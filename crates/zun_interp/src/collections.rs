@@ -5086,6 +5086,75 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Object(roots[1]))
             }
+            "destructOpen" => {
+                // Lazy array-destructuring source: an Array (or any eagerly
+                // materialisable value) becomes an Array; a protocol iterable
+                // becomes an iterator wrapper pulled one element at a time.
+                let concrete = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other.clone(),
+                };
+                let source = match &concrete {
+                    Value::Object(_) | Value::Any(_) => object(&concrete),
+                    _ => None,
+                };
+                let lazy = source.filter(|source| {
+                    zun_gc::with_current_heap(|heap| heap.array_len(*source).is_none())
+                });
+                let Some(source) = lazy else {
+                    return self.call_managed_collection("arrayFrom", &args[..1]);
+                };
+                self.protocol_iterator_new(source)
+            }
+            "destructStep" => {
+                let wrapper = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.array_len(wrapper)).is_some() {
+                    return self.call_managed_collection("arrayAt", args);
+                }
+                if matches!(self.protocol_done(wrapper)?, Value::Bool(true)) {
+                    return Ok(Value::Void);
+                }
+                self.protocol_next(wrapper)
+            }
+            "destructRest" => {
+                let wrapper = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.array_len(wrapper)).is_some() {
+                    return self.call_managed_collection("arraySlice", args);
+                }
+                let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                let roots = [wrapper, target];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                while !matches!(self.protocol_done(roots[0])?, Value::Bool(true)) {
+                    let value = self.protocol_next(roots[0])?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], boxed));
+                }
+                Ok(Value::Object(roots[1]))
+            }
+            "destructFinish" => {
+                // Close the iterator unless it already reported `done`.
+                let wrapper = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.array_len(wrapper)).is_some() {
+                    return Ok(Value::Bool(true));
+                }
+                let exhausted = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get(wrapper, "__zun_done").and_then(|any| any.as_bool())
+                })
+                .unwrap_or(false);
+                if exhausted {
+                    return Ok(Value::Bool(true));
+                }
+                let throwing = matches!(args.get(1), Some(Value::Bool(true)));
+                self.call_managed_collection(
+                    "generatorIteratorClose",
+                    &[Value::Object(wrapper), Value::Bool(throwing)],
+                )
+            }
             "arrayFrom" | "arrayFromMapped" => {
                 // Build the base array from the source (a managed Array or a
                 // string; other iterables are deferred).

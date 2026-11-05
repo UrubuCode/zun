@@ -2114,6 +2114,108 @@ impl Checker<'_> {
                 if !matches!(value.ty, Ty::Array | Ty::Any | Ty::Error) {
                     self.error(span, "array destructuring requires an Array or any value");
                 }
+                // With defaults the iterator is pulled one element at a time so a
+                // throwing default closes it before later elements are read.
+                if value.ty == Ty::Any
+                    && elements.iter().flatten().any(|element| element.default.is_some())
+                {
+                    if let (Some((open, _)), Some((step, _)), Some((rest_id, _)), Some((finish, _))) = (
+                        zun_natives::resolve("array", "destructOpen"),
+                        zun_natives::resolve("array", "destructStep"),
+                        zun_natives::resolve("array", "destructRest"),
+                        zun_natives::resolve("array", "destructFinish"),
+                    ) {
+                        let source = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
+                        out.push(hir::Stmt::Let {
+                            slot: source,
+                            init: hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id: open, args: vec![value] },
+                                ty: Ty::Any,
+                                span,
+                            },
+                        });
+                        let local = || hir::Expr { kind: hir::ExprKind::Local(source), ty: Ty::Any, span };
+                        let finish_call = |throwing: bool| hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id: finish,
+                                args: vec![
+                                    local(),
+                                    hir::Expr { kind: hir::ExprKind::Boolean(throwing), ty: Ty::Boolean, span },
+                                ],
+                            },
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                        let mut inner: Vec<hir::Stmt> = Vec::new();
+                        for (index, element) in elements.iter().enumerate() {
+                            let Some(element) = element else {
+                                // A hole still consumes one value.
+                                inner.push(hir::Stmt::Expr(hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id: step,
+                                        args: vec![
+                                            local(),
+                                            hir::Expr { kind: hir::ExprKind::Number(index as f64), ty: Ty::F64, span },
+                                        ],
+                                    },
+                                    ty: Ty::Any,
+                                    span,
+                                }));
+                                continue;
+                            };
+                            let read = hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id: step,
+                                    args: vec![
+                                        local(),
+                                        hir::Expr { kind: hir::ExprKind::Number(index as f64), ty: Ty::F64, span },
+                                    ],
+                                },
+                                ty: Ty::Any,
+                                span,
+                            };
+                            let read = self.apply_default(cx, read, element.default.as_ref(), &mut inner);
+                            self.bind_pattern(cx, &element.pattern, read, &mut inner);
+                        }
+                        if let Some(rest) = rest {
+                            let read = hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id: rest_id,
+                                    args: vec![
+                                        local(),
+                                        hir::Expr {
+                                            kind: hir::ExprKind::Number(elements.len() as f64),
+                                            ty: Ty::Int(IntKind::U64),
+                                            span,
+                                        },
+                                    ],
+                                },
+                                ty: Ty::Array,
+                                span,
+                            };
+                            self.bind_pattern(cx, rest, read, &mut inner);
+                        }
+                        let caught = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
+                        out.push(hir::Stmt::Try {
+                            body: inner,
+                            catches: vec![hir::CatchClause {
+                                slot: caught,
+                                ty: Ty::Any,
+                                body: vec![
+                                    hir::Stmt::Expr(finish_call(true)),
+                                    hir::Stmt::Throw(hir::Expr {
+                                        kind: hir::ExprKind::Local(caught),
+                                        ty: Ty::Any,
+                                        span,
+                                    }),
+                                ],
+                            }],
+                            finally_body: None,
+                        });
+                        out.push(hir::Stmt::Expr(finish_call(false)));
+                        return;
+                    }
+                }
                 // A dynamic source may hold a string or any iterable, not just
                 // an Array: materialize it through the iteration protocol first.
                 let value = if value.ty == Ty::Any {
@@ -7041,6 +7143,60 @@ impl Checker<'_> {
                                 ty: return_ty,
                                 span,
                             };
+                        }
+                    }
+                    // `f(a, ...xs)` on a named function with fixed parameters
+                    // followed by a rest parameter: flatten every argument into
+                    // one array, then split it into the fixed prefix and a
+                    // fresh rest array.
+                    if let Some(&func) = self.by_name.get(&name) {
+                        let rest_index = self.signatures[func as usize].rest_param;
+                        if let (true, Some(rest_index)) = (cx.lookup(&name).is_none(), rest_index) {
+                            if rest_index > 0 && self.signatures[func as usize].params.len() == rest_index + 1 {
+                                let elements = args
+                                    .iter()
+                                    .map(|arg| match arg {
+                                        ast::Expr::Spread { expr, .. } => {
+                                            ast::ArrayElement::Spread((**expr).clone())
+                                        }
+                                        other => ast::ArrayElement::Expr(other.clone()),
+                                    })
+                                    .collect();
+                                let literal = ast::Expr::ArrayLiteral { elements, span };
+                                let flat = self.check_expr(cx, &literal);
+                                if flat.ty == Ty::Array {
+                                    let temp = cx.declare(&self.fresh_temp_name(cx), Ty::Array);
+                                    let params = self.signatures[func as usize].params.clone();
+                                    let mut fixed_args = Vec::with_capacity(rest_index);
+                                    for (index, &expected) in params.iter().take(rest_index).enumerate() {
+                                        let _ = expected;
+                                        let read = self.array_element_read(temp, Ty::Array, index, span);
+                                        fixed_args.push(read);
+                                    }
+                                    let rest = self.array_rest_read(temp, Ty::Array, rest_index, span);
+                                    let return_ty = self.signatures[func as usize].return_ty;
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::Sequence {
+                                            effect: Box::new(hir::Expr {
+                                                kind: hir::ExprKind::Assign { slot: temp, value: Box::new(flat) },
+                                                ty: Ty::Array,
+                                                span,
+                                            }),
+                                            value: Box::new(hir::Expr {
+                                                kind: hir::ExprKind::CallRestArrayFixed {
+                                                    func,
+                                                    fixed_args,
+                                                    args: Box::new(rest),
+                                                },
+                                                ty: return_ty,
+                                                span,
+                                            }),
+                                        },
+                                        ty: return_ty,
+                                        span,
+                                    };
+                                }
+                            }
                         }
                     }
                     let callee_expr = ast::Expr::Ident(*callee);

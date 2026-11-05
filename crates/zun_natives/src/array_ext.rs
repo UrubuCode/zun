@@ -113,5 +113,9 @@ pub const MODULE: crate::Module = crate::Module {
         // Backs the lazy destructuring-default test (the default expression is
         // evaluated only when this is true).
         NativeFn { name: "anyIsUndefined", params: &[Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "destructOpen", params: &[Opaque], ret: Opaque, imp: unavailable },
+        NativeFn { name: "destructStep", params: &[Opaque, F64], ret: Opaque, imp: unavailable },
+        NativeFn { name: "destructRest", params: &[Opaque, U64], ret: Array, imp: unavailable },
+        NativeFn { name: "destructFinish", params: &[Opaque, Bool], ret: Bool, imp: unavailable },
     ],
 };
