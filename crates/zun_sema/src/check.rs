@@ -1959,6 +1959,41 @@ impl Checker<'_> {
             let mut body = self.check_block(&mut cx, &f.body);
             self.rewrite_boxed_lets(&mut body, &cx.boxed);
             boxed_locals::box_parameters(&mut body, &cx.boxed, &cx.locals, param_tys.len());
+            // A derived constructor that touches `this` in a top-level
+            // statement before its `super(...)` call throws a ReferenceError.
+            if cx.is_constructor
+                && this_class.is_some_and(|c| self.classes[c as usize].base.is_some())
+            {
+                let mut this_before_super = false;
+                for statement in &f.body.statements {
+                    let ast::Stmt::Expr(expr) = statement else { continue };
+                    let is_super_call = matches!(expr, ast::Expr::Call { callee, .. } if self.text(callee) == "super");
+                    if is_super_call {
+                        break;
+                    }
+                    let text = &self.source[expr.span().start as usize..expr.span().end as usize];
+                    if text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$')).any(|word| word == "this") {
+                        this_before_super = true;
+                        break;
+                    }
+                }
+                if this_before_super {
+                    if let Some(&class_idx) = self.classes_by_name.get("ReferenceError") {
+                        let message = ast::Expr::String {
+                            value: "Must call super constructor in derived class before accessing 'this' or returning from derived constructor".to_string(),
+                            span: f.name.span,
+                        };
+                        let thrown = self.check_error_new(
+                            &mut cx,
+                            class_idx,
+                            "ReferenceError",
+                            std::slice::from_ref(&message),
+                            f.name.span,
+                        );
+                        body.insert(0, hir::Stmt::Throw(thrown));
+                    }
+                }
+            }
             body
         };
         let defaults = f
@@ -8063,6 +8098,32 @@ impl Checker<'_> {
                                     span,
                                 };
                             }
+                        }
+                    }
+                }
+                // `Error.prototype.toString.call(value)`.
+                if self.text(method) == "call" && args.len() == 1 {
+                    let is_error_proto_to_string = match receiver.as_ref() {
+                        ast::Expr::Field { object: proto, field: member, .. } => {
+                            self.text(member) == "toString"
+                                && matches!(proto.as_ref(),
+                                    ast::Expr::Field { object: base, field: p, .. }
+                                        if self.text(p) == "prototype"
+                                            && matches!(base.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Error"))
+                                || matches!(proto.as_ref(),
+                                    ast::Expr::StaticField { class, field: p, .. }
+                                        if self.text(p) == "prototype" && self.text(class) == "Error")
+                        }
+                        _ => false,
+                    };
+                    if is_error_proto_to_string {
+                        if let Some(&func) = self.by_name.get("__zunErrorProtoToString") {
+                            let value = self.check_expr(cx, &args[0]);
+                            return hir::Expr {
+                                kind: hir::ExprKind::Call { func, args: vec![Self::box_to_any(value)] },
+                                ty: Ty::String,
+                                span,
+                            };
                         }
                     }
                 }

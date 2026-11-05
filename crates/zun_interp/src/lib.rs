@@ -673,6 +673,24 @@ impl Interp<'_> {
                             }
                         }
                     }
+                    // BigInt / Symbol primitives name their wrapper class.
+                    if name == "constructor" {
+                        let is_bigint = matches!(&concrete, Value::Object(obj)
+                            if zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_some()));
+                        let is_symbol = matches!(&concrete, Value::Any(any) if any.as_symbol().is_some());
+                        let wrapper = if is_bigint {
+                            Some("BigInt")
+                        } else if is_symbol {
+                            Some("Symbol")
+                        } else {
+                            None
+                        };
+                        if let Some(class_name) = wrapper {
+                            let record = Self::builtin_constructor_record(class_name);
+                            stack.push(Value::Object(record));
+                            continue;
+                        }
+                    }
                     if name == "constructor" {
                         if let Value::Object(obj) = &concrete {
                             if let Some(record) = self.constructor_record(*obj) {

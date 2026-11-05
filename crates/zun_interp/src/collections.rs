@@ -5059,6 +5059,51 @@ impl<'a> Interp<'a> {
                         };
                         let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source))
                         else {
+                            // The mapped form streams the iterable: each element is
+                            // mapped as it is produced, and a throwing mapper closes
+                            // the iterator (IteratorClose) before propagating.
+                            if name == "arrayFromMapped" {
+                                if let Ok(wrapper_value) = self.protocol_iterator_new(source) {
+                                    let wrapper = Self::value_object(&wrapper_value)
+                                        .ok_or(RunError::BadToken)?;
+                                    let callback = match args.get(1).ok_or(RunError::BadToken)? {
+                                        Value::Function(handle) => *handle,
+                                        _ => return Err(RunError::BadToken),
+                                    };
+                                    let result = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                                    let roots = [wrapper, result];
+                                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                                    let mut index = 0usize;
+                                    loop {
+                                        if matches!(self.protocol_done(roots[0])?, Value::Bool(true)) {
+                                            break;
+                                        }
+                                        let value = self.protocol_next(roots[0])?;
+                                        let callback_args = vec![
+                                            value,
+                                            Value::Any(zun_core::Any::float(index as f64)),
+                                        ];
+                                        match self.invoke_callback(callback, callback_args) {
+                                            Ok(produced) => {
+                                                let boxed = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
+                                                    .ok_or(RunError::BadToken)?;
+                                                zun_gc::with_current_heap_mut(|heap| {
+                                                    heap.array_push(roots[1], boxed)
+                                                });
+                                            }
+                                            Err(error) => {
+                                                let _ = self.call_managed_collection(
+                                                    "generatorIteratorClose",
+                                                    &[Value::Object(roots[0]), Value::Bool(true)],
+                                                );
+                                                return Err(error);
+                                            }
+                                        }
+                                        index += 1;
+                                    }
+                                    return Ok(Value::Object(roots[1]));
+                                }
+                            }
                             // Any other iterable (Set, Map, iterator, user
                             // iterable) is drained through the iteration protocol.
                             let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
@@ -6612,6 +6657,9 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Bool(truthy));
                 }
                 let found = match object(args.first().ok_or(RunError::BadToken)?) {
+                    // A BigInt payload object is a primitive: its core type id
+                    // must not be read as a module class rid.
+                    Some(obj) if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) => false,
                     Some(obj) => self.types.is_assignable(obj.type_rid(), class_rid),
                     None => false,
                 };

@@ -194,3 +194,19 @@ function __zunMapGroupBy(items: any, callback: any): Map<any, any> {
     }
     return groups;
 }
+
+// `Error.prototype.toString.call(value)`: the generic ToString of any object
+// with `name` / `message` properties (spec 20.5.3.4).
+function __zunErrorProtoToString(value: any): string {
+    const rawName: any = value.name;
+    const rawMessage: any = value.message;
+    const name: string = rawName === undefined ? "Error" : String(rawName);
+    const message: string = rawMessage === undefined ? "" : String(rawMessage);
+    if (name === "") {
+        return message;
+    }
+    if (message === "") {
+        return name;
+    }
+    return name + ": " + message;
+}
