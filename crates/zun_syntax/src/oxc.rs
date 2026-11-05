@@ -1844,7 +1844,13 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             Ok(Expr::Yield {
                 value: Box::new(match yield_expression.argument.as_ref() {
                     Some(argument) => convert_expression(source, argument)?,
-                    None => Expr::Null {
+                    // A bare `yield` yields `undefined`.
+                    None => Expr::Unary {
+                        op: crate::ast::UnaryOp::Void,
+                        operand: Box::new(Expr::Number {
+                            value: 0.0,
+                            span: span(yield_expression.span),
+                        }),
                         span: span(yield_expression.span),
                     },
                 }),

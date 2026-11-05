@@ -31,7 +31,12 @@ impl Checker<'_> {
             }
         }
         for capture in &captures {
-            if capture.mode == hir::CaptureMode::ByCell {
+            // Only captures read from the enclosing frame's own locals box a
+            // slot there; an inherited capture's `outer_slot` indexes a frame
+            // further out and must not touch this frame's slots.
+            if capture.mode == hir::CaptureMode::ByCell
+                && matches!(capture.source, hir::CaptureSource::Local(_))
+            {
                 outer.boxed.insert(capture.outer_slot);
             }
         }
