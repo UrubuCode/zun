@@ -147,7 +147,7 @@ fn resolve_call(module: &Module, opcode: Opcode, operand: &Operand) -> Option<(u
                 Operand::Token(t) => *t,
                 _ => return None,
             };
-            if token.table() == Some(TableKind::MemberRef) {
+            if token.rid() != 0 && token.table() == Some(TableKind::MemberRef) {
                 let member = module.tables.member_refs.get(token.rid() as usize - 1)?;
                 let arity = module.blobs.get(member.signature).first().copied()?;
                 return Some((arity, 1));

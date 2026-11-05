@@ -2264,6 +2264,35 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             }
         }
         Expression::ArrowFunctionExpression(arrow) => convert_arrow(source, arrow),
+        // A named function expression binds its own name inside its body:
+        // `(() => { let name = function name() {...}; return name; })()` gives the
+        // closure its self-reference (the `let` initializer already supports it).
+        Expression::FunctionExpression(function)
+            if function.id.as_ref().is_some_and(|id| {
+                function.body.as_ref().is_some_and(|body| {
+                    contains_word(&source[body.span.start as usize..body.span.end as usize], id.name.as_str())
+                })
+            }) =>
+        {
+            let id = function.id.as_ref().expect("checked above");
+            let name = Name { span: Span::new(id.span.start, id.span.end) };
+            let whole = Span::new(function.span.start, function.span.end);
+            let inner = convert_oxc_function(source, function)?;
+            let statements = vec![
+                Stmt::Let { name, ty: None, init: inner, span: whole },
+                Stmt::Return { value: Some(Expr::Ident(name)), span: whole },
+            ];
+            let iife = Expr::Function(FunctionExpr {
+                params: Vec::new(),
+                return_type: convert_type_annotation(source, None)?,
+                body: Block { statements, span: whole },
+                is_arrow: true,
+                is_async: false,
+                is_generator: false,
+                span: whole,
+            });
+            Ok(Expr::ComputedCall { callee: Box::new(iife), args: Vec::new(), span: whole })
+        }
         Expression::FunctionExpression(function) => convert_oxc_function(source, function),
         // A class expression is lifted to a hoisted class declaration (Zun
         // classes are program-global) and the expression becomes a reference

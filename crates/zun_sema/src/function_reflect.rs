@@ -23,7 +23,7 @@ impl<'a> Checker<'a> {
     /// Wrap a function-valued expression in the `functionBox` intrinsic so it
     /// can travel through an `Any`-boxing argument lane (functions deliberately
     /// do not box into `Any`). A non-function expression is returned unchanged.
-    fn box_function_argument(&mut self, expr: hir::Expr) -> hir::Expr {
+    pub(super) fn box_function_argument(&mut self, expr: hir::Expr) -> hir::Expr {
         if !matches!(expr.ty, Ty::Function(_)) {
             return expr;
         }

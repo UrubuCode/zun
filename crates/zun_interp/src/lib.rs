@@ -393,7 +393,16 @@ impl Interp<'_> {
                 let rest_array = zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
                     let array = heap.alloc_array(rest_values.len());
                     for (index, value) in rest_values.iter().enumerate() {
-                        let any = value.box_any(heap).ok_or(RunError::BadToken)?;
+                        // A function has no `Any` form: it rides in a `functionBox` record.
+                        let any = match value {
+                            Value::Function(handle) => {
+                                let record = heap.alloc_dynamic();
+                                heap.dynamic_set_function(record, "__boxedFn", *handle);
+                                Value::Object(record).box_any(heap)
+                            }
+                            other => other.box_any(heap),
+                        }
+                        .ok_or(RunError::BadToken)?;
                         let _ = heap.array_set(array, index, any);
                     }
                     Ok(array)

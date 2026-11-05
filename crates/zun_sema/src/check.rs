@@ -7653,6 +7653,14 @@ impl Checker<'_> {
                                         );
                                     }
                                 }
+                                // Function values packed into the rest array ride in functionBox records.
+                                let mut args = args;
+                                for index in rest_index..args.len() {
+                                    if matches!(args[index].ty, Ty::Function(_)) {
+                                        let element = std::mem::replace(&mut args[index], self.poison(span));
+                                        args[index] = self.box_function_argument(element);
+                                    }
+                                }
                                 return hir::Expr {
                                     kind: hir::ExprKind::IndirectCallRest {
                                         callee: Box::new(hir::Expr {
@@ -8266,6 +8274,13 @@ impl Checker<'_> {
                     } else {
                         while args.len() < rest_index {
                             args.push(default_args::missing_arg(param_tys[args.len()], span));
+                        }
+                        // Function values packed into the rest array ride in functionBox records.
+                        for index in rest_index..args.len() {
+                            if matches!(args[index].ty, Ty::Function(_)) {
+                                let element = std::mem::replace(&mut args[index], self.poison(span));
+                                args[index] = self.box_function_argument(element);
+                            }
                         }
                         for (arg, &expected) in args.iter_mut().take(rest_index).zip(&param_tys) {
                             coerce_numeric_literal(arg, expected);
