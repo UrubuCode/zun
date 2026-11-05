@@ -4008,15 +4008,20 @@ fn convert_class_declaration_inner(source: &str, class_declaration: &oxc_ast::as
                 .heritage
                 .as_ref()
                 .map(|heritage| {
+                    // `extends null`: the instance chain stops at the class itself.
+                    if matches!(&heritage.expression, Expression::NullLiteral(_)) {
+                        return Ok(None);
+                    }
                     let Expression::Identifier(identifier) = &heritage.expression else {
                         return Err("OXC adapter supports identifier class bases only".into());
                     };
-                    Ok(Name {
+                    Ok(Some(Name {
                         span: Span::new(identifier.span.start, identifier.span.end),
-                    })
+                    }))
                 })
                 .transpose()
-                .map_err(|error| vec![error])?;
+                .map_err(|error| vec![error])?
+                .flatten();
             let mut fields = Vec::new();
             let mut methods = Vec::new();
             let mut symbol_methods = Vec::new();

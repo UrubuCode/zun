@@ -1439,6 +1439,14 @@ impl Interp<'_> {
                     if index < 0 {
                         return Err(RunError::Malformed("negative array index".into()));
                     }
+                    // Reading past the end answers `undefined`, as in JS.
+                    let past_end = zun_gc::with_current_heap(|heap| {
+                        heap.array_len(array).is_some_and(|len| (index as usize) >= len)
+                    });
+                    if past_end {
+                        stack.push(Value::Void);
+                        continue;
+                    }
                     let value = zun_gc::with_current_heap(|heap| {
                         heap.array_get(array, index as usize)
                             .and_then(|any| value::Value::unbox_any(any, heap))

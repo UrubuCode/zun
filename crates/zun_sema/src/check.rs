@@ -8640,6 +8640,27 @@ impl Checker<'_> {
                         _ => false,
                     };
                     if is_has_own_call {
+                        // `Object.prototype.hasOwnProperty.call(Ctor.prototype, "name")` on a
+                        // built-in constructor: answered from the built-in method table.
+                        let proto_owner = match &args[0] {
+                            ast::Expr::Field { object: base, field: p, .. } if self.text(p) == "prototype" => match base.as_ref() {
+                                ast::Expr::Ident(n) => Some(self.text(n).to_string()),
+                                _ => None,
+                            },
+                            ast::Expr::StaticField { class, field: p, .. } if self.text(p) == "prototype" => {
+                                Some(self.text(class).to_string())
+                            }
+                            _ => None,
+                        };
+                        if let (Some(owner), ast::Expr::String { .. }) = (proto_owner, &args[1]) {
+                            if !self.classes_by_name.contains_key(&owner) {
+                                if let ast::Expr::String { value, .. } = &args[1] {
+                                    if builtin_function_length(&[owner.as_str(), "prototype", value.as_str()]).is_some() {
+                                        return hir::Expr { kind: hir::ExprKind::Boolean(true), ty: Ty::Boolean, span };
+                                    }
+                                }
+                            }
+                        }
                         return self.check_object_static(cx, "hasOwn", method.span, args, span);
                     }
                 }
@@ -11688,6 +11709,21 @@ impl Checker<'_> {
                 // construction model), and `newTarget` is approximated by the
                 // target (subclass newTarget selection needs a prototype model).
                 let callee = self.check_expr(cx, callee);
+                if matches!(callee.ty, Ty::Any | Ty::Function(_)) {
+                    // A dynamic callee reaches `new` as a plain value: only classes
+                    // are constructible, so anything else throws a TypeError
+                    // ("... is not a constructor") once the arguments are evaluated.
+                    let mut result = self.runtime_type_error(cx, span);
+                    for arg in args.iter().rev() {
+                        let effect = self.check_expr(cx, arg);
+                        result = hir::Expr {
+                            kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
+                    return result;
+                }
                 if callee.ty != Ty::Proxy {
                     self.error(span, "`new (expr)(...)` requires a Proxy-typed expression");
                     return self.poison(span);
