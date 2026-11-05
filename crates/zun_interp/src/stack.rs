@@ -76,6 +76,21 @@ pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunErr
     } else {
         (a, b)
     };
+    // A function carried through an `Any` lane rides in a `functionBox` record;
+    // compare the callable it wraps, not the record.
+    let (a, b) = if matches!(a, Value::Function(_))
+        || matches!(b, Value::Function(_))
+        || matches!((&a, &b), (Value::Object(x), Value::Object(y)) if x.addr() != y.addr())
+    {
+        zun_gc::with_current_heap(|heap| {
+            (
+                crate::collections::unbox_function_box(a.clone(), heap),
+                crate::collections::unbox_function_box(b.clone(), heap),
+            )
+        })
+    } else {
+        (a, b)
+    };
     // Constructor records (`x.constructor`) compare equal to the class value
     // (or another record) they describe, by realm/class descriptor.
     let ctor_desc = |value: &Value| -> Option<u32> {
