@@ -1452,6 +1452,26 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             })
         }
         Expression::ChainExpression(chain) => convert_chain(source, chain),
+        Expression::PrivateInExpression(private_in) => {
+            // `#x in obj` is a brand check: resolve `#x` to the innermost
+            // lexical class declaring it, then test `obj instanceof Class`
+            // (instance members) or `obj === Class` (static members).
+            let name = private_in.left.name.to_string();
+            let found = PRIVATE_SCOPES.with(|scopes| {
+                scopes.borrow().iter().rev().find_map(|(class_span, names)| {
+                    names.iter().find(|(n, _)| *n == name).map(|(_, is_static)| (*class_span, *is_static))
+                })
+            });
+            let Some((class_span, is_static)) = found else {
+                return Err(format!("OXC adapter: unknown private name `#{name}` in brand check"));
+            };
+            Ok(Expr::Binary {
+                op: if is_static { BinaryOp::Eq } else { BinaryOp::Instanceof },
+                lhs: Box::new(convert_expression(source, &private_in.right)?),
+                rhs: Box::new(Expr::Ident(Name { span: class_span })),
+                span: span(private_in.span),
+            })
+        }
         Expression::BinaryExpression(binary) => {
             let op = match binary.operator {
                 BinaryOperator::Equality => BinaryOp::LooseEq,
@@ -3919,7 +3939,43 @@ thread_local! {
 
 /// Convert a single OXC class declaration into the AST class (shared by the
 /// top-level scan and the statement converter for block-local classes).
+thread_local! {
+    /// Lexical stack of the classes being converted: each entry carries the
+    /// class name span and the `#private` names it declares (name, is_static),
+    /// so `#x in obj` can resolve to the declaring class.
+    static PRIVATE_SCOPES: std::cell::RefCell<Vec<(Span, Vec<(String, bool)>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Class<'_>) -> Result<crate::ast::Class, Vec<String>> {
+    let mut names: Vec<(String, bool)> = Vec::new();
+    for element in &class_declaration.body.body {
+        match element {
+            ClassElement::PropertyDefinition(property) => {
+                if let PropertyKey::PrivateIdentifier(identifier) = &property.key {
+                    names.push((identifier.name.to_string(), property.r#static));
+                }
+            }
+            ClassElement::MethodDefinition(method) => {
+                if let PropertyKey::PrivateIdentifier(identifier) = &method.key {
+                    names.push((identifier.name.to_string(), method.r#static));
+                }
+            }
+            _ => {}
+        }
+    }
+    let id_span = class_declaration
+        .id
+        .as_ref()
+        .map(|id| Span::new(id.span.start, id.span.end))
+        .unwrap_or(Span::new(class_declaration.span.start, class_declaration.span.end));
+    PRIVATE_SCOPES.with(|scopes| scopes.borrow_mut().push((id_span, names)));
+    let result = convert_class_declaration_inner(source, class_declaration);
+    PRIVATE_SCOPES.with(|scopes| scopes.borrow_mut().pop());
+    result
+}
+
+fn convert_class_declaration_inner(source: &str, class_declaration: &oxc_ast::ast::Class<'_>) -> Result<crate::ast::Class, Vec<String>> {
             // Anonymous class expressions get their name patched by the caller.
             let id_span = class_declaration
                 .id

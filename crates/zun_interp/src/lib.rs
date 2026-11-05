@@ -2271,9 +2271,14 @@ impl Interp<'_> {
                     let slot = field.slot;
                     let kind = field.kind;
                     let obj = pop(&mut stack)?.as_object();
-                    let v = zun_gc::with_current_heap(|h| {
-                        value::load_field(kind, obj, slot, h)
+                    // A dynamic object never carries a class's fixed fields
+                    // (a private-brand mismatch): TypeError, not a bad read.
+                    let loaded = zun_gc::with_current_heap(|h| {
+                        if h.is_dynamic_object(obj) { None } else { Some(value::load_field(kind, obj, slot, h)) }
                     });
+                    let Some(v) = loaded else {
+                        throw_native!(self, body, stack, pc, next - size, "TypeError: Cannot read private member from an object whose class did not declare it".to_string());
+                    };
                     stack.push(v);
                 }
                 Opcode::StoreField => {

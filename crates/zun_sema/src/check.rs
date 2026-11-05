@@ -581,6 +581,37 @@ impl Checker<'_> {
         }
     }
 
+    /// `(this as any).#x`: the cast only silences the type checker, so inside a
+    /// class body a cast-wrapped `this` is the typed instance receiver again.
+    fn peel_this_cast(&self, cx: &FunctionCx, expr: &ast::Expr) -> ast::Expr {
+        let mut inner = expr;
+        while let ast::Expr::Cast { expr: next, .. } = inner {
+            inner = next;
+        }
+        match inner {
+            ast::Expr::Ident(name) if cx.this_class.is_some() && self.text(name) == "this" => inner.clone(),
+            _ => expr.clone(),
+        }
+    }
+
+    /// An expression that throws a `TypeError` when evaluated (calling
+    /// `undefined`), used for writes the language rejects at run time.
+    fn runtime_type_error(&mut self, cx: &mut FunctionCx, span: Span) -> hir::Expr {
+        let callee = self.check_expr(
+            cx,
+            &ast::Expr::Unary {
+                op: ast::UnaryOp::Void,
+                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                span,
+            },
+        );
+        hir::Expr {
+            kind: hir::ExprKind::IndirectCall { callee: Box::new(callee), args: Vec::new(), func: hir::DYNAMIC_FUNCTION },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
     /// Evaluate non-literal `static` field initializers (`static n: number = 2 + 3`,
     /// `static #next = 1`) once, in class declaration order, before the module
     /// body. Literal initializers of a matching type are handled by the module
@@ -4924,6 +4955,8 @@ impl Checker<'_> {
             coerce_numeric_literal(&mut value, expected);
             if expected == Ty::F64 && !value.ty.is_int() && value.ty != Ty::F64 {
                 value = self.to_number_expr_strict(value);
+            } else if expected == Ty::F64 && value.ty.is_int() {
+                value = self.to_number_for_arg(value);
             }
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
                 self.error(
@@ -10721,6 +10754,11 @@ impl Checker<'_> {
                                 ),
                             );
                         }
+                        // A function value flowing into an `any` parameter
+                        // (`set.add(fn)`) must be boxed like any other value.
+                        if expected_ty == Ty::Any && matches!(value.ty, Ty::Function(_)) {
+                            value = Self::box_to_any(value);
+                        }
                         call_args.push(value);
                     }
                     let module = if receiver_is_string {
@@ -11187,7 +11225,16 @@ impl Checker<'_> {
                         mname = format!("{mname}Object");
                     }
                 }
-                let Some(func) = self.method_of(class, &mname) else {
+                // Private methods (`#m`) bind lexically to the class that declares
+                // the call site, so a same-named subclass `#m` never overrides them.
+                let mut private_direct = false;
+                let lexical = match cx.this_class {
+                    Some(tc) if mname.starts_with('#') && self.is_subclass(class, tc) => {
+                        self.method_of(tc, &mname).inspect(|_| private_direct = true)
+                    }
+                    _ => None,
+                };
+                let Some(func) = lexical.or_else(|| self.method_of(class, &mname)) else {
                     self.error(method.span, format!("no method `{mname}` on this type"));
                     return self.poison(span);
                 };
@@ -11338,6 +11385,8 @@ impl Checker<'_> {
                 hir::Expr {
                     kind: if rest_index.is_some() {
                         hir::ExprKind::MethodCallRest { func, args: call_args }
+                    } else if private_direct {
+                        hir::ExprKind::StaticCall { func, args: call_args }
                     } else {
                         hir::ExprKind::MethodCall { func, args: call_args }
                     },
@@ -11459,6 +11508,7 @@ impl Checker<'_> {
                 hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot }, ty, span }
             }
             ast::Expr::PrivateField { object, field, .. } => {
+                let object = &Box::new(self.peel_this_cast(cx, object));
                 let ast_object = object.clone();
                 // `Class.#static`: a private static field is an ordinary static slot
                 // under its `#`-prefixed name.
@@ -12920,6 +12970,15 @@ impl Checker<'_> {
                         None => {
                             let getter = format!("get_{fname}");
                             let Some(func) = self.method_of(class, &getter) else {
+                                // An extracted method (`const f = obj.method`) is a
+                                // function value whose first parameter is `this`.
+                                if let Some(method) = self.method_of(class, &fname) {
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::FunctionRef { func: method },
+                                        ty: Ty::Function(method),
+                                        span,
+                                    };
+                                }
                                 self.error(field.span, format!("no field or getter `{fname}` on this type"));
                                 return self.poison(span);
                             };
@@ -13653,6 +13712,8 @@ impl Checker<'_> {
                             }
                         }
                     }
+                    let peeled_object = Box::new(self.peel_this_cast(cx, private_object));
+                    let private_object = &peeled_object;
                     let checked_object = self.check_expr(cx, private_object);
                     let name = self.text(field).to_string();
                     let Some(class) = (match checked_object.ty { Ty::Instance(class) => Some(class), _ => None }) else {
@@ -13667,6 +13728,11 @@ impl Checker<'_> {
                         if !self.has_private_member(class, &name) {
                             self.error(field.span, format!("unknown private field `#{name}`"));
                             return self.poison(span);
+                        }
+                        // A private method or getter-only accessor is not
+                        // writable: the assignment throws a TypeError.
+                        if self.method_of(class, &format!("set_{name}")).is_none() {
+                            return self.runtime_type_error(cx, span);
                         }
                         // Private setter (`set #x(v)`): store through the
                         // ordinary member path under the `#`-prefixed name.
@@ -13743,6 +13809,30 @@ impl Checker<'_> {
                             coerce_numeric_literal(&mut value, expected);
                             if !expected.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
                                 self.error(value.span, format!("cannot assign {:?} to setter argument of type {expected:?}", value.ty));
+                            }
+                            if return_ty == Ty::Void && !value.ty.is_error() && value.ty != Ty::Void {
+                                // An assignment expression evaluates to the
+                                // assigned value, not the setter's result.
+                                let value_ty = value.ty;
+                                let temp = cx.declare(&self.fresh_temp_name(cx), value_ty);
+                                let store = hir::Expr {
+                                    kind: hir::ExprKind::Assign { slot: temp, value: Box::new(value) },
+                                    ty: value_ty,
+                                    span,
+                                };
+                                let call = hir::Expr {
+                                    kind: hir::ExprKind::MethodCall { func, args: vec![object, store] },
+                                    ty: Ty::Void,
+                                    span,
+                                };
+                                return hir::Expr {
+                                    kind: hir::ExprKind::Sequence {
+                                        effect: Box::new(call),
+                                        value: Box::new(hir::Expr { kind: hir::ExprKind::Local(temp), ty: value_ty, span }),
+                                    },
+                                    ty: value_ty,
+                                    span,
+                                };
                             }
                             hir::Expr {
                                 kind: hir::ExprKind::MethodCall { func, args: vec![object, value] },

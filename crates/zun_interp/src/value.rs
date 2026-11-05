@@ -296,6 +296,9 @@ pub fn decode_field(kind: u8, slot: u64, heap: &zun_gc::Heap) -> Value {
 pub fn encode_field(kind: u8, v: &Value, heap: &mut zun_gc::Heap) -> u64 {
     use zun_il::{JitKind, NumKind};
     match kind {
+        // A `null`/`undefined` default (a class field typed as a reference
+        // that its constructor assigns later) is the null reference.
+        FIELD_OBJECT if matches!(v, Value::Null | Value::Void) => 0,
         FIELD_OBJECT => v.as_object().addr() as u64,
         FIELD_STRING => match v {
             Value::Str(s) => heap.intern_string(s.clone()) as u64,
@@ -306,6 +309,7 @@ pub fn encode_field(kind: u8, v: &Value, heap: &mut zun_gc::Heap) -> u64 {
             JitKind::Num(NumKind::F32) => (v.as_number() as f32).to_bits() as u64,
             JitKind::Num(_) => v.as_int() as u64,
             JitKind::Bool => matches!(v, Value::Bool(true)) as u64,
+            JitKind::Object | JitKind::Array if matches!(v, Value::Null | Value::Void) => 0,
             JitKind::Object | JitKind::Array => v.as_object().addr() as u64,
             JitKind::String => match v {
                 Value::Str(s) => heap.intern_string(s.clone()) as u64,
