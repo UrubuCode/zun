@@ -328,6 +328,53 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
     let saved_prelude = PENDING_PRELUDE.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
     let mut prev_start = 0usize;
     let ordered = hoist_function_declarations(source, body);
+    // Sibling function declarations that mention a *later* sibling (mutual
+    // recursion) cannot be ordered: the later name is pre-declared with a
+    // placeholder closure and its declaration becomes an assignment, so earlier
+    // closures capture the (cell-boxed) variable.
+    let mut forward_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    {
+        let declared: Vec<&oxc_ast::ast::Function<'_>> = ordered
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::FunctionDeclaration(function) => Some(&**function),
+                _ => None,
+            })
+            .collect();
+        for (position, earlier) in declared.iter().enumerate() {
+            let Some(text) = source.get(earlier.span.start as usize..earlier.span.end as usize) else { continue };
+            for later in declared.iter().skip(position + 1) {
+                if let Some(id) = later.id.as_ref() {
+                    if contains_word(text, id.name.as_str()) {
+                        forward_names.insert(id.name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    for statement in ordered.iter().copied() {
+        let Statement::FunctionDeclaration(function) = statement else { continue };
+        if let Some(id) = function.id.as_ref() {
+            if forward_names.contains(id.name.as_str()) {
+                let whole = span(function.span);
+                statements.push(Stmt::Let {
+                    name: Name { span: span(id.span) },
+                    ty: None,
+                    init: Expr::Function(FunctionExpr {
+                        params: Vec::new(),
+                        return_type: convert_type_annotation(source, None)?,
+                        body: Block { statements: Vec::new(), span: whole },
+                        is_arrow: true,
+                        is_async: false,
+                        is_generator: false,
+                        span: whole,
+                    }),
+                    span: whole,
+                });
+            }
+        }
+    }
+    prev_start = statements.len();
     for statement in ordered.iter().copied() {
         flush_prelude(&mut statements, prev_start);
         prev_start = statements.len();
@@ -537,6 +584,14 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                 let Some(id) = function.id.as_ref() else {
                     return Err("OXC adapter requires named function declarations".into());
                 };
+                if forward_names.contains(id.name.as_str()) {
+                    statements.push(Stmt::Expr(Expr::Assign {
+                        target: Name { span: span(id.span) },
+                        value: Box::new(convert_oxc_function(source, function)?),
+                        span: span(function.span),
+                    }));
+                    continue;
+                }
                 statements.push(Stmt::Let {
                     name: Name { span: span(id.span) },
                     ty: None,
