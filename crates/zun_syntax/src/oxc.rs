@@ -756,8 +756,44 @@ fn convert_for_statement(
 ) -> Result<(Vec<Stmt>, Stmt), String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut pre = Vec::new();
+    let mut extra_init: Vec<Stmt> = Vec::new();
     let init = match &for_statement.init {
         None => None,
+        Some(ForStatementInit::VariableDeclaration(declaration))
+            if declaration.declarations.len() != 1
+                && declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var
+                && declaration
+                    .declarations
+                    .iter()
+                    .all(|d| matches!(d.id, BindingPattern::BindingIdentifier(_))) =>
+        {
+            // Several `let`/`const` declarators stay in the init clause so each
+            // is a per-iteration binding.
+            let mut lowered = Vec::new();
+            for declarator in &declaration.declarations {
+                let BindingPattern::BindingIdentifier(identifier) = &declarator.id else {
+                    return Err("OXC adapter supports identifier for-loop bindings".into());
+                };
+                let init = match declarator.init.as_ref() {
+                    Some(initializer) => convert_expression(source, initializer)?,
+                    None => Expr::Unary {
+                        op: crate::ast::UnaryOp::Void,
+                        operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+                        span: span(declarator.span),
+                    },
+                };
+                lowered.push(Stmt::Let {
+                    name: Name { span: span(identifier.span) },
+                    ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+                    init,
+                    span: span(declarator.span),
+                });
+            }
+            let mut lowered = lowered.into_iter();
+            let first = lowered.next();
+            extra_init.extend(lowered);
+            first.map(Box::new)
+        }
         Some(ForStatementInit::VariableDeclaration(declaration))
             if declaration.declarations.len() != 1 =>
         {
@@ -821,6 +857,7 @@ fn convert_for_statement(
     };
     Ok((pre, Stmt::For {
         init,
+        extra_init,
         cond: for_statement
             .test
             .as_ref()
@@ -883,6 +920,44 @@ fn convert_for_in(
         },
         other => convert_binding_pattern(source, other)?,
     };
+    // `for (var k in o)`: one function-scoped binding shared by every iteration,
+    // assigned from a per-iteration temporary at the top of the body. The
+    // declaration is emitted ahead of the loop as a separate statement.
+    if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+        if let (BindingPattern::BindingIdentifier(identifier), crate::ast::Pattern::Ident { ty, .. }) =
+            (&declarator.id, &pattern)
+        {
+            let var_name = Name { span: span(identifier.span) };
+            let temp = crate::ast::synthetic_ident("__for_in_var");
+            let mut body = convert_if_branch(source, &for_in_statement.body)?;
+            body.statements.insert(
+                0,
+                Stmt::Expr(Expr::Assign {
+                    target: var_name,
+                    value: Box::new(Expr::Ident(temp)),
+                    span: span(identifier.span),
+                }),
+            );
+            let declare = Stmt::Let {
+                name: var_name,
+                ty: ty.clone(),
+                init: Expr::Unary {
+                    op: crate::ast::UnaryOp::Void,
+                    operand: Box::new(Expr::Number { value: 0.0, span: span(identifier.span) }),
+                    span: span(identifier.span),
+                },
+                span: span(declarator.span),
+            };
+            let looped = Stmt::ForIn {
+                pattern: crate::ast::Pattern::Ident { name: temp, ty: None },
+                object: convert_expression(source, &for_in_statement.right)?,
+                body,
+                span: span(for_in_statement.span),
+            };
+            PENDING_PRELUDE.with(|pending| pending.borrow_mut().push(declare));
+            return Ok(looped);
+        }
+    }
     Ok(Stmt::ForIn {
         pattern,
         object: convert_expression(source, &for_in_statement.right)?,
@@ -1098,6 +1173,61 @@ fn convert_for_of(
                     span: span(for_of_statement.span),
                 },
             ]);
+        }
+    }
+    // `for (var [a, b] of ...)`: like the plain `var` form, the names are
+    // function-scoped bindings shared by every iteration; each round assigns
+    // them from the element at the top of the body.
+    if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+        if let BindingPattern::ArrayPattern(array) = &declarator.id {
+            let names: Option<Vec<oxc_span::Span>> = array
+                .elements
+                .iter()
+                .map(|element| match element {
+                    Some(BindingPattern::BindingIdentifier(identifier)) => Some(identifier.span),
+                    _ => None,
+                })
+                .collect();
+            if let (Some(names), None) = (names, array.rest.as_ref()) {
+                let temp = crate::ast::synthetic_ident("__for_of_var");
+                let mut body = convert_if_branch(source, &for_of_statement.body)?;
+                let mut lets = Vec::new();
+                for (position, name_span) in names.iter().enumerate() {
+                    let var_name = Name { span: span(*name_span) };
+                    lets.push(Stmt::Let {
+                        name: var_name,
+                        ty: None,
+                        init: Expr::Unary {
+                            op: crate::ast::UnaryOp::Void,
+                            operand: Box::new(Expr::Number { value: 0.0, span: span(*name_span) }),
+                            span: span(*name_span),
+                        },
+                        span: span(declarator.span),
+                    });
+                    body.statements.insert(
+                        position,
+                        Stmt::Expr(Expr::Assign {
+                            target: var_name,
+                            value: Box::new(Expr::Index {
+                                object: Box::new(Expr::Ident(temp)),
+                                index: Box::new(Expr::Number {
+                                    value: position as f64,
+                                    span: span(*name_span),
+                                }),
+                                span: span(*name_span),
+                            }),
+                            span: span(*name_span),
+                        }),
+                    );
+                }
+                lets.push(Stmt::ForOf {
+                    pattern: crate::ast::Pattern::Ident { name: temp, ty: None },
+                    iterable: convert_expression(source, &for_of_statement.right)?,
+                    body,
+                    span: span(for_of_statement.span),
+                });
+                return Ok(lets);
+            }
         }
     }
     Ok(vec![Stmt::ForOf {
@@ -2689,6 +2819,37 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             }
         }
     });
+    // `var` declared inside a nested block / loop / branch of the module body
+    // is module-scoped: hoist a `let x = undefined` to the head of the module
+    // and turn the nested declaration into an assignment.
+    let mut module_hoisted_lets: Vec<Stmt> = Vec::new();
+    {
+        let mut sites = Vec::new();
+        for (index, statement) in parsed.program.body.iter().enumerate() {
+            collect_vars_in_statement(statement, index, false, &mut sites);
+        }
+        let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for site in &sites {
+            let top_declared = sites.iter().any(|other| other.name == site.name && (!other.nested || other.in_head))
+                || TOP_LEVEL_NAMES.with(|names| names.borrow().contains(&site.name));
+            if site.nested && !site.in_head && !top_declared && names.insert(site.name.clone()) {
+                module_hoisted_lets.push(Stmt::Let {
+                    name: Name { span: Span::new(site.id_span.start, site.id_span.end) },
+                    ty: None,
+                    init: Expr::Unary {
+                        op: crate::ast::UnaryOp::Void,
+                        operand: Box::new(Expr::Number {
+                            value: 0.0,
+                            span: Span::new(site.id_span.start, site.id_span.end),
+                        }),
+                        span: Span::new(site.id_span.start, site.id_span.end),
+                    },
+                    span: Span::new(site.id_span.start, site.id_span.end),
+                });
+            }
+        }
+        HOISTED_VARS.with(|stack| stack.borrow_mut().push(names));
+    }
     for statement in parsed.program.body {
         TOP_LEVEL_BLOCK.with(|cell| {
             cell.set(match &statement {
@@ -2915,6 +3076,8 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     // Drain the block-local / nested classes collected while converting the
     // module body (and function/method bodies) into the program's class list.
     HOISTED_CLASSES.with(|cells| classes.append(&mut cells.borrow_mut()));
+    HOISTED_VARS.with(|stack| stack.borrow_mut().pop());
+    hoisted_functions.splice(0..0, module_hoisted_lets);
     hoisted_functions.append(&mut top_level);
     let top_level = hoisted_functions;
     Ok(Program {
@@ -4829,6 +4992,8 @@ thread_local! {
 /// A `var` binding found in a function body.
 struct VarSite {
     name: String,
+    /// Span of the binding identifier.
+    id_span: oxc_span::Span,
     /// Index of the enclosing top-level statement of the function body.
     top_index: usize,
     /// Declared inside a nested block / loop / branch.
@@ -4849,7 +5014,13 @@ fn collect_var_declaration(
     }
     for declarator in &declaration.declarations {
         if let BindingPattern::BindingIdentifier(identifier) = &declarator.id {
-            out.push(VarSite { name: identifier.name.to_string(), top_index, nested, in_head });
+            out.push(VarSite {
+                name: identifier.name.to_string(),
+                id_span: identifier.span,
+                top_index,
+                nested,
+                in_head,
+            });
         }
     }
 }

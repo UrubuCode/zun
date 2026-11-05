@@ -991,6 +991,7 @@ impl Parser<'_> {
                     init,
                     span: init_span,
                 })),
+                extra_init: Vec::new(),
                 cond,
                 update,
                 span: start.to(body.span),
@@ -1005,6 +1006,7 @@ impl Parser<'_> {
         let body = self.block();
         Stmt::For {
             init: None,
+            extra_init: Vec::new(),
             cond,
             update,
             span: start.to(body.span),

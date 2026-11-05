@@ -511,6 +511,9 @@ pub enum Stmt {
     For {
         /// Optional loop initializer.
         init: Option<Box<Stmt>>,
+        /// Further `let`/`const` declarators of the same init clause
+        /// (`for (let i = 0, j = 9; ...)`); each is a per-iteration binding.
+        extra_init: Vec<Stmt>,
         /// Optional condition; omitted means always true.
         cond: Option<Expr>,
         /// Optional update expression.

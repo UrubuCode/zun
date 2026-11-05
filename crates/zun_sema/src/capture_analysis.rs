@@ -23,8 +23,9 @@ pub(super) fn collect_mutated_names(
                 collect_mutated_names(checker, &body.statements, names);
                 collect_mutated_expr(checker, cond, names);
             }
-            ast::Stmt::For { init, cond, update, body, .. } => {
+            ast::Stmt::For { init, extra_init, cond, update, body, .. } => {
                 if let Some(init) = init { collect_mutated_names(checker, std::slice::from_ref(init), names); }
+                collect_mutated_names(checker, extra_init, names);
                 if let Some(cond) = cond { collect_mutated_expr(checker, cond, names); }
                 if let Some(update) = update { collect_mutated_expr(checker, update, names); }
                 collect_mutated_names(checker, &body.statements, names);

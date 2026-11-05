@@ -2854,6 +2854,7 @@ impl Checker<'_> {
             }
             ast::Stmt::For {
                 init,
+                extra_init,
                 cond,
                 update,
                 body,
@@ -2861,9 +2862,18 @@ impl Checker<'_> {
             } => {
                 // The init clause's `let` is scoped to the loop.
                 cx.scopes.push(Scope::new());
-                let init = init
-                    .as_ref()
-                    .map(|stmt| Box::new(self.check_stmt(cx, stmt)));
+                let init = init.as_ref().map(|stmt| {
+                    let first = self.check_stmt(cx, stmt);
+                    if extra_init.is_empty() {
+                        Box::new(first)
+                    } else {
+                        let mut group = vec![first];
+                        for extra in extra_init {
+                            group.push(self.check_stmt(cx, extra));
+                        }
+                        Box::new(hir::Stmt::Group(group))
+                    }
+                });
                 let cond = cond
                     .as_ref()
                     .map(|expr| self.check_condition(cx, expr))
@@ -4793,7 +4803,10 @@ impl Checker<'_> {
             if case.body.statements.is_empty() {
                 continue;
             }
-            let body = self.check_block(cx, &case.body);
+            // All case bodies share the switch's one lexical scope, so a `let`
+            // declared in one case is visible to the cases after it.
+            let body: Vec<hir::Stmt> =
+                case.body.statements.iter().map(|statement| self.check_stmt(cx, statement)).collect();
             let cond = hir::Expr {
                 kind: hir::ExprKind::Binary {
                     op: ast::BinaryOp::Le,

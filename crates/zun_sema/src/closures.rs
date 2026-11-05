@@ -361,6 +361,7 @@ impl Checker<'_> {
             }
             ast::Stmt::For {
                 init,
+                extra_init,
                 cond,
                 update,
                 body,
@@ -368,6 +369,9 @@ impl Checker<'_> {
             } => {
                 if let Some(init) = init {
                     self.collect_capture_stmt(cx, parameters, init, uses);
+                }
+                for extra in extra_init {
+                    self.collect_capture_stmt(cx, parameters, extra, uses);
                 }
                 if let Some(cond) = cond {
                     self.collect_capture_expr(cx, parameters, cond, uses);
