@@ -117,5 +117,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "destructStep", params: &[Opaque, F64], ret: Opaque, imp: unavailable },
         NativeFn { name: "destructRest", params: &[Opaque, U64], ret: Array, imp: unavailable },
         NativeFn { name: "destructFinish", params: &[Opaque, Bool], ret: Bool, imp: unavailable },
+        NativeFn { name: "arrayLikePush", params: &[Opaque, Array], ret: Opaque, imp: unavailable },
+        NativeFn { name: "arrayLikePop", params: &[Opaque], ret: Opaque, imp: unavailable },
     ],
 };

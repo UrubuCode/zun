@@ -5086,6 +5086,93 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Object(roots[1]))
             }
+            "arrayLikePush" | "arrayLikePop" => {
+                // `Array.prototype.push/pop.call(receiver, ...)`: an Array mutates in
+                // place; any other object is treated as an array-like (ToLength on
+                // `length`, index keys, `length` written back).
+                let target = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
+                    RunError::Native("TypeError: Array.prototype method called on null or undefined".into())
+                })?;
+                let is_push = name == "arrayLikePush";
+                let items: Vec<zun_core::Any> = if is_push {
+                    let list = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap(|heap| {
+                        let length = heap.array_len(list).unwrap_or(0);
+                        (0..length).filter_map(|index| heap.array_get(list, index)).collect()
+                    })
+                } else {
+                    Vec::new()
+                };
+                if zun_gc::with_current_heap(|heap| heap.array_len(target)).is_some() {
+                    if is_push {
+                        let mut length = 0usize;
+                        for item in items {
+                            length = zun_gc::with_current_heap_mut(|heap| heap.array_push(target, item))
+                                .unwrap_or(length);
+                        }
+                        if length == 0 {
+                            length = zun_gc::with_current_heap(|heap| heap.array_len(target)).unwrap_or(0);
+                        }
+                        return Ok(Value::Float(length as f64, zun_il::NumKind::F64));
+                    }
+                    let popped = zun_gc::with_current_heap_mut(|heap| heap.array_pop(target));
+                    return match popped {
+                        Some(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .ok_or(RunError::BadToken),
+                        None => Ok(Value::Void),
+                    };
+                }
+                let length_value = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get(target, "length").and_then(|any| Value::unbox_any(any, heap))
+                });
+                let raw = match length_value {
+                    Some(value) => self.to_number_value(value)?,
+                    None => 0.0,
+                };
+                let length = if raw.is_nan() || raw <= 0.0 { 0.0 } else { raw.trunc().min(9007199254740991.0) };
+                if is_push {
+                    let count = items.len() as f64;
+                    if length + count > 9007199254740991.0 {
+                        return Err(RunError::Native(format!(
+                            "TypeError: Pushing {count} elements on an array-like of length {length} is disallowed, as the total surpasses 2**53-1"
+                        )));
+                    }
+                    zun_gc::with_current_heap_mut(|heap| {
+                        for (offset, item) in items.into_iter().enumerate() {
+                            heap.dynamic_set(target, format!("{}", length as u64 + offset as u64), item);
+                        }
+                        let total = Value::Float(length + count, zun_il::NumKind::F64)
+                            .box_any(heap)
+                            .unwrap_or_else(zun_core::Any::null);
+                        heap.dynamic_set(target, "length", total);
+                    });
+                    return Ok(Value::Float(length + count, zun_il::NumKind::F64));
+                }
+                if length == 0.0 {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let zero = Value::Float(0.0, zun_il::NumKind::F64)
+                            .box_any(heap)
+                            .unwrap_or_else(zun_core::Any::null);
+                        heap.dynamic_set(target, "length", zero);
+                    });
+                    return Ok(Value::Void);
+                }
+                let last = format!("{}", length as u64 - 1);
+                let element = zun_gc::with_current_heap(|heap| heap.dynamic_get(target, &last));
+                let value = match element {
+                    Some(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                        .unwrap_or(Value::Void),
+                    None => Value::Void,
+                };
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_delete(target, &last);
+                    let total = Value::Float(length - 1.0, zun_il::NumKind::F64)
+                        .box_any(heap)
+                        .unwrap_or_else(zun_core::Any::null);
+                    heap.dynamic_set(target, "length", total);
+                });
+                Ok(value)
+            }
             "destructOpen" => {
                 // Lazy array-destructuring source: an Array (or any eagerly
                 // materialisable value) becomes an Array; a protocol iterable

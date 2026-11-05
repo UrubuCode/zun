@@ -8356,6 +8356,30 @@ impl Checker<'_> {
                         "join", "slice", "concat", "at", "flat", "flatMap", "entries", "keys", "values",
                     ];
                     if let Some(name) = array_method {
+                        // `Array.prototype.push/pop.call(receiver, ...)` mutates an Array
+                        // or an array-like through the generic algorithm.
+                        if (name == "push" || name == "pop")
+                            && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                        {
+                            let native = if name == "push" { "arrayLikePush" } else { "arrayLikePop" };
+                            if let Some((id, _)) = zun_natives::resolve("array", native) {
+                                let source = self.check_expr(cx, &args[0]);
+                                let mut call_args = vec![Self::box_to_any(source)];
+                                if name == "push" {
+                                    let literal = ast::Expr::ArrayLiteral {
+                                        elements: args[1..].iter().cloned().map(ast::ArrayElement::Expr).collect(),
+                                        span,
+                                    };
+                                    let list = self.check_expr(cx, &literal);
+                                    call_args.push(list);
+                                }
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                                    ty: Ty::Any,
+                                    span,
+                                };
+                            }
+                        }
                         if READ_ONLY.contains(&name.as_str()) && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
                             if let Some((from_id, _)) = zun_natives::resolve("array", "arrayFrom") {
                                 let source = self.check_expr(cx, &args[0]);
@@ -14328,8 +14352,24 @@ impl Checker<'_> {
             // Arrays, maps, sets, proxies, instances, buffers, null → "object".
             _ => "object",
         };
-        hir::Expr {
+        let folded = hir::Expr {
             kind: hir::ExprKind::String(type_string.to_string()),
+            ty: Ty::String,
+            span,
+        };
+        // The operand is still evaluated for its side effects (`typeof arr.push(1)`).
+        if matches!(
+            operand.kind,
+            hir::ExprKind::Local(_)
+                | hir::ExprKind::Number(_)
+                | hir::ExprKind::String(_)
+                | hir::ExprKind::Boolean(_)
+                | hir::ExprKind::Null
+        ) {
+            return folded;
+        }
+        hir::Expr {
+            kind: hir::ExprKind::Sequence { effect: Box::new(operand), value: Box::new(folded) },
             ty: Ty::String,
             span,
         }
