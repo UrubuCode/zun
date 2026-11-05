@@ -2880,6 +2880,37 @@ impl Checker<'_> {
             };
             hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: checked }, ty, span }
         };
+        // `Object.getOwnPropertyDescriptor(Map, "groupBy")`: a well-known
+        // built-in static method is a writable, non-enumerable, configurable
+        // data property.
+        if method == "getOwnPropertyDescriptor" && args.len() == 2 {
+            if let (ast::Expr::Ident(global), ast::Expr::String { .. }) = (&args[0], &args[1]) {
+                let global_name = self.text(global).to_string();
+                let key = match &args[1] {
+                    ast::Expr::String { value, .. } => value.clone(),
+                    _ => String::new(),
+                };
+                if cx.lookup(&global_name).is_none()
+                    && !self.classes_by_name.contains_key(global_name.as_str())
+                    && builtin_function_length(&[global_name.as_str(), key.as_str()]).is_some()
+                {
+                    let flag = |name: &str, value: bool| {
+                        decorator_context_entry(name, hir::ExprKind::Boolean(value), Ty::Boolean, span)
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicObjectLiteral {
+                            entries: vec![
+                                flag("writable", true),
+                                flag("enumerable", false),
+                                flag("configurable", true),
+                            ],
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
+            }
+        }
         // Expected argument count per static (`assign` is variadic: 1+).
         let fixed = match method {
             "keys" | "values" | "entries" | "freeze" | "isFrozen" | "create"
@@ -11931,6 +11962,46 @@ impl Checker<'_> {
             }
             ast::Expr::Field { object, field, .. } => {
                 let fname = self.text(field).to_string();
+                // `<Builtin>.<fn>.length` / `.name` for well-known built-in paths.
+                if (fname == "length" || fname == "name") && !matches!(object.as_ref(), ast::Expr::Ident(_)) {
+                    let mut parts: Vec<String> = Vec::new();
+                    let mut cursor = object.as_ref();
+                    let mut ok = true;
+                    loop {
+                        match cursor {
+                            ast::Expr::Field { object: inner, field: f, .. } => {
+                                parts.push(self.text(f).to_string());
+                                cursor = inner.as_ref();
+                            }
+                            ast::Expr::Ident(root) => {
+                                parts.push(self.text(root).to_string());
+                                break;
+                            }
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        parts.reverse();
+                        let shadowed = self.classes_by_name.contains_key(parts[0].as_str());
+                        let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+                        if !shadowed && cx.lookup(refs[0]).is_none() {
+                            if let Some(arity) = builtin_function_length(&refs) {
+                                return if fname == "length" {
+                                    hir::Expr { kind: hir::ExprKind::Number(arity), ty: Ty::F64, span }
+                                } else {
+                                    hir::Expr {
+                                        kind: hir::ExprKind::String(refs[refs.len() - 1].to_string()),
+                                        ty: Ty::String,
+                                        span,
+                                    }
+                                };
+                            }
+                        }
+                    }
+                }
                 // `Math.<fn>.length` / `Math.<fn>.name` fold to literals.
                 if let ast::Expr::Field { object: inner_obj, field: inner_field, .. } = object.as_ref() {
                     if let ast::Expr::Ident(m) = inner_obj.as_ref() {
@@ -13577,6 +13648,28 @@ impl Checker<'_> {
         object: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        // `"name" in Map.prototype` for well-known built-in prototypes: a
+        // prototype method is present, a static-only method is absent.
+        if let (ast::Expr::String { value, .. }, ast::Expr::Field { object: proto_owner, field: proto_field, .. }) =
+            (key, object)
+        {
+            if self.text(proto_field) == "prototype" {
+                if let ast::Expr::Ident(global) = proto_owner.as_ref() {
+                    let global_name = self.text(global).to_string();
+                    if cx.lookup(&global_name).is_none()
+                        && !self.classes_by_name.contains_key(global_name.as_str())
+                    {
+                        let on_proto =
+                            builtin_function_length(&[global_name.as_str(), "prototype", value.as_str()]).is_some();
+                        let on_static =
+                            builtin_function_length(&[global_name.as_str(), value.as_str()]).is_some();
+                        if on_proto || on_static {
+                            return hir::Expr { kind: hir::ExprKind::Boolean(on_proto), ty: Ty::Boolean, span };
+                        }
+                    }
+                }
+            }
+        }
         let key = self.check_expr(cx, key);
         let object = self.check_expr(cx, object);
         // A non-string key (e.g. an array index) is converted with ToString,
@@ -13755,6 +13848,44 @@ impl Checker<'_> {
         operand: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        // `typeof Map.groupBy` / `typeof Math.max`: well-known built-in functions.
+        {
+            let mut parts: Vec<String> = Vec::new();
+            let mut cursor = operand;
+            let mut ok = true;
+            loop {
+                match cursor {
+                    ast::Expr::Field { object: inner, field: f, .. } => {
+                        parts.push(self.text(f).to_string());
+                        cursor = inner.as_ref();
+                    }
+                    ast::Expr::Ident(root) => {
+                        parts.push(self.text(root).to_string());
+                        break;
+                    }
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok && parts.len() >= 2 {
+                parts.reverse();
+                let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+                let known = builtin_function_length(&refs).is_some()
+                    || (refs.len() == 2 && refs[0] == "Math" && math_function_length(refs[1]).is_some());
+                if known
+                    && !self.classes_by_name.contains_key(refs[0])
+                    && cx.lookup(refs[0]).is_none()
+                {
+                    return hir::Expr {
+                        kind: hir::ExprKind::String("function".to_string()),
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+            }
+        }
         let mut operand = self.check_expr(cx, operand);
         // `typeof undeclared` is "undefined", never a ReferenceError.
         if let hir::ExprKind::CallBuiltin { id, args } = &mut operand.kind {
@@ -14485,6 +14616,30 @@ fn math_function_length(name: &str) -> Option<f64> {
         | "log1p" | "log2" | "round" | "sign" | "sin" | "sinh" | "sqrt" | "tan" | "tanh"
         | "trunc" => 1.0,
         "random" => 0.0,
+        _ => return None,
+    })
+}
+
+/// Spec `length` of well-known built-in functions addressed by a dotted path
+/// such as `["Map", "groupBy"]` or `["Promise", "prototype", "then"]`.
+fn builtin_function_length(path: &[&str]) -> Option<f64> {
+    Some(match path {
+        ["Map", "groupBy"] | ["Object", "groupBy"] => 2.0,
+        ["Promise", "all" | "race" | "allSettled" | "any" | "resolve" | "reject"] => 1.0,
+        ["Promise", "withResolvers"] => 0.0,
+        ["Promise", "prototype", "then"] => 2.0,
+        ["Promise", "prototype", "catch" | "finally"] => 1.0,
+        ["Map" | "Set" | "WeakMap" | "WeakSet", "prototype", "get" | "has" | "delete" | "add"] => 1.0,
+        ["Map" | "WeakMap", "prototype", "set"] => 2.0,
+        ["Map" | "Set", "prototype", "clear"] => 0.0,
+        ["Map" | "Set", "prototype", "forEach"] => 1.0,
+        ["Object", "keys" | "values" | "entries" | "freeze" | "isFrozen" | "getPrototypeOf" | "fromEntries"] => 1.0,
+        ["Object", "assign" | "defineProperty" ] => if path[1] == "assign" { 2.0 } else { 3.0 },
+        ["Object", "getOwnPropertyDescriptor" | "hasOwn" | "setPrototypeOf"] => 2.0,
+        ["Array", "isArray" | "of"] => 1.0,
+        ["Array", "from"] => 1.0,
+        ["Number", "isInteger" | "isNaN" | "isFinite" | "isSafeInteger" | "parseFloat"] => 1.0,
+        ["Number", "parseInt"] => 2.0,
         _ => return None,
     })
 }

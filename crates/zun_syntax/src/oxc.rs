@@ -1998,7 +1998,25 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                             }
                         }
                     }
-                    let receiver = Box::new(convert_expression(source, &member.object)?);
+                    // `(Map as any).groupBy(...)`: a cast or parentheses around a
+                    // capitalized global namespace identifier is that namespace.
+                    let mut receiver_expression = &member.object;
+                    loop {
+                        match receiver_expression {
+                            Expression::ParenthesizedExpression(inner)
+                                if peels_to_global_namespace(&inner.expression) =>
+                            {
+                                receiver_expression = &inner.expression
+                            }
+                            Expression::TSAsExpression(inner)
+                                if peels_to_global_namespace(&inner.expression) =>
+                            {
+                                receiver_expression = &inner.expression
+                            }
+                            _ => break,
+                        }
+                    }
+                    let receiver = Box::new(convert_expression(source, receiver_expression)?);
                     let method = Name {
                         span: span(member.property.span),
                     };
@@ -4806,4 +4824,15 @@ fn is_plain_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+/// True when `expression` (through parentheses / `as` casts) is a bare
+/// capitalized identifier such as `Map` or `Object`.
+fn peels_to_global_namespace(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::Identifier(id) => id.name.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
+        Expression::ParenthesizedExpression(inner) => peels_to_global_namespace(&inner.expression),
+        Expression::TSAsExpression(inner) => peels_to_global_namespace(&inner.expression),
+        _ => false,
+    }
 }

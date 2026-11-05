@@ -856,6 +856,25 @@ impl<'a> Interp<'a> {
                 }) {
                     return self.create_generator(method_rid, &[]);
                 }
+                // A string (typed or boxed in `any`) iterates by code point.
+                let first_concrete = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other.clone(),
+                };
+                if let Value::Str(text) = &first_concrete {
+                    let points: Vec<String> = text.chars().map(|point| point.to_string()).collect();
+                    let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                    let roots = [array];
+                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                    for point in points {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            let id = heap.intern_string(point.as_str().into());
+                            heap.array_push(roots[0], zun_core::Any::string(id));
+                        });
+                    }
+                    return self.protocol_iterator_new(roots[0]);
+                }
                 let source = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or_else(|| RunError::Native("TypeError: value is not iterable".into()))?;
                 // A generator object drives itself through the existing frame
