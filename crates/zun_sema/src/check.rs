@@ -156,6 +156,7 @@ fn check_impl(
         type_param_names: HashSet::new(),
         enums: HashMap::new(),
         module_globals: HashSet::new(),
+        pending_static_classes: Vec::new(),
         arguments_functions: HashSet::new(),
         fn_mutated_globals: HashSet::new(),
         reassigned_fn_names: HashSet::new(),
@@ -331,6 +332,8 @@ fn decorator_context_entry(
 
 /// A collected class: its base and its own (not inherited) fields.
 struct ClassInfo {
+    /// Byte offset where the class declaration starts.
+    span_start: u32,
     base: Option<u32>,
     base_name: Option<String>,
     own_fields: Vec<(String, Ty, bool, bool)>,
@@ -410,6 +413,10 @@ struct Checker<'a> {
     /// function body can read them, matching JS module scope. All are dynamic
     /// (`any`).
     module_globals: HashSet<String>,
+    /// Classes whose non-literal static initializers run in the module body at
+    /// their declaration position (ascending by source offset), so they can see
+    /// the module bindings declared above them.
+    pending_static_classes: Vec<u32>,
     /// Functions whose body materializes an `arguments` object: their callers
     /// report the real argument count (see `setCallArgc`).
     arguments_functions: HashSet<u32>,
@@ -562,7 +569,24 @@ impl Checker<'_> {
             finally_depth: 0,
         };
         self.collect_mutated_names(&block.statements, &mut cx.mutated_names);
-        let mut body = self.static_field_initializers(&mut cx);
+        // A class declared before the last top-level statement runs its static
+        // initializers in the module body, at its textual position; the rest
+        // (and prelude classes, which trail the user source) run up front.
+        let last_start = block.statements.iter().filter_map(Self::stmt_start).max();
+        let mut early = Vec::new();
+        self.pending_static_classes.clear();
+        for class_idx in 0..self.classes.len() {
+            match last_start {
+                Some(last) if self.classes[class_idx].span_start < last => {
+                    self.pending_static_classes.push(class_idx as u32)
+                }
+                _ => early.push(class_idx as u32),
+            }
+        }
+        let mut body = Vec::new();
+        for class_idx in early {
+            body.extend(self.class_static_initializers(&mut cx, class_idx));
+        }
         body.extend(self.check_block(&mut cx, &block));
         self.rewrite_boxed_lets(&mut body, &cx.boxed);
         hir::Function {
@@ -636,10 +660,11 @@ impl Checker<'_> {
     /// `static #next = 1`) once, in class declaration order, before the module
     /// body. Literal initializers of a matching type are handled by the module
     /// initializer; this covers every other expression.
-    fn static_field_initializers(&mut self, cx: &mut FunctionCx) -> Vec<hir::Stmt> {
+    fn class_static_initializers(&mut self, cx: &mut FunctionCx, class_idx: u32) -> Vec<hir::Stmt> {
         let span = Span::new(0, 0);
         let mut out = Vec::new();
-        for class_idx in 0..self.classes.len() {
+        let class_idx = class_idx as usize;
+        {
             let fields = self.full_fields(class_idx as u32);
             let initializers = self.full_initializers(class_idx as u32);
             let first_own = fields.len().saturating_sub(self.classes[class_idx].own_fields.len());
@@ -680,6 +705,31 @@ impl Checker<'_> {
             }
         }
         out
+    }
+
+    /// Source offset where a top-level statement starts, when known.
+    fn stmt_start(statement: &ast::Stmt) -> Option<u32> {
+        use ast::Stmt::*;
+        match statement {
+            Let { span, .. }
+            | Destructure { span, .. }
+            | If { span, .. }
+            | While { span, .. }
+            | DoWhile { span, .. }
+            | For { span, .. }
+            | ForOf { span, .. }
+            | ForIn { span, .. }
+            | Switch { span, .. }
+            | Labeled { span, .. }
+            | Break { span, .. }
+            | Continue { span, .. }
+            | Return { span, .. }
+            | Throw { span, .. }
+            | Try { span, .. } => Some(span.start),
+            Expr(expr) => Some(expr.span().start),
+            #[allow(unreachable_patterns)]
+            _ => None,
+        }
     }
 
     /// Whether every value-returning `return` in `block` (outside nested functions)
@@ -5633,8 +5683,17 @@ impl Checker<'_> {
             };
         }
         // param_tys[0] is `this`.
-        let mut call_args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
         let max = param_tys.len() - 1;
+        // Extra arguments beyond the declared parameters are evaluated for
+        // their effects and then ignored, as in JS.
+        let (args, extra_args) = if args.len() > max
+            && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+        {
+            args.split_at(max)
+        } else {
+            (args, &args[0..0])
+        };
+        let mut call_args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
         let min = max.saturating_sub(optional_count);
         if call_args.len() < min || call_args.len() > max {
             self.error(
@@ -5665,11 +5724,21 @@ impl Checker<'_> {
                 );
             }
         }
-        hir::Expr {
+        let mut result = hir::Expr {
             kind: hir::ExprKind::NewWithConstructor { class: class_idx, defaults, func: ctor, args: call_args },
             ty: Ty::Instance(class_idx),
             span,
+        };
+        for extra in extra_args {
+            let effect = self.check_expr(cx, extra);
+            let ty = result.ty;
+            result = hir::Expr {
+                kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                ty,
+                span,
+            };
         }
+        result
     }
 
     /// Lower `new Error(message, { cause })` (and its subclasses) to a `New`
@@ -11642,6 +11711,26 @@ impl Checker<'_> {
             }
             ast::Expr::New { class, args, .. } => {
                 let name = self.text(class).to_string();
+                // `new Map(iterable, extra...)` / `new Set(iterable, extra...)`: the
+                // extra arguments are evaluated and ignored.
+                if args.len() > 1
+                    && (name == "Map" || name == "Set")
+                    && !self.classes_by_name.contains_key(&name)
+                    && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                {
+                    let inner = ast::Expr::New { class: *class, args: args[..1].to_vec(), span };
+                    let mut result = self.check_expr(cx, &inner);
+                    for extra in &args[1..] {
+                        let effect = self.check_expr(cx, extra);
+                        let ty = result.ty;
+                        result = hir::Expr {
+                            kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                            ty,
+                            span,
+                        };
+                    }
+                    return result;
+                }
                 if name == "Function" && !self.classes_by_name.contains_key(&name) {
                     return self.lower_function_construct(cx, args, span);
                 }

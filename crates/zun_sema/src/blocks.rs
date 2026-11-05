@@ -11,6 +11,20 @@ impl<'a> Checker<'a> {
         cx.scopes.push(Scope::new());
         let mut stmts: Vec<hir::Stmt> = Vec::with_capacity(block.statements.len());
         for statement in &block.statements {
+            // Static initializers of classes declared above this statement run
+            // here, in declaration order, with the module bindings in scope.
+            if cx.is_module_scope && cx.scopes.len() == 2 && !self.pending_static_classes.is_empty() {
+                if let Some(start) = Self::stmt_start(statement) {
+                    while let Some(&class_idx) = self.pending_static_classes.first() {
+                        if self.classes[class_idx as usize].span_start >= start {
+                            break;
+                        }
+                        self.pending_static_classes.remove(0);
+                        let init = self.class_static_initializers(cx, class_idx);
+                        stmts.extend(init);
+                    }
+                }
+            }
             let lowered = self.check_stmt(cx, statement);
             // A top-level `let`/`const` stays a typed local, but is also mirrored
             // to the realm global store so function bodies can read it via
@@ -50,6 +64,14 @@ impl<'a> Checker<'a> {
                 }
             }
             stmts.push(lowered);
+        }
+        // Anything still pending (a declaration at the tail) runs at the end.
+        if cx.is_module_scope && cx.scopes.len() == 2 {
+            while !self.pending_static_classes.is_empty() {
+                let class_idx = self.pending_static_classes.remove(0);
+                let init = self.class_static_initializers(cx, class_idx);
+                stmts.extend(init);
+            }
         }
         cx.scopes.pop();
         stmts
