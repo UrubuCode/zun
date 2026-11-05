@@ -6633,7 +6633,7 @@ impl Checker<'_> {
                                 );
                                 return self.poison(span);
                             }
-                            return hir::Expr {
+                            let store = hir::Expr {
                                 kind: hir::ExprKind::CaptureStore {
                                     environment_slot: capture.environment_slot,
                                     ty: capture.ty,
@@ -6643,6 +6643,36 @@ impl Checker<'_> {
                                 ty: capture.ty,
                                 span,
                             };
+                            // A closure writing a captured module global also updates the
+                            // realm store, which module-scope reads consult once any
+                            // function body assigns the name.
+                            if self.module_globals.contains(&text)
+                                && matches!(capture.ty, Ty::Any | Ty::F64 | Ty::Boolean | Ty::String)
+                            {
+                                let load = || hir::Expr {
+                                    kind: hir::ExprKind::CaptureLoad {
+                                        environment_slot: capture.environment_slot,
+                                        ty: capture.ty,
+                                        mode: capture.mode,
+                                    },
+                                    ty: capture.ty,
+                                    span,
+                                };
+                                let set = self.global_set_expr(&text, load(), span);
+                                return hir::Expr {
+                                    kind: hir::ExprKind::Sequence {
+                                        effect: Box::new(hir::Expr {
+                                            kind: hir::ExprKind::Sequence { effect: Box::new(store), value: Box::new(set) },
+                                            ty: capture.ty,
+                                            span,
+                                        }),
+                                        value: Box::new(load()),
+                                    },
+                                    ty: capture.ty,
+                                    span,
+                                };
+                            }
+                            return store;
                         }
                         // Assignment to a module global (top-level `let`/`const`)
                         // stores through `globalSet`.
