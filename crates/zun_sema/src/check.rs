@@ -11008,7 +11008,7 @@ impl Checker<'_> {
                                 || target == Ty::Boolean
                                 || target == Ty::Array
                                 || target == Ty::String
-                                || matches!(target, Ty::Instance(_)))))
+                                || matches!(target, Ty::Instance(_) | Ty::BufferView(_) | Ty::Map | Ty::Set | Ty::Promise | Ty::DynamicObject | Ty::Buffer))))
                 {
                     self.error(span, format!("cannot convert {:?} to {target:?}", value.ty));
                     return self.poison(span);

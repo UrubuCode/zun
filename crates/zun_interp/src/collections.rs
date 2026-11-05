@@ -996,11 +996,34 @@ impl<'a> Interp<'a> {
                 if zun_gc::with_current_heap(|heap| heap.generator_state(it).is_some()) {
                     return self.close_generator(it, throwing);
                 }
-                let method = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "return"));
-                let Some(method) = method else { return Ok(Value::Bool(true)) };
+                let mut method = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "return"));
+                // An accessor `return` is read exactly once per close.
+                if method.is_none()
+                    && zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(it, "return").is_some())
+                {
+                    if let Value::Function(handle) = self.dynamic_member_get(it, "return")? {
+                        method = Some(handle);
+                    }
+                }
+                let Some(method) = method else {
+                    // A present, non-nullish, non-callable `return` is a TypeError.
+                    let present = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get(it, "return").is_some_and(|any| {
+                            !matches!(
+                                Value::unbox_any(any, heap),
+                                Some(Value::Void) | Some(Value::Null) | None
+                            )
+                        })
+                    });
+                    if present && !throwing {
+                        return Err(RunError::Native("TypeError: iterator.return is not a function".into()));
+                    }
+                    return Ok(Value::Bool(true));
+                };
                 let roots = [it];
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                match self.invoke_function_value(method, Vec::new()) {
+                let return_args = self.with_this_arg(method, it, Vec::new());
+                match self.invoke_function_value(method, return_args) {
                     Ok(result) => {
                         if !throwing && Self::value_object(&result).is_none() {
                             return Err(RunError::Native(
@@ -7355,7 +7378,8 @@ impl<'a> Interp<'a> {
         };
         let roots = [it];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        let result = self.invoke_function_value(next, Vec::new())?;
+        let next_args = self.with_this_arg(next, it, Vec::new());
+        let result = self.invoke_function_value(next, next_args)?;
         let Some(result_obj) = Self::value_object(&result) else {
             return Err(RunError::Native("TypeError: iterator.next() did not return an object".into()));
         };
