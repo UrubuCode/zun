@@ -668,6 +668,24 @@ impl Interp<'_> {
                             None => return Err(RunError::Native(format!("TypeError: {message}"))),
                         }
                     }
+                    // A Proxy reached through `any`: reads go through its `get` trap.
+                    if let Value::Object(obj) = &concrete {
+                        if zun_gc::with_current_heap(|heap| heap.proxy_target(*obj).is_some()) {
+                            match self.proxy_dynamic_get(*obj, &name) {
+                                Ok(result) => {
+                                    stack.push(result);
+                                    continue;
+                                }
+                                Err(RunError::Thrown(exception)) => {
+                                    if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                        continue;
+                                    }
+                                    return Err(RunError::Thrown(exception));
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
+                    }
                     // `gen.next` / `gen.return` / `gen.throw` read off a generator
                     // object are callable method values.
                     if matches!(name.as_str(), "next" | "return" | "throw") {
@@ -884,6 +902,34 @@ impl Interp<'_> {
                 Opcode::StoreDynamic => {
                     let name = self.dynamic_name(&instr.operand)?.to_owned();
                     let value = pop(&mut stack)?;
+                    // A Proxy reached through `any`: writes go through its `set` trap.
+                    {
+                        let receiver = expando_receiver(stack.last().cloned().ok_or(RunError::BadToken)?);
+                        let proxy = match &receiver {
+                            Value::Object(obj) => Some(*obj),
+                            Value::Any(any) => any
+                                .as_object()
+                                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+                            _ => None,
+                        }
+                        .filter(|obj| zun_gc::with_current_heap(|heap| heap.proxy_target(*obj).is_some()));
+                        if let Some(proxy) = proxy {
+                            stack.pop();
+                            match self.proxy_dynamic_set(proxy, &name, value.clone()) {
+                                Ok(()) => {
+                                    stack.push(value);
+                                    continue;
+                                }
+                                Err(RunError::Thrown(exception)) => {
+                                    if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                        continue;
+                                    }
+                                    return Err(RunError::Thrown(exception));
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
+                    }
                     if let Value::Function(handle) = value {
                         // Function values do not box to `Any`, so they ride the
                         // object's function slot (a closure environment is a

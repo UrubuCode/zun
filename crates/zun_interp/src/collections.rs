@@ -2932,6 +2932,26 @@ impl<'a> Interp<'a> {
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // A Proxy reached through `any`: the member is read through its
+                // `get` trap and called with the proxy as `this`.
+                if zun_gc::with_current_heap(|heap| heap.proxy_target(namespace).is_some()) {
+                    let callee = self.proxy_dynamic_get(namespace, &member)?;
+                    let callee = match callee {
+                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void),
+                        other => other,
+                    };
+                    let Value::Function(handle) = callee else {
+                        return match self.new_error_object("TypeError", &format!("{member} is not a function")) {
+                            Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                            None => Err(RunError::BadToken),
+                        };
+                    };
+                    let result = self.invoke_function_value(handle, self.with_this_arg(handle, namespace, call_args))?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    return Ok(Value::Any(boxed));
+                }
                 // A Promise reached through `any` (an awaited/dynamic value, an
                 // async closure's result) answers `then`/`catch`/`finally`.
                 if matches!(member.as_ref(), "then" | "catch" | "finally")
@@ -6187,7 +6207,7 @@ impl<'a> Interp<'a> {
                         let global = heap.global_object();
                         heap.dynamic_set_function(global, name, handle);
                     });
-                    return Ok(Value::Void);
+                    return Ok(Value::Function(handle));
                 }
                 let value = any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let readonly = matches!(args.get(2), Some(Value::Bool(true)));
@@ -6195,7 +6215,8 @@ impl<'a> Interp<'a> {
                     let global = heap.global_object();
                     heap.dynamic_define(global, name, value, !readonly);
                 });
-                Ok(Value::Void)
+                // An assignment expression evaluates to the assigned value.
+                Ok(Value::Any(value))
             }
             "globalGet" => {
                 // Read a module-level binding from the realm global singleton.
@@ -8176,6 +8197,60 @@ impl<'a> Interp<'a> {
 
     /// Arguments for invoking an object-literal accessor/method closure: a
     /// closure that uses `this` (marked `@this`) takes the receiver first.
+    /// `proxy.key` read through an `any` receiver: the handler's `get` trap
+    /// (called as `(target, key, receiver)` with the handler as `this`), or the
+    /// target's own property when there is none.
+    pub(crate) fn proxy_dynamic_get(&mut self, proxy: zun_gc::Obj, key: &str) -> Result<Value, RunError> {
+        let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+            return Err(RunError::BadToken);
+        };
+        let trap = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "get"));
+        let result = match trap {
+            Some(callback) => {
+                let handler = zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
+                let args = vec![Value::Object(target), Value::Str(key.into()), Value::Object(proxy)];
+                self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?
+            }
+            None => zun_gc::with_current_heap(|heap| {
+                heap.dynamic_get(target, key)
+                    .and_then(|any| Value::unbox_any(any, heap))
+                    .unwrap_or(Value::Void)
+            }),
+        };
+        Ok(match result {
+            Value::Function(_) | Value::Any(_) => result,
+            other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap)).map(Value::Any).unwrap_or(Value::Void),
+        })
+    }
+
+    /// `proxy.key = value` through an `any` receiver: the `set` trap
+    /// (`(target, key, value, receiver)`) or a plain store on the target.
+    pub(crate) fn proxy_dynamic_set(&mut self, proxy: zun_gc::Obj, key: &str, value: Value) -> Result<(), RunError> {
+        let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+            return Err(RunError::BadToken);
+        };
+        let trap = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "set"));
+        match trap {
+            Some(callback) => {
+                let handler = zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
+                let boxed = match &value {
+                    Value::Function(_) | Value::Any(_) => value.clone(),
+                    other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap)).map(Value::Any).unwrap_or(Value::Void),
+                };
+                let args = vec![Value::Object(target), Value::Str(key.into()), boxed, Value::Object(proxy)];
+                self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?;
+            }
+            None => {
+                if let Some(any) = zun_gc::with_current_heap_mut(|heap| value.box_any(heap)) {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set(target, key.to_owned(), any);
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn with_this_arg(
         &self,
         handle: zun_core::FunctionHandle,
