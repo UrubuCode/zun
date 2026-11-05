@@ -6842,6 +6842,8 @@ impl<'a> Interp<'a> {
                 let classify_object = |obj: zun_gc::Obj| {
                     if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) {
                         "bigint"
+                    } else if zun_gc::with_current_heap(|heap| heap.function_of_cell(obj).is_some()) {
+                        "function"
                     } else {
                         "object"
                     }

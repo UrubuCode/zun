@@ -93,7 +93,11 @@ impl Value {
             Value::Object(object) => Some(zun_core::Any::object(object.addr() as usize)),
             // Function values are kept out of Any so their environment stays
             // visible to precise managed-root handling.
-            Value::Function(_) => None,
+            // Collections that must hold a callable (`Set<fn>`) store a
+            // function cell: a dynamic object that stands for it.
+            Value::Function(handle) => {
+                Some(zun_core::Any::object(heap.function_cell(*handle).addr() as usize))
+            }
             Value::Str(value) => Some(zun_core::Any::string(heap.intern_string(value.clone()))),
             Value::Void => Some(zun_core::Any::void()),
             Value::Null => Some(zun_core::Any::null()),
@@ -115,7 +119,11 @@ impl Value {
                 any.as_object()
                     .filter(|address| *address != 0)
                     .map(|address| {
-                        Value::Object(unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                        let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                        match heap.function_of_cell(object) {
+                            Some(function) => Value::Function(function),
+                            None => Value::Object(object),
+                        }
                     })
             }
             zun_core::AnyTag::String => any

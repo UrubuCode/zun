@@ -404,3 +404,34 @@ impl Heap {
         self.dynamic_objects.get(&(object.addr() as usize)).is_some_and(|properties| properties.is_instance_bag())
     }
 }
+
+/// Property name under which a function-cell dynamic object stores its callee.
+const FUNCTION_CELL_KEY: &str = "\0fn";
+
+impl Heap {
+    /// The dynamic object that stands for `function` inside an `Any` (a
+    /// `Set`/`Map` entry, for instance): functions have no `Any` tag, so each
+    /// distinct callable (method + environment) is wrapped in a one-entry
+    /// dynamic object. The cell is found by content, never cached by address,
+    /// so it stays valid across moving collections and the same callable always
+    /// maps to the same cell while one is alive.
+    pub fn function_cell(&mut self, function: zun_core::FunctionHandle) -> Obj {
+        let existing = self.dynamic_objects.iter().find_map(|(address, properties)| {
+            (properties.get_function(FUNCTION_CELL_KEY) == Some(function)).then_some(*address)
+        });
+        if let Some(address) = existing {
+            return unsafe { Obj::from_addr(address as *mut u64) };
+        }
+        let cell = self.alloc_dynamic();
+        self.dynamic_set_function(cell, FUNCTION_CELL_KEY, function);
+        cell
+    }
+
+    /// The callable a function cell stands for, or `None` for any other object.
+    pub fn function_of_cell(&self, object: Obj) -> Option<zun_core::FunctionHandle> {
+        if self.dynamic_objects.is_empty() {
+            return None;
+        }
+        self.dynamic_get_function(object, FUNCTION_CELL_KEY)
+    }
+}
