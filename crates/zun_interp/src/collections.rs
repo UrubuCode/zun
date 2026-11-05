@@ -3071,6 +3071,52 @@ impl<'a> Interp<'a> {
                         Err(_) => {}
                     }
                 }
+                // A Map / Set reached through `any` answers its collection methods
+                // through the same natives typed code uses.
+                {
+                    let (is_map, is_set) = zun_gc::with_current_heap(|heap| {
+                        (heap.map_len(namespace).is_some(), heap.set_len(namespace).is_some())
+                    });
+                    let native = if is_map {
+                        match member.as_ref() {
+                            "set" => Some("mapSetChain"),
+                            "get" => Some("mapGet"),
+                            "has" => Some("mapHas"),
+                            "delete" => Some("mapDelete"),
+                            "clear" => Some("mapClear"),
+                            "keys" => Some("mapKeys"),
+                            "values" => Some("mapValues"),
+                            "entries" => Some("mapEntries"),
+                            "forEach" => Some("mapForEach"),
+                            _ => None,
+                        }
+                    } else if is_set {
+                        match member.as_ref() {
+                            "add" => Some("setAddChain"),
+                            "has" => Some("setHas"),
+                            "delete" => Some("setDelete"),
+                            "clear" => Some("setClear"),
+                            "keys" | "values" => Some("setValues"),
+                            "entries" => Some("setEntries"),
+                            "forEach" => Some("setForEach"),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(native) = native {
+                        let mut native_args = Vec::with_capacity(call_args.len() + 1);
+                        native_args.push(Value::Object(namespace));
+                        native_args.extend(call_args.iter().cloned());
+                        if native == "mapSetChain" {
+                            native_args.resize(3, Value::Void);
+                        }
+                        let result = self.call_managed_collection(native, &native_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // A typed class instance reached through `any`: dispatch the
                 // named method (virtually) with the instance as receiver.
                 if !is_array
@@ -8052,6 +8098,12 @@ impl<'a> Interp<'a> {
         if name == "constructor" {
             if let Some(record) = self.constructor_record(object) {
                 return Ok(Value::Object(record));
+            }
+        }
+        if name == "size" {
+            let size = zun_gc::with_current_heap(|heap| heap.map_len(object).or_else(|| heap.set_len(object)));
+            if let Some(size) = size {
+                return Ok(Value::Float(size as f64, zun_il::NumKind::F64));
             }
         }
         let getter = zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, name));

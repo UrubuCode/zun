@@ -6331,7 +6331,7 @@ impl Checker<'_> {
                         }
                         // `this` outside a method (module scope, plain function):
                         // strict-mode `undefined`.
-                        if text == "this" {
+                        if text == "this" && !cx.captures.contains_key("this") {
                             let void_zero = ast::Expr::Unary {
                                 op: ast::UnaryOp::Void,
                                 operand: Box::new(ast::Expr::Number { value: 0.0, span }),
@@ -7175,7 +7175,7 @@ impl Checker<'_> {
                     }
                 }
                 if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
-                    && (self.by_name.contains_key(&name) || cx.lookup(&name).is_some())
+                    && (self.by_name.contains_key(&name) || cx.lookup(&name).is_some() || cx.captures.contains_key(&name))
                 {
                     // A named function whose only parameter is the rest array
                     // takes the flattened argument array directly.
