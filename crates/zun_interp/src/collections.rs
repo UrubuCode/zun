@@ -5219,6 +5219,43 @@ impl<'a> Interp<'a> {
                 });
                 Ok(value)
             }
+            "arrayFromArrayLike" => {
+                // CreateListFromArrayLike: `length` then index reads, never iteration.
+                let concrete = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other.clone(),
+                };
+                let Some(source) = (match &concrete {
+                    Value::Object(_) => object(&concrete),
+                    _ => None,
+                }) else {
+                    return Err(RunError::Native("TypeError: CreateListFromArrayLike called on non-object".into()));
+                };
+                if zun_gc::with_current_heap(|heap| heap.array_len(source)).is_some() {
+                    return Ok(Value::Object(source));
+                }
+                let length_value = self.dynamic_member_get(source, "length")?;
+                let raw = self.to_number_value(length_value)?;
+                let length = if raw.is_nan() || raw <= 0.0 { 0usize } else { raw.trunc().min(4294967295.0) as usize };
+                let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                let roots = [source, target];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                for index in 0..length {
+                    let element = self.dynamic_member_get(roots[0], &index.to_string())?;
+                    let boxed = match &element {
+                        Value::Function(handle) => zun_gc::with_current_heap_mut(|heap| {
+                            let record = heap.alloc_dynamic();
+                            heap.dynamic_set_function(record, "__boxedFn", *handle);
+                            Value::Object(record).box_any(heap)
+                        }),
+                        other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap)),
+                    }
+                    .unwrap_or_else(zun_core::Any::void);
+                    zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], boxed));
+                }
+                Ok(Value::Object(roots[1]))
+            }
             "destructOpen" => {
                 // Lazy array-destructuring source: an Array (or any eagerly
                 // materialisable value) becomes an Array; a protocol iterable

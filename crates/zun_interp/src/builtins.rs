@@ -497,6 +497,7 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
         "arrayDestructure",
         "arrayLikePush",
         "arrayLikePop",
+        "arrayFromArrayLike",
         "destructOpen",
         "destructStep",
         "destructRest",

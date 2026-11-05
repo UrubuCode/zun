@@ -681,6 +681,40 @@ impl Checker<'_> {
         this_count > 0 && !other
     }
 
+    /// An iterable spread source that is not statically an Array (a string, a Set,
+    /// an `any` value) is materialized through the iteration protocol.
+    fn spread_source_to_array(&mut self, source: hir::Expr) -> hir::Expr {
+        if source.ty == Ty::Array || source.ty.is_error() {
+            return source;
+        }
+        let span = source.span;
+        match zun_natives::resolve("array", "arrayFrom") {
+            Some((id, _)) => hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(source)] },
+                ty: Ty::Array,
+                span,
+            },
+            None => source,
+        }
+    }
+
+    /// `apply`/`Reflect.apply`/`Reflect.construct` argument lists: an Array passes
+    /// through; any other object is read as an array-like (no iteration).
+    pub(super) fn array_like_to_array(&mut self, source: hir::Expr) -> hir::Expr {
+        if source.ty == Ty::Array || source.ty.is_error() {
+            return source;
+        }
+        let span = source.span;
+        match zun_natives::resolve("array", "arrayFromArrayLike") {
+            Some((id, _)) => hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(source)] },
+                ty: Ty::Array,
+                span,
+            },
+            None => source,
+        }
+    }
+
     fn build_module_initializer(&self, program: &ast::Program) -> Option<hir::Function> {
         let span = Span::new(0, 0);
         let mut body: Vec<hir::Stmt> = Vec::new();
@@ -3383,7 +3417,8 @@ impl Checker<'_> {
                 );
                 return self.poison(span);
             }
-            let mut array = checked.pop().unwrap();
+            let array = checked.pop().unwrap();
+            let mut array = self.array_like_to_array(array);
             let this_arg = checked.pop().unwrap();
             let target = checked.pop().unwrap();
             self.box_function_array_elements(&mut array);
@@ -3424,6 +3459,7 @@ impl Checker<'_> {
             }
             checked.truncate(2);
             let array = checked.pop().unwrap();
+            let array = self.array_like_to_array(array);
             let target = checked.pop().unwrap();
             if array.ty != Ty::Array && !array.ty.is_error() {
                 self.error(array.span, "`Reflect.construct` expects an Array of arguments");
@@ -5502,9 +5538,46 @@ impl Checker<'_> {
             let sig = &self.signatures[ctor as usize];
             (sig.params.clone(), sig.optional_count, sig.rest_param, sig.name.clone())
         };
-        if rest_param.is_some() {
-            self.error(span, format!("`{name}` constructor rest parameters are not supported yet"));
-            return self.poison(span);
+        if let Some(rest_slot) = rest_param {
+            // The arguments from the rest position on are gathered (spreads
+            // flattened) into one array passed as the last constructor argument.
+            let fixed = rest_slot - 1;
+            if args.len() < fixed.saturating_sub(optional_count)
+                || args[..args.len().min(fixed)].iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+            {
+                self.error(span, format!("`{name}` constructor expects at least {fixed} fixed argument(s)"));
+                return self.poison(span);
+            }
+            let mut call_args: Vec<hir::Expr> = Vec::new();
+            for arg in args.iter().take(fixed) {
+                call_args.push(self.check_expr(cx, arg));
+            }
+            while call_args.len() < fixed {
+                let expected = param_tys[call_args.len() + 1];
+                call_args.push(default_args::missing_arg(expected, span));
+            }
+            let elements = args
+                .iter()
+                .skip(fixed)
+                .map(|arg| match arg {
+                    ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                    other => ast::ArrayElement::Expr(other.clone()),
+                })
+                .collect();
+            let mut rest_array = self.check_expr(cx, &ast::Expr::ArrayLiteral { elements, span });
+            self.box_function_array_elements(&mut rest_array);
+            call_args.push(rest_array);
+            for (arg, &expected) in call_args.iter_mut().zip(&param_tys[1..]).take(fixed) {
+                coerce_numeric_literal(arg, expected);
+                if !expected.is_error() && !arg.ty.is_error() && !self.is_assignable(arg.ty, expected) {
+                    self.error(arg.span, format!("argument type {:?} does not match {expected:?}", arg.ty));
+                }
+            }
+            return hir::Expr {
+                kind: hir::ExprKind::NewWithConstructor { class: class_idx, defaults, func: ctor, args: call_args },
+                ty: Ty::Instance(class_idx),
+                span,
+            };
         }
         // param_tys[0] is `this`.
         let mut call_args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
@@ -7206,6 +7279,7 @@ impl Checker<'_> {
                                 fixed_args.push(self.check_expr(cx, argument));
                             }
                             let array = self.check_expr(cx, expr);
+                            let array = self.spread_source_to_array(array);
                             if array.ty != Ty::Array && !array.ty.is_error() {
                                 self.error(array.span, "spread call requires an Array value");
                                 return self.poison(span);
@@ -11106,6 +11180,7 @@ impl Checker<'_> {
                             fixed_args.push(self.check_expr(cx, argument));
                         }
                         let array = self.check_expr(cx, expr);
+                        let array = self.spread_source_to_array(array);
                         if array.ty != Ty::Array && !array.ty.is_error() {
                             self.error(array.span, "spread method call requires an Array value");
                             return self.poison(span);

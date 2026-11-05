@@ -142,7 +142,8 @@ impl<'a> Checker<'a> {
                     return self.poison(span);
                 }
                 let this_arg = self.check_expr(cx, &args[0]);
-                let mut array = self.check_expr(cx, &args[1]);
+                let array = self.check_expr(cx, &args[1]);
+                let mut array = self.array_like_to_array(array);
                 self.box_function_array_elements(&mut array);
                 if array.ty != Ty::Array && !array.ty.is_error() {
                     self.error(array.span, "`apply` expects an Array of arguments");
