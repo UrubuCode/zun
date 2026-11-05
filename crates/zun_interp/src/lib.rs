@@ -1037,7 +1037,7 @@ impl Interp<'_> {
                         if let Value::Str(text) = &concrete {
                             let answer = match &key {
                                 Value::Int(..) | Value::Float(..) => {
-                                    let at = key.as_number();
+                                    let at = match &key { Value::Int(n, _) => *n as f64, other => other.as_number() };
                                     if at >= 0.0 && at.fract() == 0.0 {
                                         text.chars().nth(at as usize).map(|c| Value::Str(c.to_string().into()))
                                     } else {
@@ -1173,7 +1173,7 @@ impl Interp<'_> {
                         // (`obj[2]` -> property "2"). Out of range reads undefined.
                         zun_gc::with_current_heap(|heap| {
                             if let Some(len) = heap.array_len(object) {
-                                let index = key.as_number() as i64;
+                                let index = match &key { Value::Int(n, _) => *n, other => other.as_number() as i64 };
                                 if index >= 0 && (index as usize) < len {
                                     heap.array_get(object, index as usize)
                                         .and_then(|any| Value::unbox_any(any, heap))
@@ -1241,7 +1241,7 @@ impl Interp<'_> {
                             if let Some(len) = heap.array_len(object) {
                                 let level = heap.array_integrity(object);
                                 if matches!(key, Value::Int(..) | Value::Float(..)) {
-                                    let index = key.as_number() as i64;
+                                    let index = match &key { Value::Int(n, _) => *n, other => other.as_number() as i64 };
                                     if index < 0 {
                                         return None;
                                     }
@@ -1337,7 +1337,7 @@ impl Interp<'_> {
                             // managed arrays do not auto-extend).
                             zun_gc::with_current_heap_mut(|heap| {
                                 if heap.array_len(object).is_some() {
-                                    let index = key.as_number() as i64;
+                                    let index = match &key { Value::Int(n, _) => *n, other => other.as_number() as i64 };
                                     if index >= 0 {
                                         let len = heap.array_len(object).unwrap_or(0);
                                         if index as usize >= len {

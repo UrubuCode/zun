@@ -2621,6 +2621,14 @@ impl Checker<'_> {
                         init = Self::unbox_to(init, declared);
                         declared
                     }
+                    // An unannotated reassigned variable initialised from an integer-typed
+                    // value (`let hi = arr.length - 1`) is a JS `number`: widen to f64 so
+                    // later float assignments type-check.
+                    None if init.ty.is_int() && cx.mutated_names.contains(self.text(name)) => {
+                        let span = init.span;
+                        init = hir::Expr { kind: hir::ExprKind::Convert { value: Box::new(init) }, ty: Ty::F64, span };
+                        Ty::F64
+                    }
                     None => init.ty,
                 };
                 let name_text = self.text(name).to_string();
