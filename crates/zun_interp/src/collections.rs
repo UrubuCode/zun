@@ -54,7 +54,7 @@ impl<'a> Interp<'a> {
                 .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
             _ => None,
         };
-        let any = |value: &Value| zun_gc::with_current_heap_mut(|heap| value.box_any(heap));
+        let any = |value: &Value| zun_gc::with_current_heap_mut(|heap| value.box_any_cell(heap));
         // A Promise callback argument: a function value, or absent (the lowering
         // passes `null`/`undefined` for an omitted `then`/`catch`/`finally` slot).
         let callback_arg = |value: Option<&Value>| match value {

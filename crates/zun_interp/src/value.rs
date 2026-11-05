@@ -93,15 +93,23 @@ impl Value {
             Value::Object(object) => Some(zun_core::Any::object(object.addr() as usize)),
             // Function values are kept out of Any so their environment stays
             // visible to precise managed-root handling.
-            // Collections that must hold a callable (`Set<fn>`) store a
-            // function cell: a dynamic object that stands for it.
-            Value::Function(handle) => {
-                Some(zun_core::Any::object(heap.function_cell(*handle).addr() as usize))
-            }
+            Value::Function(_) => None,
             Value::Str(value) => Some(zun_core::Any::string(heap.intern_string(value.clone()))),
             Value::Void => Some(zun_core::Any::void()),
             Value::Null => Some(zun_core::Any::null()),
             Value::Any(value) => Some(*value),
+        }
+    }
+
+    /// Like [`Value::box_any`], but a callable is wrapped in a function cell (a
+    /// dynamic object standing for it) so collections (`Set<fn>`, `Map` values)
+    /// can hold it. Unboxing a cell yields the function again.
+    pub fn box_any_cell(&self, heap: &mut zun_gc::Heap) -> Option<zun_core::Any> {
+        match self {
+            Value::Function(handle) => {
+                Some(zun_core::Any::object(heap.function_cell(*handle).addr() as usize))
+            }
+            other => other.box_any(heap),
         }
     }
 
