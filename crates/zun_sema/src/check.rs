@@ -562,7 +562,8 @@ impl Checker<'_> {
             finally_depth: 0,
         };
         self.collect_mutated_names(&block.statements, &mut cx.mutated_names);
-        let mut body = self.check_block(&mut cx, &block);
+        let mut body = self.static_field_initializers(&mut cx);
+        body.extend(self.check_block(&mut cx, &block));
         self.rewrite_boxed_lets(&mut body, &cx.boxed);
         hir::Function {
             name: "<main>".to_string(),
@@ -578,6 +579,56 @@ impl Checker<'_> {
             generator_plan: None,
             body,
         }
+    }
+
+    /// Evaluate non-literal `static` field initializers (`static n: number = 2 + 3`,
+    /// `static #next = 1`) once, in class declaration order, before the module
+    /// body. Literal initializers of a matching type are handled by the module
+    /// initializer; this covers every other expression.
+    fn static_field_initializers(&mut self, cx: &mut FunctionCx) -> Vec<hir::Stmt> {
+        let span = Span::new(0, 0);
+        let mut out = Vec::new();
+        for class_idx in 0..self.classes.len() {
+            let fields = self.full_fields(class_idx as u32);
+            let initializers = self.full_initializers(class_idx as u32);
+            let first_own = fields.len().saturating_sub(self.classes[class_idx].own_fields.len());
+            for (slot, (_, field_ty, is_static, _)) in fields.iter().enumerate() {
+                if !*is_static || slot < first_own {
+                    continue;
+                }
+                let Some(Some(init)) = initializers.get(slot) else { continue };
+                let init = init.as_ref().clone();
+                let field_ty = *field_ty;
+                let literal = matches!(
+                    (&init, field_ty),
+                    (ast::Expr::Number { .. }, Ty::F64)
+                        | (ast::Expr::String { .. }, Ty::String)
+                        | (ast::Expr::Bool { .. }, Ty::Boolean)
+                );
+                // `static x;` (an implicit `void 0`) leaves the slot unset.
+                if literal || matches!(init, ast::Expr::Unary { op: ast::UnaryOp::Void, .. }) {
+                    continue;
+                }
+                let mut value = self.check_expr(cx, &init);
+                coerce_numeric_literal(&mut value, field_ty);
+                if field_ty == Ty::Any {
+                    value = Self::box_to_any(value);
+                } else if !field_ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, field_ty) {
+                    self.error(value.span, format!("cannot assign {:?} to static field of type {field_ty:?}", value.ty));
+                    continue;
+                }
+                out.push(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::StaticFieldSet {
+                        class: class_idx as u32,
+                        field_slot: slot as u16,
+                        value: Box::new(value),
+                    },
+                    ty: field_ty,
+                    span,
+                }));
+            }
+        }
+        out
     }
 
     fn build_module_initializer(&self, program: &ast::Program) -> Option<hir::Function> {
@@ -5339,7 +5390,13 @@ impl Checker<'_> {
         let mut defaults: Vec<hir::Expr> = Vec::with_capacity(fields.len());
         for (slot, (_, field_ty, _, _)) in fields.iter().enumerate() {
             let field_ty = *field_ty;
-            let mut value = match initializers.get(slot).and_then(|init| init.as_ref()) {
+            // A typed field declared without an initializer (`id: number;`) carries the
+            // implicit `void 0`; it takes the type's zero value instead.
+            let initializer = initializers.get(slot).and_then(|init| init.as_ref()).filter(|init| {
+                field_ty == Ty::Any
+                    || !matches!(init.as_ref(), ast::Expr::Unary { op: ast::UnaryOp::Void, .. })
+            });
+            let mut value = match initializer {
                 Some(init) => {
                     let init = init.clone();
                     self.check_expr(cx, &init)
@@ -11190,6 +11247,18 @@ impl Checker<'_> {
             }
             ast::Expr::PrivateField { object, field, .. } => {
                 let ast_object = object.clone();
+                // `Class.#static`: a private static field is an ordinary static slot
+                // under its `#`-prefixed name.
+                if let ast::Expr::Ident(class_name) = object.as_ref() {
+                    if cx.lookup(self.text(class_name)).is_none() {
+                        if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
+                            let internal = format!("#{}#{}", self.text(class_name), self.text(field));
+                            if let Some((field_slot, ty)) = self.static_field_of(class_index, &internal) {
+                                return hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot }, ty, span };
+                            }
+                        }
+                    }
+                }
                 let object = self.check_expr(cx, object);
                 let name = self.text(field).to_string();
                 // Private accessor (`get #x()`): not a slot, so read it through
@@ -13344,6 +13413,21 @@ impl Checker<'_> {
                 ..
             } => {
                 if let ast::Expr::PrivateField { object: private_object, field, .. } = object.as_ref() {
+                    if let ast::Expr::Ident(class_name) = private_object.as_ref() {
+                        if cx.lookup(self.text(class_name)).is_none() {
+                            if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
+                                let internal = format!("#{}#{}", self.text(class_name), self.text(field));
+                                if let Some((field_slot, ty)) = self.static_field_of(class_index, &internal) {
+                                    let mut value = self.check_expr(cx, value);
+                                    coerce_numeric_literal(&mut value, ty);
+                                    if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
+                                        self.error(value.span, format!("cannot assign {:?} to private static field of type {ty:?}", value.ty));
+                                    }
+                                    return hir::Expr { kind: hir::ExprKind::StaticFieldSet { class: class_index, field_slot, value: Box::new(value) }, ty, span };
+                                }
+                            }
+                        }
+                    }
                     let checked_object = self.check_expr(cx, private_object);
                     let name = self.text(field).to_string();
                     let Some(class) = (match checked_object.ty { Ty::Instance(class) => Some(class), _ => None }) else {
