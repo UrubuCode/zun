@@ -13302,7 +13302,19 @@ impl Checker<'_> {
                         };
                     }
                 }
+                let ast_object = object.clone();
                 let object = self.check_expr(cx, object);
+                // `str[i]`: the one-character string at `i` (a negative index is out of
+                // range, unlike `at`), or `undefined` past the end.
+                if object.ty == Ty::String {
+                    let at = ast::Expr::MethodCall {
+                        receiver: ast_object,
+                        method: ast::synthetic_ident("at"),
+                        args: vec![index.as_ref().clone()],
+                        span,
+                    };
+                    return self.check_expr(cx, &at);
+                }
                 if let ast::Expr::String { value: key, .. } = index.as_ref() {
                     if let Ty::Instance(class) = object.ty {
                         if let Some((field_slot, ty)) = self.field_of(class, key) {
