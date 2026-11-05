@@ -1029,7 +1029,27 @@ fn convert_for_of(
         return convert_for_await(source, for_of_statement);
     }
     let ForStatementLeft::VariableDeclaration(declaration) = &for_of_statement.left else {
-        return Err("OXC adapter supports declared for-of bindings only".into());
+        // `for (target of iterable)`: assign each element to an existing binding or
+        // member (or destructure it into several) at the top of the body.
+        let Some(target) = for_of_statement.left.as_assignment_target() else {
+            return Err("OXC adapter supports declared for-of bindings only".into());
+        };
+        let temp = fresh_destructure_temp();
+        let whole = span(for_of_statement.span);
+        let store = match target {
+            AssignmentTarget::ArrayAssignmentTarget(_) | AssignmentTarget::ObjectAssignmentTarget(_) => {
+                convert_destructuring_assignment(source, target, Expr::Ident(temp), whole)?
+            }
+            plain => store_into_target(source, plain, Expr::Ident(temp), whole)?,
+        };
+        let mut body = convert_if_branch(source, &for_of_statement.body)?;
+        body.statements.insert(0, Stmt::Expr(store));
+        return Ok(vec![Stmt::ForOf {
+            pattern: crate::ast::Pattern::Ident { name: temp, ty: None },
+            iterable: convert_expression(source, &for_of_statement.right)?,
+            body,
+            span: whole,
+        }]);
     };
     if declaration.declarations.len() != 1 {
         return Err("OXC adapter supports one for-of binding".into());
@@ -1818,7 +1838,12 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     AssignmentTarget::ArrayAssignmentTarget(_) | AssignmentTarget::ObjectAssignmentTarget(_)
                 ) =>
         {
-            convert_destructuring_assignment(source, &assignment.left, &assignment.right, span(assignment.span))
+            convert_destructuring_assignment(
+                source,
+                &assignment.left,
+                convert_expression(source, &assignment.right)?,
+                span(assignment.span),
+            )
         }
         Expression::AssignmentExpression(assignment) => {
             let compound = match assignment.operator {
@@ -5120,7 +5145,7 @@ fn lower_maybe_default(
 fn convert_destructuring_assignment(
     source: &str,
     target: &AssignmentTarget<'_>,
-    right: &Expression<'_>,
+    right: Expr,
     whole: Span,
 ) -> Result<Expr, String> {
     let mut stores = Vec::new();
@@ -5144,7 +5169,7 @@ fn convert_destructuring_assignment(
     });
     Ok(Expr::ComputedCall {
         callee: Box::new(iife),
-        args: vec![convert_expression(source, right)?],
+        args: vec![right],
         span: whole,
     })
 }
