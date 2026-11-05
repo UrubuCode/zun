@@ -2343,8 +2343,21 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     // `new (class X {})(...)`: the class expression is hoisted to a
                     // named class, so construct it statically.
                     let mut peeled = callee;
-                    while let Expression::ParenthesizedExpression(inner) = peeled {
-                        peeled = &inner.expression;
+                    loop {
+                        match peeled {
+                            Expression::ParenthesizedExpression(inner) => peeled = &inner.expression,
+                            Expression::TSAsExpression(inner) => peeled = &inner.expression,
+                            _ => break,
+                        }
+                    }
+                    // `new (Name as any)(...)`: the cast only silences the type
+                    // checker, so this constructs the named class.
+                    if let Expression::Identifier(identifier) = peeled {
+                        return Ok(Expr::New {
+                            class: Name { span: span(identifier.span) },
+                            args,
+                            span: span(new_expression.span),
+                        });
                     }
                     if matches!(peeled, Expression::ClassExpression(_)) {
                         if let Expr::Ident(name) = convert_expression(source, peeled)? {
