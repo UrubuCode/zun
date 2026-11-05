@@ -13378,7 +13378,20 @@ impl Checker<'_> {
                 self.check_expr(cx, expr);
                 self.poison(span)
             }
-            ast::Expr::Function(function) => self.check_closure_expr(cx, function, span),
+            ast::Expr::Function(function) => {
+                // A `function (this: T, ...)` expression declares an explicit
+                // receiver, so it takes the hidden `this` parameter wherever it
+                // appears (returned, bound to a variable, passed as an argument).
+                if !function.is_arrow && !self.closure_takes_this {
+                    let text = &self.source[function.span.start as usize..function.span.end as usize];
+                    if let Some(open) = text.find('(') {
+                        if text[open + 1..].trim_start().starts_with("this") {
+                            self.closure_takes_this = true;
+                        }
+                    }
+                }
+                self.check_closure_expr(cx, function, span)
+            }
             ast::Expr::ComputedCall { callee, args, .. } => {
                 if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
                     // `(arr.method as any)(...args)` on a typed array keeps its receiver:
