@@ -8101,6 +8101,86 @@ impl Checker<'_> {
                         }
                     }
                 }
+                // `Object.prototype.hasOwnProperty.call(obj, key)` is `Object.hasOwn(obj, key)`.
+                if self.text(method) == "call" && args.len() == 2 && !self.classes_by_name.contains_key("Object") {
+                    let is_has_own_call = match receiver.as_ref() {
+                        ast::Expr::Field { object: proto, field: member, .. } => {
+                            self.text(member) == "hasOwnProperty"
+                                && (matches!(proto.as_ref(),
+                                    ast::Expr::Field { object: base, field: p, .. }
+                                        if self.text(p) == "prototype"
+                                            && matches!(base.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Object"))
+                                    || matches!(proto.as_ref(),
+                                        ast::Expr::StaticField { class, field: p, .. }
+                                            if self.text(p) == "prototype" && self.text(class) == "Object"))
+                        }
+                        _ => false,
+                    };
+                    if is_has_own_call {
+                        return self.check_object_static(cx, "hasOwn", method.span, args, span);
+                    }
+                }
+                // `Array.prototype.<m>.call(arrayLike, ...rest)` on a non-mutating
+                // method: convert the array-like with `Array.from` and call `<m>`.
+                if self.text(method) == "call" && !args.is_empty() && !self.classes_by_name.contains_key("Array") {
+                    let array_method = match receiver.as_ref() {
+                        ast::Expr::Field { object: proto, field: member, .. }
+                            if matches!(proto.as_ref(),
+                                ast::Expr::Field { object: base, field: p, .. }
+                                    if self.text(p) == "prototype"
+                                        && matches!(base.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Array"))
+                                || matches!(proto.as_ref(),
+                                    ast::Expr::StaticField { class, field: p, .. }
+                                        if self.text(p) == "prototype" && self.text(class) == "Array") =>
+                        {
+                            Some(self.text(member).to_string())
+                        }
+                        _ => None,
+                    };
+                    const READ_ONLY: &[&str] = &[
+                        "reduce", "reduceRight", "map", "filter", "forEach", "some", "every", "find",
+                        "findIndex", "findLast", "findLastIndex", "indexOf", "lastIndexOf", "includes",
+                        "join", "slice", "concat", "at", "flat", "flatMap", "entries", "keys", "values",
+                    ];
+                    if let Some(name) = array_method {
+                        if READ_ONLY.contains(&name.as_str()) && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
+                            if let Some((from_id, _)) = zun_natives::resolve("array", "arrayFrom") {
+                                let source = self.check_expr(cx, &args[0]);
+                                let (slot, tmp) = self.synthetic_local(cx, Ty::Array);
+                                let call = ast::Expr::MethodCall {
+                                    receiver: Box::new(ast::Expr::Ident(tmp)),
+                                    method: ast::synthetic_ident(&name),
+                                    args: args[1..].to_vec(),
+                                    span,
+                                };
+                                let body = self.check_expr(cx, &call);
+                                let ty = body.ty;
+                                return hir::Expr {
+                                    kind: hir::ExprKind::Sequence {
+                                        effect: Box::new(hir::Expr {
+                                            kind: hir::ExprKind::Assign {
+                                                slot,
+                                                value: Box::new(hir::Expr {
+                                                    kind: hir::ExprKind::CallBuiltin {
+                                                        id: from_id,
+                                                        args: vec![Self::box_to_any(source)],
+                                                    },
+                                                    ty: Ty::Array,
+                                                    span,
+                                                }),
+                                            },
+                                            ty: Ty::Array,
+                                            span,
+                                        }),
+                                        value: Box::new(body),
+                                    },
+                                    ty,
+                                    span,
+                                };
+                            }
+                        }
+                    }
+                }
                 // `Error.prototype.toString.call(value)`.
                 if self.text(method) == "call" && args.len() == 1 {
                     let is_error_proto_to_string = match receiver.as_ref() {
@@ -13775,6 +13855,16 @@ impl Checker<'_> {
         operand: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        // `delete (arr as any)[k]`: an `as any` cast around a plain identifier
+        // does not change which object is deleted from.
+        if let ast::Expr::Index { object, index, span: index_span } = operand {
+            if let ast::Expr::Cast { expr: inner, ty, .. } = object.as_ref() {
+                if self.text(&ty.name) == "any" && matches!(inner.as_ref(), ast::Expr::Ident(_)) {
+                    let peeled = ast::Expr::Index { object: inner.clone(), index: index.clone(), span: *index_span };
+                    return self.check_delete_operator(cx, &peeled, span);
+                }
+            }
+        }
         // `delete a?.b` / `delete a?.[k]` / `delete a?.b.c`: a nullish guard
         // short-circuits to `true`; otherwise delete through the chain root.
         {

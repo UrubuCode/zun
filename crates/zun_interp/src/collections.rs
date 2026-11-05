@@ -2188,9 +2188,28 @@ impl<'a> Interp<'a> {
                 if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(object)) {
                     return self.call_managed_collection("forInHas", args);
                 }
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_has(object, name)
-                })))
+                let dynamic_hit = zun_gc::with_current_heap(|heap| heap.dynamic_has(object, name));
+                if dynamic_hit {
+                    return Ok(Value::Bool(true));
+                }
+                // A typed class instance: own fields, then methods / accessors
+                // inherited through its class chain, then `constructor`.
+                let typed = zun_gc::with_current_heap(|heap| {
+                    !heap.is_dynamic_object(object) && heap.array_len(object).is_none() && object.type_rid() >= 1
+                });
+                if typed {
+                    let name = name.to_string();
+                    if name == "constructor" {
+                        return Ok(Value::Bool(true));
+                    }
+                    if self.object_own_entries_impl(object, false)?.iter().any(|(key, _)| key == &name) {
+                        return Ok(Value::Bool(true));
+                    }
+                    let found = self.instance_method_rid(object, &name).is_some()
+                        || self.instance_method_rid(object, &format!("get_{name}")).is_some();
+                    return Ok(Value::Bool(found));
+                }
+                Ok(Value::Bool(false))
             }
             "arrayDeleteIndex" => {
                 // `delete arr[i]`: leave a hole at an in-range index.
@@ -3859,8 +3878,22 @@ impl<'a> Interp<'a> {
                 let roots = [source, result];
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                 for index in 0..length {
-                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
+                    // `find`/`findIndex` visit holes as `undefined`; every other
+                    // method skips holes and indices past a shrunken array.
+                    let visits_holes = matches!(name, "arrayFind" | "arrayFindIndex");
+                    let element = match zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index)) {
+                        Some(element) if !(element.is_hole() && !visits_holes) => element,
+                        _ if visits_holes => zun_core::Any::void(),
+                        _ => {
+                            if name == "arrayMap" {
+                                zun_gc::with_current_heap_mut(|heap| {
+                                    heap.array_set(roots[1], index, zun_core::Any::hole())
+                                });
+                            }
+                            continue;
+                        }
+                    };
+                    let element = if element.is_hole() { zun_core::Any::void() } else { element };
                     let callback_args = vec![
                         Value::Any(element),
                         Value::Any(zun_core::Any::float(index as f64)),
