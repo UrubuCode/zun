@@ -1207,13 +1207,13 @@ impl Checker<'_> {
                 for (slot, (_, field_ty, _, _)) in fields.iter().enumerate() {
                     let Some(Some(init)) = initializers.get(slot) else { continue };
                     let (kind, ty) = match (init.as_ref(), *field_ty) {
-                        (ast::Expr::Number { value, .. }, Ty::F64) => {
+                        (ast::Expr::Number { value, .. }, Ty::F64 | Ty::Any) => {
                             (hir::ExprKind::Number(*value), Ty::F64)
                         }
-                        (ast::Expr::String { value, .. }, Ty::String) => {
+                        (ast::Expr::String { value, .. }, Ty::String | Ty::Any) => {
                             (hir::ExprKind::String(value.clone()), Ty::String)
                         }
-                        (ast::Expr::Bool { value, .. }, Ty::Boolean) => {
+                        (ast::Expr::Bool { value, .. }, Ty::Boolean | Ty::Any) => {
                             (hir::ExprKind::Boolean(*value), Ty::Boolean)
                         }
                         _ => continue,
@@ -12810,6 +12810,27 @@ impl Checker<'_> {
                                 ty: Ty::Any,
                                 span,
                             };
+                        }
+                    }
+                    // `new x(...)` where `x` is a variable holding a class value:
+                    // construct through the class descriptor at run time.
+                    if cx.lookup(&name).is_some() || self.module_globals.contains(&name) {
+                        let callee = self.check_expr(cx, &ast::Expr::Ident(*class));
+                        if !callee.ty.is_error() && matches!(callee.ty, Ty::Any | Ty::Function(_) | Ty::DynamicObject) {
+                            if let Some((id, _)) = zun_natives::resolve("collections", "reflectConstruct") {
+                                let elements: Vec<Option<hir::Expr>> =
+                                    args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
+                                let args_array = hir::Expr {
+                                    kind: hir::ExprKind::ArrayLiteral { elements },
+                                    ty: Ty::Array,
+                                    span,
+                                };
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(callee), args_array] },
+                                    ty: Ty::Any,
+                                    span,
+                                };
+                            }
                         }
                     }
                     self.error(class.span, format!("unknown class `{name}`"));

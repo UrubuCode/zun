@@ -305,6 +305,25 @@ impl Interp<'_> {
         Ok(None)
     }
 
+    /// MethodDef rid of the instance `constructor` declared by `rid` or the
+    /// nearest base class.
+    pub(crate) fn class_constructor(&self, rid: u32) -> Option<u32> {
+        let mut current = Some(rid);
+        for _ in 0..256 {
+            let r = current?;
+            let def = self.module.tables.type_defs.get((r as usize).wrapping_sub(1))?;
+            for mrid in def.method_start..def.method_end {
+                let method = self.module.tables.method_defs.get((mrid as usize).wrapping_sub(1))?;
+                if !method.is_static && self.module.strings.get(method.name) == "constructor" {
+                    return Some(mrid);
+                }
+            }
+            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
+                .then(|| def.base.rid());
+        }
+        None
+    }
+
     /// `Class.name = value` through a class value: store into the static field
     /// found on the class or its bases. Answers whether a field took the write.
     pub(crate) fn class_static_write(&mut self, rid: u32, name: &str, value: &Value) -> bool {

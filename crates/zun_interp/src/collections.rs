@@ -3333,8 +3333,15 @@ impl<'a> Interp<'a> {
             }
             "reflectConstruct" => {
                 let token = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Any(any) => any.as_class_descriptor().ok_or(RunError::BadToken)?,
-                    _ => return Err(RunError::BadToken),
+                    Value::Any(any) if any.as_class_descriptor().is_some() => {
+                        any.as_class_descriptor().ok_or(RunError::BadToken)?
+                    }
+                    _ => {
+                        return match self.new_error_object("TypeError", "value is not a constructor") {
+                            Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                            None => Err(RunError::BadToken),
+                        };
+                    }
                 };
                 let array = object(args.get(1).ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
@@ -7425,6 +7432,46 @@ impl<'a> Interp<'a> {
             token & !zun_natives::USER_CLASS_FLAG,
         );
         let (field_start, field_count) = self.type_field_range(token)?;
+        // A class with a `constructor` (own or inherited): allocate the instance
+        // with its recorded defaults and run the constructor on it.
+        if let Some(ctor) = self.class_constructor(token.rid()) {
+            let kinds: Vec<u8> = (0..field_count as u32)
+                .map(|i| self.field_kind_at(field_start + i))
+                .collect::<Result<_, _>>()?;
+            // Slots without a recorded default stay zeroed (0, false, null, undefined).
+            let defaults: Vec<Option<Value>> = (0..field_count)
+                .map(|slot| self.class_field_defaults.get(&(token.rid(), slot as u32)).cloned())
+                .collect();
+            let obj = zun_gc::with_current_heap_mut(|h| {
+                let obj = h.alloc(token.rid(), field_count);
+                for (i, value) in defaults.iter().enumerate() {
+                    if let Some(value) = value.as_ref().filter(|v| !matches!(v, Value::Void) || kinds[i] == crate::value::FIELD_ANY) {
+                        crate::value::store_field(kinds[i], obj, i, value, h);
+                    }
+                }
+                obj
+            });
+            let mut call_args = Vec::with_capacity(values.len() + 1);
+            call_args.push(Value::Object(obj));
+            call_args.extend(values);
+            // Omitted trailing parameters carry the null sentinel that the
+            // callee's default-parameter prologue consumes.
+            let declared = self
+                .module
+                .tables
+                .method_defs
+                .get(ctor as usize - 1)
+                .and_then(|method| read_body(&self.module.code, method.body_offset).ok())
+                .map_or(call_args.len(), |body| body.param_count as usize);
+            while call_args.len() < declared {
+                call_args.push(Value::Null);
+            }
+            self.call(ctor, call_args, None)?;
+            let obj = self.run_instance_hooks(obj)?;
+            let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(obj).box_any(heap))
+                .unwrap_or_else(zun_core::Any::null);
+            return Ok(Value::Any(boxed));
+        }
         if values.len() > field_count {
             return Err(RunError::BadToken);
         }
