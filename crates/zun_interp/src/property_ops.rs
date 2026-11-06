@@ -25,6 +25,19 @@ fn as_object(value: &Value) -> Option<zun_gc::Obj> {
     }
 }
 
+/// The object a descriptor argument reads its fields from: a plain object, or
+/// a function (boxed or direct), whose expando bag holds its own properties.
+pub(crate) fn descriptor_object(value: &Value) -> Option<zun_gc::Obj> {
+    if let Value::Function(handle) = value {
+        return Some(super::function_expando_bag(*handle));
+    }
+    let obj = as_object(value)?;
+    match zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "__boxedFn")) {
+        Some(handle) => Some(super::function_expando_bag(handle)),
+        None => Some(obj),
+    }
+}
+
 /// Decode a property-key argument (string, number or symbol).
 pub(crate) fn prop_key(value: &Value) -> Option<PropKey> {
     match value {
@@ -810,7 +823,7 @@ impl Interp<'_> {
                 None => return Err(RunError::BadToken),
             },
         };
-        let Some(desc) = args.get(2).and_then(as_object) else {
+        let Some(desc) = args.get(2).and_then(descriptor_object) else {
             return Err(RunError::Native(
                 "TypeError: Property description must be an object".into(),
             ));

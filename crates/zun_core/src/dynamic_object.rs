@@ -156,7 +156,8 @@ impl DynamicObject {
     /// accessor property** (reading an accessor requires invoking its getter,
     /// which happens a layer up in the interpreter).
     pub fn get(&self, name: &str) -> Option<Any> {
-        if self.accessors.contains(name) {
+        // A function-slot key keeps only an ordering placeholder in the table.
+        if self.accessors.contains(name) || self.string_functions.contains_key(name) {
             return None;
         }
         self.index.get(name).map(|&i| self.properties[i].1)
@@ -178,6 +179,7 @@ impl DynamicObject {
             if self.frozen || self.non_writable.contains(&name) {
                 return None;
             }
+            self.string_functions.remove(&name);
             return Some(std::mem::replace(&mut self.properties[i].1, value));
         }
         if self.frozen || self.non_extensible {
@@ -226,6 +228,7 @@ impl DynamicObject {
         self.accessors.remove(&name);
         self.accessor_get.remove(&name);
         self.accessor_set.remove(&name);
+        self.string_functions.remove(&name);
         if let Some(&i) = self.index.get(&name) {
             self.properties[i].1 = value;
         } else {
@@ -374,7 +377,9 @@ impl DynamicObject {
         self.properties
             .iter()
             .filter(move |(name, _)| {
-                !self.non_enumerable.contains(name) && !self.accessors.contains(name)
+                !self.non_enumerable.contains(name)
+                    && !self.accessors.contains(name)
+                    && !self.string_functions.contains_key(name)
             })
             .map(|(name, value)| (name.as_str(), *value))
     }
@@ -488,7 +493,13 @@ impl DynamicObject {
         self.string_functions.get(name).copied()
     }
     pub fn set_function(&mut self, name: impl Into<String>, function: FunctionHandle) -> Option<FunctionHandle> {
-        self.string_functions.insert(name.into(), function)
+        let name = name.into();
+        // Register the key in the ordered property table so own-key
+        // enumeration sees function-valued properties in insertion order.
+        if !self.index.contains_key(&name) && !self.non_extensible {
+            self.insert_new(name.clone(), Any::void());
+        }
+        self.string_functions.insert(name, function)
     }
     pub fn set_symbol_function(&mut self, symbol: SymbolId, function: FunctionHandle) -> Option<FunctionHandle> {
         self.symbol_functions.insert(symbol, function)
@@ -521,6 +532,7 @@ impl DynamicObject {
         self.accessors.remove(name);
         self.accessor_get.remove(name);
         self.accessor_set.remove(name);
+        self.string_functions.remove(name);
         let (_, value) = self.properties.remove(position);
         for slot in self.index.values_mut() {
             if *slot > position {

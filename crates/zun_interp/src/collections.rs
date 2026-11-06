@@ -6165,13 +6165,15 @@ impl<'a> Interp<'a> {
                     let keys = zun_gc::with_current_heap(|heap| heap.dynamic_keys(source))
                         .unwrap_or_default();
                     for key in keys {
-                        let (enumerable, getter) = zun_gc::with_current_heap(|heap| {
+                        let (enumerable, getter, is_function) = zun_gc::with_current_heap(|heap| {
                             (
                                 heap.dynamic_is_enumerable(source, &key),
                                 heap.dynamic_accessor_getter(source, &key),
+                                heap.dynamic_get_function(source, &key).is_some(),
                             )
                         });
-                        if !enumerable {
+                        // Function-slot keys were copied above.
+                        if !enumerable || is_function {
                             continue;
                         }
                         let boxed = if let Some(getter) = getter {
@@ -6683,7 +6685,7 @@ impl<'a> Interp<'a> {
                         None => return Err(RunError::BadToken),
                     },
                 };
-                let desc = object(args.get(2).ok_or(RunError::BadToken)?).ok_or_else(|| {
+                let desc = crate::property_ops::descriptor_object(args.get(2).ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native("TypeError: Property description must be an object".into())
                 })?;
                 let obj = match self.proxy_route(proxy, "defineProperty") {
@@ -6711,15 +6713,33 @@ impl<'a> Interp<'a> {
                 // Each own enumerable key of `descs` maps a property name to a
                 // descriptor object.
                 let names = self.object_own_names(descs)?;
+                // Gather (and validate) every descriptor before applying any, so
+                // a throwing getter or a bad descriptor leaves the target clean.
+                // The normalised descriptors are held in a rooted array.
+                let holder = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                let roots = [obj, descs, holder];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                let mut gathered: Vec<String> = Vec::new();
                 for name in names {
-                    if !zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(descs, &name)) {
+                    if !zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(roots[1], &name)) {
                         continue;
                     }
-                    let desc_any = zun_gc::with_current_heap(|heap| heap.dynamic_get(descs, &name))
-                        .ok_or(RunError::BadToken)?;
-                    let desc = desc_any.as_object().ok_or(RunError::BadToken)?;
-                    let desc = unsafe { zun_gc::Obj::from_addr(desc as *mut u64) };
+                    let value = self.dynamic_member_get(roots[1], &name)?;
+                    let Some(desc) = crate::property_ops::descriptor_object(&value) else {
+                        return Err(RunError::Native("TypeError: Property description must be an object".into()));
+                    };
                     let desc = self.normalize_descriptor(desc)?;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_push(roots[2], zun_core::Any::object(desc.addr() as usize))
+                    });
+                    gathered.push(name);
+                }
+                for (position, name) in gathered.into_iter().enumerate() {
+                    let desc = zun_gc::with_current_heap(|heap| heap.array_get(roots[2], position))
+                        .and_then(|any| any.as_object())
+                        .map(|addr| unsafe { zun_gc::Obj::from_addr(addr as *mut u64) })
+                        .ok_or(RunError::BadToken)?;
+                    let obj = roots[0];
                     if !self.define_own_property(obj, &crate::property_ops::PropKey::Str(name.clone()), desc) {
                         return Err(RunError::Native(format!(
                             "TypeError: Cannot redefine property: {name}"
@@ -6947,7 +6967,10 @@ impl<'a> Interp<'a> {
                 let classify_object = |obj: zun_gc::Obj| {
                     if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) {
                         "bigint"
-                    } else if zun_gc::with_current_heap(|heap| heap.function_of_cell(obj).is_some()) {
+                    } else if zun_gc::with_current_heap(|heap| {
+                        heap.function_of_cell(obj).is_some()
+                            || heap.dynamic_get_function(obj, "__boxedFn").is_some()
+                    }) {
                         "function"
                     } else if zun_gc::with_current_heap(|heap| {
                         heap.is_dynamic_object(obj)

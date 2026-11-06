@@ -159,7 +159,15 @@ impl Interp<'_> {
         let call_args: Vec<Value> = call_args
             .into_iter()
             .map(|arg| {
-                zun_gc::with_current_heap_mut(|heap| arg.box_any(heap))
+                zun_gc::with_current_heap_mut(|heap| match &arg {
+                    // A function rides an `Any` lane inside a `__boxedFn` record.
+                    Value::Function(function) => {
+                        let record = heap.alloc_dynamic();
+                        heap.dynamic_set_function(record, "__boxedFn", *function);
+                        Value::Object(record).box_any(heap)
+                    }
+                    other => other.box_any(heap),
+                })
                     .map(Value::Any)
                     .unwrap_or(Value::Void)
             })
