@@ -164,6 +164,40 @@ impl Interp<'_> {
                     .then(|| def.base.rid())
             });
         let base = base_rid.filter(|&b| b >= 1).map(|b| self.class_prototype_object(b));
+        // The class's own instance accessors (`get_x` / `set_x` methods) become
+        // accessor properties of the prototype object.
+        let mut accessors: Vec<(String, Option<zun_core::FunctionHandle>, Option<zun_core::FunctionHandle>)> = Vec::new();
+        if let Some(def) = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1)) {
+            for method_rid in def.method_start..def.method_end {
+                let Some(method) = self.module.tables.method_defs.get((method_rid as usize).wrapping_sub(1)) else {
+                    continue;
+                };
+                if method.is_static {
+                    continue;
+                }
+                let name = self.module.strings.get(method.name);
+                let (prop, is_get) = if let Some(prop) = name.strip_prefix("get_") {
+                    (prop, true)
+                } else if let Some(prop) = name.strip_prefix("set_") {
+                    (prop, false)
+                } else {
+                    continue;
+                };
+                let handle = zun_core::FunctionHandle::new(method_rid, None);
+                let index = match accessors.iter().position(|(n, _, _)| n == prop) {
+                    Some(index) => index,
+                    None => {
+                        accessors.push((prop.to_owned(), None, None));
+                        accessors.len() - 1
+                    }
+                };
+                if is_get {
+                    accessors[index].1 = Some(handle);
+                } else {
+                    accessors[index].2 = Some(handle);
+                }
+            }
+        }
         zun_gc::with_current_heap_mut(|heap| {
             let proto = heap.alloc_dynamic();
             let any = zun_core::Any::object(proto.addr() as usize);
@@ -171,6 +205,9 @@ impl Interp<'_> {
             heap.dynamic_define(global, key, any, false);
             if let Some(base) = base {
                 heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(base.addr() as usize)));
+            }
+            for (name, get, set) in accessors {
+                heap.dynamic_define_accessor(proto, name, get, set, false, true);
             }
             proto
         })

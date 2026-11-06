@@ -12973,6 +12973,16 @@ impl Checker<'_> {
             }
             ast::Expr::Field { object, field, .. } => {
                 let fname = self.text(field).to_string();
+                // `Function.prototype.<m>` has no first-class value here: it reads
+                // as `undefined`, so comparisons against it stay stable.
+                if let ast::Expr::Field { object: inner, field: proto, .. } = object.as_ref() {
+                    if self.text(proto) == "prototype"
+                        && matches!(inner.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Function")
+                        && !self.classes_by_name.contains_key("Function")
+                    {
+                        return hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Void, span };
+                    }
+                }
                 // `<Builtin>.<fn>.length` / `.name` for well-known built-in paths.
                 if (fname == "length" || fname == "name") && !matches!(object.as_ref(), ast::Expr::Ident(_)) {
                     let mut parts: Vec<String> = Vec::new();

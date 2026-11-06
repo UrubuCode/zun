@@ -2938,6 +2938,26 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Any(boxed));
                     }
                 }
+                // A function-valued expando property on a function (`fn.m = () => ..;
+                // fn.m()`): called with the function's property bag as `this`.
+                if let Value::Function(handle) = &receiver_concrete {
+                    let bag = crate::function_expando_bag(*handle);
+                    if let Some(method) = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(bag, &member)) {
+                        let call_values = args[2..]
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                    .ok_or(RunError::BadToken),
+                                other => Ok(other.clone()),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let call_args = self.with_this_arg(method, bag, call_values);
+                        let result = self.invoke_function_value(method, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 let namespace = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
                 // A built-in iterator object (from `Array`/`Map`/`Set`
@@ -7702,6 +7722,15 @@ impl<'a> Interp<'a> {
         mode: f64,
         mut args: Vec<Value>,
     ) -> Result<Value, RunError> {
+        if mode >= 100.0 {
+            // An `Object.prototype` method value: `valueOf` answers the receiver
+            // object, the predicates answer false, the string forms the tag.
+            return Ok(match mode as u32 - 100 {
+                2 => Value::Object(promise),
+                3..=5 => Value::Bool(false),
+                _ => Value::Str("[object Object]".into()),
+            });
+        }
         let value = if args.is_empty() { Value::Void } else { args.remove(0) };
         if mode == SETTLE_REJECT {
             match &value {

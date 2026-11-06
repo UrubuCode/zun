@@ -1293,6 +1293,20 @@ impl Interp<'_> {
                         element
                     } else if let Value::Str(key) = &key {
                         match self.dynamic_member_get(object, key) {
+                            // An inherited `Object.prototype` method read off a plain
+                            // dynamic object is a callable function value.
+                            Ok(Value::Void)
+                                if matches!(&**key, "toString" | "toLocaleString" | "valueOf" | "hasOwnProperty" | "isPrototypeOf" | "propertyIsEnumerable")
+                                    && zun_gc::with_current_heap(|heap| {
+                                        heap.is_dynamic_object(object) && !heap.is_instance_bag(object) && heap.array_len(object).is_none()
+                                    }) =>
+                            {
+                                let mode = 100.0 + ["toString", "toLocaleString", "valueOf", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"]
+                                    .iter()
+                                    .position(|n| *n == &**key)
+                                    .unwrap_or(0) as f64;
+                                Value::Function(self.make_promise_settler(object, mode))
+                            }
                             Ok(v) => v,
                             Err(RunError::Thrown(exception)) => {
                                 if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
