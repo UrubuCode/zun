@@ -23,6 +23,21 @@ impl Heap {
         result
     }
 
+    /// User-level property assignment: `obj.__proto__ = v` / `{ __proto__: v }`
+    /// sets `[[Prototype]]` (object or null; other values are ignored) instead
+    /// of creating an own property. Everything else is `dynamic_set`.
+    pub fn dynamic_assign(&mut self, object: Obj, name: String, value: zun_core::Any) -> Option<zun_core::Any> {
+        if name == "__proto__" {
+            match value.tag() {
+                zun_core::AnyTag::Object => { self.dynamic_set_prototype(object, Some(value)); }
+                zun_core::AnyTag::Null => { self.dynamic_set_prototype(object, Some(zun_core::Any::null())); }
+                _ => {}
+            }
+            return None;
+        }
+        self.dynamic_set(object, name, value)
+    }
+
     /// Define or redefine a string data property with an explicit `writable`
     /// attribute, bypassing the per-entry writable guard (the definition path,
     /// backing `global.set` and a future `Object.defineProperty`). Returns

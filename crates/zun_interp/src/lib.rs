@@ -1114,7 +1114,7 @@ impl Interp<'_> {
                                     } else if typed_instance {
                                         heap.ensure_instance_bag(object);
                                     }
-                                    heap.dynamic_set(object, name, any);
+                                    heap.dynamic_assign(object, name, any);
                                 });
                             }
                         }
@@ -1494,7 +1494,7 @@ impl Interp<'_> {
                                     }
                                     heap.ensure_dynamic_entry(object);
                                 }
-                                heap.dynamic_set(object, key.as_ref().to_owned(), any);
+                                heap.dynamic_assign(object, key.as_ref().to_owned(), any);
                             });
                         }
                         Value::Int(..) | Value::Float(..) => {
