@@ -737,6 +737,8 @@ pub enum Expr {
         tag: Box<Expr>,
         /// Escape-decoded literal chunks (`cooked.len() == exprs.len() + 1`).
         cooked: Vec<String>,
+        /// Per chunk: the cooked value is `undefined` (invalid escape).
+        cooked_undefined: Vec<bool>,
         /// Raw (un-decoded) literal chunks, matching `cooked` positionally.
         raw: Vec<String>,
         /// The interpolated substitution expressions, in source order.

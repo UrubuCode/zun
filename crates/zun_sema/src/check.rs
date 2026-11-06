@@ -6649,7 +6649,7 @@ impl Checker<'_> {
                 }
                 result
             }
-            ast::Expr::TaggedTemplate { tag, cooked, raw, exprs, .. } => {
+            ast::Expr::TaggedTemplate { tag, cooked, cooked_undefined, raw, exprs, .. } => {
                 if !self.tag_is_string_raw(tag) {
                     // A user tag is called as `tag(strings, ...substitutions)`.
                     let literal = |chunks: &[String]| ast::Expr::ArrayLiteral {
@@ -6695,7 +6695,22 @@ impl Checker<'_> {
                                     value: Box::new(hir::Expr {
                                         kind: hir::ExprKind::CallBuiltin {
                                             id: template_id,
-                                            args: vec![cooked_array, raw_array],
+                                            args: vec![
+                                            cooked_array,
+                                            raw_array,
+                                            hir::Expr {
+                                                kind: hir::ExprKind::Number(span.start as f64),
+                                                ty: Ty::Int(IntKind::I32),
+                                                span,
+                                            },
+                                            hir::Expr {
+                                                kind: hir::ExprKind::String(
+                                                    cooked_undefined.iter().map(|u| if *u { '1' } else { '0' }).collect(),
+                                                ),
+                                                ty: Ty::String,
+                                                span,
+                                            },
+                                        ],
                                         },
                                         ty: Ty::Array,
                                         span,

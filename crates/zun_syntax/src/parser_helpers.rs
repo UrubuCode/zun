@@ -762,6 +762,7 @@ impl Parser<'_> {
                     expr = Expr::TaggedTemplate {
                         span: expr.span().to(t.span),
                         tag: Box::new(expr),
+                        cooked_undefined: vec![false; cooked.len()],
                         cooked,
                         raw: raw_chunks,
                         exprs,

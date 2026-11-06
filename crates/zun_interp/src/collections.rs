@@ -2450,10 +2450,23 @@ impl<'a> Interp<'a> {
             "reflectDelete" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
-                let name = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Str(name) => name,
-                    _ => return Err(RunError::BadToken),
+                let name: std::rc::Rc<str> = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.clone(),
+                    other => match crate::property_ops::prop_key(other) {
+                        Some(crate::property_ops::PropKey::Str(text)) => text.as_str().into(),
+                        _ => return Err(RunError::BadToken),
+                    },
                 };
+                let name = &name;
+                // A sealed or frozen array refuses to delete an existing element.
+                if let Ok(index) = name.parse::<usize>() {
+                    let verdict = zun_gc::with_current_heap(|heap| {
+                        heap.array_len(object).map(|len| index >= len || heap.array_integrity(object) < 2)
+                    });
+                    if verdict == Some(false) {
+                        return Ok(Value::Bool(false));
+                    }
+                }
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
                     // Deleting an absent key succeeds; a non-configurable one is refused.
                     if heap.dynamic_can_delete(object, name) {
@@ -6688,10 +6701,42 @@ impl<'a> Interp<'a> {
             "templateObject" => {
                 let cooked = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let raw = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // One template object per call site, cached on the global object.
+                let site = match args.get(2) {
+                    Some(Value::Int(n, _)) => *n,
+                    Some(Value::Float(n, _)) => *n as i64,
+                    _ => -1,
+                };
+                let key = format!("template#{site}");
+                if site >= 0 {
+                    let cached = zun_gc::with_current_heap_mut(|heap| {
+                        { let g = heap.global_object(); heap.dynamic_get(g, &key) }.and_then(|a| a.as_object())
+                    });
+                    if let Some(addr) = cached {
+                        return Ok(Value::Object(unsafe { zun_gc::Obj::from_addr(addr as *mut u64) }));
+                    }
+                }
+                let mask = match args.get(3) {
+                    Some(Value::Str(mask)) => mask.to_string(),
+                    _ => String::new(),
+                };
                 zun_gc::with_current_heap_mut(|heap| {
+                    for (index, flag) in mask.chars().enumerate() {
+                        if flag == '1' {
+                            heap.array_set(cooked, index, zun_core::Any::void());
+                        }
+                    }
                     heap.ensure_dynamic_entry(cooked);
-                    heap.dynamic_set(cooked, "raw".to_owned(), zun_core::Any::object(raw.addr() as usize));
+                    heap.dynamic_define_data(cooked, "raw".to_owned(), zun_core::Any::object(raw.addr() as usize), false, false, false);
                 });
+                self.call_managed_collection("objectFreeze", &[Value::Object(raw)])?;
+                self.call_managed_collection("objectFreeze", &[Value::Object(cooked)])?;
+                if site >= 0 {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let global = heap.global_object();
+                        heap.dynamic_set(global, key, zun_core::Any::object(cooked.addr() as usize));
+                    });
+                }
                 Ok(Value::Object(cooked))
             }
             "objectGroupBy" => {
@@ -6915,7 +6960,10 @@ impl<'a> Interp<'a> {
                 let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.to_string(),
-                    _ => return Err(RunError::BadToken),
+                    other => match crate::property_ops::prop_key(other) {
+                        Some(crate::property_ops::PropKey::Str(text)) => text,
+                        _ => return Err(RunError::BadToken),
+                    },
                 };
                 let obj = match self.proxy_route(proxy, "getOwnPropertyDescriptor") {
                     ProxyRoute::Trap(callback, target) => {
@@ -7562,6 +7610,12 @@ impl<'a> Interp<'a> {
                     _ => None,
                 }
             };
+            // A non-index expando on an array (e.g. a template object's `raw`)
+            // reports through the dynamic-property path below.
+            let expando = entry.is_none()
+                && key.parse::<usize>().is_err()
+                && zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key).is_some());
+            if !expando {
             let Some((value, writable, enumerable, configurable)) = entry else {
                 return Ok(None);
             };
@@ -7574,9 +7628,10 @@ impl<'a> Interp<'a> {
                 out
             });
             return Ok(Some(out));
+            }
         }
         let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
-        if is_dynamic {
+        if is_dynamic || zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) {
             let Some(descriptor) = zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key)) else {
                 return Ok(None);
             };

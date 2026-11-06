@@ -1397,7 +1397,9 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             let quasi = &tagged.quasi;
             let mut cooked = Vec::with_capacity(quasi.quasis.len());
             let mut raw = Vec::with_capacity(quasi.quasis.len());
+            let mut cooked_undefined = Vec::with_capacity(quasi.quasis.len());
             for element in &quasi.quasis {
+                cooked_undefined.push(element.value.cooked.is_none());
                 let cooked_text = element
                     .value
                     .cooked
@@ -1414,6 +1416,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             Ok(Expr::TaggedTemplate {
                 tag,
                 cooked,
+                cooked_undefined,
                 raw,
                 exprs,
                 span: span(tagged.span),
