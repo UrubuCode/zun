@@ -9263,7 +9263,11 @@ impl<'a> Interp<'a> {
             .ok_or(RunError::BadToken)?;
         let body = read_body(&self.module.code, target.body_offset)
             .map_err(|error| RunError::Malformed(error.to_string()))?;
-        final_args.truncate(body.param_count as usize);
+        // A rest-parameter closure packs the surplus arguments itself (in
+        // `call`), so it must see all of them.
+        if !self.module.strings.get(target.name).ends_with("@rest>") {
+            final_args.truncate(body.param_count as usize);
+        }
         self.call(method_rid, final_args, None)
     }
 

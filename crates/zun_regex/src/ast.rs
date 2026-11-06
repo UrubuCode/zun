@@ -169,7 +169,7 @@ pub enum RegexNode {
 
 impl RegexNode {
     /// Smallest and largest capture index inside this node, if any.
-    pub(crate) fn group_range(&self) -> Option<(usize, usize)> {
+    pub fn group_range(&self) -> Option<(usize, usize)> {
         fn merge(a: Option<(usize, usize)>, b: Option<(usize, usize)>) -> Option<(usize, usize)> {
             match (a, b) {
                 (Some((a0, a1)), Some((b0, b1))) => Some((a0.min(b0), a1.max(b1))),

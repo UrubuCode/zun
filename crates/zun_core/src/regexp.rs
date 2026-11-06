@@ -98,7 +98,10 @@ fn needs_backtracking(node: &zun_regex::RegexNode, dot_all: bool, multiline: boo
                 })
         }
         N::Seq(items) | N::Alt(items) => items.iter().any(|n| needs_backtracking(n, dot_all, multiline, unicode)),
-        N::Repeat { node, .. } | N::Group { node, .. } => needs_backtracking(node, dot_all, multiline, unicode),
+        // Captures inside a repeated body are reset on each iteration, which
+        // RE2 does not do.
+        N::Repeat { node, .. } => node.group_range().is_some() || needs_backtracking(node, dot_all, multiline, unicode),
+        N::Group { node, .. } => needs_backtracking(node, dot_all, multiline, unicode),
         N::Empty | N::Char(_) => false,
     }
 }
@@ -134,6 +137,83 @@ fn expand_replacement(replacement: &str, groups: &[Option<&str>], out: &mut Stri
                 }
             }
             _ => out.push('$'),
+        }
+    }
+}
+
+/// ECMAScript GetSubstitution: `$$`, `$&`, `$\``, `$'`, `$n`, `$nn` and
+/// `$<name>`. `start`/`end` are the match's UTF-8 byte offsets in `input`.
+fn expand_substitution(
+    replacement: &str,
+    groups: &[Option<&str>],
+    names: &[Option<String>],
+    input: &str,
+    start: usize,
+    end: usize,
+    out: &mut String,
+) {
+    let chars: Vec<char> = replacement.chars().collect();
+    let has_named = names.iter().any(|n| n.is_some());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c != '$' || i + 1 >= chars.len() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let next = chars[i + 1];
+        match next {
+            '$' => {
+                out.push('$');
+                i += 2;
+            }
+            '&' => {
+                out.push_str(groups[0].unwrap_or(""));
+                i += 2;
+            }
+            '`' => {
+                out.push_str(&input[..start]);
+                i += 2;
+            }
+            '\'' => {
+                out.push_str(&input[end..]);
+                i += 2;
+            }
+            d if d.is_ascii_digit() => {
+                let one = d as usize - '0' as usize;
+                let two = chars
+                    .get(i + 2)
+                    .filter(|c| c.is_ascii_digit())
+                    .map(|c| one * 10 + (*c as usize - '0' as usize));
+                let m = groups.len() - 1;
+                if let Some(n) = two.filter(|n| *n >= 1 && *n <= m) {
+                    out.push_str(groups[n].unwrap_or(""));
+                    i += 3;
+                } else if one >= 1 && one <= m {
+                    out.push_str(groups[one].unwrap_or(""));
+                    i += 2;
+                } else {
+                    out.push('$');
+                    i += 1;
+                }
+            }
+            '<' if has_named => {
+                if let Some(close) = chars[i + 2..].iter().position(|c| *c == '>') {
+                    let name: String = chars[i + 2..i + 2 + close].iter().collect();
+                    if let Some(index) = names.iter().position(|n| n.as_deref() == Some(name.as_str())) {
+                        out.push_str(groups.get(index).copied().flatten().unwrap_or(""));
+                    }
+                    i += close + 3;
+                } else {
+                    out.push('$');
+                    i += 1;
+                }
+            }
+            _ => {
+                out.push('$');
+                i += 1;
+            }
         }
     }
 }
@@ -182,10 +262,29 @@ impl RegexValue {
         if flags.contains('u') || flags.contains('v') {
             // Unicode mode rejects identity escapes of ordinary letters (`q`).
             let bytes = source.as_bytes();
+            let group_count = zun_regex::parse(&source).map(|p| p.group_count).unwrap_or(0);
             let mut i = 0;
             while i < bytes.len() {
                 if bytes[i] == b'\\' && i + 1 < bytes.len() {
                     let next = bytes[i + 1];
+                    // No legacy octal / identity fallbacks in unicode mode.
+                    if next.is_ascii_digit() {
+                        let mut j = i + 1;
+                        let mut value = 0usize;
+                        while j < bytes.len() && bytes[j].is_ascii_digit() {
+                            value = value.saturating_mul(10).saturating_add((bytes[j] - b'0') as usize);
+                            j += 1;
+                        }
+                        let bad = if next == b'0' { j > i + 2 } else { value > group_count };
+                        if bad {
+                            return Err(RegexError { message: "invalid escape in unicode mode".into() });
+                        }
+                        i = j;
+                        continue;
+                    }
+                    if next == b'k' && bytes.get(i + 2) != Some(&b'<') {
+                        return Err(RegexError { message: "invalid named reference".into() });
+                    }
                     if next.is_ascii_alphabetic() && !b"dDwWsSbBfnrtvcxukpPgG".contains(&next) {
                         return Err(RegexError { message: format!("invalid escape `\\{}`", next as char) });
                     }
@@ -592,10 +691,11 @@ impl RegexValue {
         let global = self.flags.contains('g');
         let mut out = String::new();
         let mut last = 0;
+        let names = self.group_names();
         for (start, end, groups) in self.match_spans(input, global)? {
             out.push_str(&input[last..start]);
             let refs: Vec<Option<&str>> = groups.iter().map(|g| g.as_deref()).collect();
-            expand_replacement(replacement, &refs, &mut out);
+            expand_substitution(replacement, &refs, &names, input, start, end, &mut out);
             last = end;
         }
         out.push_str(&input[last..]);
