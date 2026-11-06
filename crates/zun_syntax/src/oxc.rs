@@ -2738,6 +2738,50 @@ fn convert_update(
     update: &oxc_ast::ast::UpdateExpression<'_>,
     value_used: bool,
 ) -> Result<Expr, String> {
+    if value_used && !update.prefix {
+        if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = &update.argument {
+            // `tmp = ToNumeric(x); x = tmp ± 1; tmp` keeps the exact old value
+            // (including -0), which `(x = x ± 1) ∓ 1` cannot.
+            let whole = Span::new(update.span.start, update.span.end);
+            let id_span = Span::new(identifier.span.start, identifier.span.end);
+            let op = match update.operator {
+                oxc_ast::ast::UpdateOperator::Increment => BinaryOp::Add,
+                oxc_ast::ast::UpdateOperator::Decrement => BinaryOp::Sub,
+            };
+            let boxed = Expr::Cast {
+                expr: Box::new(Expr::Ident(Name { span: id_span })),
+                ty: crate::ast::TypeAnnotation {
+                    name: Name { span: Span::new(update.span.start, update.span.start) },
+                    is_array: false,
+                },
+                span: whole,
+            };
+            let numeric = Expr::Binary {
+                op: BinaryOp::Sub,
+                lhs: Box::new(boxed),
+                rhs: Box::new(Expr::Number { value: 0.0, span: whole }),
+                span: whole,
+            };
+            let root = || Expr::ChainRoot { depth: 0, span: whole };
+            let store = Expr::Assign {
+                target: Name { span: id_span },
+                value: Box::new(Expr::Binary {
+                    op,
+                    lhs: Box::new(root()),
+                    rhs: Box::new(Expr::Number { value: 1.0, span: whole }),
+                    span: whole,
+                }),
+                span: whole,
+            };
+            let body = Expr::Conditional {
+                condition: Box::new(store),
+                when_true: Box::new(root()),
+                when_false: Box::new(root()),
+                span: whole,
+            };
+            return Ok(Expr::TempBind { value: Box::new(numeric), body: Box::new(body), span: whole });
+        }
+    }
     let updated = convert_update_assign(source, update)?;
     if value_used && !update.prefix {
         let whole = Span::new(update.span.start, update.span.end);
