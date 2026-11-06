@@ -14,6 +14,7 @@ mod field;
 mod ident;
 mod literal;
 mod mcall_dispatch;
+mod mcall_buffers;
 mod mcall_managed;
 mod mcall_namespaces;
 mod mcall_number;
