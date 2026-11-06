@@ -3932,8 +3932,8 @@ impl<'a> Interp<'a> {
                 // `"[object <Tag>]"`, else `"[object Object]"`.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let text = match value {
-                    Value::Object(obj) if array_join_text(obj).is_some() => {
-                        array_join_text(obj).unwrap_or_default()
+                    Value::Object(obj) if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) => {
+                        self.array_join_dyn(obj, ",")?.unwrap_or_default()
                     }
                     Value::Object(obj)
                         if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) =>
@@ -4125,12 +4125,28 @@ impl<'a> Interp<'a> {
                 // string concat if either is a string, else numeric add.
                 let mut prims = Vec::with_capacity(2);
                 for index in 0..2 {
+                    if let Some(Value::Any(any)) = args.get(index) {
+                        if any.tag() == zun_core::AnyTag::Symbol {
+                            let other_is_string = matches!(
+                                args.get(1 - index).map(|v| unbox_arg(v)),
+                                Some(Ok(Value::Str(_)))
+                            );
+                            let kind = if other_is_string { "string" } else { "number" };
+                            return Err(RunError::Native(format!(
+                                "TypeError: Cannot convert a Symbol value to a {kind}"
+                            )));
+                        }
+                    }
                     let value = unbox_arg(args.get(index).ok_or(RunError::BadToken)?)?;
                     let prim = match value {
                         Value::Object(obj) => {
-                            match self.ordinary_to_primitive(obj, "default")? {
-                                Some(prim) => prim,
-                                None => Value::Str("[object Object]".into()),
+                            if let Some(text) = self.array_join_dyn(obj, ",")? {
+                                Value::Str(text.into())
+                            } else {
+                                match self.ordinary_to_primitive(obj, "default")? {
+                                    Some(prim) => prim,
+                                    None => Value::Str("[object Object]".into()),
+                                }
                             }
                         }
                         other => other,
@@ -4484,17 +4500,8 @@ impl<'a> Interp<'a> {
                     Value::Str(text) => text.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
-                let joined = zun_gc::with_current_heap(|heap| {
-                    let length = heap.array_len(source).unwrap_or(0);
-                    let mut parts = Vec::with_capacity(length);
-                    for index in 0..length {
-                        let element = heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
-                        // `null`/`undefined` render as the empty string per spec.
-                        parts.push(stringify_any(element, heap).unwrap_or_default());
-                    }
-                    zun_core::wtf16::normalize(parts.join(&separator))
-                });
-                Ok(Value::Str(joined.into()))
+                let joined = self.array_join_dyn(source, &separator)?.unwrap_or_default();
+                Ok(Value::Str(zun_core::wtf16::normalize(joined).into()))
             }
             "arrayShift" => {
                 let source =
@@ -9809,6 +9816,106 @@ impl<'a> Interp<'a> {
 
     /// ECMAScript ToNumber of an (already unboxed) value, running object
     /// coercion hooks (`valueOf` / `toString` / `[Symbol.toPrimitive]`).
+    /// Relational-comparison operand preparation (the two topmost stack values):
+    /// non-BigInt objects become primitives (hint "number"); when the result is
+    /// not string-versus-string, both sides become numbers. Plain numeric pairs
+    /// are left untouched.
+    /// `Array.prototype.join` over an array object: object elements run their
+    /// own ToString (`toString` / `Symbol.toPrimitive`), nested arrays join with
+    /// commas, and `null`/`undefined`/holes render empty. `None` for a non-array.
+    pub(crate) fn array_join_dyn(&mut self, obj: zun_gc::Obj, separator: &str) -> Result<Option<String>, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.array_len(obj)).is_none() {
+            return Ok(None);
+        }
+        let mut parts: Vec<String> = Vec::new();
+        let mut index = 0usize;
+        loop {
+            let length = zun_gc::with_current_heap(|heap| heap.array_len(obj)).unwrap_or(0);
+            if index >= length {
+                break;
+            }
+            let element = zun_gc::with_current_heap(|heap| heap.array_get(obj, index))
+                .unwrap_or_else(zun_core::Any::void);
+            index += 1;
+            let concrete = zun_gc::with_current_heap(|heap| Value::unbox_any(element, heap));
+            let text = match concrete {
+                Some(Value::Object(inner))
+                    if inner != obj
+                        && zun_gc::with_current_heap(|heap| heap.bigint_value(inner).is_none()) =>
+                {
+                    if zun_gc::with_current_heap(|heap| heap.array_len(inner).is_some()) {
+                        self.array_join_dyn(inner, ",")?.unwrap_or_default()
+                    } else {
+                        match self.call_managed_collection("stringCoerce", &[Value::Object(inner)])? {
+                            Value::Str(text) => text.to_string(),
+                            other => other.display(),
+                        }
+                    }
+                }
+                _ => zun_gc::with_current_heap(|heap| stringify_any(element, heap)).unwrap_or_default(),
+            };
+            parts.push(text);
+        }
+        Ok(Some(parts.join(separator)))
+    }
+
+    pub(crate) fn coerce_relational_operands(&mut self, stack: &mut Vec<Value>) -> Result<(), RunError> {
+        let len = stack.len();
+        if len < 2 {
+            return Ok(());
+        }
+        let unbox = |v: &Value| -> Value {
+            match v {
+                Value::Any(any) if any.as_symbol().is_none() => {
+                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)).unwrap_or_else(|| v.clone())
+                }
+                other => other.clone(),
+            }
+        };
+        let (a, b) = (unbox(&stack[len - 2]), unbox(&stack[len - 1]));
+        let is_plain_object = |v: &Value| match v {
+            Value::Object(obj) => zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_none()),
+            _ => false,
+        };
+        let numeric = |v: &Value| matches!(v, Value::Int(..) | Value::Float(..));
+        let needs = is_plain_object(&a)
+            || is_plain_object(&b)
+            || (matches!(a, Value::Str(_)) != matches!(b, Value::Str(_))
+                && (numeric(&a) || numeric(&b) || matches!(a, Value::Bool(_) | Value::Null | Value::Void)
+                    || matches!(b, Value::Bool(_) | Value::Null | Value::Void)));
+        if !needs {
+            return Ok(());
+        }
+        let mut prims = Vec::with_capacity(2);
+        for value in [a, b] {
+            let prim = match value {
+                Value::Object(obj) if is_plain_object(&Value::Object(obj)) => {
+                    if let Some(text) = self.array_join_dyn(obj, ",")? {
+                        Value::Str(text.into())
+                    } else {
+                        match self.ordinary_to_primitive(obj, "number")? {
+                            Some(prim) => prim,
+                            None => Value::Str("[object Object]".into()),
+                        }
+                    }
+                }
+                other => other,
+            };
+            prims.push(prim);
+        }
+        if !prims.iter().all(|p| matches!(p, Value::Str(_))) {
+            for prim in prims.iter_mut() {
+                let number = self.to_number_value(prim.clone())?;
+                *prim = Value::Float(number, zun_il::NumKind::F64);
+            }
+        }
+        let second = prims.pop().ok_or(RunError::BadToken)?;
+        let first = prims.pop().ok_or(RunError::BadToken)?;
+        stack[len - 2] = first;
+        stack[len - 1] = second;
+        Ok(())
+    }
+
     pub(crate) fn to_number_value(&mut self, value: Value) -> Result<f64, RunError> {
         Ok(match value {
             Value::Int(number, _) => number as f64,
@@ -9860,8 +9967,13 @@ impl<'a> Interp<'a> {
             });
             let call_args = self.with_this_arg(handle, obj, vec![hint_value]);
             let result = self.invoke_function_value(handle, call_args)?;
-            return Ok(Some(unbox_arg(&result)?));
+            let result = unbox_arg(&result)?;
+            if matches!(result, Value::Object(_) | Value::Function(_)) {
+                return Err(RunError::Native("TypeError: Cannot convert object to primitive value".into()));
+            }
+            return Ok(Some(result));
         }
+        let mut rejected = false;
         let order: [&str; 2] = if hint == "string" {
             ["toString", "valueOf"]
         } else {
@@ -9892,7 +10004,11 @@ impl<'a> Interp<'a> {
                 if !matches!(result, Value::Object(_) | Value::Function(_)) {
                     return Ok(Some(result));
                 }
+                rejected = true;
             }
+        }
+        if rejected {
+            return Err(RunError::Native("TypeError: Cannot convert object to primitive value".into()));
         }
         Ok(None)
     }

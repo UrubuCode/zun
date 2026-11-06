@@ -6702,9 +6702,10 @@ impl Checker<'_> {
                                     self.poison(span)
                                 }
                             } else if !matches!(value.ty, Ty::String | Ty::Error | Ty::Void)
-                                && zun_natives::resolve("collections", "stringCoerce").is_some()
+                                && zun_natives::resolve("collections", "stringCoerceStrict").is_some()
                             {
-                                let (id, _) = zun_natives::resolve("collections", "stringCoerce")
+                                // Template interpolation is ToString: a Symbol throws.
+                                let (id, _) = zun_natives::resolve("collections", "stringCoerceStrict")
                                     .expect("checked above");
                                 let arg = if value.ty == Ty::Any {
                                     value
@@ -7317,6 +7318,7 @@ impl Checker<'_> {
                             || t == Ty::BigInt
                             || t == Ty::Array
                             || t == Ty::Void
+                            || t == Ty::Symbol
                             || matches!(t, Ty::Int(_))
                     };
                     let numeric_ty = |t: Ty| t.is_int() || t.is_float();
@@ -9096,6 +9098,36 @@ impl Checker<'_> {
                         }
                     }
                 }
+                // `String.prototype.concat.apply(base, args)`.
+                if self.text(method) == "apply" && args.len() == 2 && !self.classes_by_name.contains_key("String") {
+                    let is_string_concat = match receiver.as_ref() {
+                        ast::Expr::Field { object: proto, field: member, .. } => {
+                            self.text(member) == "concat"
+                                && matches!(proto.as_ref(),
+                                    ast::Expr::Field { object: base, field: p, .. }
+                                        if self.text(p) == "prototype"
+                                            && matches!(base.as_ref(), ast::Expr::Ident(n) if self.text(n) == "String"))
+                        }
+                        _ => false,
+                    };
+                    if is_string_concat {
+                        if let Some(&func) = self.by_name.get("__zunStringConcatArgs") {
+                            let base = self.check_expr(cx, &args[0]);
+                            let base = if base.ty == Ty::String {
+                                base
+                            } else {
+                                self.to_string_for_parse(base)
+                            };
+                            let list = self.check_expr(cx, &args[1]);
+                            let list = self.spread_source_to_array(list);
+                            return hir::Expr {
+                                kind: hir::ExprKind::Call { func, args: vec![base, list] },
+                                ty: Ty::String,
+                                span,
+                            };
+                        }
+                    }
+                }
                 // `Error.prototype.toString.call(value)`.
                 if self.text(method) == "call" && args.len() == 1 {
                     let is_error_proto_to_string = match receiver.as_ref() {
@@ -10343,6 +10375,26 @@ impl Checker<'_> {
                 // `String.prototype.concat(...strs)` — variadic. Folded into a
                 // chain of the two-argument string `concat` native; zero
                 // arguments return the receiver (as `"x".concat() === "x"`).
+                if receiver.ty == Ty::String
+                    && mname == "concat"
+                    && args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                {
+                    if let Some(&func) = self.by_name.get("__zunStringConcatArgs") {
+                        let elements = args
+                            .iter()
+                            .map(|arg| match arg {
+                                ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                                other => ast::ArrayElement::Expr(other.clone()),
+                            })
+                            .collect();
+                        let list = self.check_expr(cx, &ast::Expr::ArrayLiteral { elements, span });
+                        return hir::Expr {
+                            kind: hir::ExprKind::Call { func, args: vec![receiver, list] },
+                            ty: Ty::String,
+                            span,
+                        };
+                    }
+                }
                 if receiver.ty == Ty::String && mname == "concat" {
                     let Some((id, _)) = zun_natives::resolve("string", "concat") else {
                         self.error(span, "missing String intrinsic `concat`");
@@ -10354,7 +10406,7 @@ impl Checker<'_> {
                         // Non-string arguments are converted with ToString.
                         if !value.ty.is_error() && value.ty != Ty::String {
                             if let Some((coerce_id, _)) =
-                                zun_natives::resolve("collections", "stringCoerce")
+                                zun_natives::resolve("collections", "stringCoerceStrict")
                             {
                                 let value_span = value.span;
                                 value = hir::Expr {

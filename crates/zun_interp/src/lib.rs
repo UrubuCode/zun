@@ -1828,10 +1828,30 @@ impl Interp<'_> {
                 }
                 Opcode::CmpEq => cmp(&mut stack, true)?,
                 Opcode::CmpNe => cmp(&mut stack, false)?,
-                Opcode::CmpLt => compare(&mut stack, Ordering::Lt)?,
-                Opcode::CmpLe => compare(&mut stack, Ordering::Le)?,
-                Opcode::CmpGt => compare(&mut stack, Ordering::Gt)?,
-                Opcode::CmpGe => compare(&mut stack, Ordering::Ge)?,
+                Opcode::CmpLt | Opcode::CmpLe | Opcode::CmpGt | Opcode::CmpGe => {
+                    // Objects run ToPrimitive(number) and a string meeting a non-string
+                    // compares numerically, before the primitive comparison.
+                    match self.coerce_relational_operands(&mut stack) {
+                        Ok(()) => {}
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                continue;
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(RunError::Native(message)) if message.starts_with("TypeError: ") => {
+                            throw_native!(self, body, stack, pc, next - size, message);
+                        }
+                        Err(error) => return Err(error),
+                    }
+                    let ordering = match instr.opcode {
+                        Opcode::CmpLt => Ordering::Lt,
+                        Opcode::CmpLe => Ordering::Le,
+                        Opcode::CmpGt => Ordering::Gt,
+                        _ => Ordering::Ge,
+                    };
+                    compare(&mut stack, ordering)?
+                }
                 Opcode::Branch => {
                     let target = branch_target(next, &instr.operand);
                     if target < *pc {

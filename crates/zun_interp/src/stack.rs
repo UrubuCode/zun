@@ -43,7 +43,11 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
         (Value::Float(x, _), Value::Float(y, _)) => op.apply(*x, *y),
         (Value::Int(x, _), Value::Float(y, _)) => op.apply(*x as f64, *y),
         (Value::Float(x, _), Value::Int(y, _)) => op.apply(*x, *y as f64),
-        (Value::Str(x), Value::Str(y)) => op.apply(x.as_ref() as &str, y.as_ref() as &str),
+        // JS compares strings by UTF-16 code units, not by code points.
+        (Value::Str(x), Value::Str(y)) => {
+            let ordering = zun_core::wtf16::encode(x).cmp(zun_core::wtf16::encode(y));
+            op.apply(ordering, std::cmp::Ordering::Equal)
+        }
         _ => return Err(RunError::Malformed(format!("comparison of mismatched numeric kinds: {a:?} vs {b:?}"))),
     };
     stack.push(Value::Bool(result));

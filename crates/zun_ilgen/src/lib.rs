@@ -471,7 +471,8 @@ fn lower_function<'a>(
         // Running off the end of a value-returning body yields `undefined`.
         match f.return_ty {
             Ty::Any => gen.emit(Instruction::simple(Opcode::ConstUndef)),
-            Ty::F64 | Ty::Boolean | Ty::Int(_) => {}
+            Ty::F64 | Ty::Int(_) => gen.emit_numeric_const(0.0, f.return_ty),
+            Ty::Boolean => gen.emit(Instruction::simple(Opcode::ConstFalse)),
             _ => gen.emit(Instruction::simple(Opcode::ConstNull)),
         }
     }
@@ -522,7 +523,8 @@ fn lower_closure_function<'a>(
         // Running off the end of a value-returning body yields `undefined`.
         match f.return_ty {
             Ty::Any => gen.emit(Instruction::simple(Opcode::ConstUndef)),
-            Ty::F64 | Ty::Boolean | Ty::Int(_) => {}
+            Ty::F64 | Ty::Int(_) => gen.emit_numeric_const(0.0, f.return_ty),
+            Ty::Boolean => gen.emit(Instruction::simple(Opcode::ConstFalse)),
             _ => gen.emit(Instruction::simple(Opcode::ConstNull)),
         }
     }
