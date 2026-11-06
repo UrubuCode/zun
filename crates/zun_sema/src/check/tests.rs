@@ -154,14 +154,14 @@
 
     #[test]
     fn async_await_is_rejected_inside_handlers() {
-        let catch_error = first_error(
+        // Async functions are coroutines now, so `await` is valid inside catch and
+        // finally handlers (it used to be rejected).
+        check_ok(
             "async function main(): Promise { try { return new Promise(); } catch (e: any) { await new Promise(); return new Promise(); } }",
         );
-        assert!(catch_error.contains("catch handler"), "{catch_error}");
-        let finally_error = first_error(
+        check_ok(
             "async function main(): Promise { try { return new Promise(); } finally { await new Promise(); } }",
         );
-        assert!(finally_error.contains("finally handler"), "{finally_error}");
     }
 
     #[test]
@@ -191,10 +191,9 @@
 
     #[test]
     fn await_requires_a_promise_operand() {
-        let message = first_error(
-            "async function main(): Promise { await 1; return new Promise(); }",
-        );
-        assert!(message.contains("Promise type"), "{message}");
+        // `await` accepts any operand (a non-Promise resumes on the next tick), so
+        // `await 1` type-checks; the result type is `any`.
+        check_ok("async function main(): Promise { await 1; return new Promise(); }");
     }
 
     #[test]
@@ -242,7 +241,9 @@
 
     #[test]
     fn unknown_variable_diagnoses() {
-        assert!(first_error("function f() { print(y); }").contains("unknown variable"));
+        // An undeclared identifier is a run-time ReferenceError (it may sit in dead
+        // code), so it type-checks and lowers to a dynamic global read.
+        check_ok("function f() { print(y); }");
     }
 
     #[test]
@@ -281,8 +282,11 @@
 
     #[test]
     fn inner_scope_names_do_not_leak() {
-        let msg = first_error("function f(x: boolean) { if (x) { let inner = 1; } print(inner); }");
-        assert!(msg.contains("unknown variable"), "{msg}");
+        // `inner` is out of scope after the block: the read no longer binds the
+        // local (a fresh slot is not allocated for it) and becomes a run-time
+        // global read (ReferenceError) instead of a compile error.
+        let hir = check_ok("function f(x: boolean) { if (x) { let inner = 1; } print(inner); }");
+        assert_eq!(hir.functions[0].locals, vec![Ty::Boolean, Ty::F64]);
     }
 
     #[test]
@@ -661,9 +665,9 @@
 
     #[test]
     fn error_does_not_cascade() {
-        // `y` is unknown; the addition and the assignment must not pile on
-        // extra diagnostics.
-        let (_, diags) = check_src("function f() { let x = y + 1; }");
+        // The bad initializer is reported once; the addition that uses `x` must
+        // not pile on extra diagnostics.
+        let (_, diags) = check_src("function f() { let x: number = \"s\"; let z = x + 1; }");
         assert_eq!(diags.len(), 1, "{diags:?}");
     }
 
