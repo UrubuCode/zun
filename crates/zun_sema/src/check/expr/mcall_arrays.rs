@@ -525,7 +525,30 @@ impl Checker<'_> {
         Err(receiver)
     }
 
+    /// Thin wrapper preserving first-match-wins order across the three
+    /// standalone array interceptors: `concat`, `flat`, then
+    /// `sort`/`reduce`/`reduceRight`.
     pub(in crate::check) fn mcall_array_concat_reduce(
+        &mut self,
+        cx: &mut FunctionCx,
+        receiver: hir::Expr,
+        mname: &str,
+        method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let receiver = match self.mcall_array_concat(cx, receiver, mname, method, args, span) {
+            Ok(e) => return Ok(e),
+            Err(r) => r,
+        };
+        let receiver = match self.mcall_array_flat(cx, receiver, mname, method, args, span) {
+            Ok(e) => return Ok(e),
+            Err(r) => r,
+        };
+        self.mcall_array_sort_reduce(cx, receiver, mname, method, args, span)
+    }
+
+    pub(in crate::check) fn mcall_array_concat(
         &mut self,
         cx: &mut FunctionCx,
         receiver: hir::Expr,
@@ -554,6 +577,18 @@ impl Checker<'_> {
                 span,
             });
         }
+        Err(receiver)
+    }
+
+    pub(in crate::check) fn mcall_array_flat(
+        &mut self,
+        cx: &mut FunctionCx,
+        receiver: hir::Expr,
+        mname: &str,
+        _method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
         if receiver.ty == Ty::Array && mname == "flat" {
             // `flat(depth=1)` — the depth defaults to 1 when omitted.
             if args.len() > 1 {
@@ -588,6 +623,18 @@ impl Checker<'_> {
                 span,
             });
         }
+        Err(receiver)
+    }
+
+    pub(in crate::check) fn mcall_array_sort_reduce(
+        &mut self,
+        cx: &mut FunctionCx,
+        receiver: hir::Expr,
+        mname: &str,
+        _method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
         if receiver.ty == Ty::Array
             && matches!(mname, "sort" | "reduce" | "reduceRight")
         {
