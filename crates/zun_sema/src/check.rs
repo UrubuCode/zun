@@ -7353,6 +7353,19 @@ impl Checker<'_> {
                         };
                     }
                 }
+                // Relational comparison of arrays / plain objects: ToPrimitive at run
+                // time, through the dynamic comparison.
+                let (lhs, rhs) = if matches!(
+                    *op,
+                    ast::BinaryOp::Lt | ast::BinaryOp::Le | ast::BinaryOp::Gt | ast::BinaryOp::Ge
+                ) && (matches!(lhs.ty, Ty::Array | Ty::DynamicObject) || matches!(rhs.ty, Ty::Array | Ty::DynamicObject))
+                    && !lhs.ty.is_error()
+                    && !rhs.ty.is_error()
+                {
+                    (Self::box_to_any(lhs), Self::box_to_any(rhs))
+                } else {
+                    (lhs, rhs)
+                };
                 let ty = self.binary_result(*op, &lhs, &rhs, span);
                 // A logical/nullish operator whose result is dynamic keeps the
                 // deciding operand's value (value-preserving short-circuit), so
