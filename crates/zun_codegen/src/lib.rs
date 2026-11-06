@@ -207,7 +207,7 @@ pub extern "C" fn zun_jit_string_trim(handle: i64) -> i64 {
         let Some(value) = heap.try_string(handle as u32).cloned() else {
             return 0;
         };
-        heap.intern_string(std::rc::Rc::from(value.trim())).into()
+        heap.intern_string(std::rc::Rc::from(zun_core::wtf16::js_trim(&value))).into()
     })
 }
 
@@ -215,7 +215,7 @@ pub extern "C" fn zun_jit_string_trim(handle: i64) -> i64 {
 pub extern "C" fn zun_jit_string_trim_start(handle: i64) -> i64 {
     zun_gc::with_current_heap_mut(|heap| {
         let Some(value) = heap.try_string(handle as u32).cloned() else { return 0 };
-        heap.intern_string(std::rc::Rc::from(value.trim_start())).into()
+        heap.intern_string(std::rc::Rc::from(zun_core::wtf16::js_trim_start(&value))).into()
     })
 }
 
@@ -223,7 +223,7 @@ pub extern "C" fn zun_jit_string_trim_start(handle: i64) -> i64 {
 pub extern "C" fn zun_jit_string_trim_end(handle: i64) -> i64 {
     zun_gc::with_current_heap_mut(|heap| {
         let Some(value) = heap.try_string(handle as u32).cloned() else { return 0 };
-        heap.intern_string(std::rc::Rc::from(value.trim_end())).into()
+        heap.intern_string(std::rc::Rc::from(zun_core::wtf16::js_trim_end(&value))).into()
     })
 }
 

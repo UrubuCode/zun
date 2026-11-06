@@ -105,3 +105,38 @@ pub fn concat(left: &str, right: &str) -> String {
         out
     }
 }
+
+/// ECMAScript WhiteSpace or LineTerminator (note: U+0085 is not, U+FEFF is).
+pub fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}' | '\u{a}' | '\u{b}' | '\u{c}' | '\u{d}' | '\u{20}' | '\u{a0}' | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+    )
+}
+
+/// `String.prototype.trim` with the ECMAScript whitespace set.
+pub fn js_trim(text: &str) -> &str {
+    text.trim_matches(is_js_space)
+}
+
+/// `String.prototype.trimStart`.
+pub fn js_trim_start(text: &str) -> &str {
+    text.trim_start_matches(is_js_space)
+}
+
+/// `String.prototype.trimEnd`.
+pub fn js_trim_end(text: &str) -> &str {
+    text.trim_end_matches(is_js_space)
+}
+
+/// Re-pair adjacent lone-surrogate stand-ins (a high followed by a low) that
+/// string building (join, repeat) may have placed side by side.
+pub fn normalize(text: String) -> String {
+    if !text.chars().any(|c| lone_unit(c).is_some()) {
+        return text;
+    }
+    let units: Vec<u16> = encode(&text).collect();
+    from_units(&units)
+}

@@ -4911,6 +4911,23 @@ impl Checker<'_> {
     /// goes through JS ToNumber.
     /// ToString of a `parseInt`/`parseFloat` operand: a string passes through,
     /// anything else goes through the `String(x)` coercion helper.
+    /// `split` limit operand: an integer passes through; anything else goes
+    /// through ToUint32 (`undefined` meaning unbounded) at run time.
+    fn split_limit_expr(&mut self, value: hir::Expr) -> hir::Expr {
+        if value.ty.is_int() || value.ty.is_error() {
+            return value;
+        }
+        let span = value.span;
+        let Some((id, _)) = zun_natives::resolve("collections", "splitLimit") else {
+            return value;
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(value)] },
+            ty: Ty::Int(IntKind::I64),
+            span,
+        }
+    }
+
     fn to_string_for_parse(&mut self, value: hir::Expr) -> hir::Expr {
         if value.ty == Ty::String || value.ty.is_error() {
             return value;
@@ -5278,6 +5295,10 @@ impl Checker<'_> {
         for arg in args {
             let mut code = self.check_expr(cx, arg);
             coerce_numeric_literal(&mut code, Ty::Int(IntKind::U32));
+            if code.ty == Ty::Any || code.ty == Ty::String || code.ty == Ty::DynamicObject {
+                // A dynamic code goes through ToNumber first.
+                code = self.to_number_expr(code);
+            }
             if code.ty.is_float() || (code.ty.is_int() && !self.is_assignable(code.ty, Ty::Int(IntKind::U32))) {
                 let cspan = code.span;
                 code = hir::Expr {
@@ -9644,15 +9665,13 @@ impl Checker<'_> {
                 }
                 // Strings hold valid UTF-8 only, so they are always well formed.
                 if receiver.ty == Ty::String && args.is_empty() && matches!(mname.as_str(), "isWellFormed" | "toWellFormed") {
-                    if mname == "toWellFormed" {
-                        return receiver;
-                    }
+                    let Some((id, _)) = zun_natives::resolve("string", mname.as_str()) else {
+                        self.error(span, format!("missing String intrinsic `{mname}`"));
+                        return self.poison(span);
+                    };
                     return hir::Expr {
-                        kind: hir::ExprKind::Sequence {
-                            effect: Box::new(receiver),
-                            value: Box::new(hir::Expr { kind: hir::ExprKind::Boolean(true), ty: Ty::Boolean, span }),
-                        },
-                        ty: Ty::Boolean,
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                        ty: if mname == "toWellFormed" { Ty::String } else { Ty::Boolean },
                         span,
                     };
                 }
@@ -10332,19 +10351,40 @@ impl Checker<'_> {
                 // separator's type: a RegExp stays on the regex engine, a string
                 // uses the string-separator native (with an optional limit).
                 if receiver.ty == Ty::String && mname == "split" {
-                    if args.is_empty() || args.len() > 2 {
+                    if args.len() > 2 {
                         self.error(span, "`split` expects 1 or 2 arguments");
                         return self.poison(span);
                     }
-                    let first = self.check_expr(cx, &args[0]);
+                    let first = match args.first() {
+                        Some(arg) => self.check_expr(cx, arg),
+                        // `split()` behaves as `split(undefined)`.
+                        None => self.check_expr(
+                            cx,
+                            &ast::Expr::Unary {
+                                op: ast::UnaryOp::Void,
+                                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                                span,
+                            },
+                        ),
+                    };
                     if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
                         let limit = args.get(1).map(|arg| self.check_expr(cx, arg));
                         return self.string_symbol_dispatch(span, 3.0, receiver, first, limit);
                     }
                     if first.ty == Ty::RegExp {
-                        if args.len() != 1 {
-                            self.error(span, "`split` with a RegExp does not accept a limit");
-                            return self.poison(span);
+                        if args.len() == 2 {
+                            let mut limit = self.check_expr(cx, &args[1]);
+                            coerce_numeric_literal(&mut limit, Ty::Int(IntKind::I64));
+                            limit = self.split_limit_expr(limit);
+                            let Some((id, _)) = zun_natives::resolve("collections", "regexpSplitLimit") else {
+                                self.error(span, "missing collection intrinsic `regexpSplitLimit`");
+                                return self.poison(span);
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver, limit] },
+                                ty: Ty::Array,
+                                span,
+                            };
                         }
                         let Some((id, _)) = zun_natives::resolve("collections", "regexpSplit") else {
                             self.error(span, "missing collection intrinsic `regexpSplit`");
@@ -10364,6 +10404,7 @@ impl Checker<'_> {
                         Some(arg) => {
                             let mut value = self.check_expr(cx, arg);
                             coerce_numeric_literal(&mut value, Ty::Int(IntKind::I64));
+                            value = self.split_limit_expr(value);
                             if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::Int(IntKind::I64)) {
                                 self.error(value.span, "`split` limit must be an integer");
                             }

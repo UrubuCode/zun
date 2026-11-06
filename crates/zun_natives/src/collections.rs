@@ -166,6 +166,12 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "regexpSplitLimit",
+            params: &[RegExp, Str, I64],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "regexpReplace",
             params: &[RegExp, Str, Str],
             ret: Str,
@@ -494,6 +500,7 @@ pub const MODULE: crate::Module = crate::Module {
         // OrdinaryToPrimitive(hint "number") via `[Symbol.toPrimitive]`.
         // Appended last so existing dispatch ids stay stable.
         NativeFn { name: "numberCoerce", params: &[Opaque], ret: F64, imp: unavailable },
+        NativeFn { name: "splitLimit", params: &[Opaque], ret: I64, imp: unavailable },
         // NUCLEUS #5: `str.match/replace/search/split(arg)` where `arg` is a
         // dynamic value. `(receiver, arg, extra, kind)` with kind 0=match,
         // 1=replace, 2=search, 3=split; `extra` is the replacement / limit.

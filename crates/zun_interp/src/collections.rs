@@ -737,6 +737,7 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 let limit = match args.get(2) {
+                    Some(Value::Int(limit, _)) if *limit >= 0 => *limit & 0xFFFF_FFFF,
                     Some(Value::Int(limit, _)) => *limit,
                     _ => -1,
                 };
@@ -2044,7 +2045,7 @@ impl<'a> Interp<'a> {
                         .map_err(|error| RunError::Native(error.to_string()))?,
                 ))
             }
-            "regexpSearch" | "regexpSplit" | "regexpReplace" => {
+            "regexpSearch" | "regexpSplit" | "regexpSplitLimit" | "regexpReplace" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
                 let input = match args.get(1).ok_or(RunError::BadToken)? {
@@ -2059,9 +2060,13 @@ impl<'a> Interp<'a> {
                                 .map_err(|error| RunError::Native(error.to_string()))?;
                         Ok(Value::Int(index, zun_il::NumKind::I32))
                     }
-                    "regexpSplit" => {
+                    "regexpSplit" | "regexpSplitLimit" => {
+                        let limit = match (name, args.get(2)) {
+                            ("regexpSplitLimit", Some(Value::Int(n, _))) => Some((*n as u64 & 0xFFFF_FFFF) as usize),
+                            _ => None,
+                        };
                         let array =
-                            zun_gc::with_current_heap_mut(|heap| heap.regex_split(object, &input))
+                            zun_gc::with_current_heap_mut(|heap| heap.regex_split(object, &input, limit))
                                 .ok_or(RunError::BadToken)?
                                 .map_err(|error| RunError::Native(error.to_string()))?;
                         Ok(Value::Object(array))
@@ -3665,6 +3670,21 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Str(text.into()))
             }
+            "splitLimit" => {
+                // `split` limit: undefined means unbounded (-1); anything else is
+                // ToUint32 of ToNumber.
+                let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                if matches!(value, Value::Void) {
+                    return Ok(Value::Int(-1, zun_il::NumKind::I64));
+                }
+                let number = self.to_number_value(value)?;
+                let limit = if number.is_finite() {
+                    number.trunc().rem_euclid(4294967296.0) as i64
+                } else {
+                    0
+                };
+                Ok(Value::Int(limit, zun_il::NumKind::I64))
+            }
             "numberCoerce" => {
                 // `Number(x)` — ECMAScript ToNumber. A number is itself; a
                 // string parses (NaN on failure); a boolean is 0/1; `null`→0,
@@ -3830,14 +3850,40 @@ impl<'a> Interp<'a> {
                             };
                             Value::Str(receiver.replacen(search.as_ref(), &replacement, 1).into())
                         }
-                        (3, Value::Str(separator)) => {
-                            let pieces: Vec<String> = if separator.is_empty() {
-                                zun_core::wtf16::encode(&receiver)
-                                    .map(|unit| zun_core::wtf16::from_units(&[unit]))
-                                    .collect()
-                            } else {
-                                receiver.split(separator.as_ref()).map(str::to_string).collect()
+                        (3, separator_value) => {
+                            // ToUint32 of the limit; absent/undefined is unbounded.
+                            let limit: Option<usize> = match &extra {
+                                Value::Float(n, _) if *n < 0.0 => None,
+                                Value::Int(n, _) if *n < 0 => None,
+                                Value::Void => None,
+                                other => {
+                                    let n = self.to_number_value(other.clone())?;
+                                    Some(if n.is_finite() {
+                                        n.trunc().rem_euclid(4294967296.0) as usize
+                                    } else {
+                                        0
+                                    })
+                                }
                             };
+                            let mut pieces: Vec<String> = match separator_value {
+                                Value::Void => vec![receiver.to_string()],
+                                other => {
+                                    let separator: std::rc::Rc<str> = match other {
+                                        Value::Str(text) => text.clone(),
+                                        other => other.display().into(),
+                                    };
+                                    if separator.is_empty() {
+                                        zun_core::wtf16::encode(&receiver)
+                                            .map(|unit| zun_core::wtf16::from_units(&[unit]))
+                                            .collect()
+                                    } else {
+                                        receiver.split(separator.as_ref()).map(str::to_string).collect()
+                                    }
+                                }
+                            };
+                            if let Some(limit) = limit {
+                                pieces.truncate(limit);
+                            }
                             let array = zun_gc::with_current_heap_mut(|heap| {
                                 let array = heap.alloc_array(pieces.len());
                                 for (index, piece) in pieces.iter().enumerate() {
@@ -4230,7 +4276,7 @@ impl<'a> Interp<'a> {
                         // `null`/`undefined` render as the empty string per spec.
                         parts.push(stringify_any(element, heap).unwrap_or_default());
                     }
-                    parts.join(&separator)
+                    zun_core::wtf16::normalize(parts.join(&separator))
                 });
                 Ok(Value::Str(joined.into()))
             }
@@ -10576,7 +10622,7 @@ pub(super) fn js_string_to_number(text: &str) -> f64 {
 
 /// `Array.prototype.toString` (join with `,`) for an array object, or `None`
 /// when `obj` is not an array.
-fn array_join_text(obj: zun_gc::Obj) -> Option<String> {
+pub(crate) fn array_join_text(obj: zun_gc::Obj) -> Option<String> {
     zun_gc::with_current_heap(|heap| {
         let length = heap.array_len(obj)?;
         let mut parts = Vec::with_capacity(length);

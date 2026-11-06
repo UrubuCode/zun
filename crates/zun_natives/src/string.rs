@@ -217,10 +217,12 @@ fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
         }
     };
     let fill = match args.get(2) {
-        Some(NativeArg::Str(fill)) if !fill.is_empty() => fill,
+        // An empty fill leaves the string unchanged.
+        Some(NativeArg::Str(fill)) if fill.is_empty() => return Ok(NativeValue::Str(value.to_string())),
+        Some(NativeArg::Str(fill)) => fill,
         _ => {
             return Err(NativeError(
-                "padStart: expected a non-empty fill string".to_string(),
+                "padStart: expected a fill string".to_string(),
             ))
         }
     };
@@ -255,10 +257,12 @@ fn pad_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
         }
     };
     let fill = match args.get(2) {
-        Some(NativeArg::Str(fill)) if !fill.is_empty() => fill,
+        // An empty fill leaves the string unchanged.
+        Some(NativeArg::Str(fill)) if fill.is_empty() => return Ok(NativeValue::Str(value.to_string())),
+        Some(NativeArg::Str(fill)) => fill,
         _ => {
             return Err(NativeError(
-                "padEnd: expected a non-empty fill string".to_string(),
+                "padEnd: expected a fill string".to_string(),
             ))
         }
     };
@@ -295,14 +299,14 @@ fn to_upper_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
 
 fn trim_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(value.trim_start().to_string())),
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(zun_core::wtf16::js_trim_start(value).to_string())),
         _ => Err(NativeError("trimStart: expected a string".to_string())),
     }
 }
 
 fn trim_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(value.trim_end().to_string())),
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(zun_core::wtf16::js_trim_end(value).to_string())),
         _ => Err(NativeError("trimEnd: expected a string".to_string())),
     }
 }
@@ -346,7 +350,7 @@ fn ends_with(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
 
 fn trim(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(value.trim().to_string())),
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(zun_core::wtf16::js_trim(value).to_string())),
         _ => Err(NativeError("trim: expected a string".to_string())),
     }
 }
@@ -364,7 +368,34 @@ fn repeat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
             ))
         }
     };
-    Ok(NativeValue::Str(value.repeat(count)))
+    if value.is_empty() {
+        return Ok(NativeValue::Str(String::new()));
+    }
+    if (value.len() as u128) * (count as u128) > 536_870_888 {
+        return Err(NativeError("RangeError: Invalid string length".to_string()));
+    }
+    Ok(NativeValue::Str(zun_core::wtf16::normalize(value.repeat(count))))
+}
+
+fn is_well_formed(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.first() {
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Bool(
+            !value.chars().any(|c| zun_core::wtf16::lone_unit(c).is_some()),
+        )),
+        _ => Err(NativeError("isWellFormed: expected a string".to_string())),
+    }
+}
+
+fn to_well_formed(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match args.first() {
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(
+            value
+                .chars()
+                .map(|c| if zun_core::wtf16::lone_unit(c).is_some() { '�' } else { c })
+                .collect(),
+        )),
+        _ => Err(NativeError("toWellFormed: expected a string".to_string())),
+    }
 }
 
 fn reverse(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -771,6 +802,18 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[Str, U64],
             ret: Str,
             imp: repeat,
+        },
+        NativeFn {
+            name: "isWellFormed",
+            params: &[Str],
+            ret: Bool,
+            imp: is_well_formed,
+        },
+        NativeFn {
+            name: "toWellFormed",
+            params: &[Str],
+            ret: Str,
+            imp: to_well_formed,
         },
         NativeFn {
             name: "reverse",

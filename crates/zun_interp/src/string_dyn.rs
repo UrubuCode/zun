@@ -229,14 +229,42 @@ impl<'a> Interp<'a> {
                 )));
             }
             "repeat" => {
-                let count = self.dyn_integer(&a0)?;
+                if let Ok(Value::Any(any)) = unbox_arg(&a0) {
+                    if any.as_symbol().is_some() {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert a Symbol value to a number".into(),
+                        ));
+                    }
+                }
+                if let Ok(Value::Object(obj)) = unbox_arg(&a0) {
+                    if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert a BigInt value to a number".into(),
+                        ));
+                    }
+                }
+                // Arrays count as their joined text (`[2]` is 2).
+                let count_number = match unbox_arg(&a0)? {
+                    Value::Object(obj) if crate::collections::array_join_text(obj).is_some() => {
+                        js_string_to_number(&crate::collections::array_join_text(obj).unwrap_or_default())
+                    }
+                    _ => self.dyn_to_number(&a0)?,
+                };
+                let count = integer_or_infinity(count_number);
                 if count < 0.0 || count.is_infinite() {
                     return Err(RunError::Native(format!(
                         "RangeError: Invalid count value: {}",
                         self.dyn_to_string(&a0)?
                     )));
                 }
-                Value::Str(recv.repeat(count as usize).into())
+                if !recv.is_empty() && count > 0.0 && (recv.len() as f64) * count > 536_870_888.0 {
+                    return Err(RunError::Native("RangeError: Invalid string length".into()));
+                }
+                if recv.is_empty() {
+                    Value::Str("".into())
+                } else {
+                    Value::Str(zun_core::wtf16::normalize(recv.repeat(count as usize)).into())
+                }
             }
             "includes" => {
                 let needle = units(&self.dyn_to_string(&a0)?);

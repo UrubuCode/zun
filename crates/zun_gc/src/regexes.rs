@@ -150,13 +150,19 @@ impl Heap {
         &mut self,
         object: Obj,
         input: &str,
+        limit: Option<usize>,
     ) -> Option<Result<Obj, zun_core::RegexError>> {
         let pieces = match self
             .regexes
             .get(&(object.addr() as usize))
             .map(|regex| regex.split(input))?
         {
-            Ok(pieces) => pieces,
+            Ok(mut pieces) => {
+                if let Some(limit) = limit {
+                    pieces.truncate(limit);
+                }
+                pieces
+            }
             Err(error) => return Some(Err(error)),
         };
         let array = self.alloc_array(pieces.len());
@@ -270,7 +276,7 @@ mod tests {
         assert!(matches!(heap.regex_is_match(regex, &input), Some(Err(_))));
         assert!(matches!(heap.regex_exec(regex, &input), Some(Err(_))));
         assert!(matches!(heap.regex_search(regex, &input), Some(Err(_))));
-        assert!(matches!(heap.regex_split(regex, &input), Some(Err(_))));
+        assert!(matches!(heap.regex_split(regex, &input, None), Some(Err(_))));
         assert!(matches!(heap.regex_replace_first(regex, &input, "x"), Some(Err(_))));
     }
 
