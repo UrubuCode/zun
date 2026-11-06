@@ -1815,7 +1815,8 @@ mod tests {
         assert_eq!(heap.array_len(array), Some(1));
         assert_eq!(
             heap.array_set(array, 0, zun_core::Any::object(child.addr() as usize)),
-            Some(zun_core::Any::int(0))
+            // A fresh array slot is a hole (sparse-array semantics), not an integer zero.
+            Some(zun_core::Any::hole())
         );
         assert_eq!(
             heap.array_get(array, 0).and_then(zun_core::Any::as_object),
