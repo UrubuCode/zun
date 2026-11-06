@@ -3374,6 +3374,7 @@ impl Checker<'_> {
         }
         // Expected argument count per static (`assign` is variadic: 1+).
         let fixed = match method {
+            "create" if args.len() == 2 => Some(2usize),
             "keys" | "values" | "entries" | "freeze" | "isFrozen" | "create"
             | "getPrototypeOf" | "fromEntries" | "getOwnPropertyDescriptors"
             | "getOwnPropertyNames" | "getOwnPropertySymbols" | "seal" | "isSealed"
@@ -3420,6 +3421,31 @@ impl Checker<'_> {
             }
             "hasOwn" => builtin(self, "objectHasOwn", checked, Ty::Boolean),
             "isFrozen" => builtin(self, "objectIsFrozen", checked, Ty::Boolean),
+            "create" if checked.len() == 2 => {
+                // `Object.create(proto, props)`: create, then define the descriptors.
+                let props = checked.pop().unwrap();
+                let (slot, _) = self.synthetic_local(cx, Ty::DynamicObject);
+                let local = |span| hir::Expr { kind: hir::ExprKind::Local(slot), ty: Ty::DynamicObject, span };
+                let created = builtin(self, "objectCreate", checked, Ty::DynamicObject);
+                let assign = hir::Expr {
+                    kind: hir::ExprKind::Assign { slot, value: Box::new(created) },
+                    ty: Ty::DynamicObject,
+                    span,
+                };
+                let define = builtin(self, "objectDefineProperties", vec![local(span), props], Ty::Any);
+                hir::Expr {
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(assign),
+                        value: Box::new(hir::Expr {
+                            kind: hir::ExprKind::Sequence { effect: Box::new(define), value: Box::new(local(span)) },
+                            ty: Ty::DynamicObject,
+                            span,
+                        }),
+                    },
+                    ty: Ty::DynamicObject,
+                    span,
+                }
+            }
             "create" => builtin(self, "objectCreate", checked, Ty::DynamicObject),
             "getPrototypeOf" => builtin(self, "objectGetPrototypeOf", checked, Ty::Any),
             "setPrototypeOf" => builtin(self, "objectSetPrototypeOf", checked, Ty::Any),

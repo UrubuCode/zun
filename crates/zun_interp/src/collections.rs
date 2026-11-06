@@ -2591,6 +2591,26 @@ impl<'a> Interp<'a> {
                     },
                 };
                 let name = &name;
+                // Arrays: an in-range index becomes a hole (unless sealed/frozen),
+                // `length` is non-configurable, anything else is a plain key.
+                if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(object)) {
+                    if name.as_ref() == "length" {
+                        return Ok(Value::Bool(false));
+                    }
+                    if let Ok(index) = name.parse::<usize>() {
+                        if index >= len {
+                            return Ok(Value::Bool(true));
+                        }
+                        return Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                            if heap.array_integrity(object) < 2 {
+                                heap.array_set(object, index, zun_core::Any::hole());
+                                true
+                            } else {
+                                false
+                            }
+                        })));
+                    }
+                }
                 // A sealed or frozen array refuses to delete an existing element.
                 if let Ok(index) = name.parse::<usize>() {
                     let verdict = zun_gc::with_current_heap(|heap| {
