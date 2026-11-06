@@ -345,7 +345,14 @@ function __zunArrayCtor(args: any[]): any[] {
         out.length = length;
         return out;
     }
-    return args.slice(0, args.length);
+    // Copy by index (not `args.slice()`): a program may declare its own `Array`
+    // class, which would shadow the method lookup here.
+    const copy: any[] = [];
+    copy.length = args.length;
+    for (let i = 0; i < args.length; i++) {
+        copy[i] = args[i];
+    }
+    return copy;
 }
 
 // `"".concat(...args)` / `String.prototype.concat.apply(s, args)`: each argument

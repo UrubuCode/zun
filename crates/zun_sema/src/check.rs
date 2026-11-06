@@ -12553,6 +12553,46 @@ impl Checker<'_> {
                 // (Zun has typed classes, no `function.prototype` + `this`
                 // construction model), and `newTarget` is approximated by the
                 // target (subclass newTarget selection needs a prototype model).
+                // `new ns.C(...args)` where `ns` is a dynamic (`any`) local holding a
+                // module namespace from `import()`: construct the class export
+                // cross-module at run time (the hand parser spelled this as a
+                // dotted class name; OXC spells it as a member-expression callee).
+                if let ast::Expr::Field { object, field, .. } = callee.as_ref() {
+                    if let ast::Expr::Ident(base) = object.as_ref() {
+                        let base_text = self.text(base).to_string();
+                        let base_is_dynamic = !self.classes_by_name.contains_key(&base_text)
+                            && !self.realm_globals.contains_key(&base_text)
+                            && cx
+                                .lookup(&base_text)
+                                .is_some_and(|slot| matches!(cx.locals[slot as usize], Ty::Any | Ty::DynamicObject));
+                        if base_is_dynamic {
+                            let member = self.text(field).to_string();
+                            let base_expr = self.check_expr(cx, &ast::Expr::Ident(*base));
+                            let member_expr = hir::Expr {
+                                kind: hir::ExprKind::String(member),
+                                ty: Ty::String,
+                                span: field.span,
+                            };
+                            let elements: Vec<Option<hir::Expr>> =
+                                args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
+                            let args_array = hir::Expr {
+                                kind: hir::ExprKind::ArrayLiteral { elements },
+                                ty: Ty::Array,
+                                span,
+                            };
+                            if let Some((id, _)) = zun_natives::resolve("collections", "dynamicConstruct") {
+                                return hir::Expr {
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id,
+                                        args: vec![base_expr, member_expr, args_array],
+                                    },
+                                    ty: Ty::Any,
+                                    span,
+                                };
+                            }
+                        }
+                    }
+                }
                 let callee = self.check_expr(cx, callee);
                 if matches!(callee.ty, Ty::Any | Ty::Function(_)) {
                     // A dynamic callee reaches `new` as a plain value: only classes

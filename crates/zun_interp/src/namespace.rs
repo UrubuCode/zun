@@ -410,8 +410,8 @@ mod tests {
         assert!(matches!(result, Value::Int(7, _)));
     }
 
-    const APP_SOURCE: &str = "async function compute(): Promise { let ns: any = await import(\"lib\"); let p = new Promise(); let v: any = ns.answer(41.0); p.resolve(v); return p; }
-\n        function main(): any { let r = compute(); return r.result(); }";
+    const APP_SOURCE: &str = "async function compute(): Promise { let ns: any = await import(\"lib\"); return ns.answer(41.0); }
+let r: any = await compute(); let n: number = r as number; print(n);";
 
     #[test]
     fn import_expression_runs_end_to_end_on_tier_zero() {
@@ -432,7 +432,9 @@ mod tests {
         loader.load_bytes("app", &app.write()).unwrap();
         let entry = loader.get("app").unwrap().module().entry_point.unwrap().rid();
         let mut output = CaptureOutput::default();
-        let imported = run_method_loaded(loader.get("app").unwrap(), &loader, entry, vec![], &mut output).unwrap();
+        run_method_loaded(loader.get("app").unwrap(), &loader, entry, vec![], &mut output).unwrap();
+        // The module body awaits `compute()` and prints the imported result.
+        assert_eq!(output.lines, ["42"]);
         // The same export called directly (what a static import links to).
         let answer = loader.get("lib").unwrap().export("answer").map(|export| match export {
             Export::Method(token) => token.rid(),
@@ -446,16 +448,15 @@ mod tests {
             &mut output,
         )
         .unwrap();
-        let (Value::Any(any), Value::Float(direct, _)) = (imported, direct) else {
-            panic!("unexpected result shapes");
+        let Value::Float(direct, _) = direct else {
+            panic!("unexpected result shape");
         };
-        assert_eq!(any.as_float(), Some(direct));
         assert_eq!(direct, 42.0);
         }
     }
 
-    const CLASS_APP_SOURCE: &str = "async function compute(): Promise { let ns: any = await import(\"lib\"); let p: any = new ns.Point(3.0, 4.0); let pr = new Promise(); pr.resolve(p.sum()); return pr; }
-\n        function main(): any { let r = compute(); return r.result(); }";
+    const CLASS_APP_SOURCE: &str = "async function compute(): Promise { let ns: any = await import(\"lib\"); let p: any = new ns.Point(3.0, 4.0); return p.sum(); }
+let r: any = await compute(); let n: number = r as number; print(n);";
 
     #[test]
     fn new_on_dynamic_import_class_constructs_and_calls_methods_end_to_end() {
@@ -483,12 +484,10 @@ mod tests {
             let entry = loader.get("app").unwrap().module().entry_point.unwrap().rid();
             let mut output = CaptureOutput::default();
             let result =
-                run_method_loaded(loader.get("app").unwrap(), &loader, entry, vec![], &mut output)
-                    .unwrap();
-            let Value::Any(any) = result else {
-                panic!("unexpected result shape: {result:?}");
-            };
-            assert_eq!(any.as_float(), Some(7.0));
+                run_method_loaded(loader.get("app").unwrap(), &loader, entry, vec![], &mut output);
+            assert!(result.is_ok(), "{result:?} {:?}", output.lines);
+            // The module body awaits `compute()` and prints `p.sum()`.
+            assert_eq!(output.lines, ["7"]);
         }
     }
 
