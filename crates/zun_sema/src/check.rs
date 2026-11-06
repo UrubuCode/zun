@@ -8142,6 +8142,24 @@ impl Checker<'_> {
                             self.error(span, "missing generator iterator intrinsic");
                             return self.poison(span);
                         };
+                        // A rest parameter collects the trailing arguments into one array.
+                        let mut args = args;
+                        if let Some(rest_index) = self.signatures[func as usize].rest_param {
+                            let param_tys = self.signatures[func as usize].params.clone();
+                            while args.len() < rest_index {
+                                let expected = param_tys.get(args.len()).copied().unwrap_or(Ty::Any);
+                                args.push(default_args::missing_arg(expected, span));
+                            }
+                            let rest: Vec<Option<hir::Expr>> =
+                                args.drain(rest_index..).map(Some).collect();
+                            let mut packed = hir::Expr {
+                                kind: hir::ExprKind::ArrayLiteral { elements: rest },
+                                ty: Ty::Array,
+                                span,
+                            };
+                            self.box_function_array_elements(&mut packed);
+                            args.push(packed);
+                        }
                         return hir::Expr {
                             kind: hir::ExprKind::GeneratorCall { func, args, native_id },
                             ty: Ty::Any,

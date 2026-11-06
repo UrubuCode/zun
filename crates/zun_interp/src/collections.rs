@@ -6157,9 +6157,10 @@ impl<'a> Interp<'a> {
                     }
                     _ => {
                         let Some(source) = object(&concrete) else {
-                            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                                "spread: value is not iterable",
-                            ))));
+                            return match self.new_error_object("TypeError", "spread: value is not iterable") {
+                                Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                                None => Err(RunError::BadToken),
+                            };
                         };
                         // A managed Array keeps its direct fast path; anything
                         // else (a Set/Map or a user `[Symbol.iterator]` object)
