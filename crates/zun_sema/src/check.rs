@@ -4809,6 +4809,91 @@ impl Checker<'_> {
         call: ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        self.optional_guarded_with(cx, slot, bound, test, call, None, span)
+    }
+
+    /// Like [`Self::optional_guarded`], with an explicit expression for the
+    /// nullish case (default: `undefined`).
+    #[allow(clippy::too_many_arguments)]
+    fn optional_guarded_with(
+        &mut self,
+        cx: &mut FunctionCx,
+        slot: hir::LocalSlot,
+        bound: hir::Expr,
+        test: ast::Expr,
+        call: ast::Expr,
+        nullish: Option<ast::Expr>,
+        span: Span,
+    ) -> hir::Expr {
+        if let Some(probe) = nullish {
+            // Nullish member: only a managed receiver (Map, class instance, Date ...)
+            // may still resolve the method through the `?`-prefixed dynamic call;
+            // anything else short-circuits to `undefined` without evaluating the
+            // arguments.
+            let Some((probe_id, _)) = zun_natives::resolve("collections", "optionalProbeOk") else {
+                return self.poison(span);
+            };
+            let tmp_name = match &test {
+                ast::Expr::Assign { value, .. } => match value.as_ref() {
+                    ast::Expr::Field { object, .. } => object.as_ref().clone(),
+                    _ => return self.poison(span),
+                },
+                _ => return self.poison(span),
+            };
+            let receiver_hir = self.check_expr(cx, &tmp_name);
+            let ok = hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id: probe_id, args: vec![Self::box_to_any(receiver_hir)] },
+                ty: Ty::Boolean,
+                span,
+            };
+            let probe_hir = self.check_expr(cx, &probe);
+            let undefined_hir = self.check_expr(
+                cx,
+                &ast::Expr::Unary {
+                    op: ast::UnaryOp::Void,
+                    operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                    span,
+                },
+            );
+            let nullish_hir = hir::Expr {
+                kind: hir::ExprKind::Conditional {
+                    condition: Box::new(ok),
+                    when_true: Box::new(Self::box_to_any(probe_hir)),
+                    when_false: Box::new(Self::box_to_any(undefined_hir)),
+                },
+                ty: Ty::Any,
+                span,
+            };
+            let cond_ast = ast::Expr::Binary {
+                op: ast::BinaryOp::LooseEq,
+                lhs: Box::new(test),
+                rhs: Box::new(ast::Expr::Null { span }),
+                span,
+            };
+            let condition = self.check_condition(cx, &cond_ast);
+            let call_hir = self.check_expr(cx, &call);
+            let value = hir::Expr {
+                kind: hir::ExprKind::Conditional {
+                    condition: Box::new(condition),
+                    when_true: Box::new(nullish_hir),
+                    when_false: Box::new(Self::box_to_any(call_hir)),
+                },
+                ty: Ty::Any,
+                span,
+            };
+            return hir::Expr {
+                kind: hir::ExprKind::Sequence {
+                    effect: Box::new(hir::Expr {
+                        kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                        ty: Ty::Any,
+                        span,
+                    }),
+                    value: Box::new(value),
+                },
+                ty: Ty::Any,
+                span,
+            };
+        }
         let cond = ast::Expr::Conditional {
             condition: Box::new(ast::Expr::Binary {
                 op: ast::BinaryOp::LooseEq,
@@ -14156,6 +14241,17 @@ impl Checker<'_> {
                             }),
                             span,
                         };
+                        // A member that reads back nullish may still be a managed
+                        // method (Map, class instance, Date ...): the `?`-prefixed
+                        // dynamic call resolves it and yields undefined if absent.
+                        let probe = ast::synthetic_ident(&format!("?{}", self.text(field)));
+                        let probe_call = ast::Expr::MethodCall {
+                            receiver: Box::new(tmp_expr.clone()),
+                            method: probe,
+                            args: args.clone(),
+                            span,
+                        };
+
                         let mut call_args = vec![tmp_expr];
                         call_args.extend(args.iter().cloned());
                         let call = ast::Expr::MethodCall {
@@ -14164,7 +14260,15 @@ impl Checker<'_> {
                             args: call_args,
                             span,
                         };
-                        return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), test, call, span);
+                        return self.optional_guarded_with(
+                            cx,
+                            slot,
+                            Self::box_to_any(recv_hir),
+                            test,
+                            call,
+                            Some(probe_call),
+                            span,
+                        );
                     }
                 }
                 if let ast::Expr::Index { object: recv, index: key, .. } = callee.as_ref() {

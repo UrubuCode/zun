@@ -66,6 +66,23 @@ impl<'a> Interp<'a> {
     }
 
     pub(crate) fn call_managed_collection(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+        // `recv.m?.(..)` probe: a `?`-prefixed member is called if it resolves and
+        // otherwise answers `undefined`.
+        if name.starts_with("dynamicCall") {
+            if let Some(Value::Str(member)) = args.get(1) {
+                if let Some(real) = member.strip_prefix('?') {
+                    let mut stripped = args.to_vec();
+                    stripped[1] = Value::Str(real.into());
+                    OPTIONAL_PROBE.with(|flag| flag.set(true));
+                    let outcome = self.call_managed_collection_inner(name, &stripped);
+                    OPTIONAL_PROBE.with(|flag| flag.set(false));
+                    return match outcome {
+                        Err(RunError::BadToken) => Ok(Value::Any(zun_core::Any::void())),
+                        other => other,
+                    };
+                }
+            }
+        }
         let result = self.call_managed_collection_inner(name, args);
         // A dynamic member call that resolved to nothing is a JS TypeError.
         if matches!(result, Err(RunError::BadToken)) && name.starts_with("dynamicCall") {
@@ -1347,6 +1364,17 @@ impl<'a> Interp<'a> {
                 Ok(zun_gc::with_current_heap(|heap| heap.map_get(object, key))
                     .map(Value::Any)
                     .unwrap_or(Value::Void))
+            }
+            "optionalProbeOk" => {
+                // True for a managed (typed, non-proxy) object whose methods are not
+                // plain properties: the `recv.m?.()` probe may resolve them.
+                let ok = match unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    Ok(Value::Object(obj)) => zun_gc::with_current_heap(|heap| {
+                        !heap.is_dynamic_object(obj) && heap.proxy_target(obj).is_none()
+                    }),
+                    _ => false,
+                };
+                Ok(Value::Bool(ok))
             }
             "mapHas" => {
                 let object =
@@ -3627,6 +3655,9 @@ impl<'a> Interp<'a> {
                 if !is_module_member {
                     // Neither a method nor a namespace export: the member is
                     // missing or not callable.
+                    if OPTIONAL_PROBE.with(|flag| flag.get()) {
+                        return Err(RunError::BadToken);
+                    }
                     return match self.new_error_object(
                         "TypeError",
                         &format!("{member} is not a function"),
@@ -11548,4 +11579,10 @@ pub(crate) fn builtin_constructor_name(heap: &zun_gc::Heap, obj: zun_gc::Obj) ->
     } else {
         None
     }
+}
+
+thread_local! {
+    /// Set while a `recv.m?.(..)` probe call runs: a missing member answers
+    /// `BadToken` (-> `undefined`) instead of throwing `TypeError`.
+    static OPTIONAL_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }

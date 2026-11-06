@@ -31,6 +31,12 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "optionalProbeOk",
+            params: &[Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "mapHas",
             params: &[Map, Opaque],
             ret: Bool,
