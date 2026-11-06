@@ -10982,12 +10982,12 @@ impl Checker<'_> {
                         vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
                     )),
                     (Ty::WeakMap, "set") => {
-                        Some(("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any]))
+                        Some(("weakMapSet", Ty::WeakMap, vec![Ty::Any, Ty::Any]))
                     }
                     (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
                     (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
-                    (Ty::WeakSet, "add") => Some(("weakSetAdd", Ty::Boolean, vec![Ty::Any])),
+                    (Ty::WeakSet, "add") => Some(("weakSetAdd", Ty::WeakSet, vec![Ty::Any])),
                     (Ty::WeakSet, "has") => Some(("weakSetHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakSet, "delete") => Some(("weakSetDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakRef, "deref") => Some(("weakRefDeref", Ty::Any, vec![])),
@@ -14092,14 +14092,14 @@ impl Checker<'_> {
                     (Ty::Set, "delete") => ("setDelete", Ty::Boolean, vec![Ty::Any]),
                     (Ty::Set, "clear") => ("setClear", Ty::Void, vec![]),
                     (Ty::WeakMap, "set") => {
-                        ("weakMapSet", Ty::Boolean, vec![Ty::Any, Ty::Any])
+                        ("weakMapSet", Ty::WeakMap, vec![Ty::Any, Ty::Any])
                     }
                     (Ty::WeakMap, "get") => ("weakMapGet", Ty::Any, vec![Ty::Any]),
                     (Ty::WeakMap, "has") => ("weakMapHas", Ty::Boolean, vec![Ty::Any]),
                     (Ty::WeakMap, "delete") => {
                         ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
                     }
-                    (Ty::WeakSet, "add") => ("weakSetAdd", Ty::Boolean, vec![Ty::Any]),
+                    (Ty::WeakSet, "add") => ("weakSetAdd", Ty::WeakSet, vec![Ty::Any]),
                     (Ty::WeakSet, "has") => ("weakSetHas", Ty::Boolean, vec![Ty::Any]),
                     (Ty::WeakSet, "delete") => ("weakSetDelete", Ty::Boolean, vec![Ty::Any]),
                     (Ty::WeakRef, "deref") => ("weakRefDeref", Ty::Any, vec![]),

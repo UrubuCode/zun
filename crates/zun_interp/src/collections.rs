@@ -80,6 +80,11 @@ impl<'a> Interp<'a> {
             _ => None,
         };
         let any = |value: &Value| zun_gc::with_current_heap_mut(|heap| value.box_any_cell(heap));
+        // A valid weak key: an object (or a function, via its cell).
+        let weak_key = |value: &Value| match value {
+            Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| heap.function_cell(*handle))),
+            other => object(other),
+        };
         // A Promise callback argument: a function value, or absent (the lowering
         // passes `null`/`undefined` for an omitted `then`/`catch`/`finally` slot).
         let callback_arg = |value: Option<&Value>| match value {
@@ -1781,32 +1786,53 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
             }
             "weakMapSet" => {
-                let map_object =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value =
-                    object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                let recv = args.first().ok_or(RunError::BadToken)?.clone();
+                let map_object = object(&recv).ok_or(RunError::BadToken)?;
+                let key = weak_key(args.get(1).ok_or(RunError::BadToken)?).ok_or_else(|| {
+                    RunError::Native("TypeError: Invalid value used as weak map key".to_string())
+                })?;
+                let raw = args.get(2).ok_or(RunError::BadToken)?;
+                // A non-object value is boxed into a hidden dynamic object so
+                // the ephemeron floor (object -> object) can hold it.
+                let value = match raw {
+                    Value::Function(_) => weak_key(raw),
+                    _ => object(raw),
+                }
+                .unwrap_or_else(|| {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let boxed = raw.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                        let cell = heap.alloc_dynamic();
+                        heap.dynamic_set(cell, "__wmv", boxed);
+                        cell
+                    })
+                });
+                zun_gc::with_current_heap_mut(|heap| {
                     heap.weak_map_set_object(map_object, key, value)
-                })))
+                });
+                Ok(recv)
             }
             "weakMapGet" => {
                 let map_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Some(key) = weak_key(args.get(1).ok_or(RunError::BadToken)?) else {
+                    return Ok(Value::Void);
+                };
                 Ok(zun_gc::with_current_heap(|heap| {
-                    heap.weak_map_get_value_object(map_object, key)
+                    heap.weak_map_get_value_object(map_object, key).map(|value| {
+                        match heap.dynamic_get(value, "__wmv") {
+                            Some(inner) => Value::Any(inner),
+                            None => Value::Any(zun_core::Any::object(value.addr() as usize)),
+                        }
+                    })
                 })
-                .map(|value| Value::Any(zun_core::Any::object(value.addr() as usize)))
                 .unwrap_or(Value::Void))
             }
             "weakMapHas" => {
                 let map_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Some(key) = weak_key(args.get(1).ok_or(RunError::BadToken)?) else {
+                    return Ok(Value::Bool(false));
+                };
                 Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
                     heap.weak_map_has_object(map_object, key)
                 })))
@@ -1814,8 +1840,9 @@ impl<'a> Interp<'a> {
             "weakMapDelete" => {
                 let map_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Some(key) = weak_key(args.get(1).ok_or(RunError::BadToken)?) else {
+                    return Ok(Value::Bool(false));
+                };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
                     heap.weak_map_delete_object(map_object, key)
                 })))
@@ -1827,19 +1854,22 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
             }
             "weakSetAdd" => {
-                let set_object =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                let recv = args.first().ok_or(RunError::BadToken)?.clone();
+                let set_object = object(&recv).ok_or(RunError::BadToken)?;
+                let key = weak_key(args.get(1).ok_or(RunError::BadToken)?).ok_or_else(|| {
+                    RunError::Native("TypeError: Invalid value used in weak set".to_string())
+                })?;
+                zun_gc::with_current_heap_mut(|heap| {
                     heap.weak_map_set_object(set_object, key, key)
-                })))
+                });
+                Ok(recv)
             }
             "weakSetHas" => {
                 let set_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Some(key) = weak_key(args.get(1).ok_or(RunError::BadToken)?) else {
+                    return Ok(Value::Bool(false));
+                };
                 Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
                     heap.weak_map_has_object(set_object, key)
                 })))
@@ -1847,8 +1877,9 @@ impl<'a> Interp<'a> {
             "weakSetDelete" => {
                 let set_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Some(key) = weak_key(args.get(1).ok_or(RunError::BadToken)?) else {
+                    return Ok(Value::Bool(false));
+                };
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
                     heap.weak_map_delete_object(set_object, key)
                 })))

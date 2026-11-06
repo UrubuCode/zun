@@ -114,7 +114,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn {
             name: "weakMapSet",
             params: &[WeakMap, Opaque, Opaque],
-            ret: Bool,
+            ret: WeakMap,
             imp: unavailable,
         },
         NativeFn {
@@ -394,7 +394,7 @@ pub const MODULE: crate::Module = crate::Module {
         // WeakSet: a set of weakly-held object keys over the WeakMap ephemeron
         // floor (value-less; the interpreter stores each key as its own value).
         NativeFn { name: "weakSetNew", params: &[], ret: WeakSet, imp: unavailable },
-        NativeFn { name: "weakSetAdd", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
+        NativeFn { name: "weakSetAdd", params: &[WeakSet, Opaque], ret: WeakSet, imp: unavailable },
         NativeFn { name: "weakSetHas", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "weakSetDelete", params: &[WeakSet, Opaque], ret: Bool, imp: unavailable },
         // WeakRef: a single weakly-held reference over the GC weak-reference
