@@ -4123,6 +4123,32 @@ impl<'a> Interp<'a> {
             "addAny" => {
                 // ECMAScript `+`: ToPrimitive(default) on each operand, then
                 // string concat if either is a string, else numeric add.
+                // BigInt operands: two BigInts add; a BigInt mixed with a non-string
+                // primitive is a TypeError; with a string it concatenates.
+                {
+                    let big = |v: Option<&Value>| -> bool {
+                        match v.and_then(|v| unbox_arg(v).ok()) {
+                            Some(Value::Object(obj)) => zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()),
+                            _ => false,
+                        }
+                    };
+                    let (a_big, b_big) = (big(args.first()), big(args.get(1)));
+                    if a_big && b_big {
+                        return self.call_managed_collection("bigIntAdd", &[unbox_arg(&args[0])?, unbox_arg(&args[1])?]);
+                    }
+                    if a_big || b_big {
+                        let other = if a_big { args.get(1) } else { args.first() };
+                        let is_str_or_obj = matches!(
+                            other.and_then(|v| unbox_arg(v).ok()),
+                            Some(Value::Str(_)) | Some(Value::Object(_))
+                        );
+                        if !is_str_or_obj {
+                            return Err(RunError::Native(
+                                "TypeError: Cannot mix BigInt and other types, use explicit conversions".into(),
+                            ));
+                        }
+                    }
+                }
                 let mut prims = Vec::with_capacity(2);
                 for index in 0..2 {
                     if let Some(Value::Any(any)) = args.get(index) {
@@ -4163,10 +4189,9 @@ impl<'a> Interp<'a> {
                         .collect();
                     Value::Str(text.into())
                 } else {
-                    let sum = zun_gc::with_current_heap(|heap| {
-                        to_number(&prims[0], heap) + to_number(&prims[1], heap)
-                    });
-                    Value::Float(sum, zun_il::NumKind::F64)
+                    let left = self.to_number_value(prims[0].clone())?;
+                    let right = self.to_number_value(prims[1].clone())?;
+                    Value::Float(left + right, zun_il::NumKind::F64)
                 };
                 let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                     .unwrap_or_else(zun_core::Any::void);
@@ -9767,6 +9792,58 @@ impl<'a> Interp<'a> {
         if let (Some(a), Some(b)) = (number(&left), number(&right)) {
             return Ok(a == b);
         }
+        // BigInt operands (heap objects) compare by mathematical value.
+        let big_text = |value: &Value| -> Option<String> {
+            match value {
+                Value::Object(obj) => zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).map(|v| v.to_string())),
+                _ => None,
+            }
+        };
+        let normalize_digits = |text: &str| -> Option<String> {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Some("0".to_string());
+            }
+            let (negative, digits) = match trimmed.strip_prefix('-') {
+                Some(rest) => (true, rest),
+                None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+            };
+            if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            let stripped = digits.trim_start_matches('0');
+            if stripped.is_empty() {
+                Some("0".to_string())
+            } else if negative {
+                Some(format!("-{stripped}"))
+            } else {
+                Some(stripped.to_string())
+            }
+        };
+        match (big_text(&left), big_text(&right)) {
+            (Some(a), Some(b)) => return Ok(a == b),
+            (Some(a), None) | (None, Some(a)) => {
+                let other = if big_text(&left).is_some() { &right } else { &left };
+                match other {
+                    Value::Str(text) => return Ok(normalize_digits(text).is_some_and(|n| n == a)),
+                    Value::Int(..) | Value::Float(..) => {
+                        let n = number(other).unwrap_or(f64::NAN);
+                        return Ok(n.is_finite()
+                            && n.fract() == 0.0
+                            && (n.abs() < 1e38)
+                            && format!("{}", n as i128) == a);
+                    }
+                    Value::Bool(flag) => return Ok(a == if *flag { "1" } else { "0" }),
+                    Value::Object(obj) => {
+                        let primitive = self.to_primitive_default(*obj)?;
+                        let (l, r) = if big_text(&left).is_some() { (left.clone(), primitive) } else { (primitive, right.clone()) };
+                        return self.loose_equals(l, r);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
         match (&left, &right) {
             (Value::Str(a), Value::Str(b)) => return Ok(a == b),
             (Value::Bool(a), Value::Bool(b)) => return Ok(a == b),
@@ -9792,12 +9869,16 @@ impl<'a> Interp<'a> {
         }
         // An object against a primitive: ToPrimitive(object), then compare again.
         if let Value::Object(obj) = &left {
-            let primitive = self.to_primitive_default(*obj)?;
-            return self.loose_equals(primitive, right);
+            if big_text(&left).is_none() {
+                let primitive = self.to_primitive_default(*obj)?;
+                return self.loose_equals(primitive, right);
+            }
         }
         if let Value::Object(obj) = &right {
-            let primitive = self.to_primitive_default(*obj)?;
-            return self.loose_equals(left, primitive);
+            if big_text(&right).is_none() {
+                let primitive = self.to_primitive_default(*obj)?;
+                return self.loose_equals(left, primitive);
+            }
         }
         Ok(false)
     }
@@ -9877,12 +9958,41 @@ impl<'a> Interp<'a> {
             Value::Object(obj) => zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_none()),
             _ => false,
         };
+        let bigint_as_f64 = |v: &Value| -> Option<f64> {
+            match v {
+                Value::Object(obj) => zun_gc::with_current_heap(|heap| {
+                    heap.bigint_value(*obj).map(|big| big.to_string().parse::<f64>().unwrap_or(f64::NAN))
+                }),
+                _ => None,
+            }
+        };
+        // A BigInt against a non-BigInt primitive compares by (approximate) numeric value.
+        match (bigint_as_f64(&a), bigint_as_f64(&b)) {
+            (Some(x), None) if !is_plain_object(&b) || matches!(b, Value::Str(_)) => {
+                let other = match &b {
+                    Value::Str(text) => js_string_to_number(text),
+                    other => self.to_number_value(other.clone())?,
+                };
+                stack[len - 2] = Value::Float(x, zun_il::NumKind::F64);
+                stack[len - 1] = Value::Float(other, zun_il::NumKind::F64);
+                return Ok(());
+            }
+            (None, Some(y)) if !is_plain_object(&a) || matches!(a, Value::Str(_)) => {
+                let other = match &a {
+                    Value::Str(text) => js_string_to_number(text),
+                    other => self.to_number_value(other.clone())?,
+                };
+                stack[len - 2] = Value::Float(other, zun_il::NumKind::F64);
+                stack[len - 1] = Value::Float(y, zun_il::NumKind::F64);
+                return Ok(());
+            }
+            _ => {}
+        }
         let numeric = |v: &Value| matches!(v, Value::Int(..) | Value::Float(..));
-        let needs = is_plain_object(&a)
-            || is_plain_object(&b)
-            || (matches!(a, Value::Str(_)) != matches!(b, Value::Str(_))
-                && (numeric(&a) || numeric(&b) || matches!(a, Value::Bool(_) | Value::Null | Value::Void)
-                    || matches!(b, Value::Bool(_) | Value::Null | Value::Void)));
+        let both_bigint = bigint_as_f64(&a).is_some() && bigint_as_f64(&b).is_some();
+        let needs = !both_bigint
+            && !(numeric(&a) && numeric(&b))
+            && !(matches!(a, Value::Str(_)) && matches!(b, Value::Str(_)));
         if !needs {
             return Ok(());
         }

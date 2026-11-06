@@ -6248,7 +6248,7 @@ impl Checker<'_> {
     fn reads_through_global(&self, cx: &FunctionCx, name: &str, slot: hir::LocalSlot) -> bool {
         cx.is_module_scope
             && self.fn_mutated_globals.contains(name)
-            && cx.scopes.iter().find_map(|s| s.get(name).copied()) == Some(slot)
+            && cx.scopes.get(1).and_then(|s| s.get(name).copied()) == Some(slot)
             && (matches!(
                 cx.locals[slot as usize],
                 Ty::Any | Ty::F64 | Ty::Boolean | Ty::String
@@ -16119,6 +16119,9 @@ impl Checker<'_> {
                     || lhs.ty == Ty::Any
                     || rhs.ty == Ty::Any
                     || (lhs.ty == Ty::String && rhs.ty == Ty::String)
+                    // Mixed primitives compare numerically at run time (JS).
+                    || (matches!(lhs.ty, Ty::String | Ty::BigInt | Ty::Boolean | Ty::Void) && rhs.ty == Ty::F64)
+                    || (lhs.ty == Ty::F64 && matches!(rhs.ty, Ty::String | Ty::BigInt | Ty::Boolean | Ty::Void))
                 {
                     Ty::Boolean
                 } else {
