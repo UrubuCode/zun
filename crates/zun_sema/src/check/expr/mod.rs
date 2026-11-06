@@ -5,6 +5,7 @@ use crate::check::*;
 
 mod assign;
 mod call;
+mod field;
 mod ident;
 mod literal;
 mod member;
