@@ -3210,7 +3210,7 @@ impl Checker<'_> {
                         e
                     }
                 });
-                let value = if value.is_none() && cx.is_generator && cx.return_ty == Ty::Any {
+                let value = if value.is_none() && cx.return_ty == Ty::Any {
                     Some(self.check_expr(
                         cx,
                         &ast::Expr::Unary {
@@ -3226,7 +3226,7 @@ impl Checker<'_> {
                     (None, Ty::Void) => {}
                     // A bare `return;` in a generator (or an `any`-returning
                     // function) yields `undefined`.
-                    (None, Ty::Any) if cx.is_generator => {}
+                    (None, Ty::Any) => {}
                     (None, expected) if !expected.is_error() => {
                         self.error(*span, format!("expected a {expected:?} return value"));
                     }

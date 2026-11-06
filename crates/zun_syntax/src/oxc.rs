@@ -2309,6 +2309,28 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             }
         }
         Expression::CallExpression(call) => {
+            // Direct `eval("<single expression>")` of an escape-free string literal:
+            // the literal's text is parsed in place (a padded copy keeps every span
+            // aligned with the real source) and converted like surrounding code.
+            if let (Expression::Identifier(callee), 1, Some(oxc_ast::ast::Argument::StringLiteral(literal))) =
+                (&call.callee, call.arguments.len(), call.arguments.first())
+            {
+                if callee.name == "eval" {
+                    let (start, end) = (literal.span.start as usize, literal.span.end as usize);
+                    if let Some(content) = source.get(start + 1..end.saturating_sub(1)) {
+                        if !content.contains('\\') {
+                            let padded = format!("{}{}", " ".repeat(start + 1), content);
+                            let allocator = Allocator::default();
+                            let parsed = Parser::new(&allocator, &padded, SourceType::mjs().with_typescript(true)).parse();
+                            if parsed.diagnostics.is_empty() && parsed.program.body.len() == 1 {
+                                if let Statement::ExpressionStatement(statement) = &parsed.program.body[0] {
+                                    return convert_expression(&padded, &statement.expression);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             let mut args = Vec::with_capacity(call.arguments.len());
             for argument in &call.arguments {
                 args.push(convert_argument(source, argument)?);
