@@ -2,7 +2,7 @@
 import { weakSet } from "zun:core";
 
 class WeakSet {
-    add(value: any): boolean { return weakSet.add(this, value); }
+    add(value: any): WeakSet { return weakSet.add(this, value); }
     has(value: any): boolean { return weakSet.has(this, value); }
     delete(value: any): boolean { return weakSet.delete(this, value); }
 }

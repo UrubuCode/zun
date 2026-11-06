@@ -3034,6 +3034,13 @@ pub fn parses(source: &str, typescript: bool) -> bool {
 /// approximated; additional statement and expression adapters can be added
 /// without changing the public frontend boundary.
 pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<String>> {
+    // Zun-only `extern` declarations are rewritten (length-preserving) into
+    // bodiless TypeScript signatures; TypeScript parsing is forced for them.
+    let preprocessed = preprocess_externs(source);
+    let (source, typescript) = match preprocessed.as_deref() {
+        Some(text) => (text, true),
+        None => (source, typescript),
+    };
     let allocator = Allocator::default();
     let source_type = SourceType::mjs().with_typescript(typescript);
     let parsed = Parser::new(&allocator, source, source_type).parse();
@@ -3287,6 +3294,35 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
             return Err(vec!["OXC adapter requires named functions".into()]);
         };
         let Some(body) = function.body.as_ref() else {
+            // `extern function f(..): T from "lib";` arrives as a bodiless
+            // overload signature (see `preprocess_externs`).
+            if let Some(module) = extern_mark(id.span.start) {
+                let mut prologue = Vec::new();
+                let mut params = Vec::new();
+                for parameter in &function.params.items {
+                    params.push(
+                        convert_formal_param(source, parameter, &mut prologue)
+                            .map_err(|error| vec![error])?,
+                    );
+                }
+                functions.push(Function {
+                    name: Name { span: Span::new(id.span.start, id.span.end) },
+                    type_params: Vec::new(),
+                    decorators: Vec::new(),
+                    params,
+                    return_type: convert_type_annotation(source, function.return_type.as_deref())
+                        .map_err(|error| vec![error])?,
+                    is_extern: true,
+                    is_static: false,
+                    accessor: None,
+                    external_module: module,
+                    is_async: false,
+                    is_generator: false,
+                    body: Block { statements: Vec::new(), span: Span::new(function.span.start, function.span.end) },
+                    span: Span::new(function.span.start, function.span.end),
+                });
+                continue;
+            }
             return Err(vec!["OXC adapter requires function bodies".into()]);
         };
         let span = |span: oxc_span::Span| Span::new(span.start, span.end);
@@ -4372,6 +4408,141 @@ thread_local! {
 }
 
 thread_local! {
+    /// Name-start offsets of Zun `extern` declarations in the source being
+    /// parsed, with the native library of an `extern function ... from "lib"`.
+    static EXTERN_MARKS: std::cell::RefCell<std::collections::HashMap<u32, Option<String>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn extern_mark(name_start: u32) -> Option<Option<String>> {
+    EXTERN_MARKS.with(|marks| marks.borrow().get(&name_start).cloned())
+}
+
+/// Rewrite Zun `extern` declarations into forms OXC parses, preserving every
+/// byte offset: the `extern` keyword and a trailing `from "lib"` become
+/// spaces, leaving `function f(..): T;` / `m(..): T;` bodiless signatures. The
+/// offsets of the declared names (and the library) go to `EXTERN_MARKS`.
+/// Returns `None` when the source has no `extern` declaration.
+fn preprocess_externs(source: &str) -> Option<String> {
+    EXTERN_MARKS.with(|marks| marks.borrow_mut().clear());
+    if !source.contains("extern") {
+        return None;
+    }
+    let bytes = source.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let word_end = |mut k: usize| {
+        while k < bytes.len() && is_ident(bytes[k]) {
+            k += 1;
+        }
+        k
+    };
+    let mut out = bytes.to_vec();
+    let mut marks: Vec<(u32, Option<String>)> = Vec::new();
+    let mut i = 0;
+    let mut last_significant = b';';
+    while i < bytes.len() {
+        let b = bytes[i];
+        match b {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2;
+                continue;
+            }
+            b'"' | b'\'' | b'`' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b {
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                i += 1;
+                last_significant = b'"';
+                continue;
+            }
+            _ => {}
+        }
+        if b.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        let at_statement_start = matches!(last_significant, b';' | b'{' | b'}');
+        if at_statement_start
+            && bytes[i..].starts_with(b"extern")
+            && bytes.get(i + 6).is_some_and(|c| c.is_ascii_whitespace())
+        {
+            // `extern` + whitespace + (`function` NAME | NAME)
+            let mut j = i + 6;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            let first_end = word_end(j);
+            let is_function = &source[j..first_end] == "function"
+                && bytes.get(first_end).is_some_and(|c| c.is_ascii_whitespace());
+            if is_function {
+                let mut k = first_end;
+                while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+                    k += 1;
+                }
+                let name_end = word_end(k);
+                if name_end > k {
+                    if let Some(semi_rel) = source[name_end..].find(';') {
+                        let semi = name_end + semi_rel;
+                        let head = &source[name_end..semi];
+                        let mut module = None;
+                        if let Some(from_rel) = head.rfind(" from ") {
+                            let tail = head[from_rel + 6..].trim();
+                            if tail.len() >= 2 && (tail.starts_with('"') || tail.starts_with('\'')) {
+                                module = Some(tail[1..tail.len() - 1].to_owned());
+                                for slot in &mut out[name_end + from_rel..semi] {
+                                    *slot = b' ';
+                                }
+                            }
+                        }
+                        for slot in &mut out[i..i + 6] {
+                            *slot = b' ';
+                        }
+                        marks.push((k as u32, module));
+                        last_significant = b';';
+                        i = semi + 1;
+                        continue;
+                    }
+                }
+            } else if first_end > j && bytes.get(first_end).is_some_and(|c| *c == b'(' || *c == b'<') {
+                for slot in &mut out[i..i + 6] {
+                    *slot = b' ';
+                }
+                marks.push((j as u32, None));
+                i = first_end;
+                last_significant = b'a';
+                continue;
+            }
+        }
+        last_significant = b;
+        i += 1;
+    }
+    if marks.is_empty() {
+        return None;
+    }
+    EXTERN_MARKS.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        for (offset, module) in marks {
+            cell.insert(offset, module);
+        }
+    });
+    String::from_utf8(out).ok()
+}
+
+thread_local! {
     /// Names bound by top-level variable declarations of the module.
     static TOP_LEVEL_NAMES: std::cell::RefCell<std::collections::HashSet<String>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
@@ -4630,6 +4801,38 @@ fn convert_class_declaration_inner(source: &str, class_declaration: &oxc_ast::as
                             ]);
                         };
                         let Some(body) = method.value.body.as_ref() else {
+                            // `extern m(..): T;` arrives as a bodiless method
+                            // signature (see `preprocess_externs`).
+                            if let Some(module) = extern_mark(name_span.start) {
+                                let mut prologue = Vec::new();
+                                let mut params = Vec::new();
+                                for parameter in &method.value.params.items {
+                                    params.push(
+                                        convert_formal_param(source, parameter, &mut prologue)
+                                            .map_err(|error| vec![error])?,
+                                    );
+                                }
+                                methods.push(Function {
+                                    name: Name { span: name_span },
+                                    type_params: Vec::new(),
+                                    decorators: Vec::new(),
+                                    params,
+                                    return_type: convert_type_annotation(
+                                        source,
+                                        method.value.return_type.as_deref(),
+                                    )
+                                    .map_err(|error| vec![error])?,
+                                    is_extern: true,
+                                    is_static: method.r#static,
+                                    accessor: None,
+                                    external_module: module,
+                                    is_async: false,
+                                    is_generator: false,
+                                    body: Block { statements: Vec::new(), span: Span::new(method.span.start, method.span.end) },
+                                    span: Span::new(method.span.start, method.span.end),
+                                });
+                                continue;
+                            }
                             return Err(vec!["OXC adapter requires class method bodies".into()]);
                         };
                         // The method body uses the unified statement converter so

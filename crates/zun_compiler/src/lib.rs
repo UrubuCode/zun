@@ -521,7 +521,9 @@ pub fn compile_with_oxc_and_externals(
     // user source, exactly as the native path does with `with_prelude`. Spans in
     // the HIR therefore refer to this combined source.
     let combined = zun_prelude::with_prelude(source);
-    let ast = zun_syntax::oxc::parse_subset(&combined, typescript)
+    // The prelude is TypeScript, so the combined program is always parsed as TS.
+    let _ = typescript;
+    let ast = zun_syntax::oxc::parse_subset(&combined, true)
         .map_err(|errors| {
             errors
                 .into_iter()

@@ -9693,7 +9693,7 @@ impl Checker<'_> {
                             );
                         }
                     }
-                    if let Some(&namespace) = self.core_namespaces.get(&class_name) {
+                    if let Some(&namespace) = self.core_namespaces.get(&class_name).filter(|_| cx.lookup(&class_name).is_none()) {
                         let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
                             self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
                             return self.poison(span);
@@ -12351,7 +12351,7 @@ impl Checker<'_> {
             }
             ast::Expr::StaticMethodCall { class, method, args, .. } => {
                 let class_name = self.text(class).to_string();
-                if let Some(&namespace) = self.core_namespaces.get(&class_name) {
+                if let Some(&namespace) = self.core_namespaces.get(&class_name).filter(|_| cx.lookup(&class_name).is_none()) {
                     let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
                         self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
                         return self.poison(span);

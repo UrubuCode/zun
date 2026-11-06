@@ -96,7 +96,8 @@ class String {
 
     isQuoted(): boolean {
         if (this.length() < 2) { return false; }
-        let first: u32 = this.charCodeAt(0);
+        let zeroIndex: u64 = 0;
+        let first: u32 = this.charCodeAt(zeroIndex);
         let last: u32 = this.charCodeAt(this.length() - 1);
         if (first == 34) { return last == 34; }
         if (first == 39) { return last == 39; }
@@ -256,7 +257,8 @@ class String {
     isSignedInteger(): boolean {
         if (this.isEmpty()) { return false; }
         let start: u64 = 0;
-        let first: u32 = this.charCodeAt(0);
+        let zeroIndex: u64 = 0;
+        let first: u32 = this.charCodeAt(zeroIndex);
         if (first == 43) { start = 1; }
         if (first == 45) { start = 1; }
         if (start == this.length()) { return false; }
@@ -275,7 +277,8 @@ class String {
         let index: u64 = 0;
         let digits: u64 = 0;
         let dots: u64 = 0;
-        let first: u32 = this.charCodeAt(0);
+        let zeroIndex: u64 = 0;
+        let first: u32 = this.charCodeAt(zeroIndex);
         if (first == 43) { index = 1; }
         if (first == 45) { index = 1; }
         while (index < this.length()) {
@@ -394,7 +397,8 @@ class String {
 
     isCamelCase(): boolean {
         if (this.isEmpty()) { return false; }
-        let first: u32 = this.charCodeAt(0);
+        let zeroIndex: u64 = 0;
+        let first: u32 = this.charCodeAt(zeroIndex);
         if (first < 97) { return false; }
         if (first > 122) { return false; }
         let index: u64 = 1;
@@ -412,7 +416,8 @@ class String {
 
     isPascalCase(): boolean {
         if (this.isEmpty()) { return false; }
-        let first: u32 = this.charCodeAt(0);
+        let zeroIndex: u64 = 0;
+        let first: u32 = this.charCodeAt(zeroIndex);
         if (first < 65) { return false; }
         if (first > 90) { return false; }
         let index: u64 = 1;

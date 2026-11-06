@@ -345,7 +345,7 @@ function __zunArrayCtor(args: any[]): any[] {
         out.length = length;
         return out;
     }
-    return args.slice();
+    return args.slice(0, args.length);
 }
 
 // `"".concat(...args)` / `String.prototype.concat.apply(s, args)`: each argument
