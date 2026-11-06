@@ -11,43 +11,43 @@ use std::collections::{HashMap, HashSet};
 use zun_common::{Diagnostic, Span};
 use zun_syntax::ast;
 
-#[path = "closures.rs"]
+#[path = "../closures.rs"]
 mod closures;
-#[path = "class_layout.rs"]
+#[path = "../class_layout.rs"]
 mod class_layout;
-#[path = "field_init_hoist.rs"]
+#[path = "../field_init_hoist.rs"]
 mod field_init_hoist;
-#[path = "classes.rs"]
+#[path = "../classes.rs"]
 mod classes;
-#[path = "conditions.rs"]
+#[path = "../conditions.rs"]
 mod conditions;
-#[path = "blocks.rs"]
+#[path = "../blocks.rs"]
 mod blocks;
-#[path = "default_args.rs"]
+#[path = "../default_args.rs"]
 mod default_args;
-#[path = "diagnostics.rs"]
+#[path = "../diagnostics.rs"]
 mod diagnostics;
-#[path = "module_resolution.rs"]
+#[path = "../module_resolution.rs"]
 mod module_resolution;
-#[path = "native_types.rs"]
+#[path = "../native_types.rs"]
 mod native_types;
-#[path = "numeric_literals.rs"]
+#[path = "../numeric_literals.rs"]
 mod numeric_literals;
-#[path = "function_context.rs"]
+#[path = "../function_context.rs"]
 mod function_context;
-#[path = "boxed_locals.rs"]
+#[path = "../boxed_locals.rs"]
 mod boxed_locals;
-#[path = "capture_analysis.rs"]
+#[path = "../capture_analysis.rs"]
 mod capture_analysis;
-#[path = "poison.rs"]
+#[path = "../poison.rs"]
 mod poison;
-#[path = "function_reflect.rs"]
+#[path = "../function_reflect.rs"]
 mod function_reflect;
-#[path = "type_expect.rs"]
+#[path = "../type_expect.rs"]
 mod type_expect;
 
 use numeric_literals::{coerce_numeric_literal, unify_numeric_literal};
-#[path = "types.rs"]
+#[path = "../types.rs"]
 mod types;
 
 use native_types::native_ty;
