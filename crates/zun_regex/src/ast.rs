@@ -77,7 +77,15 @@ pub(crate) fn canonicalize(c: char) -> char {
 impl ClassItem {
     fn matches_exact(self, c: char) -> bool {
         match self {
-            ClassItem::Range(lo, hi) => lo <= c && c <= hi,
+            ClassItem::Range(lo, hi) => {
+                // A lone-surrogate stand-in (plane-16 U+10F800..) compares as
+                // the code unit it stands for.
+                let mut v = c as u32;
+                if (0x10F800..=0x10FFFF).contains(&v) {
+                    v = v - 0x10F800 + 0xD800;
+                }
+                lo as u32 <= v && v <= hi as u32
+            }
             ClassItem::Digit => c.is_ascii_digit(),
             ClassItem::NotDigit => !c.is_ascii_digit(),
             ClassItem::Word => is_word_char(c),

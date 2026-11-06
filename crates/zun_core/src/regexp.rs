@@ -76,23 +76,27 @@ impl From<zun_regex::RegexError> for RegexError {
 ///
 /// `.` without `s` must exclude CR / U+2028 / U+2029 (RE2 only excludes LF)
 /// and multiline anchors must treat all four line terminators alike.
-fn needs_backtracking(node: &zun_regex::RegexNode, dot_all: bool, multiline: bool) -> bool {
+fn needs_backtracking(node: &zun_regex::RegexNode, dot_all: bool, multiline: bool, unicode: bool) -> bool {
     use zun_regex::RegexNode as N;
     match node {
         N::BackRef(_) | N::Look { .. } => true,
-        N::Any => !dot_all,
+        N::Any => !dot_all || !unicode,
         // ``/`B` are Unicode-aware in RE2 but ASCII-only in JS.
         N::Assertion(kind) => {
             multiline
                 || matches!(kind, zun_regex::AssertKind::WordBoundary | zun_regex::AssertKind::NotWordBoundary)
         }
         // `d`/`w`/`s` are Unicode-aware in RE2 but ASCII / JS-space in JS.
-        N::Class(class) => class
-            .items
-            .iter()
-            .any(|item| !matches!(item, zun_regex::ClassItem::Range(..))),
-        N::Seq(items) | N::Alt(items) => items.iter().any(|n| needs_backtracking(n, dot_all, multiline)),
-        N::Repeat { node, .. } | N::Group { node, .. } => needs_backtracking(node, dot_all, multiline),
+        N::Class(class) => {
+            (class.negated && !unicode)
+                || class.items.iter().any(|item| match item {
+                    // A range reaching the surrogate block must see lone-surrogate units.
+                    zun_regex::ClassItem::Range(_, hi) => !unicode && (*hi as u32) >= 0xD800,
+                    _ => true,
+                })
+        }
+        N::Seq(items) | N::Alt(items) => items.iter().any(|n| needs_backtracking(n, dot_all, multiline, unicode)),
+        N::Repeat { node, .. } | N::Group { node, .. } => needs_backtracking(node, dot_all, multiline, unicode),
         N::Empty | N::Char(_) => false,
     }
 }
@@ -133,11 +137,25 @@ fn expand_replacement(replacement: &str, groups: &[Option<&str>], out: &mut Stri
 }
 
 fn chars_to_string(chars: &[char], start: usize, end: usize) -> String {
-    chars[start..end].iter().collect()
+    // Re-pair adjacent lone-surrogate halves split out of an astral character.
+    crate::wtf16::normalize(chars[start..end].iter().collect())
 }
 
+/// Byte offset in the ORIGINAL input of char index `index`. An astral
+/// character fed unit-wise (hi stand-in, lo stand-in) counts once, so an index
+/// between its halves lands on the end of the character.
 fn byte_offset(chars: &[char], index: usize) -> usize {
-    chars[..index].iter().map(|c| c.len_utf8()).sum()
+    let mut total = 0;
+    let mut prev_hi = false;
+    for c in &chars[..index] {
+        let unit = crate::wtf16::lone_unit(*c);
+        let is_lo = matches!(unit, Some(0xDC00..=0xDFFF));
+        if !(is_lo && prev_hi) {
+            total += c.len_utf8();
+        }
+        prev_hi = matches!(unit, Some(0xD800..=0xDBFF));
+    }
+    total
 }
 
 impl RegexValue {
@@ -159,6 +177,22 @@ impl RegexValue {
     ) -> Result<Self, RegexError> {
         let source = source.into();
         let flags = flags.into();
+        if flags.contains('u') {
+            // Unicode mode rejects identity escapes of ordinary letters (`q`).
+            let bytes = source.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    let next = bytes[i + 1];
+                    if next.is_ascii_alphabetic() && !b"dDwWsSbBfnrtvcxukpPgG".contains(&next) {
+                        return Err(RegexError { message: format!("invalid escape `\\{}`", next as char) });
+                    }
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        }
         let mut builder = regex::RegexBuilder::new(&source);
         let mut seen = String::new();
         for flag in flags.chars() {
@@ -193,7 +227,7 @@ impl RegexValue {
         };
         let parsed = zun_regex::parse(&source);
         let engine = match &parsed {
-            Ok(ast) if needs_backtracking(&ast.node, flags.contains('s'), flags.contains('m')) => backtrack(&source, &flags)
+            Ok(ast) if needs_backtracking(&ast.node, flags.contains('s'), flags.contains('m'), flags.contains('u')) => backtrack(&source, &flags)
                 .map_err(|error| RegexError { message: error.to_string() })?,
             _ => match builder.build() {
                 Ok(compiled) => Engine::Re2(compiled),
@@ -210,6 +244,26 @@ impl RegexValue {
             },
         };
         Ok(Self { source, flags, engine })
+    }
+
+    /// The chars the backtracking engine runs over. Without the `u` flag a
+    /// pattern sees UTF-16 code units, so an astral character becomes its two
+    /// lone-surrogate stand-ins.
+    fn chars_of(&self, input: &str) -> Vec<char> {
+        if self.flags.contains('u') || input.is_ascii() {
+            return input.chars().collect();
+        }
+        let mut out = Vec::with_capacity(input.len());
+        for c in input.chars() {
+            if c.len_utf8() == 4 && crate::wtf16::lone_unit(c).is_none() {
+                for unit in crate::wtf16::encode(c.encode_utf8(&mut [0u8; 4])) {
+                    out.extend(crate::wtf16::from_units(&[unit]).chars());
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
     }
 
     pub fn flags(&self) -> &str {
@@ -231,10 +285,15 @@ impl RegexValue {
                 .find(input)
                 .map(|m| crate::wtf16::len16(&input[..m.start()]))),
             Engine::Backtrack(re) => {
-                let chars: Vec<char> = input.chars().collect();
+                let chars = self.chars_of(input);
                 Ok(re
                     .find_chars(&chars, 0)?
-                    .map(|m| chars[..m.start()].iter().map(|c| c.len_utf16()).sum()))
+                    .map(|m| {
+                        chars[..m.start()]
+                            .iter()
+                            .map(|c| if crate::wtf16::lone_unit(*c).is_some() { 1 } else { c.len_utf16() })
+                            .sum()
+                    }))
             }
         }
     }
@@ -279,7 +338,7 @@ impl RegexValue {
                 pieces.push(Some(input[last..].to_owned()));
             }
             Engine::Backtrack(re) => {
-                let chars: Vec<char> = input.chars().collect();
+                let chars = self.chars_of(input);
                 let mut last = 0;
                 let mut pos = 0;
                 while pos <= chars.len() {
@@ -320,7 +379,7 @@ impl RegexValue {
                 Ok(out)
             }
             Engine::Backtrack(re) => {
-                let chars: Vec<char> = input.chars().collect();
+                let chars = self.chars_of(input);
                 let Some(m) = re.find_chars(&chars, 0)? else {
                     return Ok(input.to_owned());
                 };
@@ -347,7 +406,7 @@ impl RegexValue {
                     .collect()
             })),
             Engine::Backtrack(re) => {
-                let chars: Vec<char> = input.chars().collect();
+                let chars = self.chars_of(input);
                 Ok(re.find_chars(&chars, 0)?.map(|m| {
                     (0..m.len())
                         .map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b)))
@@ -374,7 +433,7 @@ impl RegexValue {
                 }
             }
             Engine::Backtrack(re) => {
-                let chars: Vec<char> = input.chars().collect();
+                let chars = self.chars_of(input);
                 let mut pos = 0;
                 while pos <= chars.len() {
                     let Some(m) = re.find_chars(&chars, pos)? else { break };
@@ -420,7 +479,7 @@ impl RegexValue {
                 }
             }
             Engine::Backtrack(re) => {
-                let chars: Vec<char> = input.chars().collect();
+                let chars = self.chars_of(input);
                 let mut pos = 0;
                 while pos <= chars.len() {
                     let Some(m) = re.find_chars(&chars, pos)? else { break };
@@ -511,7 +570,7 @@ impl RegexValue {
         match &self.engine {
             Engine::Re2(re) => Ok(re.find(input).map(|m| (m.start(), m.end()))),
             Engine::Backtrack(re) => {
-                let chars: Vec<char> = input.chars().collect();
+                let chars = self.chars_of(input);
                 Ok(re.find_chars(&chars, 0)?.map(|m| {
                     (byte_offset(&chars, m.start()), byte_offset(&chars, m.end()))
                 }))

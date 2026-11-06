@@ -2688,39 +2688,10 @@ impl<'a> Interp<'a> {
                             .unwrap_or_else(zun_core::Any::null),
                     )
                 };
-                // A non-`u` regex works on UTF-16 units: a negated class or `.`
-                // matching one astral character matches its two halves separately.
-                let unit_wise = match &search {
-                    Value::Object(regex) => zun_gc::with_current_heap(|heap| {
-                        !heap.regex_flags(*regex).unwrap_or("").contains('u')
-                            && heap.regex_source(*regex).is_some_and(|src| src.contains("[^") || src.contains('.'))
-                    }),
-                    _ => false,
-                };
                 let mut out = String::new();
                 let mut last = 0;
                 for (start, end, groups) in spans {
                     out.push_str(&input[last..start]);
-                    if unit_wise
-                        && groups.len() == 1
-                        && input[start..end].chars().count() == 1
-                        && input[start..end].chars().next().is_some_and(|c| c.len_utf8() == 4)
-                    {
-                        let units: Vec<u16> = zun_core::wtf16::encode(&input[start..end]).collect();
-                        let base = zun_core::wtf16::len16(&input[..start]);
-                        for (k, unit) in units.iter().enumerate() {
-                            let text = zun_core::wtf16::from_units(&[*unit]);
-                            let call_args = vec![
-                                to_any(Value::Str(text.into())),
-                                to_any(Value::Float((base + k) as f64, zun_il::NumKind::F64)),
-                                to_any(Value::Str(input.clone())),
-                            ];
-                            let produced = self.invoke_callback(callback, call_args)?;
-                            out.push_str(&self.dyn_to_string(&produced)?);
-                        }
-                        last = end;
-                        continue;
-                    }
                     let mut call_args: Vec<Value> = groups
                         .into_iter()
                         .map(|group| match group {
@@ -9569,6 +9540,15 @@ impl<'a> Interp<'a> {
     /// chaining the old eager path could not express.
     fn settle_target_with(&mut self, target: zun_gc::Obj, value: Value) {
         if let Some(obj) = as_object_ref(&value) {
+            // A promise resolved with itself rejects with a TypeError.
+            if obj == target {
+                let message = "Chaining cycle detected for promise #<Promise>";
+                if let Some(Value::Object(error)) = self.make_error_value("TypeError", message) {
+                    let reason = zun_core::Any::object(error.addr() as usize);
+                    self.settle_promise_reject_value(target, reason, format!("TypeError: {message}"));
+                }
+                return;
+            }
             if let Some(state) = zun_gc::with_current_heap(|heap| heap.promise_state(obj)) {
                 // ECMAScript NewPromiseResolveThenableJob: adopting a native
                 // Promise costs a job (which attaches the pass-through reaction)
