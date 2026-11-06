@@ -14,7 +14,6 @@ zun_module = { workspace = true }
 zun_gc = { workspace = true }
 zun_natives = { workspace = true }
 zun_types = { workspace = true }
-zun_compiler = { workspace = true }
 cranelift-codegen = { workspace = true }
 cranelift-frontend = { workspace = true }
 cranelift-jit = { workspace = true }
@@ -25,6 +24,7 @@ object = { workspace = true }
 target-lexicon = { workspace = true }
 
 [dev-dependencies]
+zun_compiler = { workspace = true }
 zun_syntax = { workspace = true }
 zun_sema = { workspace = true }
 zun_ilgen = { workspace = true }
