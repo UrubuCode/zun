@@ -110,3 +110,15 @@ later cleanup pass can clear them deliberately.
   (feature-gated): the eval-capable runtime (PLAN §4.1/§5, "one eval-capable
   runtime"; `new Function`/eval compile at runtime). Keep it; document the
   exception in `zun_vm/Cargo.toml`.
+
+## cargo fmt convergence (diagnosed)
+
+`cargo fmt --all -- --check` does not pass, and CANNOT be made to pass by a
+global `cargo fmt --all`: after a full format, 5 files still do not converge
+under rustfmt (it is non-idempotent / cannot break them): `zun_gc/src/tests.rs`,
+`zun_interp/src/collections/array_iterate.rs`, `zun_interp/src/method_tests.rs`,
+`zun_sema/src/check/tests.rs`, `zun_syntax/src/tests.rs` (mostly long-line test
+code moved verbatim). So the `fmt --check` gate is blocked by a rustfmt
+limitation on these files, independent of this session's refactor. A real fix
+would hand-wrap the offending lines in those 5 files or adjust `rustfmt.toml`;
+out of scope for a behavior-preserving reorganization.
