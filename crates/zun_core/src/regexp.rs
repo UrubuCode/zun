@@ -332,6 +332,10 @@ impl RegexValue {
         };
         let parsed = zun_regex::parse(&source);
         let engine = match &parsed {
+            // Non-unicode `i` canonicalizes through toUpperCase (U+212A stays
+            // distinct from "k"), which only the backtracking engine models.
+            Ok(_) if flags.contains('i') && !flags.contains('u') && !flags.contains('v') => backtrack(&source, &flags)
+                .map_err(|error| RegexError { message: error.to_string() })?,
             Ok(ast) if needs_backtracking(&ast.node, flags.contains('s'), flags.contains('m'), flags.contains('u') || flags.contains('v')) => backtrack(&source, &flags)
                 .map_err(|error| RegexError { message: error.to_string() })?,
             _ => match builder.build() {

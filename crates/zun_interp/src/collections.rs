@@ -1842,14 +1842,16 @@ impl<'a> Interp<'a> {
                     .unwrap_or(Value::Void))
             }
             "regexpNew" => {
-                let source = match args.first().ok_or(RunError::BadToken)? {
+                let source = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
                     Value::Str(source) => source.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
                 let flags = match args.get(1) {
-                    Some(Value::Str(flags)) => flags.to_string(),
+                    Some(flags) => match unbox_arg(flags)? {
+                        Value::Str(flags) => flags.to_string(),
+                        _ => return Err(RunError::BadToken),
+                    },
                     None => String::new(),
-                    Some(_) => return Err(RunError::BadToken),
                 };
                 let object = zun_gc::with_current_heap_mut(|heap| {
                     heap.alloc_regex_with_flags(source, flags)

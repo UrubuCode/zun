@@ -387,6 +387,13 @@ impl<'a> Interp<'a> {
                 });
                 Value::Object(array)
             }
+            "normalize" => {
+                let form = if Self::is_undefined(&a0) { "NFC".to_string() } else { self.dyn_to_string(&a0)? };
+                let normalized = zun_natives::string_normalize_form(recv, &form).ok_or_else(|| {
+                    RunError::Native("RangeError: The normalization form should be one of NFC, NFD, NFKC, NFKD.".into())
+                })?;
+                Value::Str(normalized.into())
+            }
             "toString" | "valueOf" => Value::Str(recv.into()),
             "toUpperCase" => Value::Str(recv.to_uppercase().into()),
             "toLowerCase" => Value::Str(recv.to_lowercase().into()),

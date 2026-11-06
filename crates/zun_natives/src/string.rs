@@ -565,6 +565,18 @@ fn from_code_point1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
 /// `String.prototype.normalize(form?)` — Unicode Normalization Forms via the
 /// baked ICU4X normalizer. The lowering supplies `"NFC"` when the form is
 /// omitted; an unrecognized form is a RangeError-equivalent (spec).
+/// Normalize `value` to `form` (`NFC`/`NFD`/`NFKC`/`NFKD`); `None` for an unknown form.
+pub fn normalize_form(value: &str, form: &str) -> Option<String> {
+    use icu::normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
+    Some(match form {
+        "NFC" => ComposingNormalizerBorrowed::new_nfc().normalize(value).into_owned(),
+        "NFD" => DecomposingNormalizerBorrowed::new_nfd().normalize(value).into_owned(),
+        "NFKC" => ComposingNormalizerBorrowed::new_nfkc().normalize(value).into_owned(),
+        "NFKD" => DecomposingNormalizerBorrowed::new_nfkd().normalize(value).into_owned(),
+        _ => return None,
+    })
+}
+
 fn normalize(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     use icu::normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
     let (Some(NativeArg::Str(value)), Some(NativeArg::Str(form))) = (args.first(), args.get(1))
