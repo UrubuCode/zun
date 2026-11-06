@@ -162,7 +162,16 @@ fn replace(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
             Some(NativeArg::Str(value)),
             Some(NativeArg::Str(needle)),
             Some(NativeArg::Str(replacement)),
-        ) => Ok(NativeValue::Str(value.replacen(needle, replacement, 1))),
+        ) => {
+            let Some(start) = value.find(needle) else {
+                return Ok(NativeValue::Str(value.to_string()));
+            };
+            let end = start + needle.len();
+            let mut out = String::from(&value[..start]);
+            zun_core::expand_substitution(replacement, &[Some(needle)], &[None], &value[..start], &value[end..], &mut out);
+            out.push_str(&value[end..]);
+            Ok(NativeValue::Str(out))
+        }
         _ => Err(NativeError(
             "replace: expected a string, search string, and replacement".to_string(),
         )),
@@ -522,7 +531,32 @@ fn replace_all(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nati
         ) => {
             // An empty search in JS inserts the replacement between every code
             // unit (and at both ends); Rust's `replace` matches that behavior.
-            Ok(NativeValue::Str(value.replace(*search, replacement)))
+            let mut out = String::new();
+            let mut last = 0;
+            let mut from = 0;
+            let mut boundaries: Vec<usize> = Vec::new();
+            if search.is_empty() {
+                boundaries = value.char_indices().map(|(index, _)| index).collect();
+                boundaries.push(value.len());
+            }
+            let mut next_empty = 0;
+            loop {
+                let start = if search.is_empty() {
+                    let Some(&at) = boundaries.get(next_empty) else { break };
+                    next_empty += 1;
+                    at
+                } else {
+                    let Some(at) = value[from..].find(*search) else { break };
+                    from + at
+                };
+                let end = start + search.len();
+                out.push_str(&value[last..start]);
+                zun_core::expand_substitution(replacement, &[Some(search)], &[None], &value[..start], &value[end..], &mut out);
+                last = end;
+                from = end;
+            }
+            out.push_str(&value[last..]);
+            Ok(NativeValue::Str(out))
         }
         _ => Err(NativeError(
             "replaceAll: expected a string, search string, and replacement".to_string(),

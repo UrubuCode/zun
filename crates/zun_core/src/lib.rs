@@ -40,7 +40,7 @@ pub use module_bound_function::ModuleBoundFunction;
 pub use module_bound_class::ModuleBoundClass;
 pub use symbols::{SymbolId, SymbolRegistry, WellKnownSymbol};
 pub use promise_value::{ManagedPromise, ManagedPromiseState};
-pub use regexp::{EngineKind, RegexError, RegexValue};
+pub use regexp::{byte_of_utf16, expand_substitution, EngineKind, MatchFull, RegexError, RegexValue};
 pub use bigint::BigInt;
 pub use typed_elements::{clamp_to_u8, same};
 pub use views::ByteView;

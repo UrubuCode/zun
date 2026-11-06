@@ -46,7 +46,7 @@ impl Heap {
         let spans = match self
             .regexes
             .get(&(object.addr() as usize))
-            .map(|regex| regex.match_spans(input, true))?
+            .map(|regex| regex.match_spans16(input, true))?
         {
             Ok(spans) => spans,
             Err(error) => return Some(Err(error)),
@@ -64,7 +64,7 @@ impl Heap {
     fn alloc_match_array(
         &mut self,
         input: &str,
-        start_byte: usize,
+        start16: usize,
         groups: Vec<Option<String>>,
         names: &[Option<String>],
     ) -> Obj {
@@ -81,8 +81,7 @@ impl Heap {
             self.array_set(array, index, value);
         }
         self.ensure_dynamic_entry(array);
-        let utf16_index = zun_core::wtf16::len16(&input[..start_byte.min(input.len())]);
-        self.dynamic_set(array, "index".to_owned(), zun_core::Any::float(utf16_index as f64));
+        self.dynamic_set(array, "index".to_owned(), zun_core::Any::float(start16 as f64));
         let input_any = zun_core::Any::string(self.intern_string(input.into()));
         self.dynamic_set(array, "input".to_owned(), input_any);
         let groups_any = if named.is_empty() {
@@ -137,7 +136,7 @@ impl Heap {
             }
             return Some(Ok(None));
         }
-        let found = match regex.match_from(input, last_index as usize, sticky) {
+        let found = match regex.match_full(input, last_index as usize, sticky) {
             Ok(found) => found,
             Err(error) => return Some(Err(error)),
         };
@@ -149,11 +148,11 @@ impl Heap {
                 }
                 Some(Ok(None))
             }
-            Some((start, end, groups)) => {
+            Some(found) => {
                 if stateful {
-                    regex.set_last_index(zun_core::wtf16::len16(&input[..end]) as f64);
+                    regex.set_last_index(found.end16 as f64);
                 }
-                Some(Ok(Some((start, groups, names))))
+                Some(Ok(Some((found.start16, found.groups, names))))
             }
         }
     }
@@ -286,7 +285,7 @@ impl Heap {
     ) -> Option<Result<Vec<(usize, usize, Vec<Option<String>>)>, zun_core::RegexError>> {
         self.regexes.get(&(object.addr() as usize)).map(|regex| {
             let global = force_global || regex.flags().contains('g');
-            regex.match_spans(input, global)
+            regex.match_spans16(input, global)
         })
     }
 
@@ -323,7 +322,7 @@ impl Heap {
     ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
         let (spans, names) = {
             let regex = self.regexes.get(&(object.addr() as usize))?;
-            match regex.match_spans(input, false) {
+            match regex.match_spans16(input, false) {
                 Ok(spans) => (spans, regex.group_names()),
                 Err(error) => return Some(Err(error)),
             }

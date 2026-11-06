@@ -2691,12 +2691,13 @@ impl<'a> Interp<'a> {
                     other => {
                         let needle = self.dyn_to_string(other)?;
                         let mut found = Vec::new();
+                        let to16 = |byte: usize| zun_core::wtf16::len16(&input[..byte]);
                         if needle.is_empty() {
                             let mut boundaries: Vec<usize> =
                                 input.char_indices().map(|(index, _)| index).collect();
                             boundaries.push(input.len());
                             for at in boundaries {
-                                found.push((at, at, vec![Some(String::new())]));
+                                found.push((to16(at), to16(at), vec![Some(String::new())]));
                                 if !all {
                                     break;
                                 }
@@ -2705,7 +2706,7 @@ impl<'a> Interp<'a> {
                             let mut from = 0;
                             while let Some(at) = input[from..].find(&needle) {
                                 let start = from + at;
-                                found.push((start, start + needle.len(), vec![Some(needle.clone())]));
+                                found.push((to16(start), to16(start + needle.len()), vec![Some(needle.clone())]));
                                 from = start + needle.len();
                                 if !all {
                                     break;
@@ -2727,10 +2728,11 @@ impl<'a> Interp<'a> {
                     _ => Vec::new(),
                 };
                 let has_named = group_names.iter().any(|name| name.is_some());
-                let mut out = String::new();
+                let units: Vec<u16> = zun_core::wtf16::encode(&input).collect();
+                let mut out_units: Vec<u16> = Vec::new();
                 let mut last = 0;
                 for (start, end, groups) in spans {
-                    out.push_str(&input[last..start]);
+                    out_units.extend_from_slice(&units[last..start]);
                     let named_groups: Vec<(String, Option<String>)> = if has_named {
                         group_names
                             .iter()
@@ -2749,8 +2751,7 @@ impl<'a> Interp<'a> {
                             None => to_any(Value::Void),
                         })
                         .collect();
-                    let offset = zun_core::wtf16::len16(&input[..start]);
-                    call_args.push(to_any(Value::Float(offset as f64, zun_il::NumKind::F64)));
+                    call_args.push(to_any(Value::Float(start as f64, zun_il::NumKind::F64)));
                     call_args.push(to_any(Value::Str(input.clone())));
                     if has_named {
                         let object = zun_gc::with_current_heap_mut(|heap| {
@@ -2767,11 +2768,11 @@ impl<'a> Interp<'a> {
                         call_args.push(Value::Any(zun_core::Any::object(object.addr() as usize)));
                     }
                     let produced = self.invoke_callback(callback, call_args)?;
-                    out.push_str(&self.dyn_to_string(&produced)?);
+                    out_units.extend(zun_core::wtf16::encode(&self.dyn_to_string(&produced)?));
                     last = end;
                 }
-                out.push_str(&input[last..]);
-                Ok(Value::Str(zun_core::wtf16::normalize(out).into()))
+                out_units.extend_from_slice(&units[last..]);
+                Ok(Value::Str(zun_core::wtf16::from_units(&out_units).into()))
             }
             "stringMethod" => {
                 let receiver = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {

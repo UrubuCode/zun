@@ -10470,12 +10470,29 @@ impl Checker<'_> {
                 if receiver.ty == Ty::String
                     && mname == "replaceAll"
                     && args.len() == 2
-                    && matches!(&args[0], ast::Expr::RegexLiteral { .. })
                 {
                     let first = self.check_expr(cx, &args[0]);
                     let replacement = self.check_expr(cx, &args[1]);
                     if matches!(replacement.ty, Ty::Function(_)) {
                         return self.replace_with_function(span, first, receiver, replacement, true);
+                    }
+                    let (first, replacement) = if first.ty != Ty::RegExp {
+                        let first = if first.ty == Ty::String { first } else { self.to_string_for_parse(first) };
+                        let replacement = if replacement.ty == Ty::String { replacement } else { self.to_string_for_parse(replacement) };
+                        (first, replacement)
+                    } else {
+                        (first, replacement)
+                    };
+                    if first.ty == Ty::String && replacement.ty == Ty::String {
+                        let Some((id, _)) = zun_natives::resolve("string", "replaceAll") else {
+                            self.error(span, "missing String intrinsic `replaceAll`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, first, replacement] },
+                            ty: Ty::String,
+                            span,
+                        };
                     }
                     if replacement.ty != Ty::String && !replacement.ty.is_error() {
                         self.error(replacement.span, "`replaceAll` replacement must be a string");
@@ -10501,6 +10518,11 @@ impl Checker<'_> {
                         && matches!(first.ty, Ty::RegExp | Ty::String)
                     {
                         return self.replace_with_function(span, first, receiver, replacement, false);
+                    }
+                    // A dynamic (`any`) replacement is a function or ToString'd at run time.
+                    if replacement.ty == Ty::Any && matches!(first.ty, Ty::RegExp | Ty::String) {
+                        let first = Self::box_to_any(first);
+                        return self.string_symbol_dispatch(span, 1.0, receiver, first, Some(replacement));
                     }
                     if replacement.ty != Ty::String && !replacement.ty.is_error() {
                         self.error(

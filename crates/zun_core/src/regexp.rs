@@ -50,6 +50,54 @@ pub struct RegexValue {
     engine: Engine,
     /// The `lastIndex` own data property (a JS number; clamped on read).
     last_index: f64,
+    /// Lazily built backtracking twin of an RE2-engine regex, used when a
+    /// non-unicode pattern meets input with astral characters (whose halves
+    /// the RE2 engine cannot address individually).
+    fallback: std::rc::Rc<std::cell::OnceCell<Option<Arc<zun_regex::Regex>>>>,
+}
+
+/// The chars of `input` with every astral character replaced by its two
+/// lone-surrogate stand-ins (the UTF-16 code-unit view of a non-unicode pattern).
+fn split_astral(input: &str) -> Vec<char> {
+    let mut out = Vec::with_capacity(input.len());
+    for c in input.chars() {
+        if c.len_utf8() == 4 && crate::wtf16::lone_unit(c).is_none() {
+            for unit in crate::wtf16::encode(c.encode_utf8(&mut [0u8; 4])) {
+                out.extend(crate::wtf16::from_units(&[unit]).chars());
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A located match (see [`RegexValue::match_full`]).
+#[derive(Debug, Clone)]
+pub struct MatchFull {
+    /// UTF-8 byte offset of the match start.
+    pub start_byte: usize,
+    /// UTF-8 byte offset of the match end.
+    pub end_byte: usize,
+    /// UTF-16 index of the match start.
+    pub start16: usize,
+    /// UTF-16 index of the match end.
+    pub end16: usize,
+    /// The whole match followed by the capture groups.
+    pub groups: Vec<Option<String>>,
+}
+
+/// UTF-8 byte offset of UTF-16 index `index` (clamped to the end; an index
+/// inside a surrogate pair maps to the end of that character).
+pub fn byte_of_utf16(input: &str, index: usize) -> usize {
+    let mut units = 0usize;
+    for (byte, c) in input.char_indices() {
+        if units >= index {
+            return byte;
+        }
+        units += if crate::wtf16::lone_unit(c).is_some() { 1 } else { c.len_utf16() };
+    }
+    input.len()
 }
 
 /// Error returned when a pattern cannot be compiled or a match fails.
@@ -142,14 +190,13 @@ fn expand_replacement(replacement: &str, groups: &[Option<&str>], out: &mut Stri
 }
 
 /// ECMAScript GetSubstitution: `$$`, `$&`, `$\``, `$'`, `$n`, `$nn` and
-/// `$<name>`. `start`/`end` are the match's UTF-8 byte offsets in `input`.
-fn expand_substitution(
+/// `$<name>`. `before`/`after` are the subject text around the match.
+pub fn expand_substitution(
     replacement: &str,
     groups: &[Option<&str>],
     names: &[Option<String>],
-    input: &str,
-    start: usize,
-    end: usize,
+    before: &str,
+    after: &str,
     out: &mut String,
 ) {
     let chars: Vec<char> = replacement.chars().collect();
@@ -173,11 +220,11 @@ fn expand_substitution(
                 i += 2;
             }
             '`' => {
-                out.push_str(&input[..start]);
+                out.push_str(before);
                 i += 2;
             }
             '\'' => {
-                out.push_str(&input[end..]);
+                out.push_str(after);
                 i += 2;
             }
             d if d.is_ascii_digit() => {
@@ -328,6 +375,14 @@ impl RegexValue {
         let backtrack = |source: &str, flags: &str| -> Result<Engine, zun_regex::RegexParseError> {
             // The backtracking engine knows `u` but not `v` (a superset of it).
             let engine_flags = if flags.contains('v') { flags.replace('v', "u") } else { flags.to_owned() };
+            // Without `u` the pattern is a sequence of UTF-16 code units.
+            let unit_source: String;
+            let source = if engine_flags.contains('u') || source.is_ascii() {
+                source
+            } else {
+                unit_source = split_astral(source).into_iter().collect();
+                &unit_source
+            };
             zun_regex::Regex::new(source, &engine_flags).map(|re| Engine::Backtrack(Arc::new(re)))
         };
         let parsed = zun_regex::parse(&source);
@@ -352,7 +407,7 @@ impl RegexValue {
                 }
             },
         };
-        Ok(Self { source, flags, engine, last_index: 0.0 })
+        Ok(Self { source, flags, engine, last_index: 0.0, fallback: Default::default() })
     }
 
     /// The chars the backtracking engine runs over. Without the `u` flag a
@@ -362,17 +417,7 @@ impl RegexValue {
         if self.flags.contains('u') || self.flags.contains('v') || input.is_ascii() {
             return input.chars().collect();
         }
-        let mut out = Vec::with_capacity(input.len());
-        for c in input.chars() {
-            if c.len_utf8() == 4 && crate::wtf16::lone_unit(c).is_none() {
-                for unit in crate::wtf16::encode(c.encode_utf8(&mut [0u8; 4])) {
-                    out.extend(crate::wtf16::from_units(&[unit]).chars());
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
+        split_astral(input)
     }
 
     pub fn flags(&self) -> &str {
@@ -389,17 +434,44 @@ impl RegexValue {
         self.last_index = value;
     }
 
+    /// The engine selected for this pattern.
+    pub fn engine_kind(&self) -> EngineKind {
+        match self.engine {
+            Engine::Re2(_) => EngineKind::Re2,
+            Engine::Backtrack(_) => EngineKind::Backtracking,
+        }
+    }
+
+    fn u_mode(&self) -> bool {
+        self.flags.contains('u') || self.flags.contains('v')
+    }
+
     /// First match at or after the UTF-16 index `start16` (exactly at it when
-    /// `sticky`), as UTF-8 byte offsets plus the group texts. `Ok(None)` when
-    /// there is no match or `start16` lies beyond the input.
-    #[allow(clippy::type_complexity)]
-    pub fn match_from(
+    /// `sticky`). `Ok(None)` when there is no match or `start16` lies beyond
+    /// the input. Positions are reported both as UTF-8 byte offsets (a position
+    /// inside a surrogate pair collapses to the end of the character) and as
+    /// UTF-16 indices.
+    pub fn match_full(
         &self,
         input: &str,
         start16: usize,
         sticky: bool,
-    ) -> Result<Option<(usize, usize, Vec<Option<String>>)>, RegexError> {
-        match &self.engine {
+    ) -> Result<Option<MatchFull>, RegexError> {
+        let twin: Option<Arc<zun_regex::Regex>> = match &self.engine {
+            Engine::Re2(_) if !self.u_mode() && input.chars().any(|c| c.len_utf8() == 4) => self
+                .fallback
+                .get_or_init(|| {
+                    let unit_source: String = split_astral(&self.source).into_iter().collect();
+                    zun_regex::Regex::new(&unit_source, &self.flags).ok().map(Arc::new)
+                })
+                .clone(),
+            _ => None,
+        };
+        let engine = match (&self.engine, &twin) {
+            (Engine::Re2(_), Some(re)) => Engine::Backtrack(re.clone()),
+            (other, _) => other.clone(),
+        };
+        match &engine {
             Engine::Re2(re) => {
                 let mut units = 0usize;
                 let mut start_byte = None;
@@ -420,19 +492,23 @@ impl RegexValue {
                 if sticky && whole.start() != start_byte {
                     return Ok(None);
                 }
-                Ok(Some((
-                    whole.start(),
-                    whole.end(),
-                    captures.iter().map(|group| group.map(|m| m.as_str().to_owned())).collect(),
-                )))
+                Ok(Some(MatchFull {
+                    start_byte: whole.start(),
+                    end_byte: whole.end(),
+                    start16: crate::wtf16::len16(&input[..whole.start()]),
+                    end16: crate::wtf16::len16(&input[..whole.end()]),
+                    groups: captures.iter().map(|group| group.map(|m| m.as_str().to_owned())).collect(),
+                }))
             }
             Engine::Backtrack(re) => {
                 let chars = self.chars_of(input);
-                let pos = if self.flags.contains('u') || self.flags.contains('v') {
+                let unit_len = |c: char| if crate::wtf16::lone_unit(c).is_some() { 1 } else { c.len_utf16() };
+                let u_mode = self.u_mode();
+                let pos = if u_mode {
                     let mut units = 0usize;
                     let mut index = 0usize;
                     while index < chars.len() && units < start16 {
-                        units += if crate::wtf16::lone_unit(chars[index]).is_some() { 1 } else { chars[index].len_utf16() };
+                        units += unit_len(chars[index]);
                         index += 1;
                     }
                     if units < start16 {
@@ -446,24 +522,69 @@ impl RegexValue {
                     return Ok(None);
                 }
                 let found = if sticky { re.match_at_chars(&chars, pos)? } else { re.find_chars(&chars, pos)? };
+                let units_before = |index: usize| -> usize {
+                    if u_mode {
+                        chars[..index].iter().map(|c| unit_len(*c)).sum()
+                    } else {
+                        index
+                    }
+                };
                 Ok(found.map(|m| {
                     let (start, end) = m.span();
-                    (
-                        byte_offset(&chars, start),
-                        byte_offset(&chars, end),
-                        (0..m.len()).map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b))).collect(),
-                    )
+                    MatchFull {
+                        start_byte: byte_offset(&chars, start),
+                        end_byte: byte_offset(&chars, end),
+                        start16: units_before(start),
+                        end16: units_before(end),
+                        groups: (0..m.len()).map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b))).collect(),
+                    }
                 }))
             }
         }
     }
 
-    /// The engine selected for this pattern.
-    pub fn engine_kind(&self) -> EngineKind {
-        match self.engine {
-            Engine::Re2(_) => EngineKind::Re2,
-            Engine::Backtrack(_) => EngineKind::Backtracking,
+    /// [`Self::match_full`] with byte offsets only.
+    #[allow(clippy::type_complexity)]
+    pub fn match_from(
+        &self,
+        input: &str,
+        start16: usize,
+        sticky: bool,
+    ) -> Result<Option<(usize, usize, Vec<Option<String>>)>, RegexError> {
+        Ok(self.match_full(input, start16, sticky)?.map(|m| (m.start_byte, m.end_byte, m.groups)))
+    }
+
+    /// The matches of a global (or single) scan with the ECMAScript advance
+    /// rules: after an empty match the position moves on by one code unit (one
+    /// code point in unicode mode); a match may begin where the last one ended.
+    pub fn match_all_full(&self, input: &str, global: bool) -> Result<Vec<MatchFull>, RegexError> {
+        let total = crate::wtf16::len16(input);
+        let sticky = self.flags.contains('y');
+        let mut out = Vec::new();
+        let mut pos = 0usize;
+        while pos <= total {
+            let Some(m) = self.match_full(input, pos, sticky)? else { break };
+            let (start16, end16) = (m.start16, m.end16);
+            out.push(m);
+            if !global {
+                break;
+            }
+            pos = if end16 == start16 {
+                let step = if self.u_mode() && end16 < total {
+                    let at = byte_of_utf16(input, end16);
+                    match input[at..].chars().next() {
+                        Some(c) if crate::wtf16::lone_unit(c).is_none() && c.len_utf16() == 2 => 2,
+                        _ => 1,
+                    }
+                } else {
+                    1
+                };
+                end16 + step
+            } else {
+                end16
+            };
         }
+        Ok(out)
     }
 
     /// UTF-16 code-unit index of the first match (JS `String.prototype.search`).
@@ -648,45 +769,25 @@ impl RegexValue {
         input: &str,
         global: bool,
     ) -> Result<Vec<(usize, usize, Vec<Option<String>>)>, RegexError> {
-        let mut spans = Vec::new();
-        match &self.engine {
-            Engine::Re2(re) => {
-                for captures in re.captures_iter(input) {
-                    let whole = captures.get(0).expect("group 0 always exists");
-                    spans.push((
-                        whole.start(),
-                        whole.end(),
-                        captures
-                            .iter()
-                            .map(|group| group.map(|m| m.as_str().to_owned()))
-                            .collect(),
-                    ));
-                    if !global {
-                        break;
-                    }
-                }
-            }
-            Engine::Backtrack(re) => {
-                let chars = self.chars_of(input);
-                let mut pos = 0;
-                while pos <= chars.len() {
-                    let Some(m) = re.find_chars(&chars, pos)? else { break };
-                    let (start, end) = m.span();
-                    spans.push((
-                        byte_offset(&chars, start),
-                        byte_offset(&chars, end),
-                        (0..m.len())
-                            .map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b)))
-                            .collect(),
-                    ));
-                    if !global {
-                        break;
-                    }
-                    pos = if end == start { end + 1 } else { end };
-                }
-            }
-        }
-        Ok(spans)
+        Ok(self
+            .match_all_full(input, global)?
+            .into_iter()
+            .map(|m| (m.start_byte, m.end_byte, m.groups))
+            .collect())
+    }
+
+    /// Like [`Self::match_spans`] with UTF-16 offsets (exact inside a surrogate pair).
+    #[allow(clippy::type_complexity)]
+    pub fn match_spans16(
+        &self,
+        input: &str,
+        global: bool,
+    ) -> Result<Vec<(usize, usize, Vec<Option<String>>)>, RegexError> {
+        Ok(self
+            .match_all_full(input, global)?
+            .into_iter()
+            .map(|m| (m.start16, m.end16, m.groups))
+            .collect())
     }
 
     /// Replace the first match, or every match when the regex carries the `g`
@@ -696,13 +797,24 @@ impl RegexValue {
         let mut out = String::new();
         let mut last = 0;
         let names = self.group_names();
-        for (start, end, groups) in self.match_spans(input, global)? {
-            out.push_str(&input[last..start]);
+        let units: Vec<u16> = crate::wtf16::encode(input).collect();
+        let needs_context = replacement.contains("$`") || replacement.contains("$'");
+        let mut pieces: Vec<u16> = Vec::new();
+        for (start, end, groups) in self.match_spans16(input, global)? {
+            pieces.extend_from_slice(&units[last..start]);
             let refs: Vec<Option<&str>> = groups.iter().map(|g| g.as_deref()).collect();
-            expand_substitution(replacement, &refs, &names, input, start, end, &mut out);
+            let (before, after) = if needs_context {
+                (crate::wtf16::from_units(&units[..start]), crate::wtf16::from_units(&units[end..]))
+            } else {
+                (String::new(), String::new())
+            };
+            let mut piece = String::new();
+            expand_substitution(replacement, &refs, &names, &before, &after, &mut piece);
+            pieces.extend(crate::wtf16::encode(&piece));
             last = end;
         }
-        out.push_str(&input[last..]);
+        pieces.extend_from_slice(&units[last..]);
+        out.push_str(&crate::wtf16::from_units(&pieces));
         Ok(out)
     }
 
