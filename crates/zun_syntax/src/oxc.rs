@@ -2571,11 +2571,8 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
         // `new.target`: first-class class values are not modelled yet, so it
         // evaluates to `undefined` (the value it has in every plain call).
         Expression::NewTarget(meta) => {
-            Ok(Expr::Unary {
-                op: crate::ast::UnaryOp::Void,
-                operand: Box::new(Expr::Number { value: 0.0, span: span(meta.span) }),
-                span: span(meta.span),
-            })
+            // The identifier text is `new.target`; the checker resolves it.
+            Ok(Expr::Ident(Name { span: span(meta.span) }))
         }
         other => {
             let dbg = format!("{other:?}");

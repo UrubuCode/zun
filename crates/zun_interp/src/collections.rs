@@ -2863,6 +2863,28 @@ impl<'a> Interp<'a> {
                         None => Err(RunError::BadToken),
                     };
                 }
+                // A static method called through a class value
+                // (`(Cls as any).m()`, `this.m()` in a static): resolved on the
+                // class or its bases.
+                if let Value::Any(desc) = &receiver_concrete {
+                    if let Some(rid) = desc.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
+                        if let Some(mrid) = self.class_static_method(rid, &member) {
+                            let call_args = args[2..]
+                                .iter()
+                                .map(|arg| match arg {
+                                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .ok_or(RunError::BadToken),
+                                    other => Ok(other.clone()),
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let handle = zun_core::FunctionHandle::new(mrid, None);
+                            let result = self.invoke_function_value(handle, call_args)?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::void);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
                 // `Function.prototype.call/apply` on a function value reached
                 // through `any`.
                 if let Value::Function(handle) = &receiver_concrete {

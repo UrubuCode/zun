@@ -814,6 +814,23 @@ impl Interp<'_> {
                             let user_class = token & zun_natives::USER_CLASS_FLAG != 0
                                 && ((token & !zun_natives::USER_CLASS_FLAG) as usize) >= 1
                                 && ((token & !zun_natives::USER_CLASS_FLAG) as usize) <= self.module.tables.type_defs.len();
+                            if user_class && name != "prototype" {
+                                let rid = token & !zun_natives::USER_CLASS_FLAG;
+                                match self.class_static_read(rid, &name) {
+                                    Ok(Some(value)) => {
+                                        stack.push(value);
+                                        continue;
+                                    }
+                                    Ok(None) => {}
+                                    Err(RunError::Thrown(exception)) => {
+                                        if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                            continue;
+                                        }
+                                        return Err(RunError::Thrown(exception));
+                                    }
+                                    Err(error) => return Err(error),
+                                }
+                            }
                             stack.push(if name == "prototype" && user_class {
                                 let proto = self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
                                 Value::Any(zun_core::Any::object(proto.addr() as usize))

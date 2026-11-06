@@ -6586,6 +6586,42 @@ impl Checker<'_> {
                 ty: Ty::Any,
                 span,
             },
+            ast::Expr::Ident(name) if self.text(name) == "new.target" => {
+                // Inside a constructor `new.target` is the class that was
+                // instantiated: the runtime class of `this` (the most-derived
+                // class when reached through a `super(...)` chain). Everywhere
+                // else it is `undefined`.
+                if cx.is_constructor {
+                    if let Some(this_slot) = cx.lookup("this") {
+                        let this_expr = hir::Expr {
+                            ty: cx.locals[this_slot as usize],
+                            kind: hir::ExprKind::Local(this_slot),
+                            span,
+                        };
+                        let boxed = hir::Expr {
+                            kind: hir::ExprKind::BoxAny { value: Box::new(this_expr) },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        let record = hir::Expr {
+                            kind: hir::ExprKind::DynamicGet { object: Box::new(boxed), name: "constructor".to_string() },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::DynamicGet { object: Box::new(record), name: "__classDesc".to_string() },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
+                }
+                let void_zero = ast::Expr::Unary {
+                    op: ast::UnaryOp::Void,
+                    operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                    span,
+                };
+                self.check_expr(cx, &void_zero)
+            }
             ast::Expr::Ident(name) => {
                 let text = self.text(name).to_string();
                 match cx.lookup(&text) {

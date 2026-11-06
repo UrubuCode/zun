@@ -193,6 +193,104 @@ impl Interp<'_> {
         None
     }
 
+    /// TypeDef rid of a user-class descriptor token, when it names a class of
+    /// this module.
+    pub(crate) fn user_class_rid(&self, token: u32) -> Option<u32> {
+        if token & zun_natives::USER_CLASS_FLAG == 0 {
+            return None;
+        }
+        let rid = token & !zun_natives::USER_CLASS_FLAG;
+        (rid >= 1 && (rid as usize) <= self.module.tables.type_defs.len()).then_some(rid)
+    }
+
+    /// Find static method `name` declared by `rid` or inherited along its base
+    /// chain; answers the MethodDef rid.
+    pub(crate) fn class_static_method(&self, rid: u32, name: &str) -> Option<u32> {
+        let mut current = Some(rid);
+        for _ in 0..256 {
+            let r = current?;
+            let def = self.module.tables.type_defs.get((r as usize).wrapping_sub(1))?;
+            for mrid in def.method_start..def.method_end {
+                let Some(method) = self.module.tables.method_defs.get((mrid as usize).wrapping_sub(1)) else {
+                    continue;
+                };
+                if method.is_static && self.module.strings.get(method.name) == name {
+                    return Some(mrid);
+                }
+            }
+            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
+                .then(|| def.base.rid());
+        }
+        None
+    }
+
+    /// `Class.name` read through a class value: a static field, a static
+    /// getter or a static method found on the class or its bases, else the
+    /// class's own name for `name`.
+    pub(crate) fn class_static_read(&mut self, rid: u32, name: &str) -> Result<Option<Value>, RunError> {
+        let mut current = Some(rid);
+        for _ in 0..256 {
+            let Some(r) = current else { break };
+            let Some(def) = self.module.tables.type_defs.get((r as usize).wrapping_sub(1)).cloned() else {
+                break;
+            };
+            for frid in def.field_start..def.field_end {
+                let Some(field) = self.module.tables.field_defs.get((frid as usize).wrapping_sub(1)) else {
+                    continue;
+                };
+                if field.is_static && self.module.strings.get(field.name) == name {
+                    let kind = field.kind;
+                    let value = zun_gc::with_current_heap(|heap| {
+                        if let Some(any) = heap.static_get(r, frid) {
+                            let value = Value::unbox_any(any, heap).unwrap_or(Value::Void);
+                            Some(crate::value::retag_static_numeric(value, kind))
+                        } else {
+                            heap.static_get_function(r, frid).map(Value::Function)
+                        }
+                    });
+                    // An inherited-layout copy that was never initialized on this
+                    // class falls through to the declaring base class.
+                    if let Some(value) = value {
+                        return Ok(Some(value));
+                    }
+                }
+            }
+            let getter = format!("get_{name}");
+            let mut found_getter = None;
+            let mut found_method = None;
+            for mrid in def.method_start..def.method_end {
+                let Some(method) = self.module.tables.method_defs.get((mrid as usize).wrapping_sub(1)) else {
+                    continue;
+                };
+                if !method.is_static {
+                    continue;
+                }
+                let method_name = self.module.strings.get(method.name);
+                if method_name == getter {
+                    found_getter = Some(mrid);
+                } else if method_name == name {
+                    found_method = Some(mrid);
+                }
+            }
+            if let Some(mrid) = found_getter {
+                let handle = zun_core::FunctionHandle::new(mrid, None);
+                return self.invoke_function_value(handle, Vec::new()).map(Some);
+            }
+            if let Some(mrid) = found_method {
+                return Ok(Some(Value::Function(zun_core::FunctionHandle::new(mrid, None))));
+            }
+            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
+                .then(|| def.base.rid());
+        }
+        if name == "name" {
+            let def = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1));
+            if let Some(def) = def {
+                return Ok(Some(Value::Str(self.module.strings.get(def.name).into())));
+            }
+        }
+        Ok(None)
+    }
+
     /// The `Class.prototype` object a typed class instance inherits from.
     pub(crate) fn instance_class_prototype(&self, object: zun_gc::Obj) -> Option<zun_gc::Obj> {
         let typed = zun_gc::with_current_heap(|heap| {
