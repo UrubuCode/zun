@@ -329,6 +329,26 @@ impl RegexValue {
                         i = j;
                         continue;
                     }
+                    if next == b'p' || next == b'P' {
+                        let bad = || RegexError { message: "invalid property name in unicode mode".into() };
+                        if bytes.get(i + 2) != Some(&b'{') {
+                            return Err(bad());
+                        }
+                        let Some(close) = source[i + 3..].find('}') else { return Err(bad()) };
+                        let body = &source[i + 3..i + 3 + close];
+                        let well_formed = match body.split_once('=') {
+                            Some((key, value)) => {
+                                ["General_Category", "gc", "Script", "sc", "Script_Extensions", "scx"].contains(&key)
+                                    && value.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                            }
+                            None => body.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
+                        } && !body.contains(' ');
+                        if !well_formed || regex::Regex::new(&format!(r"\p{{{body}}}")).is_err() {
+                            return Err(bad());
+                        }
+                        i += 4 + close;
+                        continue;
+                    }
                     if next == b'k' && bytes.get(i + 2) != Some(&b'<') {
                         return Err(RegexError { message: "invalid named reference".into() });
                     }

@@ -279,6 +279,7 @@ pub(crate) fn compile(node: &RegexNode, group_count: usize, flags: Flags) -> Pro
         classes: Vec::new(),
         nregs: 0,
         icase: flags.ignore_case,
+        fold_word: flags.ignore_case && flags.unicode,
     };
     c.node(node, false);
     c.insts.push(Inst::Match);
@@ -529,6 +530,8 @@ struct Compiler {
     classes: Vec<CharClass>,
     nregs: usize,
     icase: bool,
+    /// `/iu`: `w` also covers U+017F and U+212A (their case folds are word chars).
+    fold_word: bool,
 }
 
 impl Compiler {
@@ -548,7 +551,12 @@ impl Compiler {
                 self.emit(Inst::Any { back });
             }
             RegexNode::Class(cls) => {
-                self.classes.push(cls.clone());
+                let mut cls = cls.clone();
+                if self.fold_word && !cls.negated && cls.items.contains(&crate::ast::ClassItem::Word) {
+                    cls.items.push(crate::ast::ClassItem::Range('ſ', 'ſ'));
+                    cls.items.push(crate::ast::ClassItem::Range('K', 'K'));
+                }
+                self.classes.push(cls);
                 let idx = self.classes.len() - 1;
                 self.emit(Inst::Class { idx, back });
             }

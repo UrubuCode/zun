@@ -34,14 +34,6 @@ impl Heap {
         object: Obj,
         input: &str,
     ) -> Option<Result<Obj, zun_core::RegexError>> {
-        let matches = match self
-            .regexes
-            .get(&(object.addr() as usize))
-            .map(|regex| regex.captures_all(input))?
-        {
-            Ok(matches) => matches,
-            Err(error) => return Some(Err(error)),
-        };
         let names = self.regexes.get(&(object.addr() as usize))?.group_names();
         let spans = match self
             .regexes
@@ -51,8 +43,8 @@ impl Heap {
             Ok(spans) => spans,
             Err(error) => return Some(Err(error)),
         };
-        let outer = self.alloc_array(matches.len());
-        for (index, (start, _end, groups)) in spans.into_iter().enumerate().take(matches.len()) {
+        let outer = self.alloc_array(spans.len());
+        for (index, (start, _end, groups)) in spans.into_iter().enumerate() {
             let inner = self.alloc_match_array(input, start, groups, &names);
             self.array_set(outer, index, zun_core::Any::object(inner.addr() as usize));
         }
