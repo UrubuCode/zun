@@ -90,11 +90,22 @@ later cleanup pass can clear them deliberately.
 - **FIXED** — `zun_codegen` declared `zun_compiler` as a normal `[dependencies]`
   entry but only used it in `tests/equivalence.rs`; moved to `[dev-dependencies]`
   (commit `7799abf0`), removing a runtime→compile-time edge from the build graph.
-- **OPEN (to audit)** — `zun_compiler → zun_loader`: the compiler uses
-  `ModuleScope` / `ModuleManifest` / `ModuleLoader` to assemble its output. If
-  `zun_loader` is a runtime crate this is a compile-time→runtime violation; the
-  likely fix is to move the module-container contract types into the format
-  layer (`zun_module` or a thin contract crate). Needs a decision before acting.
+- **RESOLVED (documented exception)** — `zun_compiler → zun_loader`: the audit
+  found this is NOT a strict CLAUDE.md breach. `zun_loader` holds the module
+  *container contract* (`ModuleScope`/`ModuleManifest`/`ModuleLoader`/`Export`,
+  pure data/registry over the format crates) AND both the compiler and the VM
+  (`zun_interp`/`zun_vm`) depend on it — so it is a shared lower layer, not a
+  compile↔runtime cross-edge. The only cost is cohesion: the compiler
+  transitively links `zun_loader`'s runtime IO/crypto (ed25519/sha2/ureq).
+  DECISION: document the exception (chosen) rather than create a new crate —
+  priority 5 gates a new crate on a measured `cargo build --timings` win, which
+  this machine cannot run safely (workspace/concurrent builds freeze it). The
+  OPTION, if that win is ever measured: extract a format-layer `zun_scope` crate
+  (ModuleScope/Manifest/Loader-container/Export + byte helpers; deps
+  zun_metadata+zun_module+zun_types only), leaving fetch/trust/index/Zmlib in
+  `zun_loader`, so the compile-time graph stops pulling crypto/network. For now
+  `zun_loader/src/lib.rs` is split into cohesive submodules in-place (no new
+  crate), which also realizes the scope/fetch boundary at the file level.
 - **INTENDED (to document)** — `zun_vm → zun_compiler` is `optional = true`
   (feature-gated): the eval-capable runtime (PLAN §4.1/§5, "one eval-capable
   runtime"; `new Function`/eval compile at runtime). Keep it; document the
