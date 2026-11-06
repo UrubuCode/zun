@@ -12,6 +12,7 @@ mod method_call;
 mod new;
 mod operators;
 mod optional;
+mod spread_optional;
 
 impl Checker<'_> {
     pub(in crate::check) fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
