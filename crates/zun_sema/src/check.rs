@@ -3413,7 +3413,11 @@ impl Checker<'_> {
                 };
                 builtin(self, name, checked, Ty::Array)
             }
-            "freeze" => builtin(self, "objectFreeze", checked, Ty::Any),
+            "freeze" => {
+                // Freezing a RegExp keeps its static type (the same object comes back).
+                let ty = if checked[0].ty == Ty::RegExp { Ty::RegExp } else { Ty::Any };
+                builtin(self, "objectFreeze", checked, ty)
+            }
             "hasOwn" => builtin(self, "objectHasOwn", checked, Ty::Boolean),
             "isFrozen" => builtin(self, "objectIsFrozen", checked, Ty::Boolean),
             "create" => builtin(self, "objectCreate", checked, Ty::DynamicObject),
@@ -3684,7 +3688,7 @@ impl Checker<'_> {
         // The target must be a dynamic receiver (plain object or `any`); a Proxy
         // target is itself a dynamic receiver at runtime.
         // A managed collection target is handed to the natives as a dynamic receiver.
-        if matches!(checked[0].ty, Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_)) {
+        if matches!(checked[0].ty, Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_) | Ty::RegExp) {
             let target = checked.remove(0);
             checked.insert(0, Self::box_to_any(target));
         }
@@ -13746,7 +13750,7 @@ impl Checker<'_> {
                         };
                         hir::Expr {
                             kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
-                            ty: Ty::F64,
+                            ty: Ty::Any,
                             span,
                         }
                     }
@@ -14622,10 +14626,10 @@ impl Checker<'_> {
                             self.error(span, "missing RegExp intrinsic");
                             return self.poison(span);
                         };
-                        let number = self.to_number_for_arg(value);
+                        let held = Self::box_to_any(value);
                         hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, number] },
-                            ty: Ty::F64,
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, held] },
+                            ty: Ty::Any,
                             span,
                         }
                     }

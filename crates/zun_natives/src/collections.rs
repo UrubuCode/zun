@@ -186,8 +186,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "regexpFlags", params: &[RegExp], ret: Str, imp: unavailable },
         NativeFn { name: "regexpFlag", params: &[RegExp, Str], ret: Bool, imp: unavailable },
         NativeFn { name: "regexpTest", params: &[RegExp, Str], ret: Bool, imp: unavailable },
-        NativeFn { name: "regexpLastIndex", params: &[RegExp], ret: F64, imp: unavailable },
-        NativeFn { name: "regexpSetLastIndex", params: &[RegExp, F64], ret: F64, imp: unavailable },
+        NativeFn { name: "regexpLastIndex", params: &[RegExp], ret: Opaque, imp: unavailable },
+        NativeFn { name: "regexpSetLastIndex", params: &[RegExp, Opaque], ret: Opaque, imp: unavailable },
         NativeFn {
             name: "finalizationRegistryNew",
             params: &[Function],

@@ -126,19 +126,106 @@ impl Heap {
         array
     }
 
-    /// The raw `lastIndex` slot of a regex (`None` if not a regex).
-    pub fn regex_last_index(&self, object: Obj) -> Option<f64> {
-        self.regexes.get(&(object.addr() as usize)).map(zun_core::RegexValue::last_index)
+    /// The `lastIndex` value as stored: a number, or whatever user code put there.
+    pub fn regex_last_index_any(&self, object: Obj) -> Option<zun_core::Any> {
+        let regex = self.regexes.get(&(object.addr() as usize))?;
+        if regex.is_last_index_materialized() {
+            Some(self.dynamic_get(object, "lastIndex").unwrap_or_else(zun_core::Any::void))
+        } else {
+            Some(zun_core::Any::float(regex.last_index()))
+        }
     }
 
-    /// Overwrite the `lastIndex` slot; `false` if `object` is not a regex.
+    /// ToLength(ToNumber(`lastIndex`)) -- what `exec` reads (`None` if not a regex).
+    pub fn regex_last_index(&self, object: Obj) -> Option<f64> {
+        let any = self.regex_last_index_any(object)?;
+        let number = match any.tag() {
+            zun_core::AnyTag::Float => any.as_float().unwrap_or(f64::NAN),
+            zun_core::AnyTag::Int => any.as_int().unwrap_or(0) as f64,
+            zun_core::AnyTag::Bool => f64::from(u8::from(any.as_bool().unwrap_or(false))),
+            zun_core::AnyTag::Null => 0.0,
+            zun_core::AnyTag::String => {
+                let text = self.string(any.as_string().unwrap_or(0)).trim().to_owned();
+                if text.is_empty() { 0.0 } else { text.parse::<f64>().unwrap_or(f64::NAN) }
+            }
+            _ => f64::NAN,
+        };
+        Some(if number.is_nan() || number <= 0.0 {
+            0.0
+        } else {
+            number.min(9007199254740991.0).floor()
+        })
+    }
+
+    /// Overwrite the `lastIndex` slot without attribute checks (internal seeding);
+    /// `false` if `object` is not a regex.
     pub fn regex_set_last_index(&mut self, object: Obj, value: f64) -> bool {
-        match self.regexes.get_mut(&(object.addr() as usize)) {
+        let materialized = match self.regexes.get_mut(&(object.addr() as usize)) {
             Some(regex) => {
                 regex.set_last_index(value);
-                true
+                regex.is_last_index_materialized()
             }
+            None => return false,
+        };
+        if materialized {
+            self.dynamic_set(object, "lastIndex".to_owned(), zun_core::Any::float(value));
+        }
+        true
+    }
+
+    /// Move `lastIndex` into the object's property table (a writable,
+    /// non-enumerable, non-configurable data property) so reflection and
+    /// `Object.freeze` can act on it.
+    pub fn regex_materialize_last_index(&mut self, object: Obj) {
+        let Some(regex) = self.regexes.get_mut(&(object.addr() as usize)) else { return };
+        if regex.is_last_index_materialized() {
+            return;
+        }
+        let value = regex.last_index();
+        regex.mark_last_index_materialized();
+        self.ensure_dynamic_entry(object);
+        if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            properties.force_define_data("lastIndex", zun_core::Any::float(value), true, false, false);
+        }
+    }
+
+    /// The checked write of `exec` / `replace` (`Set(R, "lastIndex", v, true)`):
+    /// a `TypeError` when the property is not writable.
+    pub fn regex_store_last_index(&mut self, object: Obj, value: f64) -> Result<(), zun_core::RegexError> {
+        let materialized = match self.regexes.get_mut(&(object.addr() as usize)) {
+            Some(regex) if !regex.is_last_index_materialized() => {
+                regex.set_last_index(value);
+                return Ok(());
+            }
+            Some(_) => true,
             None => false,
+        };
+        if materialized {
+            if !self.dynamic_can_set(object, "lastIndex") {
+                return Err(zun_core::RegexError::new(
+                    "TypeError: Cannot assign to read only property 'lastIndex' of object '[object RegExp]'",
+                ));
+            }
+            self.dynamic_set(object, "lastIndex".to_owned(), zun_core::Any::float(value));
+        }
+        Ok(())
+    }
+
+    /// A user assignment `re.lastIndex = value` of any value.
+    pub fn regex_assign_last_index(&mut self, object: Obj, value: zun_core::Any) -> Result<(), zun_core::RegexError> {
+        match value.tag() {
+            zun_core::AnyTag::Float => self.regex_store_last_index(object, value.as_float().unwrap_or(0.0)),
+            zun_core::AnyTag::Int => self.regex_store_last_index(object, value.as_int().unwrap_or(0) as f64),
+            _ => {
+                self.regex_materialize_last_index(object);
+                if !self.dynamic_can_set(object, "lastIndex") {
+                    return Err(zun_core::RegexError::new(
+                        "TypeError: Cannot assign to read only property 'lastIndex' of object '[object RegExp]'",
+                    ));
+                }
+                self.dynamic_set(object, "lastIndex".to_owned(), value);
+                Ok(())
+            }
         }
     }
 
@@ -151,20 +238,22 @@ impl Heap {
         object: Obj,
         input: &str,
     ) -> Option<Result<Option<(zun_core::MatchFull, Vec<Option<String>>)>, zun_core::RegexError>> {
-        let regex = self.regexes.get_mut(&(object.addr() as usize))?;
-        let flags = regex.flags();
-        let global = flags.contains('g');
-        let sticky = flags.contains('y');
-        let stateful = global || sticky;
-        let raw = regex.last_index();
-        let last_index = if stateful && raw > 0.0 { raw.floor() } else { 0.0 };
+        let (stateful, sticky) = {
+            let flags = self.regexes.get(&(object.addr() as usize))?.flags();
+            (flags.contains('g') || flags.contains('y'), flags.contains('y'))
+        };
+        let raw = self.regex_last_index(object)?;
+        let last_index = if stateful { raw } else { 0.0 };
         let total = zun_core::wtf16::len16(input);
         if last_index > total as f64 {
             if stateful {
-                regex.set_last_index(0.0);
+                if let Err(error) = self.regex_store_last_index(object, 0.0) {
+                    return Some(Err(error));
+                }
             }
             return Some(Ok(None));
         }
+        let regex = self.regexes.get(&(object.addr() as usize))?;
         let found = match regex.match_full(input, last_index as usize, sticky) {
             Ok(found) => found,
             Err(error) => return Some(Err(error)),
@@ -173,13 +262,17 @@ impl Heap {
         match found {
             None => {
                 if stateful {
-                    regex.set_last_index(0.0);
+                    if let Err(error) = self.regex_store_last_index(object, 0.0) {
+                        return Some(Err(error));
+                    }
                 }
                 Some(Ok(None))
             }
             Some(found) => {
                 if stateful {
-                    regex.set_last_index(found.end16 as f64);
+                    if let Err(error) = self.regex_store_last_index(object, found.end16 as f64) {
+                        return Some(Err(error));
+                    }
                 }
                 Some(Ok(Some((found, names))))
             }
@@ -300,29 +393,46 @@ impl Heap {
 
     /// `String.prototype.replace(regex, string)`: first match only.
     pub fn regex_replace_first(
-        &self,
+        &mut self,
         object: Obj,
         input: &str,
         replacement: &str,
     ) -> Option<Result<String, zun_core::RegexError>> {
-        self.regexes
-            .get(&(object.addr() as usize))
-            .map(|regex| regex.replace_template(input, replacement))
+        let spans = match self.regex_replace_spans(object, input, false)? {
+            Ok(spans) => spans,
+            Err(error) => return Some(Err(error)),
+        };
+        let regex = self.regexes.get(&(object.addr() as usize))?;
+        Some(Ok(regex.expand_matches(input, &spans, replacement)))
     }
 
     /// Match spans (byte offsets plus group texts) for a callback-driven
     /// replace: all matches when the regex has the `g` flag, else the first.
     #[allow(clippy::type_complexity)]
     pub fn regex_replace_spans(
-        &self,
+        &mut self,
         object: Obj,
         input: &str,
         force_global: bool,
     ) -> Option<Result<Vec<(usize, usize, Vec<Option<String>>)>, zun_core::RegexError>> {
-        self.regexes.get(&(object.addr() as usize)).map(|regex| {
-            let global = force_global || regex.flags().contains('g');
-            regex.match_spans16(input, global)
-        })
+        let (global, sticky) = {
+            let regex = self.regexes.get(&(object.addr() as usize))?;
+            (force_global || regex.flags().contains('g'), regex.flags().contains('y'))
+        };
+        if !global && sticky {
+            // A sticky, non-global replace is a single `exec` driven by `lastIndex`.
+            return Some(match self.regex_builtin_exec(object, input)? {
+                Ok(Some((found, _))) => Ok(vec![(found.start16, found.end16, found.groups)]),
+                Ok(None) => Ok(Vec::new()),
+                Err(error) => Err(error),
+            });
+        }
+        if global {
+            if let Err(error) = self.regex_store_last_index(object, 0.0) {
+                return Some(Err(error));
+            }
+        }
+        self.regexes.get(&(object.addr() as usize)).map(|regex| regex.match_spans16(input, global))
     }
 
     /// `String.prototype.match` with a global regex: every match's text as an

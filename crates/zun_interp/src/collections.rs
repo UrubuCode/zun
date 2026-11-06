@@ -47,6 +47,31 @@ impl<'a> Interp<'a> {
             return result;
         }
         self.guard_array_native(name, args)?;
+        // Reflection over a regexp sees its `lastIndex` as a real own property.
+        if matches!(
+            name,
+            "reflectSet" | "reflectHas" | "reflectDelete" | "reflectOwnKeys" | "reflectDefineProperty"
+                | "objectDefineProperty" | "objectDefineProperties" | "objectGetOwnPropertyDescriptor"
+                | "objectGetOwnPropertyDescriptors" | "objectGetOwnPropertyNames" | "objectKeys"
+                | "objectValues" | "objectEntries" | "objectFreeze" | "objectIsFrozen" | "objectSeal"
+                | "objectIsSealed" | "objectPreventExtensions" | "objectIsExtensible" | "objectHasOwn"
+                | "deleteStrict"
+        ) {
+            let regex_target = match args.first() {
+                Some(Value::Object(object)) => Some(*object),
+                Some(Value::Any(any)) => any
+                    .as_object()
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+                _ => None,
+            };
+            if let Some(target) = regex_target {
+                zun_gc::with_current_heap_mut(|heap| {
+                    if heap.regex_source(target).is_some() {
+                        heap.regex_materialize_last_index(target);
+                    }
+                });
+            }
+        }
         let object = |value: &Value| match value {
             Value::Object(object) => Some(*object),
             Value::Any(any) => any
@@ -1890,20 +1915,18 @@ impl<'a> Interp<'a> {
             "regexpLastIndex" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
-                let value = zun_gc::with_current_heap(|heap| heap.regex_last_index(object))
+                let value = zun_gc::with_current_heap(|heap| heap.regex_last_index_any(object))
                     .ok_or(RunError::BadToken)?;
-                Ok(Value::Float(value, zun_il::NumKind::F64))
+                Ok(Value::Any(value))
             }
             "regexpSetLastIndex" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Float(number, _) => *number,
-                    Value::Int(number, _) => *number as f64,
-                    _ => return Err(RunError::BadToken),
-                };
-                zun_gc::with_current_heap_mut(|heap| heap.regex_set_last_index(object, value));
-                Ok(Value::Float(value, zun_il::NumKind::F64))
+                let value = args.get(1).ok_or(RunError::BadToken)?.clone();
+                let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap)).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.regex_assign_last_index(object, any))
+                    .map_err(|error| RunError::Native(error.to_string()))?;
+                Ok(Value::Any(any))
             }
             "regexpReplaceAllGuard" => {
                 let regex = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -1930,9 +1953,9 @@ impl<'a> Interp<'a> {
                 })
                 .ok_or(RunError::BadToken)?;
                 let found = if global {
-                    zun_gc::with_current_heap_mut(|heap| {
-                        heap.regex_set_last_index(object, 0.0);
-                        heap.regex_match_global(object, &input)
+                    zun_gc::with_current_heap_mut(|heap| match heap.regex_store_last_index(object, 0.0) {
+                        Ok(()) => heap.regex_match_global(object, &input),
+                        Err(error) => Some(Err(error)),
                     })
                 } else {
                     zun_gc::with_current_heap_mut(|heap| heap.regex_exec(object, &input))
@@ -2148,16 +2171,19 @@ impl<'a> Interp<'a> {
                             Value::Str(text) => text.clone(),
                             _ => return Err(RunError::BadToken),
                         };
-                        let result = zun_gc::with_current_heap(|heap| {
+                        let result = zun_gc::with_current_heap_mut(|heap| {
                             heap.regex_replace_first(object, &input, &replacement)
                         })
                         .ok_or(RunError::BadToken)?
                         .map_err(|error| RunError::Native(error.to_string()))?;
                         zun_gc::with_current_heap_mut(|heap| {
                             if heap.regex_flags(object).is_some_and(|flags| flags.contains('g')) {
-                                heap.regex_set_last_index(object, 0.0);
+                                heap.regex_store_last_index(object, 0.0)
+                            } else {
+                                Ok(())
                             }
-                        });
+                        })
+                        .map_err(|error| RunError::Native(error.to_string()))?;
                         Ok(Value::Str(result.into()))
                     }
                 }
@@ -2704,7 +2730,7 @@ impl<'a> Interp<'a> {
                 };
                 let all = matches!(args.get(3), Some(Value::Bool(true)));
                 let spans: Vec<(usize, usize, Vec<Option<String>>)> = match &search {
-                    Value::Object(regex) => zun_gc::with_current_heap(|heap| {
+                    Value::Object(regex) => zun_gc::with_current_heap_mut(|heap| {
                         heap.regex_replace_spans(*regex, &input, all)
                     })
                     .ok_or(RunError::BadToken)?
@@ -2796,9 +2822,12 @@ impl<'a> Interp<'a> {
                 if let Value::Object(regex) = &search {
                     zun_gc::with_current_heap_mut(|heap| {
                         if heap.regex_flags(*regex).is_some_and(|flags| flags.contains('g')) {
-                            heap.regex_set_last_index(*regex, 0.0);
+                            heap.regex_store_last_index(*regex, 0.0)
+                        } else {
+                            Ok(())
                         }
-                    });
+                    })
+                    .map_err(|error| RunError::Native(error.to_string()))?;
                 }
                 Ok(Value::Str(zun_core::wtf16::from_units(&out_units).into()))
             }

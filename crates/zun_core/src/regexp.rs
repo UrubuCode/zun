@@ -50,6 +50,9 @@ pub struct RegexValue {
     engine: Engine,
     /// The `lastIndex` own data property (a JS number; clamped on read).
     last_index: f64,
+    /// Whether `lastIndex` has moved into the object's dynamic property table
+    /// (so it can carry attributes and any value); `last_index` is then stale.
+    materialized: bool,
     /// Lazily built backtracking twin of an RE2-engine regex, used when a
     /// non-unicode pattern meets input with astral characters (whose halves
     /// the RE2 engine cannot address individually).
@@ -106,6 +109,13 @@ pub fn byte_of_utf16(input: &str, index: usize) -> usize {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegexError {
     message: String,
+}
+
+impl RegexError {
+    /// An error carrying `message` (a leading `TypeError:` names the thrown class).
+    pub fn new(message: impl Into<String>) -> Self {
+        Self { message: message.into() }
+    }
 }
 
 impl core::fmt::Display for RegexError {
@@ -429,7 +439,7 @@ impl RegexValue {
                 }
             },
         };
-        Ok(Self { source, flags, engine, last_index: 0.0, fallback: Default::default() })
+        Ok(Self { source, flags, engine, last_index: 0.0, materialized: false, fallback: Default::default() })
     }
 
     /// The chars the backtracking engine runs over. Without the `u` flag a
@@ -454,6 +464,16 @@ impl RegexValue {
     /// Overwrite the `lastIndex` slot.
     pub fn set_last_index(&mut self, value: f64) {
         self.last_index = value;
+    }
+
+    /// Whether `lastIndex` lives in the object's property table.
+    pub fn is_last_index_materialized(&self) -> bool {
+        self.materialized
+    }
+
+    /// Mark `lastIndex` as living in the object's property table.
+    pub fn mark_last_index_materialized(&mut self) {
+        self.materialized = true;
     }
 
     /// The engine selected for this pattern.
@@ -622,6 +642,10 @@ impl RegexValue {
 
     /// UTF-16 code-unit index of the first match (JS `String.prototype.search`).
     pub fn search(&self, input: &str) -> Result<Option<usize>, RegexError> {
+        // A sticky regexp matches only at index 0.
+        if self.flags.contains('y') {
+            return Ok(self.match_full(input, 0, true)?.map(|found| found.start16));
+        }
         match &self.engine {
             Engine::Re2(re) => Ok(re
                 .find(input)
@@ -827,13 +851,30 @@ impl RegexValue {
     /// flag, expanding `$&`, `$1`..`$9` and `$$` in `replacement`.
     pub fn replace_template(&self, input: &str, replacement: &str) -> Result<String, RegexError> {
         let global = self.flags.contains('g');
+        let matches = self
+            .match_spans16(input, global)?
+            .into_iter()
+            .map(|(start, end, groups)| (start, end, groups))
+            .collect::<Vec<_>>();
+        Ok(self.expand_matches(input, &matches, replacement))
+    }
+
+    /// Substitute `replacement` (with `$` tokens expanded) for each located
+    /// match `(start16, end16, groups)` in `input`.
+    #[allow(clippy::type_complexity)]
+    pub fn expand_matches(
+        &self,
+        input: &str,
+        matches: &[(usize, usize, Vec<Option<String>>)],
+        replacement: &str,
+    ) -> String {
         let mut out = String::new();
         let mut last = 0;
         let names = self.group_names();
         let units: Vec<u16> = crate::wtf16::encode(input).collect();
         let needs_context = replacement.contains("$`") || replacement.contains("$'");
         let mut pieces: Vec<u16> = Vec::new();
-        for (start, end, groups) in self.match_spans16(input, global)? {
+        for (start, end, groups) in matches.iter().map(|(a, b, c)| (*a, *b, c)) {
             pieces.extend_from_slice(&units[last..start]);
             let refs: Vec<Option<&str>> = groups.iter().map(|g| g.as_deref()).collect();
             let (before, after) = if needs_context {
@@ -848,7 +889,7 @@ impl RegexValue {
         }
         pieces.extend_from_slice(&units[last..]);
         out.push_str(&crate::wtf16::from_units(&pieces));
-        Ok(out)
+        out
     }
 
     pub fn source(&self) -> &str {
