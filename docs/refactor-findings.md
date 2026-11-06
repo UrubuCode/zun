@@ -122,3 +122,12 @@ code moved verbatim). So the `fmt --check` gate is blocked by a rustfmt
 limitation on these files, independent of this session's refactor. A real fix
 would hand-wrap the offending lines in those 5 files or adjust `rustfmt.toml`;
 out of scope for a behavior-preserving reorganization.
+
+## Benchmark baseline (post-refactor, recorded)
+
+`cargo run --release --example bench -p zun_codegen` (the interpreter/JIT bench):
+- interpreter Tier 0 arithmetic loop: 264.9 ns/iter; JIT Tier 1: 2.34 ns/iter
+- i32 Map mutation loop: interp 659.7 ns/iter; JIT 36.4 ns/iter
+- field load/store loop (Tier 0): 266.6 ns/iter
+Matches the pre-refactor call_inner baseline (~256-265 ns/iter) — no hot-path
+regression from the interpreter/collections/translate splits.
