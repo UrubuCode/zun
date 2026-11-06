@@ -15,6 +15,7 @@ mod ident;
 mod literal;
 mod mcall_dispatch;
 mod mcall_namespaces;
+mod mcall_number;
 mod mcall_statics;
 mod member;
 mod method_call;
