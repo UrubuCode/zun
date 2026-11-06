@@ -2214,6 +2214,22 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     args,
                     span: span(call.span),
                 }),
+                // `Array.fromAsync(src, mapFn?)` calls the prelude coroutine
+                // `__zunArrayFromAsync`.
+                Expression::StaticMemberExpression(member)
+                    if !member.optional
+                        && member.property.name == "fromAsync"
+                        && matches!(&member.object, Expression::Identifier(id) if id.name == "Array")
+                        && !args.is_empty()
+                        && args.len() <= 2
+                        && !args.iter().any(|a| matches!(a, Expr::Spread { .. })) =>
+                {
+                    Ok(Expr::Call {
+                        callee: crate::ast::synthetic_ident("__zunArrayFromAsync"),
+                        args,
+                        span: span(call.span),
+                    })
+                }
                 // `Intl.fn(args)`: a dotted callee name the checker maps onto a
                 // prelude function (see `Checker::text`).
                 Expression::StaticMemberExpression(member)

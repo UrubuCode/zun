@@ -8886,7 +8886,7 @@ impl Checker<'_> {
                             }
                         }
                         if READ_ONLY.contains(&name.as_str()) && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
-                            if let Some((from_id, _)) = zun_natives::resolve("array", "arrayFrom") {
+                            if let Some((from_id, _)) = zun_natives::resolve("array", "arrayFromArrayLike") {
                                 let source = self.check_expr(cx, &args[0]);
                                 let (slot, tmp) = self.synthetic_local(cx, Ty::Array);
                                 let call = ast::Expr::MethodCall {

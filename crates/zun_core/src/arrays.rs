@@ -58,10 +58,21 @@ impl ArrayStorage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArrayIterator {
     next_index: usize,
+    /// 0 = values, 1 = keys, 2 = entries.
+    mode: u8,
 }
 
 impl ArrayIterator {
-    pub fn new() -> Self { Self { next_index: 0 } }
+    pub fn new() -> Self { Self { next_index: 0, mode: 0 } }
+    pub fn with_mode(mode: u8) -> Self { Self { next_index: 0, mode } }
+    pub fn mode(&self) -> u8 { self.mode }
+    /// Read the element at the cursor and advance, returning its index too.
+    pub fn advance(&mut self, array: &ArrayStorage) -> Option<(usize, Any)> {
+        let index = self.next_index;
+        let value = array.get(index)?;
+        self.next_index += 1;
+        Some((index, value))
+    }
     pub fn next(&mut self, array: &ArrayStorage) -> Option<Any> {
         let value = array.get(self.next_index)?;
         self.next_index += 1;

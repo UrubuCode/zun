@@ -210,12 +210,17 @@ impl Heap {
     }
 
     pub fn alloc_array_iterator(&mut self, array: Obj) -> Option<Obj> {
+        self.alloc_array_iterator_mode(array, 0)
+    }
+
+    /// Live array iterator: mode 0 = values, 1 = keys, 2 = entries.
+    pub fn alloc_array_iterator_mode(&mut self, array: Obj, mode: u8) -> Option<Obj> {
         self.array_len(array)?;
         let iterator = self.alloc(0, 1);
         iterator.set_field(0, array.addr() as u64);
         self.array_iterators.insert(
             iterator.addr() as usize,
-            (array, zun_core::ArrayIterator::new()),
+            (array, zun_core::ArrayIterator::with_mode(mode)),
         );
         Some(iterator)
     }

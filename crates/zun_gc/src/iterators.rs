@@ -3,7 +3,18 @@ use super::{Heap, Obj};
 impl Heap {
     pub fn array_iterator_next(&mut self, iterator: Obj) -> Option<zun_core::Any> {
         let (array, state) = self.array_iterators.get_mut(&(iterator.addr() as usize))?;
-        state.next(self.arrays.get(&(array.addr() as usize))?)
+        let mode = state.mode();
+        let (index, value) = state.advance(self.arrays.get(&(array.addr() as usize))?)?;
+        match mode {
+            1 => Some(zun_core::Any::float(index as f64)),
+            2 => {
+                let pair = self.alloc_array(2);
+                self.array_set(pair, 0, zun_core::Any::float(index as f64));
+                self.array_set(pair, 1, value);
+                Some(zun_core::Any::object(pair.addr() as usize))
+            }
+            _ => Some(value),
+        }
     }
     pub fn array_iterator_done(&self, iterator: Obj) -> Option<bool> {
         let (array, state) = self.array_iterators.get(&(iterator.addr() as usize))?;

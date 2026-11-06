@@ -182,3 +182,24 @@ class MessageChannel {
         this.port2 = b;
     }
 }
+
+// `Array.fromAsync(src, mapFn?)`: drain an async (or sync) iterable into an
+// array, awaiting each value and its mapped result.
+async function __zunArrayFromAsync(src: any, mapFn: any = undefined): Promise<any> {
+    const it: any = __zunAsyncIterOpen(src);
+    const out: any[] = [];
+    let i = 0;
+    while (true) {
+        const r: any = await it.next();
+        if (r.done) {
+            break;
+        }
+        let v: any = r.value;
+        if (mapFn !== undefined) {
+            v = await mapFn(v, i);
+        }
+        out.push(v);
+        i = i + 1;
+    }
+    return out;
+}

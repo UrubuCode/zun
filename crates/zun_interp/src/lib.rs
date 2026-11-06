@@ -1193,6 +1193,12 @@ impl Interp<'_> {
                         stack.push(Value::Void);
                         continue;
                     }
+                    // A builtin class descriptor (e.g. `Array.prototype`) has no
+                    // dynamic properties to read: the lookup yields `undefined`.
+                    if matches!(&object_raw, Value::Any(a) if a.tag() == zun_core::AnyTag::ClassDescriptor) {
+                        stack.push(Value::Void);
+                        continue;
+                    }
                     let object = object_raw.as_object();
                     // `gen["next" | "return" | "throw"]` read off a generator object
                     // is a callable method value, like the static-name read.
@@ -1411,7 +1417,12 @@ impl Interp<'_> {
                                 if heap.array_len(object).is_some() || heap.regex_source(object).is_some() {
                                     heap.ensure_dynamic_entry(object);
                                 }
-                                heap.dynamic_set_symbol(object, symbol, any);
+                                if let Some(handle) = fn_value {
+                                    // A function value rides the symbol-function slot.
+                                    heap.dynamic_set_symbol_function(object, symbol, handle);
+                                } else {
+                                    heap.dynamic_set_symbol(object, symbol, any);
+                                }
                             });
                         }
                         Value::Str(key) if fn_value.is_some() && zun_gc::with_current_heap(|heap| heap.array_len(object).is_none()) => {

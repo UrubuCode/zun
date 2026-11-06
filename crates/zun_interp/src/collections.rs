@@ -3095,6 +3095,17 @@ impl<'a> Interp<'a> {
                             native_args.push(Value::Str(",".into()));
                         }
                         "fill" | "copyWithin" => native_args.resize(4, Value::Void),
+                        "concat" => {
+                            let list = zun_gc::with_current_heap_mut(|heap| {
+                                let list = heap.alloc_array(0);
+                                for value in &call_args {
+                                    let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                    heap.array_push(list, boxed);
+                                }
+                                list
+                            });
+                            native_args = vec![Value::Object(namespace), Value::Object(list)];
+                        }
                         "splice" => {
                             let list = zun_gc::with_current_heap_mut(|heap| {
                                 let list = heap.alloc_array(0);
@@ -4456,29 +4467,8 @@ impl<'a> Interp<'a> {
             "arrayKeys" | "arrayValues" | "arrayEntries" => {
                 let source =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let result = zun_gc::with_current_heap_mut(|heap| {
-                    let length = heap.array_len(source).unwrap_or(0);
-                    let result = heap.alloc_array(length);
-                    for index in 0..length {
-                        let value = match name {
-                            "arrayKeys" => zun_core::Any::float(index as f64),
-                            "arrayValues" => {
-                                heap.array_get(source, index).unwrap_or_else(zun_core::Any::void)
-                            }
-                            _ => {
-                                let element = heap
-                                    .array_get(source, index)
-                                    .unwrap_or_else(zun_core::Any::void);
-                                let pair = heap.alloc_array(2);
-                                heap.array_set(pair, 0, zun_core::Any::float(index as f64));
-                                heap.array_set(pair, 1, element);
-                                zun_core::Any::object(pair.addr() as usize)
-                            }
-                        };
-                        heap.array_set(result, index, value);
-                    }
-                    heap.alloc_array_iterator(result)
-                })
+                let mode = match name { "arrayKeys" => 1, "arrayValues" => 0, _ => 2 };
+                let result = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator_mode(source, mode))
                 .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(result))
             }
@@ -5310,6 +5300,27 @@ impl<'a> Interp<'a> {
                         .unwrap_or(Value::Void),
                     other => other.clone(),
                 };
+                if let Value::Str(text) = &concrete {
+                    // A string is array-like over its UTF-16 code units. Rust
+                    // strings cannot hold lone surrogates, so the low half of an
+                    // astral character is a U+FFFD placeholder (the length holds).
+                    let mut units: Vec<String> = Vec::new();
+                    for ch in text.chars() {
+                        units.push(ch.to_string());
+                        if ch.len_utf16() == 2 {
+                            units.push("\u{FFFD}".to_string());
+                        }
+                    }
+                    let array = zun_gc::with_current_heap_mut(|heap| {
+                        let array = heap.alloc_array(units.len());
+                        for (index, unit) in units.iter().enumerate() {
+                            let value = zun_core::Any::string(heap.intern_string(unit.as_str().into()));
+                            heap.array_set(array, index, value);
+                        }
+                        array
+                    });
+                    return Ok(Value::Object(array));
+                }
                 let Some(source) = (match &concrete {
                     Value::Object(_) => object(&concrete),
                     _ => None,
@@ -5320,6 +5331,10 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Object(source));
                 }
                 let length_value = self.dynamic_member_get(source, "length")?;
+                let length_value = match length_value {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void),
+                    other => other,
+                };
                 let raw = self.to_number_value(length_value)?;
                 let length = if raw.is_nan() || raw <= 0.0 { 0usize } else { raw.trunc().min(4294967295.0) as usize };
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
@@ -5438,7 +5453,7 @@ impl<'a> Interp<'a> {
                                 "Array.from: value is not array-like",
                             ))));
                         };
-                        let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                        let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source).filter(|_| heap.dynamic_get_symbol_function(source, zun_core::WellKnownSymbol::Iterator.id()).is_none()))
                         else {
                             // The mapped form streams the iterable: each element is
                             // mapped as it is produced, and a throwing mapper closes
@@ -5493,7 +5508,16 @@ impl<'a> Interp<'a> {
                             });
                             let array = match drained {
                                 Ok(array) => array,
-                                Err(_) => {
+                                Err(error) => {
+                                    // A present, non-undefined `[Symbol.iterator]` that fails is an error, not an array-like.
+                                    let present = zun_gc::with_current_heap(|heap| {
+                                        heap.dynamic_get_symbol(source, zun_core::WellKnownSymbol::Iterator.id())
+                                            .and_then(|any| Value::unbox_any(any, heap))
+                                            .is_some_and(|v| !matches!(v, Value::Void))
+                                    });
+                                    if present {
+                                        return Err(error);
+                                    }
                                     // An array-like plain object (`{ length: n, 0: .. }`).
                                     let built = zun_gc::with_current_heap_mut(|heap| {
                                         if !heap.is_dynamic_object(source) {
@@ -5619,7 +5643,7 @@ impl<'a> Interp<'a> {
                         // A managed Array keeps its direct fast path; anything
                         // else (a Set/Map or a user `[Symbol.iterator]` object)
                         // is drained through the iteration protocol.
-                        if let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source))
+                        if let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source).filter(|_| heap.dynamic_get_symbol_function(source, zun_core::WellKnownSymbol::Iterator.id()).is_none()))
                         {
                             let roots = [source, target];
                             let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
@@ -7044,6 +7068,8 @@ impl<'a> Interp<'a> {
                             zun_gc::with_current_heap(|heap| {
                                 if heap.array_len(obj).is_some() {
                                     "Array"
+                                } else if heap.array_iterator_done(obj).is_some() {
+                                    "Array Iterator"
                                 } else if heap.generator_state(obj).is_some() {
                                     "Generator"
                                 } else if heap.regex_source(obj).is_some() {
@@ -7774,7 +7800,7 @@ impl<'a> Interp<'a> {
         if is_builtin_iter || zun_gc::with_current_heap(|heap| heap.generator_state(source).is_some()) {
             return Ok(source);
         }
-        if zun_gc::with_current_heap(|heap| heap.array_len(source)).is_some() {
+        if zun_gc::with_current_heap(|heap| heap.array_len(source).is_some() && heap.dynamic_get_symbol_function(source, iterator_id).is_none()) {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(source))
                 .ok_or(RunError::BadToken);
         }
