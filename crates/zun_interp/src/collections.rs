@@ -7424,7 +7424,15 @@ impl<'a> Interp<'a> {
             match descriptor {
                 zun_core::PropertyDescriptor::Data { value, writable, enumerable, configurable } => {
                     zun_gc::with_current_heap_mut(|heap| {
-                        heap.dynamic_set(out, "value".to_owned(), value);
+                        // A function-slot property reports its function as the value.
+                        match heap.dynamic_get_function(obj, key) {
+                            Some(handle) => {
+                                heap.dynamic_set_function(out, "value", handle);
+                            }
+                            None => {
+                                heap.dynamic_set(out, "value".to_owned(), value);
+                            }
+                        }
                     });
                     set_bool("writable", writable);
                     set_bool("enumerable", enumerable);
