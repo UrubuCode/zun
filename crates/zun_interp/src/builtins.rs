@@ -215,6 +215,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "arrayDeleteIndex",
         "arrayPushHole",
         "arrayHas",
+        "collectionHas",
         "reflectDelete",
         "reflectSet",
         "reflectDefineProperty",

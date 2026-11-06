@@ -10803,6 +10803,35 @@ impl Checker<'_> {
                 {
                     return self.check_data_view_method(cx, receiver, mname.as_str(), args, span);
                 }
+                // ES2025 Set methods lower to the prelude `__zunSetOp*` helpers,
+                // which follow the set-like protocol on the argument.
+                if receiver.ty == Ty::Set
+                    && args.len() == 1
+                    && matches!(
+                        mname.as_str(),
+                        "union" | "intersection" | "difference" | "symmetricDifference"
+                            | "isSubsetOf" | "isSupersetOf" | "isDisjointFrom"
+                    )
+                {
+                    let predicate = mname.starts_with("is");
+                    let helper = if predicate { "__zunSetOpBool" } else { "__zunSetOpSet" };
+                    if let Some(&func) = self.by_name.get(helper) {
+                        let argument = self.check_expr(cx, &args[0]);
+                        let op = hir::Expr {
+                            kind: hir::ExprKind::String(mname.clone()),
+                            ty: Ty::String,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::Call {
+                                func,
+                                args: vec![receiver, op, Self::box_to_any(argument)],
+                            },
+                            ty: if predicate { Ty::Boolean } else { Ty::Set },
+                            span,
+                        };
+                    }
+                }
                 // `ArrayBuffer.prototype.transfer(newLength?)` and
                 // `transferToFixedLength(newLength?)` (NUCLEUS #17). Hand-lowered
                 // rather than routed through the fixed-arity `managed_method`
@@ -11215,7 +11244,7 @@ impl Checker<'_> {
                 if let Some((native_name, return_ty, expected)) = managed_method {
                     // A callback method's optional `thisArg` is bound onto the
                     // callback (`cb.bind(thisArg)`) before the native runs.
-                    let this_arg_ast = if receiver.ty == Ty::Array
+                    let this_arg_ast = if matches!(receiver.ty, Ty::Array | Ty::Map | Ty::Set)
                         && expected.len() == 1
                         && args.len() == 2
                         && expected[0] == Ty::Function(hir::DYNAMIC_FUNCTION)
@@ -11224,7 +11253,7 @@ impl Checker<'_> {
                     } else {
                         None
                     };
-                    let args = if receiver.ty == Ty::Array
+                    let args = if matches!(receiver.ty, Ty::Array | Ty::Map | Ty::Set)
                         && expected.len() == 1
                         && args.len() == 2
                         && expected[0] == Ty::Function(hir::DYNAMIC_FUNCTION)
@@ -15252,6 +15281,17 @@ impl Checker<'_> {
             Ty::Array => "arrayHas",
             Ty::Proxy => "proxyHas",
             Ty::DynamicObject | Ty::Any => "reflectHas",
+            Ty::Map | Ty::Set | Ty::WeakMap | Ty::WeakSet => {
+                let Some((id, _)) = zun_natives::resolve("collections", "collectionHas") else {
+                    self.error(span, "missing `collectionHas` intrinsic");
+                    return self.poison(span);
+                };
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+                    ty: Ty::Boolean,
+                    span,
+                };
+            }
             Ty::Error => return self.poison(span),
             other => {
                 self.error(

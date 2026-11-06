@@ -185,6 +185,34 @@ class __BuiltinSet {
         });
     }
 
+    union(other: any): any {
+        return __zunSetOpSet(this.inner, "union", other);
+    }
+
+    intersection(other: any): any {
+        return __zunSetOpSet(this.inner, "intersection", other);
+    }
+
+    difference(other: any): any {
+        return __zunSetOpSet(this.inner, "difference", other);
+    }
+
+    symmetricDifference(other: any): any {
+        return __zunSetOpSet(this.inner, "symmetricDifference", other);
+    }
+
+    isSubsetOf(other: any): any {
+        return __zunSetOpBool(this.inner, "isSubsetOf", other);
+    }
+
+    isSupersetOf(other: any): any {
+        return __zunSetOpBool(this.inner, "isSupersetOf", other);
+    }
+
+    isDisjointFrom(other: any): any {
+        return __zunSetOpBool(this.inner, "isDisjointFrom", other);
+    }
+
     *[Symbol.iterator](): any {
         for (const value of this.inner.values()) {
             yield value;
@@ -250,6 +278,9 @@ class __BuiltinWeakMap {
 // collection, then add each element / entry (a primitive key throws).
 function __zunWeakSetFrom(items: any): WeakSet<any> {
     const set = new WeakSet<any>();
+    if (items === undefined || items === null) {
+        return set;
+    }
     for (const value of items) {
         set.add(value);
     }
@@ -258,6 +289,9 @@ function __zunWeakSetFrom(items: any): WeakSet<any> {
 
 function __zunWeakMapFrom(items: any): WeakMap<any, any> {
     const map = new WeakMap<any, any>();
+    if (items === undefined || items === null) {
+        return map;
+    }
     for (const entry of items) {
         map.set(entry[0], entry[1]);
     }
@@ -296,4 +330,191 @@ function __zunErrorProtoToString(value: any): string {
         return name;
     }
     return name + ": " + message;
+}
+
+// ES2025 Set methods (union, intersection, ...). `o` is the receiver's native
+// Set data; `other` is the set-like argument whose `size`, `has` and `keys`
+// members are read once, in that order (GetSetRecord), and then driven exactly
+// as the specification dictates.
+function __zunSetLikeHas(other: any, hasFn: any, native: boolean, value: any): boolean {
+    if (native) {
+        return other.has(value) ? true : false;
+    }
+    return hasFn.call(other, value) ? true : false;
+}
+
+function __zunSetLikeKeys(other: any, keysFn: any, native: boolean): any {
+    const iter: any = native ? other.keys() : keysFn.call(other);
+    if (iter === null || iter === undefined || (typeof iter !== "object" && typeof iter !== "function")) {
+        throw new TypeError("keys() result is not an object");
+    }
+    return iter;
+}
+
+function __zunIterNext(iter: any, nextFn: any, native: boolean): any {
+    return native ? iter.next() : nextFn.call(iter);
+}
+
+function __zunIterClose(iter: any, native: boolean): void {
+    if (native) {
+        return;
+    }
+    const ret: any = iter.return;
+    if (ret !== undefined && ret !== null) {
+        ret.call(iter);
+    }
+}
+
+function __zunSetOp(o: Set<any>, op: string, other: any): any {
+    if (other === null || other === undefined || (typeof other !== "object" && typeof other !== "function")) {
+        throw new TypeError("The \"other\" argument must be set-like");
+    }
+    const rawSize: any = other.size;
+    if (typeof rawSize === "bigint") {
+        throw new TypeError("Cannot convert a BigInt value to a number");
+    }
+    const numSize: number = Number(rawSize);
+    if (numSize !== numSize) {
+        throw new TypeError("The 'size' property must be a number");
+    }
+    const otherSize: number = numSize === Infinity || numSize === -Infinity ? numSize : Math.trunc(numSize);
+    if (otherSize < 0) {
+        throw new RangeError("'" + String(otherSize) + "' is an invalid size");
+    }
+    // Native Set / Map arguments answer `has` / `keys` through the dynamic
+    // collection dispatch (they carry no function-valued properties).
+    const native: boolean = other instanceof Set || other instanceof Map;
+    let hasFn: any = undefined;
+    let keysFn: any = undefined;
+    if (!native) {
+        hasFn = other.has;
+        if (typeof hasFn !== "function") {
+            throw new TypeError("The 'has' property must be a function");
+        }
+        keysFn = other.keys;
+        if (typeof keysFn !== "function") {
+            throw new TypeError("The 'keys' property must be a function");
+        }
+    }
+    const thisSize: number = Number(o.size);
+    const result = new Set<any>();
+    if (op === "union" || op === "symmetricDifference") {
+        const iter: any = __zunSetLikeKeys(other, keysFn, native);
+        const nextFn: any = native ? undefined : iter.next;
+        for (const v of o) {
+            result.add(v);
+        }
+        while (true) {
+            const step: any = __zunIterNext(iter, nextFn, native);
+            if (step === null || step === undefined || (typeof step !== "object" && typeof step !== "function")) {
+                throw new TypeError("Iterator result is not an object");
+            }
+            if (step.done) {
+                break;
+            }
+            const value: any = step.value === 0 ? 0 : step.value;
+            if (op === "union") {
+                result.add(value);
+            } else if (o.has(value)) {
+                result.delete(value);
+            } else {
+                result.add(value);
+            }
+        }
+        return result;
+    }
+    if (op === "isSupersetOf") {
+        if (thisSize < otherSize) {
+            return false;
+        }
+        const iter: any = __zunSetLikeKeys(other, keysFn, native);
+        const nextFn: any = native ? undefined : iter.next;
+        while (true) {
+            const step: any = __zunIterNext(iter, nextFn, native);
+            if (step === null || step === undefined || (typeof step !== "object" && typeof step !== "function")) {
+                throw new TypeError("Iterator result is not an object");
+            }
+            if (step.done) {
+                return true;
+            }
+            if (!o.has(step.value)) {
+                __zunIterClose(iter, native);
+                return false;
+            }
+        }
+    }
+    if (op === "isSubsetOf") {
+        if (thisSize > otherSize) {
+            return false;
+        }
+        const snapshot: any[] = [...o];
+        for (const e of snapshot) {
+            if (!__zunSetLikeHas(other, hasFn, native, e)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    // intersection, difference, isDisjointFrom: walk the smaller side.
+    if (op === "difference") {
+        for (const v of o) {
+            result.add(v);
+        }
+    }
+    if (thisSize <= otherSize) {
+        const snapshot: any[] = [...o];
+        for (const e of snapshot) {
+            const inOther: boolean = __zunSetLikeHas(other, hasFn, native, e) ? true : false;
+            if (op === "isDisjointFrom") {
+                if (inOther) {
+                    return false;
+                }
+            } else if (op === "intersection") {
+                if (inOther) {
+                    result.add(e);
+                }
+            } else if (inOther) {
+                result.delete(e);
+            }
+        }
+    } else {
+        const iter: any = __zunSetLikeKeys(other, keysFn, native);
+        const nextFn: any = native ? undefined : iter.next;
+        while (true) {
+            const step: any = __zunIterNext(iter, nextFn, native);
+            if (step === null || step === undefined || (typeof step !== "object" && typeof step !== "function")) {
+                throw new TypeError("Iterator result is not an object");
+            }
+            if (step.done) {
+                break;
+            }
+            const value: any = step.value === 0 ? 0 : step.value;
+            if (op === "isDisjointFrom") {
+                if (o.has(value)) {
+                    __zunIterClose(iter, native);
+                    return false;
+                }
+            } else if (op === "intersection") {
+                if (o.has(value)) {
+                    result.add(value);
+                }
+            } else {
+                result.delete(value);
+            }
+        }
+    }
+    if (op === "isDisjointFrom") {
+        return true;
+    }
+    return result;
+}
+
+function __zunSetOpSet(o: Set<any>, op: string, other: any): Set<any> {
+    const result: Set<any> = __zunSetOp(o, op, other);
+    return result;
+}
+
+function __zunSetOpBool(o: Set<any>, op: string, other: any): boolean {
+    const result: boolean = __zunSetOp(o, op, other);
+    return result;
 }

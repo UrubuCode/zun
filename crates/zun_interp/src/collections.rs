@@ -83,7 +83,9 @@ impl<'a> Interp<'a> {
         // A valid weak key: an object (or a function, via its cell).
         let weak_key = |value: &Value| match value {
             Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| heap.function_cell(*handle))),
-            other => object(other),
+            other => object(other).filter(|candidate| {
+                zun_gc::with_current_heap(|heap| heap.bigint_value(*candidate).is_none())
+            }),
         };
         // A Promise callback argument: a function value, or absent (the lowering
         // passes `null`/`undefined` for an omitted `then`/`catch`/`finally` slot).
@@ -2315,6 +2317,34 @@ impl<'a> Interp<'a> {
                     heap.finalization_unregister_by_token(unregister_token)
                 })))
             }
+            "collectionHas" => {
+                // `key in collection`: prototype members of Map / Set / the weak
+                // collections plus the Object.prototype members they inherit.
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let name = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Ok(Value::Bool(false)),
+                };
+                let (is_map, is_set) = zun_gc::with_current_heap(|heap| {
+                    (heap.map_len(object).is_some(), heap.set_len(object).is_some())
+                });
+                let own: &[&str] = if is_map {
+                    &["size", "get", "set", "has", "delete", "clear", "forEach", "keys", "values", "entries"]
+                } else if is_set {
+                    &["size", "add", "has", "delete", "clear", "forEach", "keys", "values", "entries", "union", "intersection", "difference", "symmetricDifference", "isSubsetOf", "isSupersetOf", "isDisjointFrom"]
+                } else {
+                    &["get", "set", "add", "has", "delete"]
+                };
+                let inherited = [
+                    "constructor", "toString", "toLocaleString", "valueOf", "hasOwnProperty",
+                    "isPrototypeOf", "propertyIsEnumerable", "__proto__", "__defineGetter__",
+                    "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
+                ];
+                let hit = own.contains(&name.as_str())
+                    || inherited.contains(&name.as_str())
+                    || zun_gc::with_current_heap(|heap| heap.dynamic_has(object, &name));
+                Ok(Value::Bool(hit))
+            }
             "reflectHas" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
@@ -3376,6 +3406,32 @@ impl<'a> Interp<'a> {
                     let (is_map, is_set) = zun_gc::with_current_heap(|heap| {
                         (heap.map_len(namespace).is_some(), heap.set_len(namespace).is_some())
                     });
+                    // ES2025 Set methods run the prelude helper that follows the
+                    // set-like protocol on the argument.
+                    if is_set
+                        && matches!(
+                            member.as_ref(),
+                            "union" | "intersection" | "difference" | "symmetricDifference"
+                                | "isSubsetOf" | "isSupersetOf" | "isDisjointFrom"
+                        )
+                    {
+                        let helper = if member.starts_with("is") { "__zunSetOpBool" } else { "__zunSetOpSet" };
+                        if let Some(rid) = self.free_function_rid(helper) {
+                            let other = call_args
+                                .first()
+                                .and_then(|value| zun_gc::with_current_heap_mut(|heap| value.box_any_cell(heap)))
+                                .unwrap_or_else(zun_core::Any::void);
+                            let helper_args = vec![
+                                Value::Object(namespace),
+                                Value::Str(member.as_ref().into()),
+                                Value::Any(other),
+                            ];
+                            let result = self.call(rid, helper_args, None)?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::void);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
                     let native = if is_map {
                         match member.as_ref() {
                             "set" => Some("mapSetChain"),

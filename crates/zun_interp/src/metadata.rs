@@ -95,6 +95,17 @@ impl<'a> Interp<'a> {
         args
     }
 
+    /// The RID of the module-level function `name` (a prelude helper such as
+    /// `__zunSetOpSet`), or `None` when the module does not carry it.
+    pub(crate) fn free_function_rid(&self, name: &str) -> Option<u32> {
+        self.module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| self.module.strings.get(method.name) == name)
+            .map(|index| index as u32 + 1)
+    }
+
     /// The method RID implementing `name` on a typed instance (most-derived
     /// override), or `None` when the object is not a typed instance or has no
     /// such method.
