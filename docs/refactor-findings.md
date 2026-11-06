@@ -113,15 +113,17 @@ later cleanup pass can clear them deliberately.
 
 ## cargo fmt convergence (diagnosed)
 
-`cargo fmt --all -- --check` does not pass, and CANNOT be made to pass by a
-global `cargo fmt --all`: after a full format, 5 files still do not converge
-under rustfmt (it is non-idempotent / cannot break them): `zun_gc/src/tests.rs`,
-`zun_interp/src/collections/array_iterate.rs`, `zun_interp/src/method_tests.rs`,
-`zun_sema/src/check/tests.rs`, `zun_syntax/src/tests.rs` (mostly long-line test
-code moved verbatim). So the `fmt --check` gate is blocked by a rustfmt
-limitation on these files, independent of this session's refactor. A real fix
-would hand-wrap the offending lines in those 5 files or adjust `rustfmt.toml`;
-out of scope for a behavior-preserving reorganization.
+`cargo fmt --all -- --check` does not pass. CORRECTION: this is NOT a rustfmt
+limitation — the content is ordinary formattable code (e.g.
+`zun_interp/src/collections/array_iterate.rs` just needs normal line-wrapping,
+no string-literal/idempotency problem). The real blocker is SCOPE: the gate
+requires the ENTIRE repo (~347 files) to be fmt-clean, and the repo was never
+fmt-clean to begin with (hundreds of pre-existing diffs in files this refactor
+never touched). Making it pass means a repo-wide `cargo fmt --all` reformat
+commit — behavior-neutral and reversible, but a large change unrelated to the
+"reorganize in small steps" mandate and not requested. It is available on
+request; the few files that needed a second `cargo fmt` pass (the 5 new/extracted
+ones) format cleanly when run through rustfmt directly.
 
 ## Benchmark baseline (post-refactor, recorded)
 
