@@ -84,3 +84,24 @@ mod tests {
         assert_eq!(to_utf8_lossy(&s), "a\u{FFFD}b\u{FFFD}\u{1F600}");
     }
 }
+
+/// Concatenate two strings, merging a trailing lone high surrogate on the left
+/// with a leading lone low surrogate on the right into one astral scalar.
+pub fn concat(left: &str, right: &str) -> String {
+    let high = left.chars().next_back().and_then(lone_unit).filter(|u| (0xD800..0xDC00).contains(u));
+    let low = right.chars().next().and_then(lone_unit).filter(|u| (0xDC00..0xE000).contains(u));
+    if let (Some(h), Some(l)) = (high, low) {
+        let head = &left[..left.len() - 4];
+        let tail = &right[4..];
+        let mut out = String::with_capacity(left.len() + right.len());
+        out.push_str(head);
+        out.push_str(&from_units(&[h, l]));
+        out.push_str(tail);
+        out
+    } else {
+        let mut out = String::with_capacity(left.len() + right.len());
+        out.push_str(left);
+        out.push_str(right);
+        out
+    }
+}

@@ -9463,8 +9463,23 @@ impl Checker<'_> {
                         }
                     }
                 }
-                let receiver = self.check_expr(cx, receiver);
+                let mut receiver = self.check_expr(cx, receiver);
                 let mname = self.text(method).to_string();
+                // An integer-typed receiver (`s.codePointAt(0)!`) is a JS number:
+                // widen it so the `Number.prototype` methods apply.
+                if receiver.ty.is_int()
+                    && matches!(
+                        mname.as_str(),
+                        "toString" | "toFixed" | "toExponential" | "toPrecision" | "toLocaleString" | "valueOf"
+                    )
+                {
+                    let receiver_span = receiver.span;
+                    receiver = hir::Expr {
+                        kind: hir::ExprKind::Convert { value: Box::new(receiver) },
+                        ty: Ty::F64,
+                        span: receiver_span,
+                    };
+                }
                 // `Object.prototype` instance reflectors over typed, dynamic, or
                 // `any` receivers. Checked before the generic `any` member-call
                 // path so they are not swallowed by dynamic dispatch.
@@ -12697,6 +12712,19 @@ impl Checker<'_> {
                             args: if name == "RegExp" || name == "BigInt" || name == "Proxy" {
                                 let mut checked: Vec<hir::Expr> =
                                     args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                                if name == "RegExp" {
+                                    // A dynamic (`any`) pattern or flags operand goes
+                                    // through ToString, as `new RegExp(x)` does.
+                                    let mut converted = Vec::with_capacity(checked.len());
+                                    for arg in checked.drain(..) {
+                                        converted.push(if arg.ty == Ty::Any {
+                                            self.to_string_for_parse(arg)
+                                        } else {
+                                            arg
+                                        });
+                                    }
+                                    checked = converted;
+                                }
                                 if name == "RegExp" && checked.len() == 1 {
                                     // `regexpNew(pattern, flags)`: default to no flags.
                                     checked.push(hir::Expr {

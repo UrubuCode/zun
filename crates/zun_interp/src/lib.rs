@@ -1733,7 +1733,7 @@ impl Interp<'_> {
                         other => other,
                     };
                     let (a, b) = (unbox(a), unbox(b));
-                    stack.push(Value::Str(format!("{}{}", a.as_str(), b.as_str()).into()));
+                    stack.push(Value::Str(zun_core::wtf16::concat(a.as_str(), b.as_str()).into()));
                 }
                 Opcode::CmpEq => cmp(&mut stack, true)?,
                 Opcode::CmpNe => cmp(&mut stack, false)?,
