@@ -8665,6 +8665,21 @@ impl Checker<'_> {
                             }
                             _ => None,
                         };
+                        if let (Some(owner), ast::Expr::String { value, .. }) = (&proto_owner, &args[1]) {
+                            // A user class: its prototype owns exactly the declared
+                            // instance methods and accessors (plus `constructor`).
+                            if let Some(&class_idx) = self.classes_by_name.get(owner) {
+                                let own = &self.methods_by_class[class_idx as usize];
+                                let present = value == "constructor"
+                                    || [value.clone(), format!("get_{value}"), format!("set_{value}")]
+                                        .iter()
+                                        .any(|n| {
+                                            own.get(n).is_some_and(|&f| !self.signatures[f as usize].is_static)
+                                        });
+                                return hir::Expr { kind: hir::ExprKind::Boolean(present), ty: Ty::Boolean, span };
+                            }
+                        }
+                        let proto_owner = proto_owner;
                         if let (Some(owner), ast::Expr::String { .. }) = (proto_owner, &args[1]) {
                             if !self.classes_by_name.contains_key(&owner) {
                                 if let ast::Expr::String { value, .. } = &args[1] {
@@ -11915,10 +11930,17 @@ impl Checker<'_> {
                                             Ty::Function(hir::DYNAMIC_FUNCTION),
                                         )
                                     {
-                                        self.error(
-                                            executor.span,
-                                            "`new Promise` expects an executor function",
-                                        );
+                                        // A non-callable executor (reachable through an
+                                        // `as any` cast) throws a TypeError at runtime.
+                                        let throw = self.runtime_type_error(cx, span);
+                                        return hir::Expr {
+                                            kind: hir::ExprKind::Sequence {
+                                                effect: Box::new(executor),
+                                                value: Box::new(throw),
+                                            },
+                                            ty: Ty::Any,
+                                            span,
+                                        };
                                     }
                                     let Some((id, _)) = zun_natives::resolve("promise", "promiseNewExecutor") else {
                                         self.error(span, "missing Promise intrinsic `promiseNewExecutor`");
@@ -12898,6 +12920,19 @@ impl Checker<'_> {
                                         span,
                                     };
                                 }
+                            }
+                        }
+                        // A static accessor read (`Class.prop` with `static get prop()`).
+                        if let Some(func) = self.method_of(class_index, &format!("get_{fname}")) {
+                            if self.signatures[func as usize].is_static
+                                && self.signatures[func as usize].params.is_empty()
+                            {
+                                let ty = self.signatures[func as usize].return_ty;
+                                return hir::Expr {
+                                    kind: hir::ExprKind::StaticCall { func, args: Vec::new() },
+                                    ty,
+                                    span,
+                                };
                             }
                         }
                         // A static method read as a value (`const f = A.method`).

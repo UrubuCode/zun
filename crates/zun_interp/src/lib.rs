@@ -810,7 +810,18 @@ impl Interp<'_> {
                     // of a descriptor yield undefined.
                     if let Value::Any(descriptor) = &concrete {
                         if descriptor.as_class_descriptor().is_some() {
-                            stack.push(if name == "prototype" { Value::Any(*descriptor) } else { Value::Void });
+                            let token = descriptor.as_class_descriptor().unwrap_or(0);
+                            let user_class = token & zun_natives::USER_CLASS_FLAG != 0
+                                && ((token & !zun_natives::USER_CLASS_FLAG) as usize) >= 1
+                                && ((token & !zun_natives::USER_CLASS_FLAG) as usize) <= self.module.tables.type_defs.len();
+                            stack.push(if name == "prototype" && user_class {
+                                let proto = self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
+                                Value::Any(zun_core::Any::object(proto.addr() as usize))
+                            } else if name == "prototype" {
+                                Value::Any(*descriptor)
+                            } else {
+                                Value::Void
+                            });
                             continue;
                         }
                     }
@@ -1035,7 +1046,28 @@ impl Interp<'_> {
                                     && heap.array_len(object).is_none()
                                     && object.type_rid() >= 1
                             });
-                            if !(typed_instance && self.instance_member_set(object, &name, &value)) {
+                            let handled = typed_instance && self.instance_member_set(object, &name, &value);
+                            // An accessor defined on the class prototype chain
+                            // (`Object.defineProperty(C.prototype, ...)`) takes the write.
+                            let proto_accessor = if typed_instance && !handled {
+                                self.proto_chain_accessor_setter(object, &name)
+                            } else {
+                                None
+                            };
+                            if let Some(setter) = proto_accessor {
+                                if let Some(setter) = setter {
+                                    match self.invoke_function_value(setter, self.with_this_arg(setter, object, vec![Value::Any(any)])) {
+                                        Ok(_) => {}
+                                        Err(RunError::Thrown(exception)) => {
+                                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                                continue;
+                                            }
+                                            return Err(RunError::Thrown(exception));
+                                        }
+                                        Err(error) => return Err(error),
+                                    }
+                                }
+                            } else if !handled {
                                 zun_gc::with_current_heap_mut(|heap| {
                                     if heap.array_len(object).is_some() {
                                         heap.ensure_dynamic_entry(object);

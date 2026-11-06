@@ -129,6 +129,83 @@ impl Interp<'_> {
         })
     }
 
+    /// The real `Class.prototype` object of the user class with TypeDef `rid`:
+    /// created on first use, anchored (non-enumerable) on the realm global so
+    /// it is rooted, and linked to its base class's prototype.
+    pub(crate) fn class_prototype_object(&self, rid: u32) -> zun_gc::Obj {
+        let key = format!("$classProto#{rid}");
+        let existing = zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            heap.dynamic_get(global, &key).and_then(|a| a.as_object())
+        });
+        if let Some(address) = existing {
+            return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+        }
+        let base_rid = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .and_then(|def| {
+                (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
+                    .then(|| def.base.rid())
+            });
+        let base = base_rid.filter(|&b| b >= 1).map(|b| self.class_prototype_object(b));
+        zun_gc::with_current_heap_mut(|heap| {
+            let proto = heap.alloc_dynamic();
+            let any = zun_core::Any::object(proto.addr() as usize);
+            let global = heap.global_object();
+            heap.dynamic_define(global, key, any, false);
+            if let Some(base) = base {
+                heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(base.addr() as usize)));
+            }
+            proto
+        })
+    }
+
+    /// Walk a typed instance's class-prototype chain for an accessor property
+    /// `name`: `Some(setter)` (possibly `None` when getter-only) when found.
+    pub(crate) fn proto_chain_accessor_setter(
+        &self,
+        object: zun_gc::Obj,
+        name: &str,
+    ) -> Option<Option<zun_core::FunctionHandle>> {
+        let mut current = self.instance_class_prototype(object)?;
+        for _ in 0..256 {
+            let step = zun_gc::with_current_heap(|heap| {
+                if heap.dynamic_is_accessor(current, name) {
+                    return Err(Some(heap.dynamic_accessor_setter(current, name)));
+                }
+                if heap.dynamic_has(current, name) {
+                    return Err(None);
+                }
+                Ok(heap
+                    .dynamic_prototype(current)
+                    .and_then(|any| any.as_object())
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }))
+            });
+            match step {
+                Err(found) => return found,
+                Ok(Some(next)) => current = next,
+                Ok(None) => return None,
+            }
+        }
+        None
+    }
+
+    /// The `Class.prototype` object a typed class instance inherits from.
+    pub(crate) fn instance_class_prototype(&self, object: zun_gc::Obj) -> Option<zun_gc::Obj> {
+        let typed = zun_gc::with_current_heap(|heap| {
+            (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
+                && heap.array_len(object).is_none()
+        });
+        let rid = object.type_rid();
+        if !typed || rid < 1 || (rid as usize) > self.module.tables.type_defs.len() {
+            return None;
+        }
+        Some(self.class_prototype_object(rid))
+    }
+
     /// Map a prototype argument to the stored link: an explicit `null` is kept
     /// as a `null` link (no prototype at all); the shared `Object.prototype`
     /// is the default link (stored as none).

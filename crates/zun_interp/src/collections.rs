@@ -6388,6 +6388,9 @@ impl<'a> Interp<'a> {
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
                 };
+                if let Some(class_proto) = self.instance_class_prototype(obj) {
+                    return Ok(Value::Any(zun_core::Any::object(class_proto.addr() as usize)));
+                }
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
                 if prototype.is_none()
                     && zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some())
@@ -8075,12 +8078,14 @@ impl<'a> Interp<'a> {
         name: &str,
     ) -> Result<Option<Value>, RunError> {
         let mut current = receiver;
-        for _ in 0..256 {
-            let Some(next) = zun_gc::with_current_heap(|heap| {
+        for hop in 0..256 {
+            // A typed class instance inherits from its class's prototype object.
+            let class_proto = if hop == 0 { self.instance_class_prototype(receiver) } else { None };
+            let Some(next) = class_proto.or_else(|| zun_gc::with_current_heap(|heap| {
                 heap.dynamic_prototype(current)
                     .and_then(|any| any.as_object())
                     .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-            }) else {
+            })) else {
                 return Ok(None);
             };
             current = next;
