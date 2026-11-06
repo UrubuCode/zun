@@ -105,3 +105,22 @@ impl<'a> Checker<'a> {
         }
     }
 }
+
+impl<'a> Checker<'a> {
+    /// The class that declares static field `name` as seen from `class`: the
+    /// class itself when it declares (or shadows) it, else the nearest base
+    /// that does. An inherited static is stored once, on its declaring class.
+    pub(super) fn static_field_owner(&self, class: u32, name: &str) -> u32 {
+        let mut current = class;
+        loop {
+            let info = &self.classes[current as usize];
+            if info.own_fields.iter().any(|(n, _, is_static, _)| n == name && *is_static) {
+                return current;
+            }
+            match info.base {
+                Some(base) => current = base,
+                None => return class,
+            }
+        }
+    }
+}

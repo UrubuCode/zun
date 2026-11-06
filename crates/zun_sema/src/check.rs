@@ -15,6 +15,8 @@ use zun_syntax::ast;
 mod closures;
 #[path = "class_layout.rs"]
 mod class_layout;
+#[path = "field_init_hoist.rs"]
+mod field_init_hoist;
 #[path = "classes.rs"]
 mod classes;
 #[path = "conditions.rs"]
@@ -106,6 +108,8 @@ fn check_impl(
     allow_external_modules: bool,
     allow_core: bool,
 ) -> hir::Program {
+    let hoisted = field_init_hoist::hoist(source, program);
+    let program = hoisted.as_ref().unwrap_or(program);
     let mut external_by_name: HashMap<String, ExternalFunction> = HashMap::new();
     let mut external_by_module_name: HashMap<(String, String), ExternalFunction> = HashMap::new();
     for function in external_functions {
@@ -11781,7 +11785,7 @@ impl Checker<'_> {
                     self.error(field.span, format!("unknown static field `{}`", self.text(field)));
                     return self.poison(span);
                 };
-                hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot }, ty, span }
+                hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: self.static_field_owner(class_index, self.text(field)), field_slot }, ty, span }
             }
             ast::Expr::PrivateField { object, field, .. } => {
                 let object = &Box::new(self.peel_this_cast(cx, object));
@@ -13027,7 +13031,7 @@ impl Checker<'_> {
                     if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
                         if let Some((field_slot, ty)) = self.static_field_of(class_index, &fname) {
                             return hir::Expr {
-                                kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot },
+                                kind: hir::ExprKind::StaticFieldGet { class: self.static_field_owner(class_index, &fname), field_slot },
                                 ty,
                                 span,
                             };
@@ -14112,7 +14116,7 @@ impl Checker<'_> {
                             if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
                                 self.error(value.span, format!("cannot assign {:?} to static field of type {ty:?}", value.ty));
                             }
-                            return hir::Expr { kind: hir::ExprKind::StaticFieldSet { class: class_index, field_slot, value: Box::new(value) }, ty, span };
+                            return hir::Expr { kind: hir::ExprKind::StaticFieldSet { class: self.static_field_owner(class_index, &fname), field_slot, value: Box::new(value) }, ty, span };
                         }
                     }
                 }

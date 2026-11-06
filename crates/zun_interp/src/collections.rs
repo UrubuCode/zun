@@ -6893,6 +6893,12 @@ impl<'a> Interp<'a> {
                         "bigint"
                     } else if zun_gc::with_current_heap(|heap| heap.function_of_cell(obj).is_some()) {
                         "function"
+                    } else if zun_gc::with_current_heap(|heap| {
+                        heap.is_dynamic_object(obj)
+                            && heap.dynamic_get(obj, "__classDesc").is_some_and(|d| d.as_class_descriptor().is_some())
+                    }) {
+                        // A `constructor` record stands for its class value.
+                        "function"
                     } else {
                         "object"
                     }
