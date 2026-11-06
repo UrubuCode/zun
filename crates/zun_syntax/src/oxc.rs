@@ -2128,6 +2128,11 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             }
             let value = Box::new(value);
             match &assignment.left {
+                AssignmentTarget::AssignmentTargetIdentifier(identifier)
+                    if is_immutable_self_name(identifier.name.as_str()) =>
+                {
+                    Ok(throw_const_assignment(*value, span(assignment.span)))
+                }
                 AssignmentTarget::AssignmentTargetIdentifier(identifier) => Ok(Expr::Assign {
                     target: Name {
                         span: span(identifier.span),
@@ -2186,6 +2191,9 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     if matches!(peel_parens(&cast.expression), Expression::Identifier(_)) =>
                 {
                     let Expression::Identifier(identifier) = peel_parens(&cast.expression) else { unreachable!() };
+                    if is_immutable_self_name(identifier.name.as_str()) {
+                        return Ok(throw_const_assignment(*value, span(assignment.span)));
+                    }
                     Ok(Expr::Assign {
                         target: Name { span: span(identifier.span) },
                         value,
@@ -2360,7 +2368,11 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 // Any other callee is an arbitrary function-valued expression
                 // (`a[b]()`, `f()()`, `(cond ? f : g)(…)`): call it indirectly.
                 other => Ok(Expr::ComputedCall {
-                    callee: Box::new(convert_expression(source, other)?),
+                    callee: Box::new(convert_expression(
+                        source,
+                        // `(1 as any)()`: keep the `any` cast so a literal callee is dynamic.
+                        if matches!(other, Expression::NumericLiteral(_) | Expression::StringLiteral(_) | Expression::BooleanLiteral(_) | Expression::NullLiteral(_)) { &call.callee } else { other },
+                    )?),
                     args,
                     span: span(call.span),
                 }),
@@ -2554,7 +2566,23 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             let id = function.id.as_ref().expect("checked above");
             let name = Name { span: Span::new(id.span.start, id.span.end) };
             let whole = Span::new(function.span.start, function.span.end);
-            let inner = convert_oxc_function(source, function)?;
+            let (body_start, body_end) = function
+                .body
+                .as_ref()
+                .map_or((0, 0), |body| (body.span.start as usize, body.span.end as usize));
+            let body_text = &source[body_start..body_end];
+            let shadowed = ["var", "let", "const", "function", "class"]
+                .iter()
+                .any(|keyword| body_text.contains(&format!("{keyword} {}", id.name)))
+                || contains_word(&source[function.params.span.start as usize..function.params.span.end as usize], id.name.as_str());
+            if !shadowed {
+                IMMUTABLE_SELF_NAMES.with(|names| names.borrow_mut().push(id.name.to_string()));
+            }
+            let inner = convert_oxc_function(source, function);
+            if !shadowed {
+                IMMUTABLE_SELF_NAMES.with(|names| names.borrow_mut().pop());
+            }
+            let inner = inner?;
             let statements = vec![
                 Stmt::Let { name, ty: None, init: inner, span: whole },
                 Stmt::Return { value: Some(Expr::Ident(name)), span: whole },
@@ -2589,8 +2617,14 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     class_expression.span.start + 5,
                 ),
             };
-            let mut class = convert_class_declaration(source, class_expression)
-                .map_err(|errors| errors.join("; "))?;
+            if let Some(id) = class_expression.id.as_ref() {
+                IMMUTABLE_SELF_NAMES.with(|names| names.borrow_mut().push(id.name.to_string()));
+            }
+            let class = convert_class_declaration(source, class_expression);
+            if class_expression.id.is_some() {
+                IMMUTABLE_SELF_NAMES.with(|names| names.borrow_mut().pop());
+            }
+            let mut class = class.map_err(|errors| errors.join("; "))?;
             class.name = Name { span: name_span };
             HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
             Ok(Expr::Ident(Name { span: name_span }))
@@ -2875,6 +2909,13 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         }
         HOISTED_VARS.with(|stack| stack.borrow_mut().push(names));
     }
+    let module_code_spans: Vec<(usize, usize)> = parsed
+        .program
+        .body
+        .iter()
+        .filter(|other| !matches!(other, Statement::FunctionDeclaration(_) | Statement::ClassDeclaration(_)))
+        .map(|other| (other.span().start as usize, other.span().end as usize))
+        .collect();
     for statement in parsed.program.body {
         TOP_LEVEL_BLOCK.with(|cell| {
             cell.set(match &statement {
@@ -3017,11 +3058,26 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                 let name = &source[id.span.start as usize..id.span.end as usize];
                 if !function.generator
                     && !function.r#async
-                    && name_is_reassigned(&source[function.span.start as usize..function.span.end as usize], name) {
-                    hoisted_functions.extend(
-                        convert_statement_list(source, std::slice::from_ref(&statement))
-                            .map_err(|error| vec![error])?,
-                    );
+                    && (name_is_reassigned(&source[function.span.start as usize..function.span.end as usize], name)
+                        // Reassigned by top-level module code (never shadowed
+                        // there, unlike text inside other functions).
+                        || module_code_spans.iter().any(|&(start, end)| {
+                            source.get(start..end).is_some_and(|text| name_is_reassigned(text, name))
+                        })) {
+                    let converted = convert_statement_list(source, std::slice::from_ref(&statement))
+                        .map_err(|error| vec![error])?;
+                    // Hoist to the module head only when earlier text uses the
+                    // name; otherwise keep the textual position so the body
+                    // can capture the globals declared before it.
+                    if source[..function.span.start as usize]
+                        .lines()
+                        .filter(|line| !line.trim_start().starts_with("//"))
+                        .any(|line| contains_word(line, name))
+                    {
+                        hoisted_functions.extend(converted);
+                    } else {
+                        top_level.extend(converted);
+                    }
                     continue;
                 }
             }
@@ -5270,6 +5326,15 @@ fn name_is_reassigned(source: &str, name: &str) -> bool {
         while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
             cursor += 1;
         }
+        // `(name as any) = v`: skip the cast and the closing parenthesis.
+        if bytes[cursor..].starts_with(b"as ") && start > 0 && bytes[..start].trim_ascii_end().ends_with(b"(") {
+            if let Some(close) = source[cursor..].find(')') {
+                cursor += close + 1;
+                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                    cursor += 1;
+                }
+            }
+        }
         if cursor < bytes.len()
             && bytes[cursor] == b'='
             && !matches!(bytes.get(cursor + 1), Some(b'=') | Some(b'>'))
@@ -5489,6 +5554,40 @@ fn convert_destructuring_assignment(
         args: vec![right],
         span: whole,
     })
+}
+
+thread_local! {
+    /// Names of the named function / class expressions being converted: inside
+    /// their bodies the name is an immutable binding.
+    static IMMUTABLE_SELF_NAMES: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn is_immutable_self_name(name: &str) -> bool {
+    IMMUTABLE_SELF_NAMES.with(|names| names.borrow().iter().any(|n| n == name))
+}
+
+/// An assignment to an immutable binding: evaluates the value, then throws
+/// `TypeError: Assignment to constant variable.`
+fn throw_const_assignment(value: Expr, whole: Span) -> Expr {
+    let message = Expr::String { value: "Assignment to constant variable.".to_owned(), span: whole };
+    let statements = vec![
+        Stmt::Expr(value),
+        Stmt::Throw {
+            value: Expr::New { class: crate::ast::synthetic_ident("TypeError"), args: vec![message], span: whole },
+            span: whole,
+        },
+    ];
+    let iife = Expr::Function(FunctionExpr {
+        params: Vec::new(),
+        return_type: None,
+        body: Block { statements, span: whole },
+        is_arrow: true,
+        is_async: false,
+        is_generator: false,
+        span: whole,
+    });
+    Expr::ComputedCall { callee: Box::new(iife), args: Vec::new(), span: whole }
 }
 
 fn peel_parens<'a, 'b>(expression: &'a Expression<'b>) -> &'a Expression<'b> {
