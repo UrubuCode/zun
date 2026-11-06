@@ -3061,6 +3061,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     let mut functions = Vec::new();
     let mut imports = Vec::new();
     let mut classes = Vec::new();
+    let mut enums: Vec<crate::ast::EnumDecl> = Vec::new();
     let mut top_level = Vec::new();
     let mut hoisted_functions: Vec<Stmt> = Vec::new();
     TOP_LEVEL_NAMES.with(|names| {
@@ -3216,6 +3217,20 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                     ]);
                 }
             }
+            continue;
+        }
+        // `enum E { .. }` / `const enum` / `export enum`: members fold to constants in
+        // sema, exactly as for the hand parser.
+        let enum_declaration = match &statement {
+            Statement::TSEnumDeclaration(declaration) => Some(declaration),
+            Statement::ExportDeclaration(export) => match &export.declaration {
+                Declaration::TSEnumDeclaration(declaration) => Some(declaration),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(declaration) = enum_declaration {
+            enums.push(convert_enum_declaration(declaration).map_err(|error| vec![error])?);
             continue;
         }
         let class_declaration = match &statement {
@@ -3396,8 +3411,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         // The OXC adapter does not surface type aliases/interfaces yet; they
         // erase, so this only limits alias resolution on that secondary path.
         type_aliases: Vec::new(),
-        // Likewise, enum declarations are not surfaced on the OXC path yet.
-        enums: Vec::new(),
+        enums,
         top_level,
     })
 }
@@ -4408,6 +4422,45 @@ thread_local! {
     /// `convert_statement_list` right after each statement is converted.
     static PENDING_PRELUDE: std::cell::RefCell<Vec<Stmt>> = const { std::cell::RefCell::new(Vec::new()) };
     static YIELD_STAR_COUNTER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Convert an OXC `enum` declaration into the AST enum (numeric / string / auto
+/// members; computed initializers are rejected).
+fn convert_enum_declaration(
+    declaration: &oxc_ast::ast::TSEnumDeclaration<'_>,
+) -> Result<crate::ast::EnumDecl, String> {
+    use crate::ast::{EnumMember, EnumValue};
+    let mut members = Vec::with_capacity(declaration.body.members.len());
+    for member in &declaration.body.members {
+        let name = match &member.id {
+            oxc_ast::ast::TSEnumMemberName::Identifier(identifier) => Name {
+                span: Span::new(identifier.span.start, identifier.span.end),
+            },
+            _ => return Err("OXC adapter supports identifier enum member names only".into()),
+        };
+        let value = match &member.initializer {
+            None => EnumValue::Auto,
+            Some(Expression::NumericLiteral(number)) => EnumValue::Num(number.value),
+            Some(Expression::UnaryExpression(unary))
+                if matches!(unary.operator, oxc_ast::ast::UnaryOperator::UnaryNegation) =>
+            {
+                match &unary.argument {
+                    Expression::NumericLiteral(number) => EnumValue::Num(-number.value),
+                    _ => return Err("OXC adapter supports literal enum initializers only".into()),
+                }
+            }
+            Some(Expression::StringLiteral(text)) => EnumValue::Str(text.value.as_str().ok_or("enum string initializer must be well-formed")?.to_owned()),
+            Some(_) => return Err("OXC adapter supports literal enum initializers only".into()),
+        };
+        members.push(EnumMember { name, value });
+    }
+    Ok(crate::ast::EnumDecl {
+        name: Name {
+            span: Span::new(declaration.id.span.start, declaration.id.span.end),
+        },
+        members,
+        span: Span::new(declaration.span.start, declaration.span.end),
+    })
 }
 
 thread_local! {

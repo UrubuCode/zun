@@ -12,7 +12,7 @@ fn run_with_std(user: &str) -> Vec<String> {
 /// captured output lines.
 fn run_source(src: &str) -> Vec<String> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -38,7 +38,7 @@ fn run_oxc(src: &str) -> Vec<String> {
 /// Compile and run `src`, expecting a runtime failure; return the error text.
 fn run_source_expect_error(src: &str) -> String {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -532,7 +532,7 @@ fn number_and_string_value_of_are_identity() {
 
 #[test]
 fn string_match_all_global_regex() {
-    let out = run_source(
+    let out = run_with_std(
         r#"function main() {
             let all = "12 34 56".matchAll(/(\d)(\d)/g);
             print(all.length);
@@ -555,7 +555,7 @@ fn string_match_all_without_global_flag_errors() {
         }"#,
     );
     assert!(
-        error.contains("matchAll must be called with a global RegExp"),
+        error.contains("matchAll called with a non-global RegExp"),
         "unexpected error: {error}"
     );
 }
@@ -1258,12 +1258,13 @@ fn array_reduce_without_initial_value() {
 
 #[test]
 fn array_reduce_empty_no_initial_throws() {
-    let error = run_source_expect_error(
-        "function main(): number { \
-            let a = new Array(0); \
-            return a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number)) as number; }",
+    // The thrown value is a real `TypeError` object (JS semantics), so observe
+    // its message from inside the program.
+    let out = run_with_std(
+        "function main() {             let a = new Array(0);             try {                 a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number));                 print(\"no throw\");             } catch (e: any) { print(e.message as string); } }",
     );
-    assert!(error.contains("Reduce of empty array"), "unexpected error: {error}");
+    assert_eq!(out.len(), 1);
+    assert!(out[0].contains("Reduce of empty array"), "unexpected: {out:?}");
 }
 
 #[test]
@@ -2286,7 +2287,7 @@ fn std_prelude_numeric_helpers() {
 fn unknown_import_is_a_sema_error() {
     let src = "import { nope } from \"zun:ghost\";\nfunction main() {}";
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     zun_sema::check(src, &ast, &mut diags);
     assert!(diags.iter().any(|d| d.message.contains("unknown module")));
 }
@@ -2327,7 +2328,7 @@ fn adaptive_tiering_compiles_hot_methods() {
                    while (i < 5) { print(sq(i)); i = i + 1; }\n\
                }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty());
     let module = zun_ilgen::lower(&hir);
@@ -2359,7 +2360,7 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
     let src = "function spin(n: int): int { let i: int = 0; let total: int = 0; while (i < n) { total = total + i; i = i + 1; } return total; }\n\
                function main(): int { return spin(5); }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty());
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty());
@@ -2387,7 +2388,7 @@ fn loop_with_exception_region_keeps_tier0_fallback() {
     let src = "class Error {} function guarded(n: int): int { let i: int = 0; try { while (i < n) { i = i + 1; } } catch (error: Error) { return -1; } return i; }\n\
                function main(): int { return guarded(5); }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty());
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty());
@@ -2409,7 +2410,7 @@ fn osr_rejects_snapshots_with_a_live_evaluation_stack() {
 
     let src = "function main(): int { return 1; }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     let hir = zun_sema::check(src, &ast, &mut diags);
     let module = zun_ilgen::lower(&hir);
     let loaded = zun_vm::load(&module.write()).unwrap();
@@ -2440,7 +2441,7 @@ fn osr_rejects_snapshots_inside_exception_regions() {
 
     let src = "class Error {} function main(): int { try { throw new Error(); } catch (error: Error) { return 42; } }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty());
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty());
@@ -2513,7 +2514,7 @@ fn weak_set_std_class_add_has_delete_round_trip() {
             let s = new WeakSet();
             let a = new Key();
             let b = new Key();
-            print(s.add(a));
+            print(s.add(a) === s);
             print(s.has(a));
             print(s.has(b));
             print(s.delete(a));
@@ -2579,7 +2580,7 @@ fn string_at_slice_concat_and_code_point_at() {
         r#"function main() {
             print("hello".at(-1));
             print("hello".at(0));
-            print("héllo".codePointAt(1));
+            print("héllo".codePointAt(1) as number);
             print("hello".slice(1, 3));
             print("hello".slice(-2));
             print("hello".slice(2));
@@ -2665,7 +2666,7 @@ fn error_cause_carries_the_options_value() {
     let out = run_with_std(
         r#"function main() {
             let e = new Error("boom", { cause: 42 });
-            print(e.message);
+            print(e.message as string);
             if ((e.cause as number) === 42) { print("cause-42"); }
         }"#,
     );
@@ -2743,7 +2744,7 @@ fn error_is_a_realm_global_and_throws() {
             try {
                 throw new Error("nope");
             } catch (e: Error) {
-                print(e.message);
+                print(e.message as string);
             }
             if (typeof globalThis.Error !== "undefined") { print("global-error"); }
         }"#,
@@ -2759,7 +2760,7 @@ fn error_subclass_throws_as_realm_global() {
                 throw new TypeError("wrong type");
             } catch (e: TypeError) {
                 print(e.name);
-                print(e.message);
+                print(e.message as string);
             }
         }"#,
     );
@@ -2773,7 +2774,7 @@ fn error_subclass_throws_as_realm_global() {
 fn compile_with_std(user: &str) -> zun_module::Module {
     let src = zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(&src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(&src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(&src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");

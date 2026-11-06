@@ -11,7 +11,7 @@ fn promise_reject_with_error_object_is_caught_as_error() {
                 await Promise.reject(new Error("rj"));
                 print("no-throw");
             } catch (e: Error) {
-                print("caught:" + e.message);
+                print("caught:" + (e.message as string));
             }
             return Promise.resolve(0.0);
         }

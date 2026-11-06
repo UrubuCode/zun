@@ -6,7 +6,7 @@ use zun_interp::CaptureOutput;
 fn run(user: &str) -> CaptureOutput {
     let src = &zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -353,7 +353,7 @@ fn fetch_end_to_end_over_localhost() {
         let _ = stream.flush();
     });
     let out = run(&format!(
-        r#"function main() {{
+        r#"async function main() {{
         let raw: any = await fetch("http://127.0.0.1:{port}/");
         let res = raw as Response;
         console.log(res.status);
@@ -376,7 +376,7 @@ fn fetch_rejects_on_transport_failure() {
         l.local_addr().unwrap().port()
     };
     let out = run(&format!(
-        r#"function main() {{
+        r#"async function main() {{
         try {{
             let raw: any = await fetch("http://127.0.0.1:{port}/");
             console.log("resolved");

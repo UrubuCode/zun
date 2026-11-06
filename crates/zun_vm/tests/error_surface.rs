@@ -14,7 +14,7 @@ const ERROR_SOURCE: &str = zun_prelude::ERRORS;
 fn run_with_errors(main: &str) -> Vec<String> {
     let src = format!("{ERROR_SOURCE}\n{main}");
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(&src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(&src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(&src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -32,7 +32,7 @@ fn construction_takes_the_message_alone() {
     let out = run_with_errors(
         r#"function main() {
             let e = new Error("boom");
-            print(e.message);
+            print(e.message as string);
             print(e.name);
         }"#,
     );
@@ -69,8 +69,8 @@ fn subclasses_inherit_the_message_field() {
     let out = run_with_errors(
         r#"function main() {
             let e = new TypeError("bad value");
-            print(e.message);
-            print(e.toString());
+            print(e.message as string);
+            print(e.toString() as string);
         }"#,
     );
     assert_eq!(out, vec!["bad value", "TypeError: bad value"]);
@@ -111,7 +111,7 @@ fn errors_survive_being_thrown_and_caught() {
             try {
                 throw new TypeError("thrown");
             } catch (e: Error) {
-                print(e.toString());
+                print(e.toString() as string);
             }
         }"#,
     );
@@ -126,7 +126,7 @@ fn stack_starts_with_the_header_and_has_a_frame() {
     let out = run_with_errors(
         r#"function main() {
             let e = new Error("boom");
-            print(e.stack);
+            print(e.stack as string);
         }"#,
     );
     assert_eq!(out.len(), 1);
@@ -177,7 +177,7 @@ fn thrown_and_caught_error_keeps_its_stack() {
             try {
                 throw new RangeError("oops");
             } catch (e: Error) {
-                print(e.stack);
+                print(e.stack as string);
             }
         }"#,
     );
@@ -195,7 +195,7 @@ fn aggregate_error_carries_its_errors_and_shape() {
             errs[1] = new Error("b");
             let agg = new AggregateError(errs, "several");
             print(agg.name);
-            print(agg.message);
+            print(agg.message as string);
             print(agg.errors.length);
             print(agg.stack);
         }"#,

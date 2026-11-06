@@ -12,7 +12,7 @@ use zun_interp::CaptureOutput;
 
 fn run_source(src: &str) -> Vec<String> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -88,7 +88,7 @@ fn a_slice_can_be_sliced_again() {
 fn run_with_prelude(user: &str) -> Vec<String> {
     let src = zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(&src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(&src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(&src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");

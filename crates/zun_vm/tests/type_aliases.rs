@@ -7,7 +7,7 @@ use zun_interp::CaptureOutput;
 fn run_source(user: &str) -> Vec<String> {
     let src = zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(&src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(&src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(&src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -24,7 +24,7 @@ fn alias_to_primitive_keeps_its_type() {
     let out = run_source(
         r#"type Id = number;
         function inc(x: Id): Id { return x + 1.0; }
-        function main() { print(inc(41.0)); }"#,
+        function main() { print(inc(41.0) as number); }"#,
     );
     assert_eq!(out, ["42"]);
 }
@@ -35,7 +35,7 @@ fn alias_to_class_resolves_to_instance() {
         r#"class Point { x: number; constructor(x: number) { this.x = x; } }
         type P = Point;
         function origin(): P { return new Point(0.0); }
-        function main() { print(origin().x); }"#,
+        function main() { print(origin().x as number); }"#,
     );
     assert_eq!(out, ["0"]);
 }

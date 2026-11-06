@@ -9,7 +9,7 @@ use zun_ilgen::MATH_MACHINE_OPS;
 /// Compile a source file and return `main`'s opcode sequence.
 fn opcodes_of(src: &str, function: &str) -> Vec<Opcode> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema: {diags:?}");

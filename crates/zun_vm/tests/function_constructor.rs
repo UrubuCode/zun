@@ -4,7 +4,7 @@ use zun_interp::CaptureOutput;
 
 fn module_bytes(src: &str) -> Vec<u8> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");

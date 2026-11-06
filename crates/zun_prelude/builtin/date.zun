@@ -77,7 +77,8 @@ class Date {
     utcMillisecond(): i32 { return date.field(this.t, 6) as i32; }
     utcWeekday(): i32 {
         const w: i32 = date.field(this.t, 7) as i32;
-        return w == 0 ? 7 : w;
+        if (w == 0) { return 7; }
+        return w;
     }
     utcDayOfYear(): i32 { return date.dayOfYear(this.t as i64); }
     isoDate(): string { return this.toISOString().slice(0, 10); }

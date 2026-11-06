@@ -6,7 +6,7 @@ const HELLO: &str = r#"function main() { print("hello"); }"#;
 
 fn hello_zm() -> Vec<u8> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(HELLO, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(HELLO, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "{diags:?}");
     let hir = zun_sema::check(HELLO, &ast, &mut diags);
     assert!(diags.is_empty(), "{diags:?}");

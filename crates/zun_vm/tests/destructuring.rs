@@ -10,7 +10,7 @@ use zun_interp::CaptureOutput;
 /// Compile `src` through the hand parser, round-trip the `.zm`, run it.
 fn run(src: &str) -> Vec<String> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -131,7 +131,7 @@ fn for_of_entries_destructuring_sums_index_and_value() {
 fn with_resolvers_destructuring_resolves() {
     // NUCLEUS #9 payoff: bind the function-slot resolver and call it.
     let out = run(
-        "function main() { \
+        "async function main() { \
             let { promise, resolve } = Promise.withResolvers(); \
             resolve(7.0); \
             let v: any = await promise; \
@@ -143,7 +143,7 @@ fn with_resolvers_destructuring_resolves() {
 #[test]
 fn with_resolvers_destructuring_rejects() {
     let out = run(
-        "function main() { \
+        "async function main() { \
             let { promise, reject } = Promise.withResolvers(); \
             reject(\"bad\"); \
             try { let v: any = await promise; } \

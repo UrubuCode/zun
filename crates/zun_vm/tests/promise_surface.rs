@@ -7,7 +7,7 @@ use zun_interp::CaptureOutput;
 /// Compile `src` to a module, serialize it, run it, and return output lines.
 fn run_source(src: &str) -> Vec<String> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -24,7 +24,7 @@ fn run_source(src: &str) -> Vec<String> {
 #[test]
 fn with_resolvers_resolves_externally() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let r: any = Promise.withResolvers(); \
             r.resolve(42.0); \
             let v: any = await r.promise; \
@@ -38,7 +38,7 @@ fn with_resolvers_rejects_externally() {
     // `await`ing the rejected promise throws; a `try`/`catch` observes the
     // reason. (`r.promise` is typed `any`, and `await` accepts an `any`.)
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let r: any = Promise.withResolvers(); \
             r.reject(\"nope\"); \
             try { let v: any = await r.promise; } \
@@ -52,7 +52,7 @@ fn with_resolvers_rejects_externally() {
 #[test]
 fn any_all_rejected_yields_an_aggregate_error() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = Promise.any([Promise.reject(\"a\"), Promise.reject(\"b\")]); \
             let agg: any = await p.catch((e: any) => e); \
             print(agg.name as string); \
@@ -67,7 +67,7 @@ fn any_all_rejected_yields_an_aggregate_error() {
 #[test]
 fn unhandled_rejection_is_reported_at_turn_end() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             Promise.reject(\"boom\"); }",
     );
     assert_eq!(out, ["UnhandledPromiseRejection: boom"]);
@@ -78,7 +78,7 @@ fn unhandled_rejection_is_reported_at_turn_end() {
 #[test]
 fn a_late_catch_prevents_the_unhandled_report() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = Promise.reject(\"boom\"); \
             let v: any = await p.catch((e: any) => e); \
             print(v as string); }",
@@ -89,7 +89,7 @@ fn a_late_catch_prevents_the_unhandled_report() {
 #[test]
 fn then_chains_and_returns_a_new_promise() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = Promise.resolve(1.0); \
             let q = p.then((x: any) => (x as number) + 1.0); \
             let v: any = await q; \
@@ -102,7 +102,7 @@ fn then_chains_and_returns_a_new_promise() {
 fn then_adopts_a_returned_promise() {
     // A callback returning a Promise is chained (adopted), not wrapped.
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = Promise.resolve(1.0); \
             let q = p.then((x: any) => Promise.resolve((x as number) + 40.0)); \
             let v: any = await q; \
@@ -115,7 +115,7 @@ fn then_adopts_a_returned_promise() {
 fn rejection_skips_on_fulfilled_and_propagates() {
     // `then` with no onRejected forwards the rejection; `catch` then handles it.
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = Promise.reject(\"boom\"); \
             let q = p.then((x: any) => (x as number) + 1.0); \
             let v: any = await q.catch((e: any) => e); \
@@ -127,7 +127,7 @@ fn rejection_skips_on_fulfilled_and_propagates() {
 #[test]
 fn catch_handles_a_rejected_promise() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let v: any = await Promise.reject(\"bad\").catch((e: any) => \"caught\"); \
             print(v as string); }",
     );
@@ -137,7 +137,7 @@ fn catch_handles_a_rejected_promise() {
 #[test]
 fn finally_runs_and_passes_the_value_through() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let log = new Array(0); \
             let p = Promise.resolve(5.0); \
             let q = p.finally(() => log.push(\"cleanup\")); \
@@ -151,7 +151,7 @@ fn finally_runs_and_passes_the_value_through() {
 #[test]
 fn finally_passes_rejection_through() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = Promise.reject(\"nope\"); \
             let q = p.finally(() => 0.0); \
             let v: any = await q.catch((e: any) => e); \
@@ -163,7 +163,7 @@ fn finally_passes_rejection_through() {
 #[test]
 fn promise_all_resolves_to_an_array_of_results() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let a = new Array(2); \
             a[0] = Promise.resolve(1.0); \
             a[1] = Promise.resolve(2.0); \
@@ -178,7 +178,7 @@ fn promise_all_resolves_to_an_array_of_results() {
 #[test]
 fn promise_all_rejects_on_first_rejection() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let a = new Array(2); \
             a[0] = Promise.resolve(1.0); \
             a[1] = Promise.reject(\"second\"); \
@@ -191,7 +191,7 @@ fn promise_all_rejects_on_first_rejection() {
 #[test]
 fn promise_race_settles_as_the_first_to_settle() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let a = new Array(2); \
             a[0] = Promise.resolve(10.0); \
             a[1] = Promise.resolve(20.0); \
@@ -204,7 +204,7 @@ fn promise_race_settles_as_the_first_to_settle() {
 #[test]
 fn promise_all_settled_describes_each_outcome() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let a = new Array(2); \
             a[0] = Promise.resolve(7.0); \
             a[1] = Promise.reject(\"err\"); \
@@ -223,7 +223,7 @@ fn promise_all_settled_describes_each_outcome() {
 #[test]
 fn promise_any_takes_the_first_fulfilment() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let a = new Array(2); \
             a[0] = Promise.reject(\"x\"); \
             a[1] = Promise.resolve(99.0); \
@@ -244,7 +244,7 @@ fn then_on_a_pending_promise_runs_when_it_later_resolves() {
     // when the source settles. Under the old eager-at-settle path this printed
     // only "sync" because the reaction was never driven.
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = new Promise(); \
             p.then((x: any) => { print(x as number); }); \
             print(\"sync\"); \
@@ -256,7 +256,7 @@ fn then_on_a_pending_promise_runs_when_it_later_resolves() {
 #[test]
 fn catch_on_a_pending_promise_runs_on_later_rejection() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = new Promise(); \
             p.catch((e: any) => { print(e as string); }); \
             p.reject(\"boom\"); \
@@ -268,7 +268,7 @@ fn catch_on_a_pending_promise_runs_on_later_rejection() {
 #[test]
 fn finally_on_a_pending_promise_runs_on_settle() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = new Promise(); \
             p.finally(() => { print(\"cleanup\"); }); \
             p.resolve(1.0); \
@@ -282,7 +282,7 @@ fn an_already_settled_then_still_does_not_run_inline() {
     // The async-not-sync guarantee: even on an already-resolved source the
     // callback runs on the drain, after the synchronous "sync".
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             Promise.resolve(7.0).then((x: any) => { print(x as number); }); \
             print(\"sync\"); }",
     );
@@ -294,7 +294,7 @@ fn reactions_run_in_attach_order_and_chain_within_one_drain() {
     // Multiple `then`s on one promise run in attach order; a reaction scheduled
     // by a reaction (the chained `d`) runs in the same drain, after c.
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = new Promise(); \
             p.then((x: any) => { print(\"a\"); }); \
             p.then((x: any) => { print(\"b\"); }); \
@@ -308,7 +308,7 @@ fn reactions_run_in_attach_order_and_chain_within_one_drain() {
 #[test]
 fn promise_all_over_pending_inputs_resolves_after_both_settle() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let a = new Array(2); \
             let p1 = new Promise(); \
             let p2 = new Promise(); \
@@ -326,7 +326,7 @@ fn promise_all_over_pending_inputs_resolves_after_both_settle() {
 #[test]
 fn promise_resolve_returns_an_existing_promise_unchanged() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = Promise.resolve(3.0); \
             let q = Promise.resolve(p); \
             let v: any = await q; \
@@ -342,7 +342,7 @@ fn promise_resolve_returns_an_existing_promise_unchanged() {
 #[test]
 fn new_promise_executor_resolves() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p: any = new Promise((res: any) => { res(42.0); }); \
             let v: any = await p; \
             print(v as number); }",
@@ -355,7 +355,7 @@ fn new_promise_executor_resolves() {
 #[test]
 fn new_promise_executor_rejects() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = new Promise((res: any, rej: any) => { rej(\"boom\"); }); \
             let v: any = await p.catch((e: any) => e); \
             print(v as string); }",
@@ -368,7 +368,7 @@ fn new_promise_executor_rejects() {
 #[test]
 fn new_promise_executor_throw_rejects() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let p = new Promise((res: any, rej: any) => { throw \"x\"; }); \
             let v: any = await p.catch((e: any) => e); \
             print(v as string); }",
@@ -390,7 +390,7 @@ fn new_promise_executor_throw_rejects() {
 #[test]
 fn new_promise_executor_resolves_asynchronously() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let hub: any = Promise.withResolvers(); \
             let p = new Promise((res: any) => { res(hub.promise); }); \
             setTimeout(() => { hub.resolve(1.0); }, 0.0); \
@@ -405,7 +405,7 @@ fn new_promise_executor_resolves_asynchronously() {
 #[test]
 fn new_promise_executor_adopts_a_promise() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let inner: any = new Promise((res: any) => { res(7.0); }); \
             let p: any = new Promise((res: any) => { res(inner); }); \
             let v: any = await p; \
@@ -420,7 +420,7 @@ fn new_promise_executor_adopts_a_promise() {
 #[test]
 fn new_promise_without_executor_is_pending() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let pending: any = new Promise(); \
             let a = new Array(2); \
             a[0] = pending; \
@@ -436,7 +436,7 @@ fn new_promise_without_executor_is_pending() {
 #[test]
 fn resolve_adopts_generic_thenable() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let thenable: any = { then(f: any, r: any) { f(42.0); } }; \
             let p = new Promise((res: any) => { res(thenable); }); \
             let v: any = await p; \
@@ -449,7 +449,7 @@ fn resolve_adopts_generic_thenable() {
 #[test]
 fn thenable_that_throws_rejects() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let thenable: any = { then(f: any, r: any) { throw \"boom\"; } }; \
             let p = new Promise((res: any) => { res(thenable); }); \
             try { let v: any = await p; } catch (e: string) { print(e); } }",
@@ -462,7 +462,7 @@ fn thenable_that_throws_rejects() {
 #[test]
 fn thenable_adoption_is_a_microtask_before_timers() {
     let out = run_source(
-        "function main() { \
+        "async function main() { \
             let thenable: any = { then(f: any, r: any) { print(\"then\"); f(1.0); } }; \
             let p = new Promise((res: any) => { res(thenable); }); \
             print(\"sync\"); \

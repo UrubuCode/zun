@@ -9,7 +9,7 @@ use zun_interp::CaptureOutput;
 fn run_source(user: &str) -> Vec<String> {
     let src = zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(&src, &mut diags);
+    let ast = zun_syntax::oxc::parse_subset(&src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(&src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -272,26 +272,21 @@ fn reduce_right_without_initial_value_seeds_from_last_element() {
 
 #[test]
 fn reduce_empty_without_initial_value_throws() {
-    let src = zun_prelude::with_prelude(
-        "function main(): number {
+    // The thrown value is a real `TypeError` object (JS semantics), so observe
+    // its message from inside the program.
+    let out = run_source(
+        "function main() {
             let a = Int32Array.of();
-            return a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number)) as number;
+            try {
+                a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number));
+                print(\"no throw\");
+            } catch (e: any) {
+                print(e.message as string);
+            }
         }",
     );
-    let mut diags = Vec::new();
-    let ast = zun_syntax::parse(&src, &mut diags);
-    assert!(diags.is_empty(), "parse errors: {diags:?}");
-    let hir = zun_sema::check(&src, &ast, &mut diags);
-    assert!(diags.is_empty(), "sema errors: {diags:?}");
-    let module = zun_ilgen::lower(&hir);
-    let bytes = module.write();
-    let mut out = CaptureOutput::default();
-    let error = zun_vm::execute_with(&bytes, &mut out)
-        .expect_err("empty reduce without initial value should throw");
-    assert!(
-        format!("{error:?}").contains("Reduce of empty array"),
-        "unexpected error: {error:?}"
-    );
+    assert_eq!(out.len(), 1);
+    assert!(out[0].contains("Reduce of empty array"), "unexpected: {out:?}");
 }
 
 #[test]
