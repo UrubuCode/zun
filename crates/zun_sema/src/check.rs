@@ -10897,7 +10897,8 @@ impl Checker<'_> {
                     (Ty::WeakSet, "has") => Some(("weakSetHas", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakSet, "delete") => Some(("weakSetDelete", Ty::Boolean, vec![Ty::Any])),
                     (Ty::WeakRef, "deref") => Some(("weakRefDeref", Ty::Any, vec![])),
-                    (Ty::RegExp, "isMatch" | "test") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
+                    (Ty::RegExp, "isMatch") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
+                    (Ty::RegExp, "test") => Some(("regexpTest", Ty::Boolean, vec![Ty::String])),
                     (Ty::RegExp, "exec") => Some(("regexpExec", Ty::Array, vec![Ty::String])),
                     (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
                     (Ty::BigInt, "add") => Some(("bigIntAdd", Ty::BigInt, vec![Ty::BigInt])),
@@ -13628,6 +13629,17 @@ impl Checker<'_> {
                             span,
                         }
                     }
+                    Ty::RegExp if fname == "lastIndex" => {
+                        let Some((id, _)) = zun_natives::resolve("collections", "regexpLastIndex") else {
+                            self.error(span, "missing RegExp intrinsic");
+                            return self.poison(span);
+                        };
+                        hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                            ty: Ty::F64,
+                            span,
+                        }
+                    }
                     Ty::RegExp
                         if matches!(
                             fname.as_str(),
@@ -13977,7 +13989,8 @@ impl Checker<'_> {
                     (Ty::WeakSet, "has") => ("weakSetHas", Ty::Boolean, vec![Ty::Any]),
                     (Ty::WeakSet, "delete") => ("weakSetDelete", Ty::Boolean, vec![Ty::Any]),
                     (Ty::WeakRef, "deref") => ("weakRefDeref", Ty::Any, vec![]),
-                    (Ty::RegExp, "isMatch" | "test") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
+                    (Ty::RegExp, "isMatch") => ("regexpIsMatch", Ty::Boolean, vec![Ty::String]),
+                    (Ty::RegExp, "test") => ("regexpTest", Ty::Boolean, vec![Ty::String]),
                     (Ty::RegExp, "exec") => ("regexpExec", Ty::Array, vec![Ty::String]),
                     (Ty::RegExp, "source") => ("regexpSource", Ty::String, vec![]),
                     (Ty::Promise, "state") => ("promiseState", Ty::Int(IntKind::U8), vec![]),
@@ -14477,6 +14490,19 @@ impl Checker<'_> {
                                 value: Box::new(boxed),
                             },
                             ty: Ty::Any,
+                            span,
+                        }
+                    }
+                    // `re.lastIndex = v`: the regex's own writable data slot.
+                    Ty::RegExp if fname == "lastIndex" => {
+                        let Some((id, _)) = zun_natives::resolve("collections", "regexpSetLastIndex") else {
+                            self.error(span, "missing RegExp intrinsic");
+                            return self.poison(span);
+                        };
+                        let number = self.to_number_for_arg(value);
+                        hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, number] },
+                            ty: Ty::F64,
                             span,
                         }
                     }

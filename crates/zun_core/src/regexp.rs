@@ -48,6 +48,8 @@ pub struct RegexValue {
     source: String,
     flags: String,
     engine: Engine,
+    /// The `lastIndex` own data property (a JS number; clamped on read).
+    last_index: f64,
 }
 
 /// Error returned when a pattern cannot be compiled or a match fails.
@@ -177,7 +179,7 @@ impl RegexValue {
     ) -> Result<Self, RegexError> {
         let source = source.into();
         let flags = flags.into();
-        if flags.contains('u') {
+        if flags.contains('u') || flags.contains('v') {
             // Unicode mode rejects identity escapes of ordinary letters (`q`).
             let bytes = source.as_bytes();
             let mut i = 0;
@@ -214,7 +216,9 @@ impl RegexValue {
                 }
                 'g' => {}
                 // Unicode mode: the engines already match by code point.
-                'u' => {}
+                'u' | 'v' => {}
+                // Sticky and hasIndices only change the stateful match drivers.
+                'y' | 'd' => {}
                 other => {
                     return Err(RegexError {
                         message: format!("unsupported regular expression flag `{other}`"),
@@ -223,11 +227,13 @@ impl RegexValue {
             }
         }
         let backtrack = |source: &str, flags: &str| -> Result<Engine, zun_regex::RegexParseError> {
-            zun_regex::Regex::new(source, flags).map(|re| Engine::Backtrack(Arc::new(re)))
+            // The backtracking engine knows `u` but not `v` (a superset of it).
+            let engine_flags = if flags.contains('v') { flags.replace('v', "u") } else { flags.to_owned() };
+            zun_regex::Regex::new(source, &engine_flags).map(|re| Engine::Backtrack(Arc::new(re)))
         };
         let parsed = zun_regex::parse(&source);
         let engine = match &parsed {
-            Ok(ast) if needs_backtracking(&ast.node, flags.contains('s'), flags.contains('m'), flags.contains('u')) => backtrack(&source, &flags)
+            Ok(ast) if needs_backtracking(&ast.node, flags.contains('s'), flags.contains('m'), flags.contains('u') || flags.contains('v')) => backtrack(&source, &flags)
                 .map_err(|error| RegexError { message: error.to_string() })?,
             _ => match builder.build() {
                 Ok(compiled) => Engine::Re2(compiled),
@@ -243,14 +249,14 @@ impl RegexValue {
                 }
             },
         };
-        Ok(Self { source, flags, engine })
+        Ok(Self { source, flags, engine, last_index: 0.0 })
     }
 
     /// The chars the backtracking engine runs over. Without the `u` flag a
     /// pattern sees UTF-16 code units, so an astral character becomes its two
     /// lone-surrogate stand-ins.
     fn chars_of(&self, input: &str) -> Vec<char> {
-        if self.flags.contains('u') || input.is_ascii() {
+        if self.flags.contains('u') || self.flags.contains('v') || input.is_ascii() {
             return input.chars().collect();
         }
         let mut out = Vec::with_capacity(input.len());
@@ -268,6 +274,85 @@ impl RegexValue {
 
     pub fn flags(&self) -> &str {
         &self.flags
+    }
+
+    /// The raw `lastIndex` slot.
+    pub fn last_index(&self) -> f64 {
+        self.last_index
+    }
+
+    /// Overwrite the `lastIndex` slot.
+    pub fn set_last_index(&mut self, value: f64) {
+        self.last_index = value;
+    }
+
+    /// First match at or after the UTF-16 index `start16` (exactly at it when
+    /// `sticky`), as UTF-8 byte offsets plus the group texts. `Ok(None)` when
+    /// there is no match or `start16` lies beyond the input.
+    #[allow(clippy::type_complexity)]
+    pub fn match_from(
+        &self,
+        input: &str,
+        start16: usize,
+        sticky: bool,
+    ) -> Result<Option<(usize, usize, Vec<Option<String>>)>, RegexError> {
+        match &self.engine {
+            Engine::Re2(re) => {
+                let mut units = 0usize;
+                let mut start_byte = None;
+                for (byte, c) in input.char_indices() {
+                    if units >= start16 {
+                        start_byte = Some(byte);
+                        break;
+                    }
+                    units += if crate::wtf16::lone_unit(c).is_some() { 1 } else { c.len_utf16() };
+                }
+                let start_byte = match start_byte {
+                    Some(byte) => byte,
+                    None if units >= start16 => input.len(),
+                    None => return Ok(None),
+                };
+                let Some(captures) = re.captures_at(input, start_byte) else { return Ok(None) };
+                let whole = captures.get(0).expect("group 0 always exists");
+                if sticky && whole.start() != start_byte {
+                    return Ok(None);
+                }
+                Ok(Some((
+                    whole.start(),
+                    whole.end(),
+                    captures.iter().map(|group| group.map(|m| m.as_str().to_owned())).collect(),
+                )))
+            }
+            Engine::Backtrack(re) => {
+                let chars = self.chars_of(input);
+                let pos = if self.flags.contains('u') || self.flags.contains('v') {
+                    let mut units = 0usize;
+                    let mut index = 0usize;
+                    while index < chars.len() && units < start16 {
+                        units += if crate::wtf16::lone_unit(chars[index]).is_some() { 1 } else { chars[index].len_utf16() };
+                        index += 1;
+                    }
+                    if units < start16 {
+                        return Ok(None);
+                    }
+                    index
+                } else {
+                    start16
+                };
+                if pos > chars.len() {
+                    return Ok(None);
+                }
+                let found = if sticky { re.match_at_chars(&chars, pos)? } else { re.find_chars(&chars, pos)? };
+                Ok(found.map(|m| {
+                    let (start, end) = m.span();
+                    (
+                        byte_offset(&chars, start),
+                        byte_offset(&chars, end),
+                        (0..m.len()).map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b))).collect(),
+                    )
+                }))
+            }
+        }
     }
 
     /// The engine selected for this pattern.

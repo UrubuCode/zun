@@ -1864,13 +1864,44 @@ impl<'a> Interp<'a> {
                     Value::Str(input) => input.clone(),
                     _ => return Err(RunError::BadToken),
                 };
-                match zun_gc::with_current_heap_mut(|heap| heap.regex_exec(object, &input))
+                match zun_gc::with_current_heap_mut(|heap| heap.regex_exec_stateful(object, &input))
                     .ok_or(RunError::BadToken)?
                     .map_err(|error| RunError::Native(error.to_string()))?
                 {
                     Some(array) => Ok(Value::Object(array)),
                     None => Ok(Value::Null),
                 }
+            }
+            "regexpTest" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let input = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(input) => input.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| heap.regex_test_stateful(object, &input))
+                        .ok_or(RunError::BadToken)?
+                        .map_err(|error| RunError::Native(error.to_string()))?,
+                ))
+            }
+            "regexpLastIndex" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let value = zun_gc::with_current_heap(|heap| heap.regex_last_index(object))
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Float(value, zun_il::NumKind::F64))
+            }
+            "regexpSetLastIndex" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Float(number, _) => *number,
+                    Value::Int(number, _) => *number as f64,
+                    _ => return Err(RunError::BadToken),
+                };
+                zun_gc::with_current_heap_mut(|heap| heap.regex_set_last_index(object, value));
+                Ok(Value::Float(value, zun_il::NumKind::F64))
             }
             "regexpMatch" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)

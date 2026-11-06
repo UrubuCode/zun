@@ -98,6 +98,88 @@ impl Heap {
         array
     }
 
+    /// The raw `lastIndex` slot of a regex (`None` if not a regex).
+    pub fn regex_last_index(&self, object: Obj) -> Option<f64> {
+        self.regexes.get(&(object.addr() as usize)).map(zun_core::RegexValue::last_index)
+    }
+
+    /// Overwrite the `lastIndex` slot; `false` if `object` is not a regex.
+    pub fn regex_set_last_index(&mut self, object: Obj, value: f64) -> bool {
+        match self.regexes.get_mut(&(object.addr() as usize)) {
+            Some(regex) => {
+                regex.set_last_index(value);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The stateful core of `exec` / `test` (RegExpBuiltinExec): honors and
+    /// updates `lastIndex` for `g` / `y` regexes. Returns the match as
+    /// (byte start, groups, group names).
+    #[allow(clippy::type_complexity)]
+    fn regex_builtin_exec(
+        &mut self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<Option<(usize, Vec<Option<String>>, Vec<Option<String>>)>, zun_core::RegexError>> {
+        let regex = self.regexes.get_mut(&(object.addr() as usize))?;
+        let flags = regex.flags();
+        let global = flags.contains('g');
+        let sticky = flags.contains('y');
+        let stateful = global || sticky;
+        let raw = regex.last_index();
+        let last_index = if stateful && raw > 0.0 { raw.floor() } else { 0.0 };
+        let total = zun_core::wtf16::len16(input);
+        if last_index > total as f64 {
+            if stateful {
+                regex.set_last_index(0.0);
+            }
+            return Some(Ok(None));
+        }
+        let found = match regex.match_from(input, last_index as usize, sticky) {
+            Ok(found) => found,
+            Err(error) => return Some(Err(error)),
+        };
+        let names = regex.group_names();
+        match found {
+            None => {
+                if stateful {
+                    regex.set_last_index(0.0);
+                }
+                Some(Ok(None))
+            }
+            Some((start, end, groups)) => {
+                if stateful {
+                    regex.set_last_index(zun_core::wtf16::len16(&input[..end]) as f64);
+                }
+                Some(Ok(Some((start, groups, names))))
+            }
+        }
+    }
+
+    /// `RegExp.prototype.test` with `lastIndex` semantics.
+    pub fn regex_test_stateful(
+        &mut self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<bool, zun_core::RegexError>> {
+        Some(self.regex_builtin_exec(object, input)?.map(|found| found.is_some()))
+    }
+
+    /// `RegExp.prototype.exec` with `lastIndex` semantics.
+    pub fn regex_exec_stateful(
+        &mut self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
+        match self.regex_builtin_exec(object, input)? {
+            Ok(Some((start, groups, names))) => Some(Ok(Some(self.alloc_match_array(input, start, groups, &names)))),
+            Ok(None) => Some(Ok(None)),
+            Err(error) => Some(Err(error)),
+        }
+    }
+
     pub fn regex_source(&self, object: Obj) -> Option<&str> {
         self.regexes
             .get(&(object.addr() as usize))
