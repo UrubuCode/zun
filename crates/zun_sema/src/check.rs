@@ -9892,15 +9892,28 @@ impl Checker<'_> {
                     }
                     let mut start = self.check_expr(cx, &args[0]);
                     coerce_numeric_literal(&mut start, Ty::Int(IntKind::U64));
-                    if !start.ty.is_error() && !self.is_assignable(start.ty, Ty::Int(IntKind::U64)) {
-                        self.error(start.span, "`Array.splice` start must be an integer");
-                    }
                     let mut delete_count = self.check_expr(cx, &args[1]);
                     coerce_numeric_literal(&mut delete_count, Ty::Int(IntKind::U64));
-                    if !delete_count.ty.is_error()
-                        && !self.is_assignable(delete_count.ty, Ty::Int(IntKind::U64))
-                    {
-                        self.error(delete_count.span, "`Array.splice` deleteCount must be an integer");
+                    let static_ints = (start.ty.is_error() || self.is_assignable(start.ty, Ty::Int(IntKind::U64)))
+                        && (delete_count.ty.is_error() || self.is_assignable(delete_count.ty, Ty::Int(IntKind::U64)));
+                    if !static_ints {
+                        // Non-integer (`number` / dynamic) bounds: the runtime argument
+                        // list applies the full ToIntegerOrInfinity clamping.
+                        let elements = args
+                            .iter()
+                            .map(|arg| ast::ArrayElement::Expr(arg.clone()))
+                            .collect();
+                        let literal = ast::Expr::ArrayLiteral { elements, span };
+                        let list = self.check_expr(cx, &literal);
+                        let Some((id, _)) = zun_natives::resolve("array", "arraySpliceArgs") else {
+                            self.error(span, "missing Array intrinsic `arraySpliceArgs`");
+                            return self.poison(span);
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, list] },
+                            ty: Ty::Array,
+                            span,
+                        };
                     }
                     let items: Vec<Option<hir::Expr>> =
                         args[2..].iter().map(|item| Some(self.check_expr(cx, item))).collect();

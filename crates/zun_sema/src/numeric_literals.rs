@@ -41,7 +41,7 @@ pub(super) fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
     if !is_number_literal(expr)
         && matches!(
             (expr.ty, expected),
-            (Ty::Int(IntKind { bits: 64, signed: true }), Ty::F64)
+            (Ty::Int(_), Ty::F64)
                 | (Ty::F64, Ty::Int(IntKind { bits: 64, signed: true }))
         )
     {
