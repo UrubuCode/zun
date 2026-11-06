@@ -51,6 +51,18 @@ impl Heap {
 impl Heap {
     /// Integrity level of an array: 0 open, 1 non-extensible, 2 sealed, 3 frozen.
     /// Unknown objects report 0.
+    /// Whether `object` is the array backing an `arguments` object.
+    pub fn array_is_arguments(&self, object: Obj) -> bool {
+        self.arrays.get(&(object.addr() as usize)).is_some_and(zun_core::ArrayStorage::is_arguments)
+    }
+
+    /// Mark an array as the backing store of an `arguments` object.
+    pub fn array_mark_arguments(&mut self, object: Obj) {
+        if let Some(array) = self.arrays.get_mut(&(object.addr() as usize)) {
+            array.mark_arguments();
+        }
+    }
+
     pub fn array_integrity(&self, object: Obj) -> u8 {
         self.arrays.get(&(object.addr() as usize)).map_or(0, zun_core::ArrayStorage::integrity)
     }

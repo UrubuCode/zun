@@ -6,11 +6,15 @@ pub struct ArrayStorage {
     elements: Vec<Any>,
     /// Integrity level: 0 open, 1 non-extensible, 2 sealed, 3 frozen.
     integrity: u8,
+    /// Set on the array that backs a function's `arguments` object.
+    is_arguments: bool,
 }
 
 impl ArrayStorage {
     /// Create an array with `length` initialized to `undefined`-like void values.
-    pub fn with_length(length: usize) -> Self { Self { elements: vec![Any::hole(); length], integrity: 0 } }
+    pub fn with_length(length: usize) -> Self { Self { elements: vec![Any::hole(); length], integrity: 0, is_arguments: false } }
+    pub fn is_arguments(&self) -> bool { self.is_arguments }
+    pub fn mark_arguments(&mut self) { self.is_arguments = true; }
     pub fn len(&self) -> usize { self.elements.len() }
     pub fn integrity(&self) -> u8 { self.integrity }
     pub fn raise_integrity(&mut self, level: u8) { if level > self.integrity { self.integrity = level; } }

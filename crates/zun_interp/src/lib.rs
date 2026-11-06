@@ -1153,6 +1153,10 @@ impl Interp<'_> {
                                         heap.ensure_dynamic_entry(object);
                                     } else if typed_instance {
                                         heap.ensure_instance_bag(object);
+                                    } else if !heap.is_dynamic_object(object) {
+                                        // A Map, Set, RegExp, typed array ...: the write
+                                        // becomes an own expando property.
+                                        heap.ensure_dynamic_entry(object);
                                     }
                                     heap.dynamic_assign(object, name, any);
                                 });

@@ -202,6 +202,19 @@ impl Interp<'_> {
 
     /// Read an own enumerable property of an object (running a getter).
     fn json_get(&mut self, obj: zun_gc::Obj, key: &str) -> Result<Option<Value>, RunError> {
+        // Elements of an array-like (an `arguments` object, a typed array).
+        if let Some(index) = key.parse::<usize>().ok().filter(|i| i.to_string() == key) {
+            if let Some(len) = crate::typed_arrays::element_len(obj) {
+                return Ok(if index < len { crate::typed_arrays::read_element(obj, index) } else { None });
+            }
+            if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) {
+                return Ok(zun_gc::with_current_heap(|heap| {
+                    heap.array_get(obj, index)
+                        .filter(|any| !any.is_hole())
+                        .and_then(|any| Value::unbox_any(any, heap))
+                }));
+            }
+        }
         if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
             let (enumerable, getter, accessor, data, function) = zun_gc::with_current_heap(|heap| {
                 (
@@ -385,7 +398,7 @@ impl Interp<'_> {
                         ));
                     }
                 }
-                if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) {
+                if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some() && !heap.array_is_arguments(obj)) {
                     self.json_array(ctx, slot, indent, depth)
                 } else {
                     self.json_object(ctx, slot, indent, depth)
@@ -413,6 +426,22 @@ impl Interp<'_> {
                     .and_then(|any| Value::unbox_any(any, heap))
             })
             .unwrap_or(Value::Void);
+            // An accessor element (an array index defined with a getter) reads
+            // through its getter.
+            let item = match &item {
+                Value::Object(record)
+                    if zun_gc::with_current_heap(|heap| heap.dynamic_get(*record, "__elemAcc").is_some()) =>
+                {
+                    match zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(*record, "v")) {
+                        Some(getter) => {
+                            let this = ctx.slot_get(slot);
+                            self.invoke_function_value(getter, self.with_this_arg(getter, this, Vec::new()))?
+                        }
+                        None => Value::Void,
+                    }
+                }
+                _ => item,
+            };
             let text = self.json_property(ctx, &index.to_string(), slot, item, &inner, depth + 1)?;
             parts.push(text.unwrap_or_else(|| "null".into()));
         }

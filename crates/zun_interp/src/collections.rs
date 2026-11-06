@@ -2487,6 +2487,7 @@ impl<'a> Interp<'a> {
                             heap.array_resize(array, actual);
                         }
                     }
+                    heap.array_mark_arguments(array);
                 });
                 Ok(Value::Object(array))
             }
@@ -5606,7 +5607,9 @@ impl<'a> Interp<'a> {
             "arrayIsArray" => {
                 let value = args.first().ok_or(RunError::BadToken)?;
                 let is_array = object(value)
-                    .map(|obj| zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()))
+                    .map(|obj| {
+                        zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some() && !heap.array_is_arguments(obj))
+                    })
                     .unwrap_or(false);
                 Ok(Value::Bool(is_array))
             }
@@ -6729,6 +6732,14 @@ impl<'a> Interp<'a> {
                         "TypeError: Cannot convert undefined or null to object".into(),
                     ));
                 };
+                // A Map, Set or RegExp target gains own expando properties.
+                zun_gc::with_current_heap_mut(|heap| {
+                    if !heap.is_dynamic_object(target)
+                        && (heap.map_len(target).is_some() || heap.set_len(target).is_some() || heap.regex_source(target).is_some())
+                    {
+                        heap.ensure_dynamic_entry(target);
+                    }
+                });
                 // A string source contributes its indexed characters.
                 let string_source = match args.get(1) {
                     Some(Value::Str(text)) => Some(text.to_string()),
@@ -7801,7 +7812,7 @@ impl<'a> Interp<'a> {
                         } else {
                             zun_gc::with_current_heap(|heap| {
                                 if heap.array_len(obj).is_some() {
-                                    "Array"
+                                    if heap.array_is_arguments(obj) { "Arguments" } else { "Array" }
                                 } else if heap.array_iterator_done(obj).is_some() {
                                     "Array Iterator"
                                 } else if heap.generator_state(obj).is_some() {
@@ -7946,6 +7957,16 @@ impl<'a> Interp<'a> {
                 Some("NumberObject") | Some("BooleanObject") => return Ok(Vec::new()),
                 _ => {}
             }
+        }
+        // A typed array: its elements by index.
+        if let Some(len) = crate::typed_arrays::element_len(obj) {
+            let mut out: Vec<(String, Value)> = Vec::with_capacity(len);
+            for index in 0..len {
+                if let Some(element) = crate::typed_arrays::read_element(obj, index) {
+                    out.push((index.to_string(), element));
+                }
+            }
+            return Ok(out);
         }
         // An array: its present indices (as strings), then enumerable expando
         // properties.
