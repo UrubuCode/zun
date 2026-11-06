@@ -534,7 +534,7 @@ fn number_and_string_value_of_are_identity() {
 fn string_match_all_global_regex() {
     let out = run_with_std(
         r#"function main() {
-            let all = "12 34 56".matchAll(/(\d)(\d)/g);
+            let all = [..."12 34 56".matchAll(/(\d)(\d)/g)];
             print(all.length);
             print((all[0] as Array)[0] as string);
             print((all[0] as Array)[1] as string);
