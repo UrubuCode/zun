@@ -715,14 +715,69 @@ fn convert_formal_param(
     prologue: &mut Vec<Stmt>,
 ) -> Result<crate::ast::Param, String> {
     let span = |s: oxc_span::Span| Span::new(s.start, s.end);
+    if prologue.is_empty() {
+        PATTERN_PARAM_TEXT.with(|text| text.borrow_mut().clear());
+    }
     match &parameter.pattern {
-        BindingPattern::BindingIdentifier(identifier) => Ok(crate::ast::Param {
-            name: Name { span: span(identifier.span) },
-            ty: convert_type_annotation(source, parameter.type_annotation.as_deref())?,
-            default_value: param_default(source, parameter)?,
-            is_rest: false,
-        }),
+        BindingPattern::BindingIdentifier(identifier) => {
+            let ty = convert_type_annotation(source, parameter.type_annotation.as_deref())?;
+            let mut default_value = param_default(source, parameter)?;
+            // A default that reads a name bound by an earlier destructuring
+            // parameter must run after that destructuring: it moves into the body
+            // prologue as `p = p === undefined ? <default> : p`.
+            if let (Some(initializer), false, true) =
+                (
+                parameter.initializer.as_ref(),
+                prologue.is_empty(),
+                ty.as_ref().is_none_or(|annotation| {
+                    !annotation.is_array
+                        && source
+                            .get(annotation.name.span.start as usize..annotation.name.span.end as usize)
+                            == Some("any")
+                }),
+            )
+            {
+                let init_text = &source[initializer.span().start as usize..initializer.span().end as usize];
+                let mentions = PATTERN_PARAM_TEXT.with(|text| {
+                    let text = text.borrow();
+                    text.split(|c: char| !is_identifier_char(c))
+                        .filter(|word| !word.is_empty() && word.chars().next().is_some_and(|c| !c.is_ascii_digit()))
+                        .any(|word| contains_word(init_text, word))
+                });
+                if mentions {
+                    let at = span(parameter.span);
+                    let name = Name { span: span(identifier.span) };
+                    let undefined = Expr::Unary {
+                        op: crate::ast::UnaryOp::Void,
+                        operand: Box::new(Expr::Number { value: 0.0, span: at }),
+                        span: at,
+                    };
+                    let default = default_value.take().expect("initializer was converted");
+                    prologue.push(Stmt::Expr(Expr::Assign {
+                        target: name,
+                        value: Box::new(Expr::Conditional {
+                            condition: Box::new(Expr::Binary {
+                                op: BinaryOp::Eq,
+                                lhs: Box::new(Expr::Ident(name)),
+                                rhs: Box::new(undefined),
+                                span: at,
+                            }),
+                            when_true: default,
+                            when_false: Box::new(Expr::Ident(name)),
+                            span: at,
+                        }),
+                        span: at,
+                    }));
+                }
+            }
+            Ok(crate::ast::Param { name: Name { span: span(identifier.span) }, ty, default_value, is_rest: false })
+        }
         other => {
+            PATTERN_PARAM_TEXT.with(|text| {
+                let mut text = text.borrow_mut();
+                text.push(' ');
+                text.push_str(&source[parameter.span.start as usize..parameter.span.end as usize]);
+            });
             let pattern = convert_binding_pattern(source, other)?;
             let slot = span(parameter.span);
             prologue.push(Stmt::Destructure {
@@ -5868,6 +5923,9 @@ thread_local! {
 
 thread_local! {
     /// Parameter names that a hoisted function declaration of the body shadows.
+    /// Source text of the destructuring parameters seen so far in the parameter
+    /// list being converted.
+    static PATTERN_PARAM_TEXT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     static PARAM_SHADOWS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
     static EMIT_SHADOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
