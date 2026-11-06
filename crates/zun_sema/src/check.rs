@@ -4999,6 +4999,17 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether an argument is a `function (this: T, ...)` expression that
+    /// declares the hidden receiver parameter.
+    fn ast_function_takes_this(&self, expr: &ast::Expr) -> bool {
+        let ast::Expr::Function(function) = expr else { return false };
+        if function.is_arrow {
+            return false;
+        }
+        let text = &self.source[function.span.start as usize..function.span.end as usize];
+        text.find('(').is_some_and(|open| text[open + 1..].trim_start().starts_with("this"))
+    }
+
     fn to_number_for_arg(&mut self, value: hir::Expr) -> hir::Expr {
         if value.ty.is_int() {
             let span = value.span;
@@ -10179,8 +10190,24 @@ impl Checker<'_> {
                             }
                         };
                     let mut call_args = vec![receiver];
+                    let undefined_ast = ast::Expr::Unary { op: ast::UnaryOp::Void, operand: Box::new(ast::Expr::Number { value: 0.0, span }), span };
                     for (arg, expected_ty) in args.iter().zip(expected) {
                         let mut value = self.check_expr(cx, arg);
+                        if matches!(value.ty, Ty::Function(_)) && self.ast_function_takes_this(arg) {
+                            if let Some((bind_id, _)) = zun_natives::resolve("collections", "functionBind") {
+                                let checked = self.check_expr(cx, &undefined_ast);
+                                let bound_this = self.box_function_argument(checked);
+                                value = hir::Expr {
+                                    span: value.span,
+                                    kind: hir::ExprKind::FunctionBind {
+                                        callee: Box::new(value),
+                                        args: vec![bound_this],
+                                        native_id: bind_id,
+                                    },
+                                    ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+                                };
+                            }
+                        }
                         coerce_numeric_literal(&mut value, expected_ty);
                         if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
                             self.error(
@@ -11294,12 +11321,22 @@ impl Checker<'_> {
                 if let Some((native_name, return_ty, expected)) = managed_method {
                     // A callback method's optional `thisArg` is bound onto the
                     // callback (`cb.bind(thisArg)`) before the native runs.
+                    let undefined_ast = ast::Expr::Unary { op: ast::UnaryOp::Void, operand: Box::new(ast::Expr::Number { value: 0.0, span }), span };
                     let this_arg_ast = if matches!(receiver.ty, Ty::Array | Ty::Map | Ty::Set)
                         && expected.len() == 1
                         && args.len() == 2
                         && expected[0] == Ty::Function(hir::DYNAMIC_FUNCTION)
                     {
                         args.get(1)
+                    } else if matches!(receiver.ty, Ty::Array | Ty::Map | Ty::Set)
+                        && expected.len() == 1
+                        && args.len() == 1
+                        && expected[0] == Ty::Function(hir::DYNAMIC_FUNCTION)
+                        && self.ast_function_takes_this(&args[0])
+                    {
+                        // A callback with an explicit `this` parameter and no thisArg
+                        // is called with `this` undefined.
+                        Some(&undefined_ast)
                     } else {
                         None
                     };
@@ -13306,6 +13343,16 @@ impl Checker<'_> {
                         && !self.classes_by_name.contains_key("Function")
                     {
                         return hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Void, span };
+                    }
+                }
+                // `[].indexOf.length`: a method read off an array literal.
+                if fname == "length" {
+                    if let ast::Expr::Field { object: inner, field: method, .. } = object.as_ref() {
+                        if matches!(inner.as_ref(), ast::Expr::ArrayLiteral { .. }) && !self.classes_by_name.contains_key("Array") {
+                            if let Some(arity) = builtin_function_length(&["Array", "prototype", self.text(method)]) {
+                                return hir::Expr { kind: hir::ExprKind::Number(arity), ty: Ty::F64, span };
+                            }
+                        }
                     }
                 }
                 // `<Builtin>.<fn>.length` / `.name` for well-known built-in paths.
@@ -16348,6 +16395,9 @@ fn builtin_function_length(path: &[&str]) -> Option<f64> {
         }
         ["String", "prototype", "padStart" | "padEnd" | "split" | "slice" | "substring" | "replace" | "replaceAll"] => 2.0,
         ["String", "prototype", "trim" | "trimStart" | "trimEnd" | "toUpperCase" | "toLowerCase" | "toString" | "valueOf"] => 0.0,
+        ["Array", "prototype", "push" | "unshift" | "concat" | "at" | "every" | "fill" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap" | "forEach" | "includes" | "indexOf" | "join" | "lastIndexOf" | "map" | "reduce" | "reduceRight" | "some" | "sort" | "toSorted"] => 1.0,
+        ["Array", "prototype", "copyWithin" | "slice" | "splice" | "toSpliced" | "with"] => 2.0,
+        ["Array", "prototype", "pop" | "shift" | "entries" | "keys" | "values" | "flat" | "reverse" | "toLocaleString" | "toReversed" | "toString"] => 0.0,
         ["Array", "isArray" | "of"] => 1.0,
         ["Array", "from"] => 1.0,
         ["Number", "isInteger" | "isNaN" | "isFinite" | "isSafeInteger" | "parseFloat"] => 1.0,
