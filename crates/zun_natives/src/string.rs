@@ -377,6 +377,22 @@ fn repeat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
     Ok(NativeValue::Str(zun_core::wtf16::normalize(value.repeat(count))))
 }
 
+/// `key in new String(s)`: a code-unit index below the length, or `length`.
+fn string_has_property(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    match (args.first(), args.get(1)) {
+        (Some(NativeArg::Str(value)), Some(NativeArg::Str(key))) => {
+            if *key == "length" {
+                return Ok(NativeValue::Bool(true));
+            }
+            let canonical = key.parse::<u32>().ok().filter(|index| index.to_string() == **key);
+            Ok(NativeValue::Bool(
+                canonical.is_some_and(|index| (index as usize) < zun_core::wtf16::len16(value)),
+            ))
+        }
+        _ => Err(NativeError("stringHasProperty: expected strings".to_string())),
+    }
+}
+
 fn is_well_formed(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
         Some(NativeArg::Str(value)) => Ok(NativeValue::Bool(
@@ -802,6 +818,12 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[Str, U64],
             ret: Str,
             imp: repeat,
+        },
+        NativeFn {
+            name: "stringHasProperty",
+            params: &[Str, Str],
+            ret: Bool,
+            imp: string_has_property,
         },
         NativeFn {
             name: "isWellFormed",

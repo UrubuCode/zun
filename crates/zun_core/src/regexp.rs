@@ -236,6 +236,13 @@ impl RegexValue {
                 vec![Some(String::new())]
             });
         }
+        // Without `u`, an empty pattern splits by UTF-16 code unit (an astral
+        // character yields two lone-surrogate pieces).
+        if !self.flags.contains('u') && matches!(self.source.as_str(), "" | "(?:)") {
+            return Ok(crate::wtf16::encode(input)
+                .map(|unit| Some(crate::wtf16::from_units(&[unit])))
+                .collect());
+        }
         let mut pieces = Vec::new();
         match &self.engine {
             Engine::Re2(re) => {

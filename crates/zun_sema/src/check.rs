@@ -2391,6 +2391,8 @@ impl Checker<'_> {
                 out.push(hir::Stmt::Let { slot, init: value });
             }
             ast::Pattern::Array { elements, rest, .. } => {
+                // A string destructures by code point.
+                let value = if value.ty == Ty::String { self.spread_source_to_array(value) } else { value };
                 if !matches!(value.ty, Ty::Array | Ty::Any | Ty::Error) {
                     self.error(span, "array destructuring requires an Array or any value");
                 }
@@ -14930,6 +14932,16 @@ impl Checker<'_> {
         } else {
             key
         };
+        if object.ty == Ty::String {
+            // A string reaching `in` came from `Object(str)`: index / length keys.
+            if let Some((id, _)) = zun_natives::resolve("string", "stringHasProperty") {
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+                    ty: Ty::Boolean,
+                    span,
+                };
+            }
+        }
         let native = match object.ty {
             Ty::Array => "arrayHas",
             Ty::Proxy => "proxyHas",
