@@ -1206,6 +1206,47 @@ impl Interp<'_> {
                         stack.push(Value::Void);
                         continue;
                     }
+                    // `Class[Symbol.species]`: the class's static species getter, else
+                    // the constructor itself (the default `get [Symbol.species]() { return this; }`).
+                    // A `{ name, __classDesc }` constructor record stands for its class.
+                    let species_receiver = match &object_raw {
+                        Value::Any(any) if any.tag() == zun_core::AnyTag::ClassDescriptor => Some(*any),
+                        Value::Any(any) => any.as_object().and_then(|address| {
+                            let obj = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                            zun_gc::with_current_heap(|heap| {
+                                if heap.is_dynamic_object(obj) { heap.dynamic_get(obj, "__classDesc") } else { None }
+                            })
+                        }),
+                        Value::Object(obj) => zun_gc::with_current_heap(|heap| {
+                            if heap.is_dynamic_object(*obj) { heap.dynamic_get(*obj, "__classDesc") } else { None }
+                        }),
+                        _ => None,
+                    };
+                    if let (Some(descriptor), Value::Any(key_any)) = (&species_receiver, &key) {
+                        if descriptor.tag() == zun_core::AnyTag::ClassDescriptor
+                            && key_any.as_symbol().is_some_and(|symbol| symbol.get() == zun_core::WellKnownSymbol::Species.id().get())
+                        {
+                            let species_symbol = key_any.as_symbol().map_or(0, |symbol| symbol.get());
+                            let handle = descriptor
+                                .as_class_descriptor()
+                                .and_then(|token| self.user_class_rid(token))
+                                .and_then(|rid| self.class_symbol_methods.get(&(rid, species_symbol)).copied());
+                            match handle {
+                                Some(handle) => match self.invoke_function_value(handle, Vec::new()) {
+                                    Ok(value) => stack.push(value),
+                                    Err(RunError::Thrown(exception)) => {
+                                        if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                            continue;
+                                        }
+                                        return Err(RunError::Thrown(exception));
+                                    }
+                                    Err(error) => return Err(error),
+                                },
+                                None => stack.push(Value::Any(*descriptor)),
+                            }
+                            continue;
+                        }
+                    }
                     // A builtin class descriptor (e.g. `Array.prototype`) has no
                     // dynamic properties to read: the lookup yields `undefined`.
                     if matches!(&object_raw, Value::Any(a) if a.tag() == zun_core::AnyTag::ClassDescriptor) {

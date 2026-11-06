@@ -20,24 +20,39 @@ class __BuiltinPromise {
         }
     }
 
+    // The derived promise is built by the species constructor (`this.constructor[Symbol.species]`);
+    // a species of `Promise` itself yields a plain native promise.
+    __derive(p: any): any {
+        const C: any = (this as any).constructor;
+        const S: any = C[Symbol.species];
+        if (S === undefined || S === null || S === Promise) {
+            return p;
+        }
+        return new S((res: any, rej: any) => {
+            p.then(res, rej);
+        });
+    }
+
     then(onFulfilled?: any, onRejected?: any): any {
-        return this.inner.then(onFulfilled, onRejected);
+        return this.__derive(this.inner.then(onFulfilled, onRejected));
     }
 
     catch(onRejected?: any): any {
-        return this.inner.catch(onRejected);
+        return this.then(undefined, onRejected);
     }
 
     finally(onFinally?: any): any {
-        return this.inner.finally(onFinally);
+        return this.__derive(this.inner.finally(onFinally));
     }
 
     static resolve(value: any): any {
-        return new __BuiltinPromise((res: any, rej: any) => res(value));
+        const C: any = this;
+        return new C((res: any, rej: any) => res(value));
     }
 
     static reject(reason: any): any {
-        return new __BuiltinPromise((res: any, rej: any) => rej(reason));
+        const C: any = this;
+        return new C((res: any, rej: any) => rej(reason));
     }
 
     static all(items: any): any {

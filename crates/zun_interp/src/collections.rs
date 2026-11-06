@@ -5930,6 +5930,20 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Object(existing));
                     }
                 }
+                // A thenable object is adopted (its `then` runs as a job).
+                if let Some(obj) = object(value) {
+                    let thenable = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get_function(obj, "then").is_some()
+                            || (!heap.is_dynamic_object(obj) && self.instance_method_rid(obj, "then").is_some())
+                    });
+                    if thenable {
+                        let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                        let roots = [promise];
+                        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                        self.settle_target_with(roots[0], Value::Object(obj));
+                        return Ok(Value::Object(roots[0]));
+                    }
+                }
                 let boxed = any(value).ok_or(RunError::BadToken)?;
                 let promise = zun_gc::with_current_heap_mut(|heap| {
                     let promise = heap.alloc_promise();
@@ -6640,6 +6654,26 @@ impl<'a> Interp<'a> {
                 if prototype.is_none() && is_dynamic {
                     let root = Self::object_prototype_singleton();
                     return Ok(Value::Any(zun_core::Any::object(root.addr() as usize)));
+                }
+                // A `class X extends Promise` chain ends at the prelude wrapper
+                // `__BuiltinPromise`; its prototype stands for the built-in's own.
+                if let Some(proto_addr) = prototype.and_then(|p| p.as_object()) {
+                    let count = self.module.tables.type_defs.len();
+                    for rid in 1..=count as u32 {
+                        let Some(def) = self.module.tables.type_defs.get(rid as usize - 1) else { continue };
+                        let Some(builtin) = self.module.strings.get(def.name).strip_prefix("__Builtin").map(str::to_owned) else {
+                            continue;
+                        };
+                        if self.class_prototype_object(rid).addr() as usize == proto_addr {
+                            let descriptor = zun_gc::with_current_heap_mut(|heap| {
+                                let global = heap.global_object();
+                                heap.dynamic_get(global, &builtin)
+                            });
+                            if let Some(descriptor) = descriptor {
+                                return Ok(Value::Any(descriptor));
+                            }
+                        }
+                    }
                 }
                 Ok(Value::Any(prototype.unwrap_or_else(zun_core::Any::null)))
             }
