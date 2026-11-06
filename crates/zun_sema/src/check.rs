@@ -10473,6 +10473,28 @@ impl Checker<'_> {
                 {
                     let first = self.check_expr(cx, &args[0]);
                     let replacement = self.check_expr(cx, &args[1]);
+                    if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
+                        return self.string_symbol_dispatch(span, 5.0, receiver, first, Some(replacement));
+                    }
+                    // A dynamic (`any`) replacement is a function or ToString'd at run time.
+                    if replacement.ty == Ty::Any && matches!(first.ty, Ty::RegExp | Ty::String) {
+                        let first = Self::box_to_any(first);
+                        return self.string_symbol_dispatch(span, 5.0, receiver, first, Some(replacement));
+                    }
+                    // A RegExp search must carry the `g` flag (checked at run time).
+                    let first = if first.ty == Ty::RegExp {
+                        let Some((guard, _)) = zun_natives::resolve("collections", "regexpReplaceAllGuard") else {
+                            self.error(span, "missing collection intrinsic `regexpReplaceAllGuard`");
+                            return self.poison(span);
+                        };
+                        hir::Expr {
+                            span: first.span,
+                            kind: hir::ExprKind::CallBuiltin { id: guard, args: vec![first] },
+                            ty: Ty::RegExp,
+                        }
+                    } else {
+                        first
+                    };
                     if matches!(replacement.ty, Ty::Function(_)) {
                         return self.replace_with_function(span, first, receiver, replacement, true);
                     }
@@ -11546,19 +11568,14 @@ impl Checker<'_> {
                 // (no distinct iterator object yet).
                 if receiver.ty == Ty::String && mname == "matchAll" && args.len() == 1 {
                     let first = self.check_expr(cx, &args[0]);
-                    if first.ty != Ty::RegExp && !first.ty.is_error() {
-                        self.error(first.span, "`matchAll` expects a RegExp argument");
+                    if first.ty.is_error() {
                         return self.poison(span);
                     }
-                    let Some((id, _)) = zun_natives::resolve("collections", "stringMatchAll") else {
-                        self.error(span, "missing collection intrinsic `stringMatchAll`");
-                        return self.poison(span);
-                    };
-                    return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver] },
-                        ty: Ty::Array,
-                        span,
-                    };
+                    // Every argument shape (RegExp, string, any, object carrying
+                    // `Symbol.matchAll`) goes through the runtime dispatch, which
+                    // returns the lazy match iterator.
+                    let first = Self::box_to_any(first);
+                    return self.string_symbol_dispatch(span, 4.0, receiver, first, None);
                 }
                 // `boolean.toString()` → `"true"` / `"false"`. Intercepted
                 // before class dispatch, like `number.toString(radix?)`, since
@@ -13437,6 +13454,7 @@ impl Checker<'_> {
                             "species" => Some(9.0),
                             "isConcatSpreadable" => Some(10.0),
                             "unscopables" => Some(11.0),
+                            "matchAll" => Some(12.0),
                             _ => None,
                         };
                         if let Some(well_known_id) = well_known_id {

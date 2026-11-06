@@ -105,6 +105,21 @@ impl<'a> Interp<'a> {
                 }) {
                     return Ok(text);
                 }
+                // An array stringifies as its comma-joined elements.
+                if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(obj)) {
+                    let mut parts: Vec<String> = Vec::with_capacity(len);
+                    for index in 0..len {
+                        let element = zun_gc::with_current_heap(|heap| heap.array_get(obj, index));
+                        parts.push(match element {
+                            Some(any) => match unbox_arg(&Value::Any(any))? {
+                                Value::Void | Value::Null => String::new(),
+                                other => self.dyn_to_string(&other)?,
+                            },
+                            None => String::new(),
+                        });
+                    }
+                    return Ok(parts.join(","));
+                }
                 match self.ordinary_to_primitive(obj, "string")? {
                     Some(primitive) => primitive.display(),
                     None => "[object Object]".to_string(),
@@ -399,5 +414,310 @@ impl<'a> Interp<'a> {
             "toLowerCase" => Value::Str(recv.to_lowercase().into()),
             _ => return Ok(None),
         }))
+    }
+}
+
+/// Outcome of a `GetMethod(obj, @@symbol)` walk.
+enum SymbolLookup {
+    Getter(zun_core::FunctionHandle),
+    Function(zun_core::FunctionHandle),
+    Value(zun_core::Any),
+    Missing,
+}
+
+impl<'a> Interp<'a> {
+    /// ECMAScript `GetMethod(obj, symbol)` over the object's prototype chain:
+    /// `Ok(None)` for `undefined`/`null`, a `TypeError` for any other
+    /// non-callable value.
+    pub(super) fn symbol_method(
+        &mut self,
+        start: zun_gc::Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Result<Option<zun_core::FunctionHandle>, RunError> {
+        let mut current = start;
+        for _ in 0..64 {
+            let found = zun_gc::with_current_heap(|heap| {
+                if let Some(getter) = heap.dynamic_symbol_getter(current, symbol) {
+                    SymbolLookup::Getter(getter)
+                } else if let Some(function) = heap.dynamic_get_symbol_function(current, symbol) {
+                    SymbolLookup::Function(function)
+                } else if let Some(any) = heap.dynamic_get_symbol(current, symbol) {
+                    SymbolLookup::Value(any)
+                } else {
+                    SymbolLookup::Missing
+                }
+            });
+            match found {
+                SymbolLookup::Function(function) => return Ok(Some(function)),
+                SymbolLookup::Getter(getter) => {
+                    let args = self.with_this_arg(getter, start, Vec::new());
+                    let value = self.invoke_function_value(getter, args)?;
+                    return self.callable_or_nullish(&value);
+                }
+                SymbolLookup::Value(any) => return self.callable_or_nullish(&Value::Any(any)),
+                SymbolLookup::Missing => {
+                    let next = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(current))
+                        .and_then(|proto| proto.as_object());
+                    match next {
+                        Some(addr) => current = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) },
+                        None => return Ok(None),
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn callable_or_nullish(&self, value: &Value) -> Result<Option<zun_core::FunctionHandle>, RunError> {
+        match unbox_arg(value)? {
+            Value::Void | Value::Null => Ok(None),
+            other => match self.as_callable(&other) {
+                Some(handle) => Ok(Some(handle)),
+                None => Err(RunError::Native("TypeError: value is not a function".into())),
+            },
+        }
+    }
+
+    /// The callable a value stands for (a function, a function cell or a
+    /// `functionBox` record), if any.
+    pub(super) fn as_callable(&self, value: &Value) -> Option<zun_core::FunctionHandle> {
+        match value {
+            Value::Function(handle) => Some(*handle),
+            Value::Object(object) => zun_gc::with_current_heap(|heap| {
+                heap.function_of_cell(*object).or_else(|| heap.dynamic_get_function(*object, "__boxedFn"))
+            }),
+            _ => None,
+        }
+    }
+
+    /// `str.match/replace/search/split/matchAll/replaceAll(arg, extra?)` with a
+    /// dynamic `arg`: call `arg[Symbol.<kind>](str, extra?)` when present,
+    /// otherwise the String.prototype algorithm (kind 0 match, 1 replace,
+    /// 2 search, 3 split, 4 matchAll, 5 replaceAll).
+    pub(super) fn string_symbol_dispatch(&mut self, args: &[Value]) -> Result<Value, RunError> {
+        let receiver = match args.first().ok_or(RunError::BadToken)? {
+            Value::Str(text) => text.clone(),
+            _ => return Err(RunError::BadToken),
+        };
+        let arg = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
+        let extra = unbox_arg(args.get(2).ok_or(RunError::BadToken)?)?;
+        let kind = match args.get(3) {
+            Some(Value::Int(kind, _)) => *kind,
+            _ => return Err(RunError::BadToken),
+        };
+        let symbol = match kind {
+            0 => zun_core::WellKnownSymbol::Match,
+            1 | 5 => zun_core::WellKnownSymbol::Replace,
+            2 => zun_core::WellKnownSymbol::Search,
+            3 => zun_core::WellKnownSymbol::Split,
+            4 => zun_core::WellKnownSymbol::MatchAll,
+            _ => return Err(RunError::BadToken),
+        };
+        let regex_obj = match &arg {
+            Value::Object(obj) if zun_gc::with_current_heap(|heap| heap.regex_source(*obj).is_some()) => Some(*obj),
+            _ => None,
+        };
+        // matchAll / replaceAll refuse a regexp-like argument without `g`.
+        if (kind == 4 || kind == 5) && (regex_obj.is_some() || self.is_regexp(&arg)?) {
+            let flags = match (&arg, regex_obj) {
+                (_, Some(obj)) => zun_gc::with_current_heap(|heap| heap.regex_flags(obj).unwrap_or("").to_owned()),
+                (Value::Object(obj), None) => match zun_gc::with_current_heap(|heap| heap.dynamic_get(*obj, "flags")) {
+                    Some(any) => self.dyn_to_string(&Value::Any(any))?,
+                    None => String::new(),
+                },
+                _ => String::new(),
+            };
+            if !flags.contains('g') {
+                return Err(RunError::Native(if kind == 4 {
+                    "TypeError: String.prototype.matchAll called with a non-global RegExp argument".into()
+                } else {
+                    "TypeError: replaceAll must be called with a global RegExp".into()
+                }));
+            }
+        }
+        let handler = match (&arg, regex_obj) {
+            (Value::Object(obj), None) => self.symbol_method(*obj, symbol.id())?,
+            _ => None,
+        };
+        let result = if let (Some(handle), Value::Object(obj)) = (handler, &arg) {
+            let mut call_args = vec![Value::Str(receiver)];
+            let pass_extra = match kind {
+                1 | 5 => true,
+                3 => !matches!(&extra, Value::Float(n, _) if *n < 0.0) && !matches!(&extra, Value::Int(n, _) if *n < 0),
+                _ => false,
+            };
+            if pass_extra {
+                call_args.push(extra);
+            }
+            let call_args = self.with_this_arg(handle, *obj, call_args);
+            self.invoke_function_value(handle, call_args)?
+        } else {
+            match kind {
+                0 | 2 | 4 => {
+                    let regex = match regex_obj {
+                        Some(regex) => regex,
+                        None => {
+                            let source = match &arg {
+                                Value::Void => "(?:)".to_string(),
+                                other => {
+                                    let text = self.dyn_to_string(other)?;
+                                    if text.is_empty() { "(?:)".to_string() } else { text }
+                                }
+                            };
+                            let flags = if kind == 4 { "g" } else { "" };
+                            zun_gc::with_current_heap_mut(|heap| heap.alloc_regex_with_flags(source, flags))
+                                .map_err(|error| RunError::Native(format!("SyntaxError: Invalid regular expression: {error}")))?
+                        }
+                    };
+                    match kind {
+                        0 => self.call_managed_collection("regexpMatch", &[Value::Object(regex), Value::Str(receiver)])?,
+                        2 => self.call_managed_collection("regexpSearch", &[Value::Object(regex), Value::Str(receiver)])?,
+                        _ => self.match_all_iterator(regex, &receiver)?,
+                    }
+                }
+                1 | 5 => {
+                    let callable = self.as_callable(&extra);
+                    let all = kind == 5;
+                    if let Some(regex) = regex_obj {
+                        match callable {
+                            Some(callback) => self.call_managed_collection(
+                                "replaceFn",
+                                &[Value::Object(regex), Value::Str(receiver), Value::Function(callback), Value::Bool(all)],
+                            )?,
+                            None => {
+                                let replacement = self.dyn_to_string(&extra)?;
+                                self.call_managed_collection(
+                                    "regexpReplace",
+                                    &[Value::Object(regex), Value::Str(receiver), Value::Str(replacement.into())],
+                                )?
+                            }
+                        }
+                    } else {
+                        let needle = self.dyn_to_string(&arg)?;
+                        match callable {
+                            Some(callback) => self.call_managed_collection(
+                                "replaceFn",
+                                &[Value::Str(needle.into()), Value::Str(receiver), Value::Function(callback), Value::Bool(all)],
+                            )?,
+                            None => {
+                                let replacement = self.dyn_to_string(&extra)?;
+                                let (id, _) = zun_natives::resolve("string", if all { "replaceAll" } else { "replace" })
+                                    .ok_or(RunError::BadToken)?;
+                                let values = [Value::Str(receiver), Value::Str(needle.into()), Value::Str(replacement.into())];
+                                let native_args: Vec<zun_natives::NativeArg> =
+                                    values.iter().map(super::native::to_native_arg).collect();
+                                let out = zun_natives::dispatch(id, &native_args, self.output)
+                                    .map_err(|e| RunError::Native(e.0))?;
+                                super::native::from_native_value(out, id)
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // split
+                    let limit: Option<usize> = match &extra {
+                        Value::Float(n, _) if *n < 0.0 => None,
+                        Value::Int(n, _) if *n < 0 => None,
+                        Value::Void => None,
+                        other => {
+                            let n = self.dyn_to_number(other)?;
+                            Some(if n.is_finite() { n.trunc().rem_euclid(4294967296.0) as usize } else { 0 })
+                        }
+                    };
+                    if let Some(regex) = regex_obj {
+                        let mut call = vec![Value::Object(regex), Value::Str(receiver)];
+                        match limit {
+                            Some(n) => {
+                                call.push(Value::Int(n as i64, zun_il::NumKind::I64));
+                                self.call_managed_collection("regexpSplitLimit", &call)?
+                            }
+                            None => self.call_managed_collection("regexpSplit", &call)?,
+                        }
+                    } else {
+                        let mut pieces: Vec<String> = match &arg {
+                            Value::Void => vec![receiver.to_string()],
+                            other => {
+                                let separator = self.dyn_to_string(other)?;
+                                if separator.is_empty() {
+                                    zun_core::wtf16::encode(&receiver)
+                                        .map(|unit| zun_core::wtf16::from_units(&[unit]))
+                                        .collect()
+                                } else {
+                                    receiver.split(separator.as_str()).map(str::to_string).collect()
+                                }
+                            }
+                        };
+                        if let Some(limit) = limit {
+                            pieces.truncate(limit);
+                        }
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(pieces.len());
+                            for (index, piece) in pieces.iter().enumerate() {
+                                let value = zun_core::Any::string(heap.intern_string(piece.as_str().into()));
+                                heap.array_set(array, index, value);
+                            }
+                            array
+                        });
+                        Value::Object(array)
+                    }
+                }
+            }
+        };
+        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap)).unwrap_or_else(zun_core::Any::void);
+        Ok(Value::Any(boxed))
+    }
+
+    /// `String.prototype.matchAll` over a (cloned) global regexp: the matches
+    /// are collected through `exec` on a clone seeded with the caller's
+    /// `lastIndex`, then handed out by an iterator.
+    pub(super) fn match_all_iterator(&mut self, regex: zun_gc::Obj, input: &str) -> Result<Value, RunError> {
+        let (source, flags, last_index) = zun_gc::with_current_heap(|heap| {
+            (
+                heap.regex_source(regex).unwrap_or("").to_owned(),
+                heap.regex_flags(regex).unwrap_or("").to_owned(),
+                heap.regex_last_index(regex).unwrap_or(0.0),
+            )
+        });
+        let unicode = flags.contains('u') || flags.contains('v');
+        let input_units: Vec<u16> = units(input);
+        let clone = zun_gc::with_current_heap_mut(|heap| {
+            let clone = heap.alloc_regex_with_flags(source, flags)?;
+            heap.regex_set_last_index(clone, last_index);
+            Ok::<_, zun_core::RegexError>(clone)
+        })
+        .map_err(|error| RunError::Native(error.to_string()))?;
+        let mut matches: Vec<zun_gc::Obj> = Vec::new();
+        loop {
+            let found = zun_gc::with_current_heap_mut(|heap| heap.regex_exec_stateful(clone, input))
+                .ok_or(RunError::BadToken)?
+                .map_err(|error| RunError::Native(error.to_string()))?;
+            let Some(array) = found else { break };
+            let empty = zun_gc::with_current_heap(|heap| {
+                heap.array_get(array, 0)
+                    .and_then(|any| any.as_string())
+                    .is_some_and(|handle| heap.string(handle).is_empty())
+            });
+            if empty {
+                zun_gc::with_current_heap_mut(|heap| {
+                    let at = heap.regex_last_index(clone).unwrap_or(0.0).max(0.0) as usize;
+                    let step = match (input_units.get(at), input_units.get(at + 1)) {
+                        (Some(high), Some(low))
+                            if unicode && (0xD800..=0xDBFF).contains(high) && (0xDC00..=0xDFFF).contains(low) => 2,
+                        _ => 1,
+                    };
+                    heap.regex_set_last_index(clone, (at + step) as f64);
+                });
+            }
+            matches.push(array);
+        }
+        let iterator = zun_gc::with_current_heap_mut(|heap| {
+            let outer = heap.alloc_array(matches.len());
+            for (index, array) in matches.iter().enumerate() {
+                heap.array_set(outer, index, zun_core::Any::object(array.addr() as usize));
+            }
+            heap.alloc_array_iterator(outer)
+        })
+        .ok_or(RunError::BadToken)?;
+        Ok(Value::Object(iterator))
     }
 }

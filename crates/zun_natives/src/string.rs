@@ -529,8 +529,27 @@ fn replace_all(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nati
             Some(NativeArg::Str(search)),
             Some(NativeArg::Str(replacement)),
         ) => {
-            // An empty search in JS inserts the replacement between every code
-            // unit (and at both ends); Rust's `replace` matches that behavior.
+            // An empty search inserts the replacement between every UTF-16 code
+            // unit (and at both ends), tearing astral pairs.
+            if search.is_empty() {
+                let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
+                let needs_context = replacement.contains("$`") || replacement.contains("$'");
+                let mut out_units: Vec<u16> = Vec::with_capacity(units.len() * 2 + 1);
+                for at in 0..=units.len() {
+                    let (before, after) = if needs_context {
+                        (zun_core::wtf16::from_units(&units[..at]), zun_core::wtf16::from_units(&units[at..]))
+                    } else {
+                        (String::new(), String::new())
+                    };
+                    let mut piece = String::new();
+                    zun_core::expand_substitution(replacement, &[Some(search)], &[None], &before, &after, &mut piece);
+                    out_units.extend(zun_core::wtf16::encode(&piece));
+                    if let Some(&unit) = units.get(at) {
+                        out_units.push(unit);
+                    }
+                }
+                return Ok(NativeValue::Str(zun_core::wtf16::from_units(&out_units)));
+            }
             let mut out = String::new();
             let mut last = 0;
             let mut from = 0;

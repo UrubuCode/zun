@@ -1905,6 +1905,19 @@ impl<'a> Interp<'a> {
                 zun_gc::with_current_heap_mut(|heap| heap.regex_set_last_index(object, value));
                 Ok(Value::Float(value, zun_il::NumKind::F64))
             }
+            "regexpReplaceAllGuard" => {
+                let regex = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let global = zun_gc::with_current_heap(|heap| {
+                    heap.regex_flags(regex).map(|flags| flags.contains('g'))
+                })
+                .ok_or(RunError::BadToken)?;
+                if !global {
+                    return Err(RunError::Native(
+                        "TypeError: replaceAll must be called with a global RegExp".into(),
+                    ));
+                }
+                Ok(Value::Object(regex))
+            }
             "regexpMatch" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
@@ -2137,6 +2150,11 @@ impl<'a> Interp<'a> {
                         })
                         .ok_or(RunError::BadToken)?
                         .map_err(|error| RunError::Native(error.to_string()))?;
+                        zun_gc::with_current_heap_mut(|heap| {
+                            if heap.regex_flags(object).is_some_and(|flags| flags.contains('g')) {
+                                heap.regex_set_last_index(object, 0.0);
+                            }
+                        });
                         Ok(Value::Str(result.into()))
                     }
                 }
@@ -2693,11 +2711,10 @@ impl<'a> Interp<'a> {
                         let mut found = Vec::new();
                         let to16 = |byte: usize| zun_core::wtf16::len16(&input[..byte]);
                         if needle.is_empty() {
-                            let mut boundaries: Vec<usize> =
-                                input.char_indices().map(|(index, _)| index).collect();
-                            boundaries.push(input.len());
-                            for at in boundaries {
-                                found.push((to16(at), to16(at), vec![Some(String::new())]));
+                            // Empty pattern: every UTF-16 position, tearing astral pairs.
+                            let total = zun_core::wtf16::len16(&input);
+                            for at in 0..=total {
+                                found.push((at, at, vec![Some(String::new())]));
                                 if !all {
                                     break;
                                 }
@@ -2756,6 +2773,7 @@ impl<'a> Interp<'a> {
                     if has_named {
                         let object = zun_gc::with_current_heap_mut(|heap| {
                             let object = heap.alloc_dynamic();
+                            heap.dynamic_set_prototype(object, Some(zun_core::Any::null()));
                             for (name, value) in named_groups {
                                 let any = match value {
                                     Some(text) => zun_core::Any::string(heap.intern_string(text.into())),
@@ -2772,6 +2790,13 @@ impl<'a> Interp<'a> {
                     last = end;
                 }
                 out_units.extend_from_slice(&units[last..]);
+                if let Value::Object(regex) = &search {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        if heap.regex_flags(*regex).is_some_and(|flags| flags.contains('g')) {
+                            heap.regex_set_last_index(*regex, 0.0);
+                        }
+                    });
+                }
                 Ok(Value::Str(zun_core::wtf16::from_units(&out_units).into()))
             }
             "stringMethod" => {
@@ -3939,110 +3964,7 @@ impl<'a> Interp<'a> {
                     }
                 }
             }
-            "stringSymbolDispatch" => {
-                // `str.match/replace/search/split(arg)` with a dynamic `arg`:
-                // call `arg[Symbol.<kind>](str, extra?)` when the object carries
-                // the method; else fall back to the string path (replace/split
-                // with a string `arg`), `null` for match, `-1` for search.
-                let receiver = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Str(text) => text.clone(),
-                    _ => return Err(RunError::BadToken),
-                };
-                let arg = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)?;
-                let extra = unbox_arg(args.get(2).ok_or(RunError::BadToken)?)?;
-                let kind = match args.get(3) {
-                    Some(Value::Int(kind, _)) => *kind,
-                    _ => return Err(RunError::BadToken),
-                };
-                let symbol = match kind {
-                    0 => zun_core::WellKnownSymbol::Match,
-                    1 => zun_core::WellKnownSymbol::Replace,
-                    2 => zun_core::WellKnownSymbol::Search,
-                    _ => zun_core::WellKnownSymbol::Split,
-                };
-                let handler = match &arg {
-                    Value::Object(obj) => {
-                        zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(*obj, symbol.id()))
-                    }
-                    _ => None,
-                };
-                let result = if let Some(handle) = handler {
-                    let mut call_args = vec![Value::Str(receiver)];
-                    // replace passes the replacement; split passes a limit only
-                    // when one was given (negative sentinel = absent).
-                    let pass_extra = match kind {
-                        1 => true,
-                        3 => !matches!(&extra, Value::Float(n, _) if *n < 0.0)
-                            && !matches!(&extra, Value::Int(n, _) if *n < 0),
-                        _ => false,
-                    };
-                    if pass_extra {
-                        call_args.push(extra);
-                    }
-                    self.invoke_function_value(handle, call_args)?
-                } else {
-                    match (kind, &arg) {
-                        (1, Value::Str(search)) => {
-                            let replacement = match &extra {
-                                Value::Str(text) => text.to_string(),
-                                other => other.display(),
-                            };
-                            Value::Str(receiver.replacen(search.as_ref(), &replacement, 1).into())
-                        }
-                        (3, separator_value) => {
-                            // ToUint32 of the limit; absent/undefined is unbounded.
-                            let limit: Option<usize> = match &extra {
-                                Value::Float(n, _) if *n < 0.0 => None,
-                                Value::Int(n, _) if *n < 0 => None,
-                                Value::Void => None,
-                                other => {
-                                    let n = self.to_number_value(other.clone())?;
-                                    Some(if n.is_finite() {
-                                        n.trunc().rem_euclid(4294967296.0) as usize
-                                    } else {
-                                        0
-                                    })
-                                }
-                            };
-                            let mut pieces: Vec<String> = match separator_value {
-                                Value::Void => vec![receiver.to_string()],
-                                other => {
-                                    let separator: std::rc::Rc<str> = match other {
-                                        Value::Str(text) => text.clone(),
-                                        other => other.display().into(),
-                                    };
-                                    if separator.is_empty() {
-                                        zun_core::wtf16::encode(&receiver)
-                                            .map(|unit| zun_core::wtf16::from_units(&[unit]))
-                                            .collect()
-                                    } else {
-                                        receiver.split(separator.as_ref()).map(str::to_string).collect()
-                                    }
-                                }
-                            };
-                            if let Some(limit) = limit {
-                                pieces.truncate(limit);
-                            }
-                            let array = zun_gc::with_current_heap_mut(|heap| {
-                                let array = heap.alloc_array(pieces.len());
-                                for (index, piece) in pieces.iter().enumerate() {
-                                    let value =
-                                        zun_core::Any::string(heap.intern_string(piece.as_str().into()));
-                                    heap.array_set(array, index, value);
-                                }
-                                array
-                            });
-                            Value::Object(array)
-                        }
-                        (2, _) => Value::Int(-1, zun_il::NumKind::I64),
-                        (0, _) => Value::Null,
-                        _ => Value::Str(receiver),
-                    }
-                };
-                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
-                    .unwrap_or_else(zun_core::Any::void);
-                Ok(Value::Any(boxed))
-            }
+            "stringSymbolDispatch" => self.string_symbol_dispatch(args),
             "addAny" => {
                 // ECMAScript `+`: ToPrimitive(default) on each operand, then
                 // string concat if either is a string, else numeric add.

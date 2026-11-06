@@ -312,6 +312,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "objectIsExtensible",
         "objectPropertyIsEnumerable",
         "stringMatchAll",
+        "regexpReplaceAllGuard",
         "regexpMatch",
         "functionBox",
         "functionBoxIs",

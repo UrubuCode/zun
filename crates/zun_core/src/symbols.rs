@@ -43,11 +43,12 @@ pub enum WellKnownSymbol {
     /// N/A: `Symbol.unscopables` only affects the `with` statement, which Zun
     /// does not have.
     Unscopables = 11,
+    MatchAll = 12,
 }
 
 impl WellKnownSymbol {
     /// All well-known symbols in id order; the seed order for the registry.
-    pub const ALL: [WellKnownSymbol; 12] = [
+    pub const ALL: [WellKnownSymbol; 13] = [
         WellKnownSymbol::Iterator,
         WellKnownSymbol::AsyncIterator,
         WellKnownSymbol::HasInstance,
@@ -60,6 +61,7 @@ impl WellKnownSymbol {
         WellKnownSymbol::Species,
         WellKnownSymbol::IsConcatSpreadable,
         WellKnownSymbol::Unscopables,
+        WellKnownSymbol::MatchAll,
     ];
 
     pub const fn id(self) -> SymbolId { SymbolId(self as u64) }
@@ -80,6 +82,7 @@ impl WellKnownSymbol {
             WellKnownSymbol::Species => "Symbol.species",
             WellKnownSymbol::IsConcatSpreadable => "Symbol.isConcatSpreadable",
             WellKnownSymbol::Unscopables => "Symbol.unscopables",
+            WellKnownSymbol::MatchAll => "Symbol.matchAll",
         }
     }
 
@@ -99,6 +102,7 @@ impl WellKnownSymbol {
             "species" => WellKnownSymbol::Species,
             "isConcatSpreadable" => WellKnownSymbol::IsConcatSpreadable,
             "unscopables" => WellKnownSymbol::Unscopables,
+            "matchAll" => WellKnownSymbol::MatchAll,
             _ => return None,
         })
     }

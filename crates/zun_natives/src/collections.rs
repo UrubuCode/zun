@@ -636,6 +636,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "asyncGenResume", params: &[Opaque, Opaque, Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "asyncIterOpen", params: &[Opaque], ret: Opaque, imp: unavailable },
         NativeFn { name: "syncIterOpen", params: &[Opaque], ret: Opaque, imp: unavailable },
+        // `replaceAll(regex, ...)` guard: TypeError unless the regex carries `g`; returns the regex.
+        NativeFn { name: "regexpReplaceAllGuard", params: &[RegExp], ret: RegExp, imp: unavailable },
     ],
 };
 

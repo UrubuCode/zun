@@ -80,6 +80,7 @@ impl Heap {
             zun_core::Any::void()
         } else {
             let object = self.alloc_dynamic();
+            self.dynamic_set_prototype(object, Some(zun_core::Any::null()));
             for (name, value) in named {
                 self.dynamic_set(object, name, value);
             }
