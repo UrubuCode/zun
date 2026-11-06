@@ -458,9 +458,18 @@ fn compile_source_with_externals(
     source: &str,
     external_functions: &[zun_sema::check::ExternalFunction],
 ) -> Result<Module, Vec<Diagnostic>> {
-    let mut diagnostics = Vec::new();
-    let ast = zun_syntax::parse(source, &mut diagnostics);
-    compile_program_with_externals(source, ast, diagnostics, external_functions)
+    // OXC is the single parser (PLAN §89). The standard prelude now uses modern
+    // TypeScript (generators, getters, generic annotations) that the transitional
+    // native parser cannot read, so every compile entry point parses through OXC.
+    // `source` here already has the prelude concatenated by the caller, so it is
+    // parsed as-is (no further `with_prelude`).
+    let ast = zun_syntax::oxc::parse_subset(source, true).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(Diagnostic::error)
+            .collect::<Vec<_>>()
+    })?;
+    compile_program_with_externals(source, ast, Vec::new(), external_functions)
 }
 
 fn compile_program_with_externals(
@@ -592,8 +601,12 @@ where
 
 fn collect_function_signatures(source: &str) -> Vec<zun_sema::check::ExternalFunction> {
     let source = zun_prelude::with_prelude(source);
-    let mut parse_diagnostics = Vec::new();
-    let ast = zun_syntax::parse(&source, &mut parse_diagnostics);
+    // Parse through OXC, the single parser: the prelude is modern TypeScript the
+    // native parser can no longer read.
+    let ast = match zun_syntax::oxc::parse_subset(&source, true) {
+        Ok(ast) => ast,
+        Err(_) => return Vec::new(),
+    };
     let mut check_diagnostics = Vec::new();
     let hir = zun_sema::check_with_externals(&source, &ast, &mut check_diagnostics, &[]);
 
