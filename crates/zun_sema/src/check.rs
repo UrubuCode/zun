@@ -150,6 +150,8 @@ fn check_impl(
         classes_with_iterator: HashSet::new(),
         closure_param_hint: None,
         closure_takes_this: false,
+        static_this: HashMap::new(),
+        cur_static_class: None,
         closure_self_name: None,
         routed_methods: HashMap::new(),
         hooked_classes: HashSet::new(),
@@ -395,6 +397,11 @@ struct Checker<'a> {
     /// (named `this`) and is marked by an `@this` name suffix, which the
     /// interpreter reads to pass the receiver on a dynamic member call.
     closure_takes_this: bool,
+    /// Static methods whose body uses `this`/`super`: func index -> declaring
+    /// class. They take the receiving class value as a hidden first parameter.
+    static_this: HashMap<u32, u32>,
+    /// Declaring class of the static method currently being checked (for `super`).
+    cur_static_class: Option<u32>,
     /// Name a closure being bound by `let name = <closure>` may call itself by.
     closure_self_name: Option<String>,
     /// Instance methods whose runtime decorator returns a function (method
@@ -1831,7 +1838,22 @@ impl Checker<'_> {
                     "FinalizationRegistry" => Ty::FinalizationRegistry,
                     _ => Ty::Instance(class_idx as u32),
                 };
-                let mut params = if m.is_static { Vec::new() } else { vec![receiver_ty] };
+                // A static method that mentions `this`/`super` receives the
+                // receiving class value as a hidden first parameter.
+                let hidden_class_param = m.is_static
+                    && !m.is_extern
+                    && self
+                        .source
+                        .get(m.body.span.start as usize..m.body.span.end as usize)
+                        .is_some_and(|text| {
+                            text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                                .any(|word| word == "this" || word == "super")
+                        });
+                let mut params = if m.is_static {
+                    if hidden_class_param { vec![Ty::Any] } else { Vec::new() }
+                } else {
+                    vec![receiver_ty]
+                };
                 for p in &m.params {
                     params.push(match &p.ty {
                         Some(t) => self.resolve_annotation(t),
@@ -1867,6 +1889,12 @@ impl Checker<'_> {
                 {
                     self.error(m.name.span, format!("duplicate method `{name}`"));
                 }
+                let name = if hidden_class_param {
+                    self.static_this.insert(func_index, class_idx as u32);
+                    format!("{name}@this")
+                } else {
+                    name
+                };
                 self.signatures.push(Signature {
                     name,
                     params,
@@ -2049,7 +2077,8 @@ impl Checker<'_> {
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
         let mut param_tys_iter = param_tys.iter();
-        if this_class.is_some() {
+        self.cur_static_class = self.static_this.get(&(index as u32)).copied();
+        if this_class.is_some() || self.cur_static_class.is_some() {
             let this_ty = *param_tys_iter.next().expect("method has a this param");
             cx.declare("this", this_ty);
         }
@@ -5502,6 +5531,11 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        if cx.this_class.is_none() {
+            if let (Some(class), Some(method)) = (self.cur_static_class, method) {
+                return self.check_static_super_call(cx, class, method, args, span);
+            }
+        }
         let Some(this_class) = cx.this_class else {
             self.error(span, "`super` is only valid inside a class method");
             return self.poison(span);
@@ -5588,6 +5622,68 @@ impl Checker<'_> {
                     format!("argument type {:?} does not match {expected:?}", arg.ty),
                 );
             }
+        }
+        hir::Expr { kind: hir::ExprKind::StaticCall { func, args: call_args }, ty: return_ty, span }
+    }
+
+    /// `super.m(args)` inside a static method of `class`: a direct call of the
+    /// base class's static `m`, with the current `this` (the receiving class
+    /// value) forwarded as its hidden first parameter.
+    fn check_static_super_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        class: u32,
+        method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let Some(base) = self.classes[class as usize].base else {
+            self.error(span, "`super` used in a class that has no base class (no `extends`)");
+            return self.poison(span);
+        };
+        let mname = self.text(method).to_string();
+        let Some(func) = self.method_of(base, &mname) else {
+            self.error(method.span, format!("no static method `{mname}` on the base class"));
+            return self.poison(span);
+        };
+        if !self.signatures[func as usize].is_static {
+            self.error(method.span, format!("`{mname}` is not a static method of the base class"));
+            return self.poison(span);
+        }
+        let hidden_class = self.static_this.contains_key(&func);
+        let (param_tys, return_ty, optional_count, signature_name) = {
+            let sig = &self.signatures[func as usize];
+            (sig.params[hidden_class as usize..].to_vec(), sig.return_ty, sig.optional_count, sig.name.clone())
+        };
+        let mut call_args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
+        if call_args.len() > param_tys.len()
+            || call_args.len() < param_tys.len().saturating_sub(optional_count)
+        {
+            self.error(span, format!("`{mname}` expects {} argument(s), found {}", param_tys.len(), call_args.len()));
+            return self.poison(span);
+        }
+        let sig = Signature {
+            name: signature_name,
+            params: param_tys.clone(),
+            return_ty,
+            optional_count,
+            rest_param: None,
+            is_generator: false,
+            is_static: true,
+        };
+        self.pad_default_args(&mut call_args, &sig, span);
+        for (arg, &expected) in call_args.iter_mut().zip(&param_tys) {
+            coerce_numeric_literal(arg, expected);
+        }
+        if hidden_class {
+            let Some(this_slot) = cx.lookup("this") else {
+                self.error(span, "`super` is not supported inside this closure");
+                return self.poison(span);
+            };
+            call_args.insert(
+                0,
+                hir::Expr { ty: cx.locals[this_slot as usize], kind: hir::ExprKind::Local(this_slot), span },
+            );
         }
         hir::Expr { kind: hir::ExprKind::StaticCall { func, args: call_args }, ty: return_ty, span }
     }
@@ -9241,9 +9337,11 @@ impl Checker<'_> {
                     }
                     if let Some(&class_index) = self.classes_by_name.get(&class_name) {
                         if let Some(func) = self.method_of(class_index, self.text(method)) {
+                            // A static taking the receiving class value hidden-first.
+                            let hidden_class = self.static_this.contains_key(&func);
                             let (param_tys, return_ty) = {
                                 let sig = &self.signatures[func as usize];
-                                (sig.params.clone(), sig.return_ty)
+                                (sig.params[hidden_class as usize..].to_vec(), sig.return_ty)
                             };
                             if !self.signatures[func as usize].is_static {
                                 self.error(
@@ -9288,6 +9386,10 @@ impl Checker<'_> {
                                         is_static: true,
                                     };
                                     self.pad_default_args(&mut checked, &sig, span);
+                                }
+                                if hidden_class {
+                                    let token = zun_natives::USER_CLASS_FLAG | (class_index + 1);
+                                    checked.insert(0, self.realm_descriptor_expr(token, span));
                                 }
                                 return hir::Expr {
                                     kind: hir::ExprKind::StaticCall { func, args: checked },
@@ -12960,13 +13062,30 @@ impl Checker<'_> {
                         }
                         // A static accessor read (`Class.prop` with `static get prop()`).
                         if let Some(func) = self.method_of(class_index, &format!("get_{fname}")) {
+                            let hidden_class = self.static_this.contains_key(&func);
                             if self.signatures[func as usize].is_static
-                                && self.signatures[func as usize].params.is_empty()
+                                && self.signatures[func as usize].params.len() == hidden_class as usize
                             {
                                 let ty = self.signatures[func as usize].return_ty;
+                                let mut getter_args = Vec::new();
+                                if hidden_class {
+                                    let token = zun_natives::USER_CLASS_FLAG | (class_index + 1);
+                                    getter_args.push(self.realm_descriptor_expr(token, span));
+                                }
                                 return hir::Expr {
-                                    kind: hir::ExprKind::StaticCall { func, args: Vec::new() },
+                                    kind: hir::ExprKind::StaticCall { func, args: getter_args },
                                     ty,
+                                    span,
+                                };
+                            }
+                        }
+                        // A static method that takes its receiving class (`this`) is a
+                        // plain function reference; `.call(Class)` supplies the receiver.
+                        if let Some(func) = self.method_of(class_index, &fname) {
+                            if self.static_this.contains_key(&func) {
+                                return hir::Expr {
+                                    kind: hir::ExprKind::FunctionRef { func },
+                                    ty: Ty::Function(func),
                                     span,
                                 };
                             }

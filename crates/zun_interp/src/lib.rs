@@ -934,6 +934,16 @@ impl Interp<'_> {
                 Opcode::StoreDynamic => {
                     let name = self.dynamic_name(&instr.operand)?.to_owned();
                     let value = pop(&mut stack)?;
+                    // A class value: the write lands on its static field.
+                    if let Some(Value::Any(descriptor)) = stack.last() {
+                        let descriptor = *descriptor;
+                        if let Some(rid) = descriptor.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
+                            stack.pop();
+                            self.class_static_write(rid, &name, &value);
+                            stack.push(value);
+                            continue;
+                        }
+                    }
                     // A Proxy reached through `any`: writes go through its `set` trap.
                     {
                         let receiver = expando_receiver(stack.last().cloned().ok_or(RunError::BadToken)?);

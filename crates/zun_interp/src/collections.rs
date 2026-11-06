@@ -2868,8 +2868,8 @@ impl<'a> Interp<'a> {
                 // class or its bases.
                 if let Value::Any(desc) = &receiver_concrete {
                     if let Some(rid) = desc.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
-                        if let Some(mrid) = self.class_static_method(rid, &member) {
-                            let call_args = args[2..]
+                        if let Some((mrid, hidden)) = self.class_static_method(rid, &member) {
+                            let mut call_args = args[2..]
                                 .iter()
                                 .map(|arg| match arg {
                                     Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
@@ -2877,6 +2877,9 @@ impl<'a> Interp<'a> {
                                     other => Ok(other.clone()),
                                 })
                                 .collect::<Result<Vec<_>, _>>()?;
+                            if hidden {
+                                call_args.insert(0, Value::Any(*desc));
+                            }
                             let handle = zun_core::FunctionHandle::new(mrid, None);
                             let result = self.invoke_function_value(handle, call_args)?;
                             let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
