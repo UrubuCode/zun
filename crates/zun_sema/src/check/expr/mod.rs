@@ -5,6 +5,11 @@ use crate::check::*;
 
 mod assign;
 mod call;
+mod call_builtins;
+mod call_coerce;
+mod call_dispatch;
+mod call_indirect;
+mod call_sugar;
 mod field;
 mod ident;
 mod literal;
