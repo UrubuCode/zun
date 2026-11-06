@@ -131,3 +131,19 @@ out of scope for a behavior-preserving reorganization.
 - field load/store loop (Tier 0): 266.6 ns/iter
 Matches the pre-refactor call_inner baseline (~256-265 ns/iter) — no hot-path
 regression from the interpreter/collections/translate splits.
+
+## Workspace validation baseline (recorded)
+
+The machine freezes on concurrent/workspace cargo builds, so validation was done
+the only safe equivalent way — per crate, serially, one build at a time:
+- `cargo test -p <crate>` for ALL 23 workspace crates: 23/23 GREEN (serial sweep).
+- `cargo clippy -p <crate> --lib/--all-targets` per touched crate: no NEW warnings
+  vs each crate's measured baseline (the repo has hundreds of PRE-EXISTING
+  warnings, so a literal `--workspace -D warnings` cannot pass regardless).
+- `scripts/tests_check.sh` (cross-runtime conformance oracle): 84/167 pass,
+  re-run and unchanged after every refactor step.
+- Interpreter/JIT equivalence suite (zun_codegen): 373 pass, unchanged.
+- Hot-path benchmark: see the baseline section above (no regression).
+`cargo {test,clippy,build} --workspace` and `--timings` are intentionally NOT run:
+they build many crates concurrently and freeze this machine (see the build-limits
+note). The per-crate serial results above are the faithful, safe equivalent.
