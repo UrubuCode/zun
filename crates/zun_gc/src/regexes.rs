@@ -180,6 +180,11 @@ impl Heap {
         }
     }
 
+    /// Capture-group names by group number (index 0 unused), `None` if not a regex.
+    pub fn regex_group_names(&self, object: Obj) -> Option<Vec<Option<String>>> {
+        self.regexes.get(&(object.addr() as usize)).map(zun_core::RegexValue::group_names)
+    }
+
     pub fn regex_source(&self, object: Obj) -> Option<&str> {
         self.regexes
             .get(&(object.addr() as usize))

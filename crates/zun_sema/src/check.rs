@@ -10465,6 +10465,32 @@ impl Checker<'_> {
                 // the search's type: a RegExp uses the regex engine, a string
                 // replaces the first occurrence via the string native (so it no
                 // longer needs the `String` class in scope).
+                // `replaceAll(/re/g, replacement)`: a regex search replaces every
+                // match through the same natives as `replace`.
+                if receiver.ty == Ty::String
+                    && mname == "replaceAll"
+                    && args.len() == 2
+                    && matches!(&args[0], ast::Expr::RegexLiteral { .. })
+                {
+                    let first = self.check_expr(cx, &args[0]);
+                    let replacement = self.check_expr(cx, &args[1]);
+                    if matches!(replacement.ty, Ty::Function(_)) {
+                        return self.replace_with_function(span, first, receiver, replacement, true);
+                    }
+                    if replacement.ty != Ty::String && !replacement.ty.is_error() {
+                        self.error(replacement.span, "`replaceAll` replacement must be a string");
+                        return self.poison(span);
+                    }
+                    let Some((id, _)) = zun_natives::resolve("collections", "regexpReplace") else {
+                        self.error(span, "missing collection intrinsic `regexpReplace`");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver, replacement] },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
                 if receiver.ty == Ty::String && mname == "replace" && args.len() == 2 {
                     let first = self.check_expr(cx, &args[0]);
                     let replacement = self.check_expr(cx, &args[1]);
@@ -11151,6 +11177,7 @@ impl Checker<'_> {
                         return self.poison(span);
                     }
                     let receiver_is_string = receiver.ty == Ty::String;
+                    let receiver_is_regexp = receiver.ty == Ty::RegExp;
                     let mut call_args = vec![receiver];
                     let callback_receiver = call_args[0].ty == Ty::Array;
                     for (arg, expected_ty) in args.into_iter().zip(expected) {
@@ -11179,6 +11206,14 @@ impl Checker<'_> {
                                     ty: Ty::Function(hir::DYNAMIC_FUNCTION),
                                 };
                             }
+                        }
+                        // `re.exec(x)` / `re.test(x)` run ToString on a non-string subject.
+                        if receiver_is_regexp
+                            && expected_ty == Ty::String
+                            && value.ty != Ty::String
+                            && !value.ty.is_error()
+                        {
+                            value = self.to_string_for_parse(value);
                         }
                         coerce_numeric_literal(&mut value, expected_ty);
                         if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {

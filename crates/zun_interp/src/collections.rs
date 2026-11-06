@@ -2721,10 +2721,27 @@ impl<'a> Interp<'a> {
                             .unwrap_or_else(zun_core::Any::null),
                     )
                 };
+                let group_names: Vec<Option<String>> = match &search {
+                    Value::Object(regex) => zun_gc::with_current_heap(|heap| heap.regex_group_names(*regex))
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                let has_named = group_names.iter().any(|name| name.is_some());
                 let mut out = String::new();
                 let mut last = 0;
                 for (start, end, groups) in spans {
                     out.push_str(&input[last..start]);
+                    let named_groups: Vec<(String, Option<String>)> = if has_named {
+                        group_names
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, name)| {
+                                name.as_ref().map(|name| (name.clone(), groups.get(index).cloned().flatten()))
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
                     let mut call_args: Vec<Value> = groups
                         .into_iter()
                         .map(|group| match group {
@@ -2735,6 +2752,20 @@ impl<'a> Interp<'a> {
                     let offset = zun_core::wtf16::len16(&input[..start]);
                     call_args.push(to_any(Value::Float(offset as f64, zun_il::NumKind::F64)));
                     call_args.push(to_any(Value::Str(input.clone())));
+                    if has_named {
+                        let object = zun_gc::with_current_heap_mut(|heap| {
+                            let object = heap.alloc_dynamic();
+                            for (name, value) in named_groups {
+                                let any = match value {
+                                    Some(text) => zun_core::Any::string(heap.intern_string(text.into())),
+                                    None => zun_core::Any::void(),
+                                };
+                                heap.dynamic_set(object, name, any);
+                            }
+                            object
+                        });
+                        call_args.push(Value::Any(zun_core::Any::object(object.addr() as usize)));
+                    }
                     let produced = self.invoke_callback(callback, call_args)?;
                     out.push_str(&self.dyn_to_string(&produced)?);
                     last = end;
