@@ -3424,6 +3424,30 @@ impl<'a> Interp<'a> {
                             return Ok(Value::Any(boxed));
                         }
                     }
+                    // A WeakMap / WeakSet reached through `any`. WeakSet and WeakMap
+                    // share a store; `add` / `set` tell them apart by name.
+                    if !is_map && !is_set && zun_gc::with_current_heap(|heap| heap.is_weak_collection(namespace)) {
+                        let weak_native = match member.as_ref() {
+                            "set" => Some("weakMapSet"),
+                            "get" => Some("weakMapGet"),
+                            "has" => Some("weakMapHas"),
+                            "delete" => Some("weakMapDelete"),
+                            "add" => Some("weakSetAdd"),
+                            _ => None,
+                        };
+                        if let Some(native) = weak_native {
+                            let mut native_args = Vec::with_capacity(call_args.len() + 1);
+                            native_args.push(Value::Object(namespace));
+                            native_args.extend(call_args.iter().cloned());
+                            if native == "weakMapSet" {
+                                native_args.resize(3, Value::Void);
+                            }
+                            let result = self.call_managed_collection(native, &native_args)?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::void);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
                     let native = if is_map {
                         match member.as_ref() {
                             "set" => Some("mapSetChain"),

@@ -5857,8 +5857,27 @@ impl Checker<'_> {
         } else {
             (args, &args[0..0])
         };
-        let mut call_args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
         let min = max.saturating_sub(optional_count);
+        // A missing `any` parameter reads as `undefined` (JS passes fewer arguments freely).
+        let padded: Vec<ast::Expr>;
+        let args = if args.len() < min
+            && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+            && param_tys[1 + args.len()..=min].iter().all(|ty| *ty == Ty::Any)
+        {
+            let mut extended = args.to_vec();
+            while extended.len() < min {
+                extended.push(ast::Expr::Unary {
+                    op: ast::UnaryOp::Void,
+                    operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                    span,
+                });
+            }
+            padded = extended;
+            &padded[..]
+        } else {
+            args
+        };
+        let mut call_args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
         if call_args.len() < min || call_args.len() > max {
             self.error(
                 span,
