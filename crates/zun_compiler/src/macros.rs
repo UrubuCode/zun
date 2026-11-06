@@ -200,7 +200,8 @@ fn decorator_name<'a>(source: &'a str, decorator: &ast::Decorator) -> Option<&'a
 }
 
 fn source_text(source: &str, span: Span) -> &str {
-    &source[span.start as usize..span.end as usize]
+    // Compiler-synthesized names carry out-of-range spans.
+    source.get(span.start as usize..span.end as usize).unwrap_or("")
 }
 
 /// Interns generated identifiers into a source suffix and lowers emit-model

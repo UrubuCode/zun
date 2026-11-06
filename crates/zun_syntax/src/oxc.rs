@@ -4353,6 +4353,71 @@ fn convert_class_declaration_inner(source: &str, class_declaration: &oxc_ast::as
             let mut symbol_methods = Vec::new();
             for element in &class_declaration.body.body {
                 match element {
+                    ClassElement::PropertyDefinition(property) if property.computed && property.key.as_expression().is_some() && class_declaration.id.is_some() => {
+                        // A field with a run-time computed key. The key is evaluated once,
+                        // when the class is defined (a module-level temp); every instance
+                        // then defines the property from a hidden initializer slot, which
+                        // keeps the initialization order of the fields.
+                        static COMPUTED_FIELD_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                        let n = COMPUTED_FIELD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let member_span = Span::new(property.span.start, property.span.end);
+                        let key_expression = property.key.as_expression().ok_or_else(|| vec!["OXC adapter requires an expression computed field key".to_owned()])?;
+                        let key = convert_expression(source, key_expression).map_err(|error| vec![error])?;
+                        let value = match property.value.as_ref() {
+                            Some(expression) => convert_expression(source, expression).map_err(|error| vec![error])?,
+                            None => Expr::Unary {
+                                op: crate::ast::UnaryOp::Void,
+                                operand: Box::new(Expr::Number { value: 0.0, span: member_span }),
+                                span: member_span,
+                            },
+                        };
+                        let slot = |name: &str, value: Expr| {
+                            crate::ast::ObjectMember::Property(crate::ast::ObjectProperty {
+                                key: crate::ast::PropertyKey::Ident(crate::ast::synthetic_ident(name)),
+                                value,
+                                kind: crate::ast::PropertyKind::Init,
+                            })
+                        };
+                        let flag = |name: &str| slot(name, Expr::Bool { value: true, span: member_span });
+                        let define = |target: Expr, key: Expr, value: Expr| Expr::MethodCall {
+                            receiver: Box::new(Expr::Ident(crate::ast::synthetic_ident("Object"))),
+                            method: crate::ast::synthetic_ident("defineProperty"),
+                            args: vec![
+                                target,
+                                key,
+                                Expr::ObjectLiteral {
+                                    properties: vec![slot("value", value), flag("writable"), flag("enumerable"), flag("configurable")],
+                                    span: member_span,
+                                },
+                            ],
+                            span: member_span,
+                        };
+                        let class_id = class_declaration.id.as_ref().ok_or_else(|| vec!["OXC adapter requires a named class".to_owned()])?;
+                        if property.r#static {
+                            let class_ref = Expr::Ident(Name { span: Span::new(class_id.span.start, class_id.span.end) });
+                            CLASS_TRAILING.with(|cells| cells.borrow_mut().push(Stmt::Expr(define(class_ref, key, value))));
+                        } else {
+                            let key_temp = crate::ast::synthetic_ident(&format!("__ck{n}"));
+                            CLASS_TRAILING.with(|cells| {
+                                cells.borrow_mut().push(Stmt::Let { name: key_temp, ty: None, init: key, span: member_span })
+                            });
+                            fields.push(crate::ast::ClassField {
+                                name: crate::ast::synthetic_ident(&format!("__cf{n}")),
+                                decorators: Vec::new(),
+                                ty: crate::ast::TypeAnnotation {
+                                    name: Name { span: Span::new(property.span.start, property.span.start) },
+                                    is_array: false,
+                                },
+                                is_static: false,
+                                is_private: true,
+                                initializer: Some(Box::new(define(
+                                    Expr::Ident(crate::ast::synthetic_ident("this")),
+                                    Expr::Ident(key_temp),
+                                    value,
+                                ))),
+                            });
+                        }
+                    }
                     ClassElement::PropertyDefinition(property) => {
                         let (field_span, is_private) = match &property.key {
                             PropertyKey::StaticIdentifier(identifier) => {
@@ -4531,7 +4596,7 @@ fn convert_class_declaration_inner(source: &str, class_declaration: &oxc_ast::as
                         if let (Some(key), Some(class_id)) = (computed_key.as_ref(), class_declaration.id.as_ref()) {
                             let well_known = matches!(key, Expr::Field { object, .. }
                                 if matches!(object.as_ref(), Expr::Ident(n) if source.get(n.span.start as usize..n.span.end as usize) == Some("Symbol")));
-                            if !well_known && !method.value.generator && !method.value.r#async {
+                            if !well_known {
                                 let function_value = convert_oxc_function(source, &method.value).map_err(|error| vec![error])?;
                                 let class_ref = Expr::Ident(Name { span: Span::new(class_id.span.start, class_id.span.end) });
                                 let target = if method.r#static {
