@@ -15480,6 +15480,17 @@ impl Checker<'_> {
         let object = self.check_expr(cx, object);
         // A non-string key (e.g. an array index) is converted with ToString,
         // matching ECMAScript property-key coercion.
+        let dynamic_receiver = matches!(object.ty, Ty::DynamicObject | Ty::Any);
+        if key.ty == Ty::Symbol && dynamic_receiver {
+            // A Symbol key is looked up by identity, never stringified.
+            if let Some((id, _)) = zun_natives::resolve("collections", "symbolHas") {
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(object), Self::box_to_any(key)] },
+                    ty: Ty::Boolean,
+                    span,
+                };
+            }
+        }
         let key = if key.ty != Ty::String && !key.ty.is_error() {
             self.to_string_for_parse(key)
         } else {
@@ -15636,7 +15647,9 @@ impl Checker<'_> {
             ast::Expr::Index { object, index, .. } => {
                 let key = self.check_expr(cx, index);
                 let key = if matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int() { self.to_string_for_parse(key) } else { key };
-                if !key.ty.is_error() && key.ty != Ty::String {
+                // A Symbol key rides the dynamic lane (boxed) to `deleteStrict`.
+                let key = if key.ty == Ty::Symbol { Self::box_to_any(key) } else { key };
+                if !key.ty.is_error() && key.ty != Ty::String && key.ty != Ty::Any {
                     self.error(key.span, "`delete obj[k]` requires a string key");
                 }
                 (object.as_ref(), key)

@@ -963,7 +963,15 @@ impl Interp<'_> {
         let Some(target) = args.first().and_then(as_object) else {
             return Ok(Value::Bool(true));
         };
-        let Some(PropKey::Str(name)) = args.get(1).and_then(prop_key) else {
+        let key = args.get(1).and_then(prop_key);
+        if let Some(PropKey::Sym(symbol)) = key {
+            let removed = zun_gc::with_current_heap_mut(|heap| heap.dynamic_delete_symbol(target, symbol));
+            if !removed {
+                return Err(RunError::Native("TypeError: Cannot delete property of #<Object>".into()));
+            }
+            return Ok(Value::Bool(true));
+        }
+        let Some(PropKey::Str(name)) = key else {
             return Ok(Value::Bool(true));
         };
         if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(target)) {

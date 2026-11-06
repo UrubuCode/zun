@@ -2337,6 +2337,33 @@ impl<'a> Interp<'a> {
                     || zun_gc::with_current_heap(|heap| heap.dynamic_has(object, &name));
                 Ok(Value::Bool(hit))
             }
+            "symbolHas" => {
+                // `sym in obj`: an own or inherited symbol-keyed property.
+                let symbol = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
+                    _ => return Err(RunError::BadToken),
+                };
+                let mut cursor = object(args.first().ok_or(RunError::BadToken)?);
+                let mut depth = 0;
+                while let Some(current) = cursor {
+                    let found = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get_symbol(current, symbol).is_some()
+                            || heap.dynamic_get_symbol_function(current, symbol).is_some()
+                            || heap.dynamic_symbol_getter(current, symbol).is_some()
+                    });
+                    if found {
+                        return Ok(Value::Bool(true));
+                    }
+                    cursor = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(current))
+                        .and_then(|proto| proto.as_object())
+                        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                    depth += 1;
+                    if depth > 64 {
+                        break;
+                    }
+                }
+                Ok(Value::Bool(false))
+            }
             "reflectHas" => {
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
@@ -5161,8 +5188,13 @@ impl<'a> Interp<'a> {
                 let result = zun_gc::with_current_heap_mut(|heap| {
                     let excluded_count = heap.array_len(excluded).unwrap_or(0);
                     let mut excluded_names = Vec::with_capacity(excluded_count);
+                    let mut excluded_symbols = Vec::new();
                     for index in 0..excluded_count {
                         if let Some(any) = heap.array_get(excluded, index) {
+                            if let Some(symbol) = any.as_symbol() {
+                                excluded_symbols.push(symbol);
+                                continue;
+                            }
                             // Static keys are strings; a computed key may also be a number.
                             if let Some(key) = stringify_any(any, heap) {
                                 excluded_names.push(key);
@@ -5175,6 +5207,15 @@ impl<'a> Interp<'a> {
                             if let Some(value) = heap.dynamic_get(source, &key) {
                                 heap.dynamic_set(result, key, value);
                             }
+                        }
+                    }
+                    // Own enumerable symbol-keyed properties are rest members too.
+                    for symbol in heap.dynamic_symbol_keys(source) {
+                        if excluded_symbols.contains(&symbol) || !heap.dynamic_is_symbol_enumerable(source, symbol) {
+                            continue;
+                        }
+                        if let Some(value) = heap.dynamic_get_symbol(source, symbol) {
+                            heap.dynamic_set_symbol(result, symbol, value);
                         }
                     }
                     result
@@ -7304,7 +7345,23 @@ impl<'a> Interp<'a> {
                         )));
                     }
                 }
-                Ok(Value::Object(obj))
+                // Symbol-keyed descriptors of the map define symbol properties.
+                let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(roots[1]));
+                for symbol in symbols {
+                    if !zun_gc::with_current_heap(|heap| heap.dynamic_is_symbol_enumerable(roots[1], symbol)) {
+                        continue;
+                    }
+                    let Some(any) = zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol(roots[1], symbol)) else { continue };
+                    let value = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void);
+                    let Some(desc) = crate::property_ops::descriptor_object(&value) else {
+                        return Err(RunError::Native("TypeError: Property description must be an object".into()));
+                    };
+                    let desc = self.normalize_descriptor(desc)?;
+                    if !self.define_own_property(roots[0], &crate::property_ops::PropKey::Sym(symbol), desc) {
+                        return Err(RunError::Native("TypeError: Cannot redefine property".into()));
+                    }
+                }
+                Ok(Value::Object(roots[0]))
             }
             "objectGetOwnPropertyDescriptor" => {
                 let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -7312,6 +7369,12 @@ impl<'a> Interp<'a> {
                     Value::Str(key) => key.to_string(),
                     other => match crate::property_ops::prop_key(other) {
                         Some(crate::property_ops::PropKey::Str(text)) => text,
+                        Some(crate::property_ops::PropKey::Sym(symbol)) => {
+                            return Ok(match self.build_symbol_descriptor(proxy, symbol) {
+                                Some(descriptor) => Value::Object(descriptor),
+                                None => Value::Void,
+                            });
+                        }
                         _ => return Err(RunError::BadToken),
                     },
                 };
@@ -7340,6 +7403,15 @@ impl<'a> Interp<'a> {
                         let boxed = zun_core::Any::object(descriptor.addr() as usize);
                         zun_gc::with_current_heap_mut(|heap| {
                             heap.dynamic_set(out, name, boxed);
+                        });
+                    }
+                }
+                let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(obj));
+                for symbol in symbols {
+                    if let Some(descriptor) = self.build_symbol_descriptor(obj, symbol) {
+                        let boxed = zun_core::Any::object(descriptor.addr() as usize);
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set_symbol(out, symbol, boxed);
                         });
                     }
                 }
@@ -7946,6 +8018,21 @@ impl<'a> Interp<'a> {
     /// Build a descriptor object `{ value, writable, enumerable, configurable }`
     /// or `{ get, set, enumerable, configurable }` for `obj[key]`, or `None` if
     /// there is no own property.
+    /// Data descriptor of an own symbol-keyed property (`None` when absent).
+    fn build_symbol_descriptor(&mut self, obj: zun_gc::Obj, symbol: zun_core::SymbolId) -> Option<zun_gc::Obj> {
+        zun_gc::with_current_heap_mut(|heap| {
+            let value = heap.dynamic_get_symbol(obj, symbol)?;
+            let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
+            let frozen = !heap.dynamic_can_set(obj, " __symbol_probe");
+            let out = heap.alloc_dynamic();
+            heap.dynamic_set(out, "value".to_owned(), value);
+            heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(!frozen));
+            heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(enumerable));
+            heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(!frozen));
+            Some(out)
+        })
+    }
+
     fn build_descriptor(&mut self, obj: zun_gc::Obj, key: &str) -> Result<Option<zun_gc::Obj>, RunError> {
         // Arrays: indexed elements and the `length` data property.
         if let Some((len, level)) = zun_gc::with_current_heap(|heap| {

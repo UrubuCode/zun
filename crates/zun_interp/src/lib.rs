@@ -723,6 +723,21 @@ impl Interp<'_> {
                             }
                         }
                     }
+                    // `symbol.description` read through `any`.
+                    if name == "description" {
+                        if let Value::Any(any) = &concrete {
+                            if let Some(id) = any.as_symbol() {
+                                let description = zun_gc::with_current_heap(|heap| {
+                                    heap.symbol_description(id).map(|text| text.to_string())
+                                });
+                                stack.push(match description {
+                                    Some(text) => Value::Str(text.into()),
+                                    None => Value::Void,
+                                });
+                                continue;
+                            }
+                        }
+                    }
                     // BigInt / Symbol primitives name their wrapper class.
                     if name == "constructor" {
                         let is_bigint = matches!(&concrete, Value::Object(obj)

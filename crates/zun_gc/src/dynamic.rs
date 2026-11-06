@@ -338,6 +338,14 @@ impl Heap {
         self.dynamic_objects.get(&(object.addr() as usize)).is_some_and(|p| p.is_symbol_enumerable(symbol))
     }
 
+    /// `delete obj[symbol]`; `false` when the object refuses (frozen).
+    pub fn dynamic_delete_symbol(&mut self, object: Obj, symbol: zun_core::SymbolId) -> bool {
+        match self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            Some(properties) => properties.remove_symbol(symbol),
+            None => true,
+        }
+    }
+
     pub fn dynamic_delete(&mut self, object: Obj, name: &str) -> bool {
         self.dynamic_remove(object, name).is_some()
     }

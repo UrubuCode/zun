@@ -468,6 +468,22 @@ impl DynamicObject {
     pub fn can_delete(&self, name: &str) -> bool {
         !self.index.contains_key(name) || !(self.frozen || self.non_configurable.contains(name))
     }
+    /// `delete obj[symbol]`: removes the own symbol property. Absent keys succeed;
+    /// a frozen object refuses (returns `false`).
+    pub fn remove_symbol(&mut self, symbol: SymbolId) -> bool {
+        if !self.symbol_properties.contains_key(&symbol) && !self.symbol_functions.contains_key(&symbol) && !self.symbol_getters.contains_key(&symbol) {
+            return true;
+        }
+        if self.frozen {
+            return false;
+        }
+        self.symbol_properties.remove(&symbol);
+        self.symbol_functions.remove(&symbol);
+        self.symbol_getters.remove(&symbol);
+        self.non_enumerable_symbols.remove(&symbol);
+        self.symbol_order.retain(|s| *s != symbol);
+        true
+    }
     pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
         if !self.symbol_properties.contains_key(&symbol) { self.symbol_order.push(symbol); }
         self.symbol_properties.insert(symbol, value)

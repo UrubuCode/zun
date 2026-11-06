@@ -344,6 +344,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "decoratorRunInitializers",
         "classBox",
         "reflectConstruct",
+        "symbolHas",
         "proxyConstruct",
         "classSetMethod",
         "classSetFieldDefault",
