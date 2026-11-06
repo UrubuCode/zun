@@ -47,10 +47,20 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
   call arm routes against the correct outer `body`. A real bug for cross-module
   calls that throw; needs its own `fix` commit + a regression test. The
   interpreter split must not "normalize" this away silently.
-- **OPEN (cleanup)** — `fn value_object` (collections.rs:~8633) is a
+- **OPEN (cleanup)** — `fn value_object` (collections/runtime_iter.rs) is a
   byte-for-byte duplicate of the `object` closure in the preamble of
   `call_managed_collection_inner` (~140). The collections split is the natural
   moment to converge on one; flagged, not changed.
+
+## crates/zun_sema (checker)
+
+- **OPEN (latent, pre-existing)** — in `check_new`'s realm BufferView path
+  (now `check/expr/new_realm.rs::new_ctor_buffer_view` / `new_typed_single_arg`),
+  `new <TypedArray>(x)` with a single `any`-typed argument checks that argument
+  with `self.check_expr` TWICE: once in the numeric/array single-arg probe (which
+  falls through when the arg is neither), then again in the tracking-view path.
+  Can double-emit diagnostics / double-run arg side-effects. Preserved verbatim
+  by the refactor; needs its own fix.
 
 ## Pre-existing clippy/rustc baseline warnings (not introduced by the refactor)
 
