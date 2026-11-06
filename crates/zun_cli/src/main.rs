@@ -315,14 +315,10 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
             path.extension().and_then(|extension| extension.to_str()),
             Some("js") | Some("mjs") | Some("cjs") | Some("jsx")
         );
-    let module_result = if use_oxc {
-        if cached_prelude.is_some() {
-            Err(vec![Diagnostic::error(
-                "native OXC JavaScript input cannot be combined with a prelude cache",
-            )])
-        } else {
-            zun_compiler::compile_with_oxc(&source, oxc_typescript)
-        }
+    // A prelude cache links the program against the cached standard library, which
+    // is itself parsed by OXC, so it applies to OXC-routed input too.
+    let module_result = if use_oxc && cached_prelude.is_none() {
+        zun_compiler::compile_with_oxc(&source, oxc_typescript)
     } else {
         match cached_prelude.as_ref() {
             Some(prelude) => {
