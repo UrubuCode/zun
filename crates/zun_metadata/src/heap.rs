@@ -98,6 +98,12 @@ impl StringHeap {
         idx
     }
 
+    /// Offset of the entry that follows the one at `offset` (skips the NUL terminator).
+    pub fn next_offset(&self, offset: usize) -> usize {
+        let rest = &self.bytes[offset..];
+        offset + rest.iter().position(|&b| b == 0).unwrap_or(rest.len()) + 1
+    }
+
     /// Read back the string stored at `idx`.
     pub fn get(&self, idx: StringIndex) -> &str {
         if let Some(text) = self.nul_entries.get(&idx.0) {

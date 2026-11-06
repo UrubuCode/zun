@@ -6645,6 +6645,19 @@ impl Checker<'_> {
                     let (slot, tmp) = self.synthetic_local(cx, Ty::Array);
                     let mut args = vec![ast::Expr::Ident(tmp)];
                     args.extend(exprs.iter().map(|expression| (**expression).clone()));
+                    // JS ignores substitutions beyond the tag's declared parameters.
+                    if let ast::Expr::Ident(tag_name) = tag.as_ref() {
+                        let tag_text = self.text(tag_name).to_string();
+                        if cx.lookup(&tag_text).is_none() {
+                            if let Some(&func) = self.by_name.get(&tag_text) {
+                                let sig = &self.signatures[func as usize];
+                                if sig.rest_param.is_none() && args.len() > sig.params.len() {
+                                    let keep = sig.params.len().max(1);
+                                    args.truncate(keep);
+                                }
+                            }
+                        }
+                    }
                     let call = match tag.as_ref() {
                         ast::Expr::Ident(name) => ast::Expr::Call { callee: *name, args, span },
                         other => ast::Expr::ComputedCall { callee: Box::new(other.clone()), args, span },
@@ -14023,6 +14036,9 @@ impl Checker<'_> {
                 if let Ty::BufferView(kind) = object.ty {
                     let mut index = self.check_expr(cx, index);
                     coerce_numeric_literal(&mut index, Ty::Int(IntKind::U64));
+                    if index.ty == Ty::F64 {
+                        index = self.coerce_array_index(index);
+                    }
                     if !index.ty.is_int() && !index.ty.is_error() {
                         self.error(index.span, "buffer index must be an integer");
                     }
@@ -14107,6 +14123,9 @@ impl Checker<'_> {
                 if let Ty::BufferView(kind) = object.ty {
                     let mut index = self.check_expr(cx, index);
                     coerce_numeric_literal(&mut index, Ty::Int(IntKind::U64));
+                    if index.ty == Ty::F64 {
+                        index = self.coerce_array_index(index);
+                    }
                     if !index.ty.is_int() && !index.ty.is_error() {
                         self.error(index.span, "buffer index must be an integer");
                     }

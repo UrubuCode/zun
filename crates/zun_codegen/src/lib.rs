@@ -1962,7 +1962,7 @@ impl Jit {
                 .strings
                 .get(zun_metadata::StringIndex(string_offset as u32));
             literal_storage.push(value.as_bytes().to_vec().into_boxed_slice());
-            string_offset += value.len() + 1;
+            string_offset = zm.strings.next_offset(string_offset);
         }
         let mut literal_ptrs = vec![0u64; zm.strings.as_bytes().len()];
         let mut string_offset = 0usize;
@@ -1972,7 +1972,7 @@ impl Jit {
             let value = zm
                 .strings
                 .get(zun_metadata::StringIndex(string_offset as u32));
-            string_offset += value.len() + 1;
+            string_offset = zm.strings.next_offset(string_offset);
             storage_index += 1;
         }
         let literal_ptrs = literal_ptrs.into_boxed_slice();
@@ -2688,7 +2688,7 @@ pub fn compile_object_for_target(
             .map_err(|e| JitError::Module(e.to_string()))?;
         literal_data_ids[string_offset] = data_id.as_u32();
         literal_data.push((data_id, description));
-        string_offset += value.len() + 1;
+        string_offset = zm.strings.next_offset(string_offset);
     }
     let mut func_ids = HashMap::new();
     let mut ctx = cranelift_codegen::Context::new();
