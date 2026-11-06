@@ -582,6 +582,18 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                 let Some(id) = function.id.as_ref() else {
                     return Err("OXC adapter requires named function declarations".into());
                 };
+                // A declaration named like a parameter overrides it at entry:
+                // skipped here, emitted as an assignment at the body head.
+                if PARAM_SHADOWS.with(|names| names.borrow().iter().any(|n| n == id.name.as_str())) {
+                    if EMIT_SHADOW.with(|flag| flag.get()) {
+                        statements.push(Stmt::Expr(Expr::Assign {
+                            target: Name { span: span(id.span) },
+                            value: Box::new(convert_oxc_function(source, function)?),
+                            span: span(function.span),
+                        }));
+                    }
+                    continue;
+                }
                 if forward_names.contains(id.name.as_str()) {
                     statements.push(Stmt::Expr(Expr::Assign {
                         target: Name { span: span(id.span) },
@@ -5187,6 +5199,7 @@ fn convert_function_statements(
     body: &[Statement<'_>],
     params: &[String],
 ) -> Result<Vec<Stmt>, String> {
+    let simple_params = LAST_PARAMS_SIMPLE.with(|flag| flag.replace(false));
     let mut sites = Vec::new();
     for (index, statement) in body.iter().enumerate() {
         collect_vars_in_statement(statement, index, false, &mut sites);
@@ -5212,10 +5225,56 @@ fn convert_function_statements(
             hoisted.push(site.name.clone());
         }
     }
-    HOISTED_VARS.with(|stack| stack.borrow_mut().push(hoisted.iter().cloned().collect()));
+    let mut hoisted_set: std::collections::HashSet<String> = hoisted.iter().cloned().collect();
+    if simple_params {
+        for site in &sites {
+            if !site.in_head && params.contains(&site.name) {
+                hoisted_set.insert(site.name.clone());
+            }
+        }
+    }
+    HOISTED_VARS.with(|stack| stack.borrow_mut().push(hoisted_set));
+    let shadowing: Vec<&Statement<'_>> = body
+        .iter()
+        .filter(|statement| matches!(statement, Statement::FunctionDeclaration(function)
+            if function.id.as_ref().is_some_and(|id| params.iter().any(|p| p == id.name.as_str()))))
+        .collect();
+    let outer_shadows = PARAM_SHADOWS.with(|names| {
+        std::mem::replace(
+            &mut *names.borrow_mut(),
+            shadowing
+                .iter()
+                .filter_map(|statement| match statement {
+                    Statement::FunctionDeclaration(function) => function.id.as_ref().map(|id| id.name.to_string()),
+                    _ => None,
+                })
+                .collect(),
+        )
+    });
     let converted = convert_statement_list(source, body);
+    let mut head = Vec::new();
+    if converted.is_ok() && !shadowing.is_empty() {
+        EMIT_SHADOW.with(|flag| flag.set(true));
+        for statement in &shadowing {
+            match convert_statement_list(source, std::slice::from_ref(*statement)) {
+                Ok(list) => head.extend(list),
+                Err(error) => {
+                    EMIT_SHADOW.with(|flag| flag.set(false));
+                    PARAM_SHADOWS.with(|names| *names.borrow_mut() = outer_shadows);
+                    HOISTED_VARS.with(|stack| stack.borrow_mut().pop());
+                    return Err(error);
+                }
+            }
+        }
+        EMIT_SHADOW.with(|flag| flag.set(false));
+    }
+    PARAM_SHADOWS.with(|names| *names.borrow_mut() = outer_shadows);
     HOISTED_VARS.with(|stack| stack.borrow_mut().pop());
-    let converted = converted?;
+    let mut converted = converted?;
+    if !head.is_empty() {
+        head.append(&mut converted);
+        converted = head;
+    }
     if hoisted.is_empty() {
         return Ok(converted);
     }
@@ -5292,6 +5351,17 @@ fn find_var_name_span(body: &[Statement<'_>], name: &str) -> Option<Span> {
 }
 
 fn param_names(params: &oxc_ast::ast::FormalParameters<'_>) -> Vec<String> {
+    // Side channel for `convert_function_statements`: a list of plain
+    // identifier parameters (no defaults, patterns or rest) shares one scope
+    // with the body, so a body `var` of a parameter name is that parameter.
+    LAST_PARAMS_SIMPLE.with(|flag| {
+        flag.set(
+            params.rest.is_none()
+                && params.items.iter().all(|item| {
+                    matches!(item.pattern, BindingPattern::BindingIdentifier(_)) && item.initializer.is_none()
+                }),
+        )
+    });
     let mut names = Vec::new();
     for item in &params.items {
         if let BindingPattern::BindingIdentifier(identifier) = &item.pattern {
@@ -5561,6 +5631,16 @@ thread_local! {
     /// their bodies the name is an immutable binding.
     static IMMUTABLE_SELF_NAMES: std::cell::RefCell<Vec<String>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    static LAST_PARAMS_SIMPLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+thread_local! {
+    /// Parameter names that a hoisted function declaration of the body shadows.
+    static PARAM_SHADOWS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static EMIT_SHADOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn is_immutable_self_name(name: &str) -> bool {
