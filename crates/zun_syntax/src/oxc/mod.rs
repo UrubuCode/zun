@@ -266,8 +266,6 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Convert a single OXC class declaration into the AST class (shared by the
-/// top-level scan and the statement converter for block-local classes).
 thread_local! {
     /// Lexical stack of the classes being converted: each entry carries the
     /// class name span and the `#private` names it declares (name, is_static),

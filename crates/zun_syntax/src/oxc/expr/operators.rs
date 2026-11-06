@@ -25,7 +25,6 @@ pub(super) fn convert_binary(source: &str, binary: &oxc_ast::ast::BinaryExpressi
         BinaryOperator::ShiftRightZeroFill => BinaryOp::UShr,
         BinaryOperator::In => BinaryOp::In,
         BinaryOperator::Instanceof => BinaryOp::Instanceof,
-        _ => return Err("OXC adapter does not support this binary operator yet".into()),
     };
     Ok(Expr::Binary {
         op,

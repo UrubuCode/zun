@@ -22,9 +22,6 @@ fn compound_binary_op(operator: AssignmentOperator) -> Result<Option<BinaryOp>, 
         AssignmentOperator::LogicalAnd => Some(BinaryOp::And),
         AssignmentOperator::LogicalOr => Some(BinaryOp::Or),
         AssignmentOperator::LogicalNullish => Some(BinaryOp::Nullish),
-        _ => {
-            return Err("OXC adapter does not support compound assignment yet".into());
-        }
     })
 }
 

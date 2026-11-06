@@ -57,18 +57,14 @@ pub(super) fn convert_expression(source: &str, expression: &Expression<'_>) -> R
         Expression::TemplateLiteral(template) => convert_template_literal(source, template),
         Expression::TaggedTemplateExpression(tagged) => convert_tagged_template(source, tagged),
         Expression::Identifier(identifier) => convert_identifier(identifier),
-        // `super.method(...)`: the receiver name is the source text `super`.
-        Expression::Super(super_expression) => Ok(Expr::Ident(Name {
-            span: span(super_expression.span),
-        })),
-        Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
-            span: span(this_expression.span),
-        })),
         // `super` is modelled as an identifier whose text is `super`; sema
         // recognises it in call/method-call receiver position and lowers the
         // base-class dispatch. The span covers the `super` keyword in source.
         Expression::Super(super_keyword) => Ok(Expr::Ident(Name {
             span: span(super_keyword.span),
+        })),
+        Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
+            span: span(this_expression.span),
         })),
         Expression::ParenthesizedExpression(parenthesized) => {
             convert_expression(source, &parenthesized.expression)

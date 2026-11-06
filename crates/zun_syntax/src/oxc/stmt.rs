@@ -1,28 +1,15 @@
 use super::*;
 
-pub(super) fn convert_block_statement(source: &str, statement: &Statement<'_>) -> Result<Block, String> {
-    let Statement::BlockStatement(block) = statement else {
-        return Err("OXC adapter requires block branches for conditional statements".into());
-    };
-    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
-    let statements = convert_statement_list(source, &block.body)?;
-    Ok(Block {
-        statements,
-        span: span(block.span),
-    })
-}
-
 /// Convert an OXC statement list into Zun statements, reused by block
 /// statements and by object-method / function bodies.
 pub(super) fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<Stmt>, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut statements = Vec::with_capacity(body.len());
     let saved_prelude = PENDING_PRELUDE.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
-    let mut prev_start = 0usize;
     let ordered = hoist_function_declarations(source, body);
     let forward_names = forward_declared_names(source, &ordered);
     predeclare_forward_functions(source, &ordered, &forward_names, &mut statements)?;
-    prev_start = statements.len();
+    let mut prev_start = statements.len();
     for statement in ordered.iter().copied() {
         flush_prelude(&mut statements, prev_start);
         prev_start = statements.len();
