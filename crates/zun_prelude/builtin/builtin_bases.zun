@@ -192,6 +192,78 @@ class __BuiltinSet {
     }
 }
 
+class __BuiltinWeakSet {
+    inner: WeakSet<any> = new WeakSet();
+
+    constructor(iterable?: any) {
+        if (iterable !== undefined && iterable !== null) {
+            for (const value of iterable) {
+                this.add(value);
+            }
+        }
+    }
+
+    add(value: any): any {
+        this.inner.add(value);
+        return this;
+    }
+
+    has(value: any): boolean {
+        return this.inner.has(value);
+    }
+
+    delete(value: any): boolean {
+        return this.inner.delete(value);
+    }
+}
+
+class __BuiltinWeakMap {
+    inner: WeakMap<any, any> = new WeakMap();
+
+    constructor(iterable?: any) {
+        if (iterable !== undefined && iterable !== null) {
+            for (const entry of iterable) {
+                this.set(entry[0], entry[1]);
+            }
+        }
+    }
+
+    set(key: any, value: any): any {
+        this.inner.set(key, value);
+        return this;
+    }
+
+    get(key: any): any {
+        return this.inner.get(key);
+    }
+
+    has(key: any): boolean {
+        return this.inner.has(key);
+    }
+
+    delete(key: any): boolean {
+        return this.inner.delete(key);
+    }
+}
+
+// `new WeakSet(iterable)` / `new WeakMap(iterable)`: build the empty weak
+// collection, then add each element / entry (a primitive key throws).
+function __zunWeakSetFrom(items: any): WeakSet<any> {
+    const set = new WeakSet<any>();
+    for (const value of items) {
+        set.add(value);
+    }
+    return set;
+}
+
+function __zunWeakMapFrom(items: any): WeakMap<any, any> {
+    const map = new WeakMap<any, any>();
+    for (const entry of items) {
+        map.set(entry[0], entry[1]);
+    }
+    return map;
+}
+
 // `Map.groupBy(items, callback)`: group by the callback's key (SameValueZero),
 // preserving first-appearance order of keys and encounter order inside groups.
 function __zunMapGroupBy(items: any, callback: any): Map<any, any> {

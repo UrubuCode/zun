@@ -12162,6 +12162,18 @@ impl Checker<'_> {
                     use crate::realm::CtorLowering;
                     match binding.ctor.clone() {
                         CtorLowering::Intrinsic0 { module, native, ty } => {
+                            // `new WeakSet(iterable)` / `new WeakMap(iterable)`.
+                            if args.len() == 1 && matches!(name.as_str(), "WeakSet" | "WeakMap") {
+                                let helper = if name == "WeakSet" { "__zunWeakSetFrom" } else { "__zunWeakMapFrom" };
+                                if let Some(&func) = self.by_name.get(helper) {
+                                    let argument = self.check_expr(cx, &args[0]);
+                                    return hir::Expr {
+                                        kind: hir::ExprKind::Call { func, args: vec![Self::box_to_any(argument)] },
+                                        ty,
+                                        span,
+                                    };
+                                }
+                            }
                             if !args.is_empty() {
                                 self.error(span, format!("`{name}` expects no constructor arguments"));
                                 return self.poison(span);
