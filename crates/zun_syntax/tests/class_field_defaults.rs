@@ -89,6 +89,22 @@ fn an_unterminated_class_body_terminates() {
 }
 
 #[test]
+fn synthetic_names_are_deterministic_across_repeated_compiles() {
+    // The OXC adapter generates synthetic temporaries for destructuring
+    // (`__zd{n}`) and computed class fields (`__ck{n}` / `__cf{n}`). Its
+    // counters are reset per compilation, so compiling the same source twice
+    // in one process must yield structurally identical programs (same
+    // synthetic names), rather than drifting with earlier parses.
+    let source = "const [a, b] = arr; class C { [\"k\"] = 1; }";
+    let first = zun_syntax::oxc::parse_subset(source, false).expect("first compile");
+    let second = zun_syntax::oxc::parse_subset(source, false).expect("second compile");
+    assert_eq!(
+        first, second,
+        "synthetic identifier names must be deterministic across compiles"
+    );
+}
+
+#[test]
 fn a_stray_token_does_not_swallow_the_members_after_it() {
     // Recovery skips one token and resumes, so the well-formed members on
     // either side of the junk still arrive.

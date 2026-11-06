@@ -19,19 +19,19 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
 - **FIXED** — A doc comment ("Convert a single OXC class declaration…") sits on
   the `PRIVATE_SCOPES` `thread_local!` instead of on `convert_class_declaration`
   (caused an "unused doc comment" warning).
-- **OPEN (fix plan ready)** — `static COMPUTED_FIELD_COUNTER` (class.rs:141),
-  `static DESTRUCTURE_TEMP` (destructure.rs:3) AND `YIELD_STAR_COUNTER`
-  (thread-local, mod.rs:231, never reset) generate synthetic temp/field names
-  (`__cf`/`__ck`, `__zd`, `__fa_`/`__ys_`) that are **not deterministic** across
+- **FIXED** (commit `8e259c2a`) — `static COMPUTED_FIELD_COUNTER`
+  (class.rs), `static DESTRUCTURE_TEMP` (destructure.rs) AND `YIELD_STAR_COUNTER`
+  (thread-local, mod.rs, never reset) generated synthetic temp/field names
+  (`__cf`/`__ck`, `__zd`, `__fa_`/`__ys_`) that were **not deterministic** across
   multiple compiles in one process / across threads. Harmless for the
   conformance oracle (one program per process) but a latent bug for any
-  multi-compile host (eval, a watch server). No test pins the current names.
-  Fix: make all three thread-local `Cell<u32>` (mirroring the existing
-  `YIELD_STAR_COUNTER` style) and reset them to 0 at the top of `parse_subset`
-  (next to the existing per-compile resets at mod.rs:101). Behavior-preserving
-  on the single-compile path. Deferred only because it needs a build; it is a
-  safe standalone fix. Validate: `cargo test -p zun_syntax -p zun_compiler
-  -p zun_vm` + conformance.
+  multi-compile host (eval, a watch server). Fix: all three are now thread-local
+  `Cell<u32>` (mirroring the existing `YIELD_STAR_COUNTER` style) and reset to 0
+  at the top of `parse_subset` (next to the existing per-compile resets).
+  Behavior-preserving on the single-compile path. A regression test
+  (`synthetic_names_are_deterministic_across_repeated_compiles` in
+  `tests/class_field_defaults.rs`) compiles source with a destructuring binding
+  plus a computed class field twice and asserts the programs are identical.
 
 ## crates/zun_interp (interpreter)
 

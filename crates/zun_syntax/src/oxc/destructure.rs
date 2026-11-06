@@ -1,9 +1,18 @@
 use super::*;
 
-pub(super) static DESTRUCTURE_TEMP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    /// Per-compilation counter for destructuring temporaries. Reset at the top
+    /// of `parse_subset` so generated names are deterministic across repeated
+    /// compiles in the same process / thread.
+    pub(super) static DESTRUCTURE_TEMP: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 
 pub(super) fn fresh_destructure_temp() -> Name {
-    let id = DESTRUCTURE_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let id = DESTRUCTURE_TEMP.with(|counter| {
+        let id = counter.get();
+        counter.set(id + 1);
+        id
+    });
     crate::ast::synthetic_ident(&format!("__zd{id}"))
 }
 

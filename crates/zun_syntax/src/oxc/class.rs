@@ -1,5 +1,13 @@
 use super::*;
 
+thread_local! {
+    /// Per-compilation counter for synthetic computed-field key/slot names
+    /// (`__ck{n}` / `__cf{n}`). Reset at the top of `parse_subset` so the
+    /// generated names are deterministic across repeated compiles in the same
+    /// process / thread.
+    pub(super) static COMPUTED_FIELD_COUNTER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// Map an OXC decorator node to our [`crate::ast::Decorator`].
 ///
 /// Phase 1 is syntax only. The callee is the decorator expression (an
@@ -138,8 +146,11 @@ fn convert_computed_field(
     property: &oxc_ast::ast::PropertyDefinition<'_>,
     fields: &mut Vec<crate::ast::ClassField>,
 ) -> Result<(), Vec<String>> {
-    static COMPUTED_FIELD_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let n = COMPUTED_FIELD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let n = COMPUTED_FIELD_COUNTER.with(|counter| {
+        let n = counter.get();
+        counter.set(n + 1);
+        n
+    });
     let member_span = Span::new(property.span.start, property.span.end);
     let key_expression = property.key.as_expression().ok_or_else(|| vec!["OXC adapter requires an expression computed field key".to_owned()])?;
     let key = convert_expression(source, key_expression).map_err(|error| vec![error])?;

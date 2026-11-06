@@ -100,6 +100,13 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
     // built.
     HOISTED_CLASSES.with(|cells| cells.borrow_mut().clear());
 
+    // Reset the synthetic-identifier counters so generated temp names are
+    // deterministic per compilation rather than depending on how many parses
+    // happened earlier on this thread.
+    DESTRUCTURE_TEMP.with(|counter| counter.set(0));
+    COMPUTED_FIELD_COUNTER.with(|counter| counter.set(0));
+    YIELD_STAR_COUNTER.with(|counter| counter.set(0));
+
     let mut functions = Vec::new();
     let mut imports = Vec::new();
     let mut classes = Vec::new();
