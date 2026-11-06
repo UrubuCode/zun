@@ -1260,6 +1260,15 @@ impl Interp<'_> {
                         continue;
                     }
                     let object = object_raw.as_object();
+                    // A numeric key on a dynamic object is the canonical string key, so
+                    // accessors and the ordinary property path apply (`o[0]` -> "0").
+                    let key = if matches!(key, Value::Int(..) | Value::Float(..))
+                        && zun_gc::with_current_heap(|heap| heap.is_dynamic_object(object))
+                    {
+                        Value::Str(number_index_key(&key).into())
+                    } else {
+                        key
+                    };
                     // `gen["next" | "return" | "throw"]` read off a generator object
                     // is a callable method value, like the static-name read.
                     if let Value::Str(name) = &key {

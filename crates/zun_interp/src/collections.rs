@@ -6945,6 +6945,10 @@ impl<'a> Interp<'a> {
                 // shared `Object.prototype`; an explicit `null` link
                 // (`Object.create(null)`) stays null.
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                // `Object.prototype` itself is the end of every chain.
+                if prototype.is_none() && is_dynamic && obj.addr() == Self::object_prototype_singleton().addr() {
+                    return Ok(Value::Any(zun_core::Any::null()));
+                }
                 if prototype.is_none() && is_dynamic {
                     let root = Self::object_prototype_singleton();
                     return Ok(Value::Any(zun_core::Any::object(root.addr() as usize)));

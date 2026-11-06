@@ -2863,6 +2863,13 @@ impl Checker<'_> {
                 ..
             } => {
                 let narrowing = self.type_guard_narrowing(cx, cond);
+                // A typed shadow copy would swallow writes to the guarded variable
+                // (`if (Array.isArray(c)) c = c[0]`), so assigned names stay untyped.
+                let narrowing = narrowing.filter(|(name, _, _)| {
+                    let mut assigned = HashSet::new();
+                    self.collect_mutated_names(&then_block.statements, &mut assigned);
+                    !assigned.contains(name)
+                });
                 let cond = self.check_condition(cx, cond);
                 let then_body = match narrowing {
                     // Inside the guarded branch the untyped local is shadowed by
@@ -14044,15 +14051,25 @@ impl Checker<'_> {
                     if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
                         let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
                         let tmp_expr = ast::Expr::Ident(tmp);
-                        let test = ast::Expr::Field {
-                            object: Box::new(tmp_expr.clone()),
-                            field: *field,
+                        // The member is read once into a second temp, then invoked with
+                        // the receiver as `this` (`fn.call(recv, ...args)`).
+                        let (_, fn_tmp) = self.synthetic_local(cx, Ty::Any);
+                        let fn_expr = ast::Expr::Ident(fn_tmp);
+                        let test = ast::Expr::Assign {
+                            target: fn_tmp,
+                            value: Box::new(ast::Expr::Field {
+                                object: Box::new(tmp_expr.clone()),
+                                field: *field,
+                                span,
+                            }),
                             span,
                         };
+                        let mut call_args = vec![tmp_expr];
+                        call_args.extend(args.iter().cloned());
                         let call = ast::Expr::MethodCall {
-                            receiver: Box::new(tmp_expr),
-                            method: *field,
-                            args: args.clone(),
+                            receiver: Box::new(fn_expr),
+                            method: ast::synthetic_ident("call"),
+                            args: call_args,
                             span,
                         };
                         return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), test, call, span);
