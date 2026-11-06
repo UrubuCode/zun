@@ -73,13 +73,27 @@ impl From<zun_regex::RegexError> for RegexError {
 }
 
 /// True when the AST needs features Engine A cannot provide.
-fn needs_backtracking(node: &zun_regex::RegexNode) -> bool {
+///
+/// `.` without `s` must exclude CR / U+2028 / U+2029 (RE2 only excludes LF)
+/// and multiline anchors must treat all four line terminators alike.
+fn needs_backtracking(node: &zun_regex::RegexNode, dot_all: bool, multiline: bool) -> bool {
     use zun_regex::RegexNode as N;
     match node {
         N::BackRef(_) | N::Look { .. } => true,
-        N::Seq(items) | N::Alt(items) => items.iter().any(needs_backtracking),
-        N::Repeat { node, .. } | N::Group { node, .. } => needs_backtracking(node),
-        N::Empty | N::Char(_) | N::Any | N::Class(_) | N::Assertion(_) => false,
+        N::Any => !dot_all,
+        // ``/`B` are Unicode-aware in RE2 but ASCII-only in JS.
+        N::Assertion(kind) => {
+            multiline
+                || matches!(kind, zun_regex::AssertKind::WordBoundary | zun_regex::AssertKind::NotWordBoundary)
+        }
+        // `d`/`w`/`s` are Unicode-aware in RE2 but ASCII / JS-space in JS.
+        N::Class(class) => class
+            .items
+            .iter()
+            .any(|item| !matches!(item, zun_regex::ClassItem::Range(..))),
+        N::Seq(items) | N::Alt(items) => items.iter().any(|n| needs_backtracking(n, dot_all, multiline)),
+        N::Repeat { node, .. } | N::Group { node, .. } => needs_backtracking(node, dot_all, multiline),
+        N::Empty | N::Char(_) => false,
     }
 }
 
@@ -179,7 +193,7 @@ impl RegexValue {
         };
         let parsed = zun_regex::parse(&source);
         let engine = match &parsed {
-            Ok(ast) if needs_backtracking(&ast.node) => backtrack(&source, &flags)
+            Ok(ast) if needs_backtracking(&ast.node, flags.contains('s'), flags.contains('m')) => backtrack(&source, &flags)
                 .map_err(|error| RegexError { message: error.to_string() })?,
             _ => match builder.build() {
                 Ok(compiled) => Engine::Re2(compiled),

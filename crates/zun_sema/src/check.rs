@@ -10496,7 +10496,7 @@ impl Checker<'_> {
                                 return self.poison(span);
                             }
                             let (native_name, return_ty) = match mname.as_str() {
-                                "match" => ("regexpExec", Ty::Array),
+                                "match" => ("regexpMatch", Ty::Array),
                                 _ => ("regexpSearch", Ty::Int(IntKind::I32)),
                             };
                             let call_args = vec![first, receiver];

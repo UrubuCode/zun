@@ -1854,7 +1854,7 @@ impl<'a> Interp<'a> {
                 let object = zun_gc::with_current_heap_mut(|heap| {
                     heap.alloc_regex_with_flags(source, flags)
                 })
-                .map_err(|error| RunError::Native(error.to_string()))?;
+                .map_err(|error| RunError::Native(format!("SyntaxError: Invalid regular expression: {error}")))?;
                 Ok(Value::Object(object))
             }
             "regexpExec" => {
@@ -1868,6 +1868,29 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?
                     .map_err(|error| RunError::Native(error.to_string()))?
                 {
+                    Some(array) => Ok(Value::Object(array)),
+                    None => Ok(Value::Null),
+                }
+            }
+            "regexpMatch" => {
+                let object = object(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let input = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Str(input) => input.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let global = zun_gc::with_current_heap(|heap| {
+                    heap.regex_flags(object).map(|flags| flags.contains('g'))
+                })
+                .ok_or(RunError::BadToken)?;
+                let found = if global {
+                    zun_gc::with_current_heap_mut(|heap| heap.regex_match_global(object, &input))
+                } else {
+                    zun_gc::with_current_heap_mut(|heap| heap.regex_exec(object, &input))
+                }
+                .ok_or(RunError::BadToken)?
+                .map_err(|error| RunError::Native(error.to_string()))?;
+                match found {
                     Some(array) => Ok(Value::Object(array)),
                     None => Ok(Value::Null),
                 }
@@ -2750,9 +2773,28 @@ impl<'a> Interp<'a> {
                                         _ => None,
                                     }
                                 }
-                                "match" => Some(self.call_managed_collection("regexpExec", &[regex, subject])?),
+                                "match" => Some(self.call_managed_collection("regexpMatch", &[regex, subject])?),
                                 "search" => Some(self.call_managed_collection("regexpSearch", &[regex, subject])?),
                                 "matchAll" => Some(self.call_managed_collection("stringMatchAll", &[regex, subject])?),
+                                "split" if args.len() == 3 => {
+                                    Some(self.call_managed_collection("regexpSplit", &[regex, subject])?)
+                                }
+                                "split" if args.len() == 4 => {
+                                    let limit = match unbox_arg(&args[3])? {
+                                        Value::Void | Value::Null => None,
+                                        other => {
+                                            let n = self.dyn_to_number(&other)?;
+                                            Some(if n.is_nan() || n <= 0.0 { 0 } else if n >= 4294967295.0 { 4294967295 } else { n as i64 })
+                                        }
+                                    };
+                                    match limit {
+                                        None => Some(self.call_managed_collection("regexpSplit", &[regex, subject])?),
+                                        Some(n) => Some(self.call_managed_collection(
+                                            "regexpSplitLimit",
+                                            &[regex, subject, Value::Int(n, zun_il::NumKind::I64)],
+                                        )?),
+                                    }
+                                }
                                 _ => None,
                             };
                             if let Some(result) = routed {

@@ -203,6 +203,28 @@ impl Heap {
         })
     }
 
+    /// `String.prototype.match` with a global regex: every match's text as an
+    /// array of strings, or `None` for no match (`null`).
+    pub fn regex_match_global(
+        &mut self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
+        let spans = match self.regexes.get(&(object.addr() as usize))?.match_spans(input, true) {
+            Ok(spans) => spans,
+            Err(error) => return Some(Err(error)),
+        };
+        if spans.is_empty() {
+            return Some(Ok(None));
+        }
+        let array = self.alloc_array(spans.len());
+        for (index, (start, end, _)) in spans.into_iter().enumerate() {
+            let value = zun_core::Any::string(self.intern_string(input[start..end].into()));
+            self.array_set(array, index, value);
+        }
+        Some(Ok(Some(array)))
+    }
+
     /// Run `exec`: `None` if `object` is not a regex, `Some(None)` when there is
     /// no match, otherwise an array of Any: index 0 is the full match and
     /// indices 1.. are capture-group strings (`undefined` for non-participating

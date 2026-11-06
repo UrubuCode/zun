@@ -448,6 +448,7 @@ pub const MODULE: crate::Module = crate::Module {
         // `String.prototype.matchAll(regexp)` — array of match arrays (each
         // like `exec`'s result). Requires a global regexp (checked at runtime).
         // Appended last so existing dispatch ids stay stable.
+        NativeFn { name: "regexpMatch", params: &[RegExp, Str], ret: Array, imp: unavailable },
         NativeFn { name: "stringMatchAll", params: &[RegExp, Str], ret: Array, imp: unavailable },
         // `functionBox(function)` wraps a callable in a GC-traced object so a
         // function-valued value can travel through an argument lane that boxes
