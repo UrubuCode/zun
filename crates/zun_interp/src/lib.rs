@@ -653,6 +653,9 @@ impl Interp<'_> {
                             Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
                             other => Some(other.clone()),
                         };
+                        let callee = callee.map(|value| {
+                            zun_gc::with_current_heap(|heap| crate::collections::unbox_function_box(value, heap))
+                        });
                         if let Some(Value::Function(handle)) = callee {
                             if let Some(meta) = self.function_meta(handle, &name) {
                                 stack.push(meta);
@@ -2203,12 +2206,17 @@ impl Interp<'_> {
                             Value::Bool(_) => "boolean",
                             Value::Int(..) | Value::Float(..) => "number",
                             Value::Str(_) => "string",
+                            Value::Any(any) if any.tag() == zun_core::AnyTag::ClassDescriptor => "class",
                             _ => "value",
                         };
                         if what == "value" {
                             return Err(RunError::BadToken);
                         }
-                        let message = format!("{what} is not a function");
+                        let message = if what == "class" {
+                            "Class constructor cannot be invoked without 'new'".to_string()
+                        } else {
+                            format!("{what} is not a function")
+                        };
                         match self.new_error_object("TypeError", &message) {
                             Some(error) => {
                                 let exception = Value::Object(error);

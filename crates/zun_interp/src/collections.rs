@@ -8657,6 +8657,14 @@ impl<'a> Interp<'a> {
     /// `Date.prototype[Symbol.toPrimitive]`), read off the method metadata.
     /// Other function values keep their existing expando-bag behavior.
     pub(crate) fn function_meta(&self, handle: zun_core::FunctionHandle, name: &str) -> Option<Value> {
+        // A promise resolving function (`resolve` / `reject`): length 1, empty name.
+        if self.settler_of(handle).is_some() {
+            return Some(if name == "name" {
+                Value::Str("".into())
+            } else {
+                Value::Float(1.0, zun_il::NumKind::F64)
+            });
+        }
         if handle.is_bound() || handle.generator_method().is_some() {
             return None;
         }

@@ -205,6 +205,41 @@ fn split_assignment(
     }
 }
 
+/// `const o: any = { m() { ... o ... } }`: an object literal whose methods
+/// refer to the binding being declared. The binding is declared first and
+/// assigned after, so the methods capture its (shared) cell.
+fn convert_declarator_stmts(
+    source: &str,
+    declarator: &oxc_ast::ast::VariableDeclarator<'_>,
+) -> Result<Vec<Stmt>, String> {
+    if let (BindingPattern::BindingIdentifier(id), Some(Expression::ObjectExpression(object)), Some(annotation)) =
+        (&declarator.id, declarator.init.as_ref(), declarator.type_annotation.as_deref())
+    {
+        let annotation_text = source.get(annotation.span.start as usize..annotation.span.end as usize).unwrap_or("");
+        let object_text = source.get(object.span.start as usize..object.span.end as usize).unwrap_or("");
+        if annotation_text.trim_start_matches(':').trim() == "any" && contains_word(object_text, id.name.as_str()) {
+            let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+            let whole = span(declarator.span);
+            let name = Name { span: span(id.span) };
+            let value = convert_expression(source, declarator.init.as_ref().expect("checked"))?;
+            return Ok(vec![
+                Stmt::Let {
+                    name,
+                    ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
+                    init: Expr::Unary {
+                        op: crate::ast::UnaryOp::Void,
+                        operand: Box::new(Expr::Number { value: 0.0, span: whole }),
+                        span: whole,
+                    },
+                    span: whole,
+                },
+                Stmt::Expr(Expr::Assign { target: name, value: Box::new(value), span: whole }),
+            ]);
+        }
+    }
+    Ok(vec![convert_declarator(source, declarator)?])
+}
+
 /// Convert one variable declarator into either a `Stmt::Let` (identifier head)
 /// or a `Stmt::Destructure` (array/object pattern head).
 fn convert_declarator(
@@ -403,7 +438,7 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                         _ => false,
                     };
                     if !hoisted {
-                        statements.push(convert_declarator(source, declarator)?);
+                        statements.extend(convert_declarator_stmts(source, declarator)?);
                         continue;
                     }
                     // Hoisted: the declaration lives at function scope, so the
@@ -423,7 +458,7 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
             }
             Statement::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
-                    statements.push(convert_declarator(source, declarator)?);
+                    statements.extend(convert_declarator_stmts(source, declarator)?);
                 }
             }
             Statement::ReturnStatement(return_statement) => statements.push(Stmt::Return {
