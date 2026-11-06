@@ -2636,6 +2636,22 @@ impl<'a> Interp<'a> {
                 })))
             }
             "reflectDelete" => {
+                // A boxed string (modelled as the primitive): its indices and
+                // `length` are non-configurable, any other key is deletable.
+                if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
+                        let index = key.parse::<usize>().ok().filter(|i| i.to_string() == *key);
+                        let fixed = key.as_ref() == "length"
+                            || index.is_some_and(|i| i < zun_core::wtf16::len16(&text));
+                        return Ok(Value::Bool(!fixed));
+                    }
+                }
+                // A function's own `name`/`length` are configurable, `prototype` is not.
+                if let Ok(Value::Function(_)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
+                        return Ok(Value::Bool(key.as_ref() != "prototype"));
+                    }
+                }
                 let object = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
                 let name: std::rc::Rc<str> = match args.get(1).ok_or(RunError::BadToken)? {
@@ -2646,6 +2662,30 @@ impl<'a> Interp<'a> {
                     },
                 };
                 let name = &name;
+                // A Proxy target: the `deleteProperty` trap decides (a `true` answer for
+                // a non-configurable target key breaks the invariant); without a trap
+                // the operation applies to the proxied target.
+                let mut object = object;
+                if let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(object)) {
+                    if let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(object, "deleteProperty")) {
+                        let result = self.invoke_proxy_trap(
+                            callback,
+                            vec![Value::Object(target), Value::Str(name.clone())],
+                        )?;
+                        let verdict = !matches!(result, Value::Bool(false) | Value::Void | Value::Null);
+                        if verdict && !zun_gc::with_current_heap(|heap| heap.dynamic_can_delete(target, name)) {
+                            return match self.new_error_object(
+                                "TypeError",
+                                &format!("'deleteProperty' on proxy: trap returned truish for property '{name}' which is non-configurable in the proxy target"),
+                            ) {
+                                Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                                None => Err(RunError::BadToken),
+                            };
+                        }
+                        return Ok(Value::Bool(verdict));
+                    }
+                    object = target;
+                }
                 // Arrays: an in-range index becomes a hole (unless sealed/frozen),
                 // `length` is non-configurable, anything else is a plain key.
                 if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(object)) {
@@ -2691,6 +2731,16 @@ impl<'a> Interp<'a> {
                 // respecting writability (existing own data property) and
                 // extensibility (adding a new property). Non-object targets and
                 // failed stores return `false` rather than throwing.
+                // A boxed string (modelled as the primitive) accepts new keys but its
+                // indices and `length` are read-only.
+                if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
+                        let index = key.parse::<usize>().ok().filter(|i| i.to_string() == *key);
+                        let fixed = key.as_ref() == "length"
+                            || index.is_some_and(|i| i < zun_core::wtf16::len16(&text));
+                        return Ok(Value::Bool(!fixed));
+                    }
+                }
                 self.reflect_set(args)
             }
             "proxyNew" => {
@@ -7439,6 +7489,37 @@ impl<'a> Interp<'a> {
                 }
             }
             "objectGetOwnPropertyDescriptors" => {
+                // A primitive is read through its box: a string owns its code units and
+                // `length`; a number or boolean owns nothing.
+                match unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    Ok(Value::Str(text)) => {
+                        let units: Vec<String> = text.encode_utf16().map(|u| String::from_utf16_lossy(&[u])).collect();
+                        let out = zun_gc::with_current_heap_mut(|heap| {
+                            let out = heap.alloc_dynamic();
+                            let mut entries: Vec<(String, zun_core::Any, bool)> = Vec::new();
+                            for (index, unit) in units.iter().enumerate() {
+                                let id = heap.intern_string(unit.as_str().into());
+                                entries.push((index.to_string(), zun_core::Any::string(id), true));
+                            }
+                            entries.push(("length".to_string(), zun_core::Any::float(units.len() as f64), false));
+                            for (name, value, enumerable) in entries {
+                                let descriptor = heap.alloc_dynamic();
+                                heap.dynamic_set(descriptor, "value", value);
+                                heap.dynamic_set(descriptor, "writable", zun_core::Any::bool(false));
+                                heap.dynamic_set(descriptor, "enumerable", zun_core::Any::bool(enumerable));
+                                heap.dynamic_set(descriptor, "configurable", zun_core::Any::bool(false));
+                                heap.dynamic_set(out, name, zun_core::Any::object(descriptor.addr() as usize));
+                            }
+                            out
+                        });
+                        return Ok(Value::Object(out));
+                    }
+                    Ok(Value::Bool(_)) | Ok(Value::Int(..)) | Ok(Value::Float(..)) => {
+                        let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+                        return Ok(Value::Object(out));
+                    }
+                    _ => {}
+                }
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let names = self.object_own_names(obj)?;
                 let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());

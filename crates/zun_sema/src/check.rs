@@ -167,6 +167,7 @@ fn check_impl(
         arguments_functions: HashSet::new(),
         fn_mutated_globals: HashSet::new(),
         reassigned_fn_names: HashSet::new(),
+        deleted_fn_meta: HashSet::new(),
         chain_roots: Vec::new(),
     };
     checker.collect_type_param_names(program);
@@ -442,6 +443,9 @@ struct Checker<'a> {
     fn_mutated_globals: HashSet<String>,
     /// Names of function-valued bindings that are reassigned (dynamic callee).
     reassigned_fn_names: HashSet<String>,
+    /// `(function, "name" | "length")` pairs removed by `Reflect.deleteProperty`:
+    /// later static reads of that metadata see the deleted value.
+    deleted_fn_meta: HashSet<(u32, String)>,
     /// Temps bound by enclosing `OptionalChain` guards (innermost last).
     chain_roots: Vec<ast::Name>,
     /// Every generic type-parameter name declared anywhere in the program
@@ -3737,6 +3741,13 @@ impl Checker<'_> {
         };
         let mut checked: Vec<hir::Expr> =
             args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+        if method == "deleteProperty" && checked.len() == 2 {
+            if let (Ty::Function(func), ast::Expr::String { value, .. }) = (checked[0].ty, &args[1]) {
+                if func < hir::DYNAMIC_FUNCTION && (value == "name" || value == "length") {
+                    self.deleted_fn_meta.insert((func, value.clone()));
+                }
+            }
+        }
         // The optional `receiver` of `Reflect.get` / `Reflect.set` is accepted and
         // ignored: the operation is applied to the target directly.
         if (method == "get" && checked.len() == 3) || (method == "set" && checked.len() == 4) {
@@ -3752,7 +3763,7 @@ impl Checker<'_> {
         // The target must be a dynamic receiver (plain object or `any`); a Proxy
         // target is itself a dynamic receiver at runtime.
         // A managed collection target is handed to the natives as a dynamic receiver.
-        if matches!(checked[0].ty, Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_) | Ty::RegExp) {
+        if matches!(checked[0].ty, Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_) | Ty::RegExp | Ty::Function(_)) {
             let target = checked.remove(0);
             checked.insert(0, Self::box_to_any(target));
         }
@@ -14047,6 +14058,23 @@ impl Checker<'_> {
                 // signature of a function value; a dynamic function value (a
                 // closure) has no statically known name or declared arity.
                 if let Ty::Function(func) = object.ty {
+                    if fname == "prototype" && func < hir::DYNAMIC_FUNCTION {
+                        // A function's `prototype` is an ordinary (initially empty) object.
+                        return hir::Expr {
+                            kind: hir::ExprKind::DynamicObjectLiteral { entries: Vec::new() },
+                            ty: Ty::DynamicObject,
+                            span,
+                        };
+                    }
+                    if (fname == "name" || fname == "length")
+                        && self.deleted_fn_meta.contains(&(func, fname.to_string()))
+                    {
+                        return if fname == "name" {
+                            hir::Expr { kind: hir::ExprKind::String(String::new()), ty: Ty::String, span }
+                        } else {
+                            hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::F64, span }
+                        };
+                    }
                     if fname == "name" {
                         let name = if matches!(
                             func,
