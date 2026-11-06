@@ -128,3 +128,92 @@ pub(super) fn wrap_binds(binds: Vec<Expr>, body: Expr, span: Span) -> Expr {
     }
     result
 }
+
+pub(super) fn convert_computed_member(source: &str, member: &oxc_ast::ast::ComputedMemberExpression<'_>) -> Result<Expr, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let object = Box::new(convert_expression(source, &member.object)?);
+    // `obj['name']` with a plain identifier-shaped literal is `obj.name`.
+    if let Expression::StringLiteral(text) = &member.expression {
+        if text.value.as_str().is_some_and(is_plain_identifier)
+            && (text.span.end - text.span.start) as usize
+                == text.value.as_str().map_or(0, str::len) + 2
+        {
+            let field = Name { span: Span::new(text.span.start + 1, text.span.end - 1) };
+            return Ok(if member.optional {
+                Expr::OptionalField { object, field, span: span(member.span) }
+            } else {
+                Expr::Field { object, field, span: span(member.span) }
+            });
+        }
+    }
+    let index = Box::new(convert_expression(source, &member.expression)?);
+    if member.optional {
+        return Ok(Expr::OptionalIndex {
+            object,
+            index,
+            span: span(member.span),
+        });
+    }
+    Ok(Expr::Index {
+        object,
+        index,
+        span: span(member.span),
+    })
+}
+
+pub(super) fn convert_private_in(source: &str, private_in: &oxc_ast::ast::PrivateInExpression<'_>) -> Result<Expr, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    // `#x in obj` is a brand check: resolve `#x` to the innermost
+    // lexical class declaring it, then test `obj instanceof Class`
+    // (instance members) or `obj === Class` (static members).
+    let name = private_in.left.name.to_string();
+    let found = PRIVATE_SCOPES.with(|scopes| {
+        scopes.borrow().iter().rev().find_map(|(class_span, names)| {
+            names.iter().find(|(n, _)| *n == name).map(|(_, is_static)| (*class_span, *is_static))
+        })
+    });
+    let Some((class_span, is_static)) = found else {
+        return Err(format!("OXC adapter: unknown private name `#{name}` in brand check"));
+    };
+    Ok(Expr::Binary {
+        op: if is_static { BinaryOp::Eq } else { BinaryOp::Instanceof },
+        lhs: Box::new(convert_expression(source, &private_in.right)?),
+        rhs: Box::new(Expr::Ident(Name { span: class_span })),
+        span: span(private_in.span),
+    })
+}
+
+pub(super) fn convert_static_member(source: &str, member: &oxc_ast::ast::StaticMemberExpression<'_>) -> Result<Expr, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let object = Box::new(convert_expression(source, &member.object)?);
+    let field = Name {
+        span: span(member.property.span),
+    };
+    if member.optional {
+        Ok(Expr::OptionalField {
+            object,
+            field,
+            span: span(member.span),
+        })
+    } else {
+        Ok(Expr::Field {
+            object,
+            field,
+            span: span(member.span),
+        })
+    }
+}
+
+pub(super) fn convert_private_field(source: &str, member: &oxc_ast::ast::PrivateFieldExpression<'_>) -> Result<Expr, String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    if member.optional {
+        return Err("OXC adapter does not support optional private members yet".into());
+    }
+    Ok(Expr::PrivateField {
+        object: Box::new(convert_expression(source, &member.object)?),
+        field: Name {
+            span: span(member.field.span),
+        },
+        span: span(member.span),
+    })
+}
