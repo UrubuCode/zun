@@ -977,8 +977,12 @@ mod tests {
         assert!(!RegexValue::new("a.b").unwrap().is_match("a\nb").unwrap());
         assert!(RegexValue::with_flags("a.b", "s").unwrap().is_match("a\nb").unwrap());
         assert!(RegexValue::with_flags("a", "g").is_ok());
-        assert!(RegexValue::with_flags("a", "y").is_err());
+        // `y`, `d` and `v` are accepted flags (sticky, indices, unicodeSets).
+        assert!(RegexValue::with_flags("a", "y").is_ok());
+        assert!(RegexValue::with_flags("a", "d").is_ok());
+        assert!(RegexValue::with_flags("a", "v").is_ok());
         assert!(RegexValue::with_flags("a", "ii").is_err());
+        assert!(RegexValue::with_flags("a", "z").is_err());
     }
 
     #[test]

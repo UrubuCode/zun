@@ -195,8 +195,9 @@ mod tests {
     fn array_storage_is_contiguous_and_bounds_checked() {
         let mut array = ArrayStorage::with_length(2);
         assert_eq!(array.len(), 2);
-        assert_eq!(array.get(0).and_then(Any::as_int), Some(0));
-        assert_eq!(array.set(1, Any::int(7)).and_then(Any::as_int), Some(0));
+        // New slots are holes (sparse-array semantics), not integer zeros.
+        assert!(array.get(0).is_some_and(Any::is_hole));
+        assert!(array.set(1, Any::int(7)).is_some_and(Any::is_hole));
         assert_eq!(array.get(1).and_then(Any::as_int), Some(7));
         assert_eq!(array.get(2), None);
         assert_eq!(array.set(2, Any::int(9)), None);
