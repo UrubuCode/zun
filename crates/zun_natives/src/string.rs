@@ -597,10 +597,10 @@ fn from_code_point1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
     let code = match args.first() {
         Some(NativeArg::Int(code)) => *code,
         Some(NativeArg::Float(code)) if code.fract() == 0.0 => *code as i64,
-        _ => return Err(NativeError("fromCodePoint: expected an integer code point".to_string())),
+        _ => return Err(NativeError("RangeError: Invalid code point".to_string())),
     };
     if !(0..=0x10FFFF).contains(&code) {
-        return Err(NativeError(format!("fromCodePoint: invalid code point {code}")));
+        return Err(NativeError(format!("RangeError: Invalid code point {code}")));
     }
     let code = code as u32;
     if code <= 0xFFFF {
@@ -609,7 +609,7 @@ fn from_code_point1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
     } else {
         match char::from_u32(code) {
             Some(scalar) => Ok(NativeValue::Str(scalar.to_string())),
-            None => Err(NativeError(format!("fromCodePoint: invalid code point {code}"))),
+            None => Err(NativeError(format!("RangeError: Invalid code point {code}"))),
         }
     }
 }

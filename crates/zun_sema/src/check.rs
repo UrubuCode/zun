@@ -10383,7 +10383,10 @@ impl Checker<'_> {
                                     && checked.iter().all(|e| e.ty.is_int() || natural_literal(e))
                             }
                             "slice" => checked.iter().all(|e| e.ty == Ty::F64),
-                            "repeat" | "charCodeAt" | "codePointAt" => {
+                            // A literal index may be out of range (NaN / undefined results),
+                            // which the integer-typed native cannot express.
+                            "charCodeAt" | "codePointAt" => checked.len() == 1 && checked[0].ty.is_int(),
+                            "repeat" => {
                                 checked.len() == 1 && (checked[0].ty.is_int() || natural_literal(&checked[0]))
                             }
                             "at" => checked.len() == 1 && checked[0].ty == Ty::F64,
@@ -10430,7 +10433,9 @@ impl Checker<'_> {
                             call_args.push(it.next().unwrap_or_else(|| undefined(span)));
                         }
                         let result_ty = match mname.as_str() {
-                            "indexOf" | "lastIndexOf" | "charCodeAt" | "codePointAt" => Ty::F64,
+                            "indexOf" | "lastIndexOf" | "charCodeAt" => Ty::F64,
+                            // `undefined` past the end, so the result stays dynamic.
+                            "codePointAt" => Ty::Any,
                             "includes" | "startsWith" | "endsWith" => Ty::Boolean,
                             _ => Ty::String,
                         };
@@ -10439,6 +10444,9 @@ impl Checker<'_> {
                             ty: Ty::Any,
                             span,
                         };
+                        if result_ty == Ty::Any {
+                            return call;
+                        }
                         return hir::Expr {
                             kind: hir::ExprKind::Convert { value: Box::new(call) },
                             ty: result_ty,

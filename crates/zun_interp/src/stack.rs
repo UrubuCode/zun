@@ -431,13 +431,15 @@ pub(crate) fn convert(v: &Value, target: zun_il::NumKind) -> Result<Value, RunEr
     let as_f64 = match v {
         Value::Int(n, _) => *n as f64,
         Value::Float(n, _) => *n,
+        // ToNumber(undefined) is NaN (e.g. an out-of-range `codePointAt`).
+        Value::Void => f64::NAN,
         other => return Err(RunError::Malformed(format!("cannot convert {other:?}"))),
     };
     Ok(if target.is_int() {
         let truncated = match v {
             Value::Int(n, _) => *n,
             Value::Float(n, _) => *n as i64,
-            _ => unreachable!(),
+            _ => 0,
         };
         Value::Int(value::wrap_int(truncated, target), target)
     } else {
