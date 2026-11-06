@@ -65,7 +65,8 @@ class IntlNumberFormat {
 class IntlDateTimeFormat {
     locale: string = "";
     format(d: Date): string {
-        return intlDate.intlDateTimeFormat(this.locale, d.millis);
+        if (!d.isValid()) { return "Invalid Date"; }
+        return intlDate.intlDateTimeFormat(this.locale, d.t);
     }
 }
 

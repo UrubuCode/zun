@@ -2927,7 +2927,10 @@ impl<'a> Interp<'a> {
                                 .tables
                                 .method_defs
                                 .get((handle.method_rid() as usize).wrapping_sub(1))
-                                .map(|method| self.module.strings.get(method.name).ends_with("@this>"))
+                                .map(|method| {
+                                    let name = self.module.strings.get(method.name);
+                                    name.ends_with("@this>") || name.ends_with("@this")
+                                })
                                 .unwrap_or(false);
                         if takes_this {
                             rest.insert(0, this_arg);
@@ -3210,6 +3213,7 @@ impl<'a> Interp<'a> {
                         let mut method_args = Vec::with_capacity(call_args.len() + 1);
                         method_args.push(Value::Object(namespace));
                         method_args.extend(call_args.iter().cloned());
+                        let method_args = self.pack_rest_call_args(rid, method_args);
                         let result = self.call(rid, method_args, None)?;
                         let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                             .unwrap_or_else(zun_core::Any::void);
@@ -8474,6 +8478,34 @@ impl<'a> Interp<'a> {
         Ok(())
     }
 
+    /// `length` / `name` of a class symbol-keyed method value (for example
+    /// `Date.prototype[Symbol.toPrimitive]`), read off the method metadata.
+    /// Other function values keep their existing expando-bag behavior.
+    pub(crate) fn function_meta(&self, handle: zun_core::FunctionHandle, name: &str) -> Option<Value> {
+        if handle.is_bound() || handle.generator_method().is_some() {
+            return None;
+        }
+        let rid = handle.method_rid();
+        let method = self.module.tables.method_defs.get((rid as usize).wrapping_sub(1))?;
+        let method_name = self.module.strings.get(method.name);
+        if !method_name.starts_with("[symbol]") {
+            return None;
+        }
+        if name == "name" {
+            let symbol = self
+                .class_symbol_methods
+                .iter()
+                .find(|(_, candidate)| candidate.method_rid() == rid)
+                .map(|(key, _)| key.1)?;
+            let well_known = zun_core::WellKnownSymbol::ALL.get(symbol as usize)?;
+            return Some(Value::Str(format!("[{}]", well_known.description()).into()));
+        }
+        let body = read_body(&self.module.code, method.body_offset).ok()?;
+        let receiver = usize::from(method_name.contains("@this"));
+        let length = (body.param_count as usize).saturating_sub(receiver);
+        Some(Value::Float(length as f64, zun_il::NumKind::F64))
+    }
+
     pub(crate) fn with_this_arg(
         &self,
         handle: zun_core::FunctionHandle,
@@ -9264,7 +9296,7 @@ impl<'a> Interp<'a> {
         if let Some(text) = array_join_text(obj) {
             return Ok(Value::Str(text.into()));
         }
-        Ok(match self.ordinary_to_primitive(obj, "number")? {
+        Ok(match self.ordinary_to_primitive(obj, "default")? {
             Some(primitive) => primitive,
             None => Value::Str("[object Object]".into()),
         })

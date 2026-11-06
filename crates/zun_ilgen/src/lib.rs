@@ -157,9 +157,17 @@ pub fn lower(program: &hir::Program) -> Module {
     // each body is emitted.
     for f in &program.functions {
         let name = module.strings.intern(&f.name);
+        // Signatures land with the verifier; until then the signature blob
+        // only records that the last parameter is a rest parameter, so a
+        // dynamic (`any`-receiver) call can pack the trailing arguments.
+        let signature = if f.rest_param.is_some() {
+            module.blobs.intern(&[b'R'])
+        } else {
+            BlobIndex(0)
+        };
         module.tables.add_method_def(MethodDef {
             name,
-            signature: BlobIndex(0), // signatures land with the verifier
+            signature,
             body_offset: u32::MAX,
             is_static: f.is_static,
         });

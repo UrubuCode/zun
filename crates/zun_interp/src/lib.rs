@@ -647,7 +647,20 @@ impl Interp<'_> {
                 }
                 Opcode::LoadDynamic => {
                     let name = self.dynamic_name(&instr.operand)?.to_owned();
-                    let raw = expando_receiver(pop(&mut stack)?);
+                    let popped = pop(&mut stack)?;
+                    if name == "length" || name == "name" {
+                        let callee = match &popped {
+                            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
+                            other => Some(other.clone()),
+                        };
+                        if let Some(Value::Function(handle)) = callee {
+                            if let Some(meta) = self.function_meta(handle, &name) {
+                                stack.push(meta);
+                                continue;
+                            }
+                        }
+                    }
+                    let raw = expando_receiver(popped);
                     // A dynamic receiver that unboxes to a primitive string or an
                     // array exposes `.length` the same as the typed forms, so a
                     // value read through `any` (e.g. a module global) keeps it.

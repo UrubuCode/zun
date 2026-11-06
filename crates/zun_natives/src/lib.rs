@@ -22,6 +22,7 @@ mod node_buffer;
 mod collections;
 pub use collections::USER_CLASS_FLAG;
 mod date;
+mod date_f64;
 mod error;
 mod host;
 mod io;

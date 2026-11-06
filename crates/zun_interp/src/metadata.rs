@@ -63,6 +63,38 @@ impl<'a> Interp<'a> {
             .ok_or(RunError::BadToken)
     }
 
+    /// Arguments for a dynamic call of method `rid`: when the method ends in a
+    /// rest parameter (its signature blob is the rest marker), the trailing
+    /// arguments are packed into the array the callee expects; omitted fixed
+    /// parameters carry the null sentinel its default prologue consumes.
+    pub(crate) fn pack_rest_call_args(&self, rid: u32, mut args: Vec<Value>) -> Vec<Value> {
+        let Some(method) = self.module.tables.method_defs.get((rid as usize).wrapping_sub(1)) else {
+            return args;
+        };
+        if method.signature.0 == 0 || self.module.blobs.get(method.signature) != b"R" {
+            return args;
+        }
+        let Some(body) = zun_module::read_body(&self.module.code, method.body_offset).ok() else {
+            return args;
+        };
+        let fixed = (body.param_count as usize).saturating_sub(1);
+        while args.len() < fixed {
+            args.push(Value::Null);
+        }
+        let rest = args.split_off(fixed);
+        let array = zun_gc::with_current_heap_mut(|heap| {
+            let array = heap.alloc_array(rest.len());
+            for (index, value) in rest.iter().enumerate() {
+                if let Some(any) = value.box_any(heap) {
+                    let _ = heap.array_set(array, index, any);
+                }
+            }
+            array
+        });
+        args.push(Value::Object(array));
+        args
+    }
+
     /// The method RID implementing `name` on a typed instance (most-derived
     /// override), or `None` when the object is not a typed instance or has no
     /// such method.

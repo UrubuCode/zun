@@ -1,178 +1,225 @@
-// UTC calendar surface over a millisecond timestamp.
+// ECMAScript `Date` over an f64 time value.
 //
-// Construction is `new Date(millis)` or `new Date()`. The no-argument form
-// falls out of the field default initializer `millis = time.nowMillis()`:
-// when `new Date()` supplies no argument, the object is built from the
-// initializer (the current time); `new Date(0)` still binds the epoch. This is
-// the same trailing-default-initializer mechanism `Error.stackFrames` uses.
-// JS also has `new Date(string)`; Zun builds an object from one positional
-// argument per field with no overloads, so the string form arrives as the
-// `Date.fromISO` static instead.
+// The instance state is one `number`, `t`: milliseconds since the epoch, with
+// NaN standing for Invalid Date (every getter then answers NaN, `toString` is
+// "Invalid Date", `toISOString` throws a RangeError). Values are clipped to
+// +-8.64e15 ms at every point a time value is produced (`date.clip`).
 //
-// Local getters/setters convert at the method boundary: local = UTC + the
-// host zone's DST-aware offset (`date.localOffsetMinutes`); stored millis stay UTC.
-// (Formerly the calendar was UTC-only, so local time *was* UTC.) The local-time getters (`getFullYear`, `getHours`, ...)
-// therefore return exactly their UTC counterparts and `getTimezoneOffset`
-// returns 0. These are accurate for a UTC-only calendar, not stubs; a real
-// local offset waits on a timezone intrinsic that does not yet exist.
+// The constructor and the multi-argument members are rest-parameter members:
+// ECMAScript distinguishes an omitted argument from an explicit `undefined`
+// (`d.setUTCHours(1, undefined)` poisons the date, `d.setUTCHours(1)` does not)
+// and ignores extra arguments, neither of which fixed positional parameters
+// can express. The spec `length` of those members is folded at compile time in
+// `zun_sema` (`date_function_length`).
+//
+// All calendar arithmetic (MakeDay/MakeTime/TimeClip, field extraction, ISO
+// parsing and formatting) lives in the `zun:date` natives
+// (`crates/zun_natives/src/date_f64.rs`). Local-time members convert at the
+// method boundary through `date.localTime` / `date.utcFromLocal` (host zone,
+// DST aware); the stored time value is always UTC.
 
 import { date, time } from "zun:core";
 
 class Date {
-    millis: i64 = time.nowMillis();
+    t: number = 0;
 
-    setMillis(value: i64): Date {
-        this.millis = value;
+    // `new Date()` (now), `new Date(number | string | Date)`, and
+    // `new Date(year, month, ...)` (local time, years 0-99 mean 19xx).
+    constructor(...args: any[]) {
+        const n: number = args.length as number;
+        if (n == 0) {
+            this.t = time.nowMillis() as number;
+        } else if (n == 1) {
+            const v: any = args[0];
+            if (v instanceof Date) {
+                this.t = (v as Date).t;
+            } else if (typeof v === "string") {
+                this.t = date.parseDate(v as string);
+            } else {
+                this.t = date.clip(Number(v));
+            }
+        } else {
+            const y: number = Number(args[0]);
+            const mo: number = Number(args[1]);
+            const d: number = n > 2 ? Number(args[2]) : 1;
+            const h: number = n > 3 ? Number(args[3]) : 0;
+            const mi: number = n > 4 ? Number(args[4]) : 0;
+            const s: number = n > 5 ? Number(args[5]) : 0;
+            const ms: number = n > 6 ? Number(args[6]) : 0;
+            this.t = date.utcFromLocal(date.makeUtc(y, mo, d, h, mi, s, ms, true));
+        }
+    }
+
+    setMillis(value: number): Date {
+        this.t = date.clip(value);
         return this;
     }
 
-    valueOf(): i64 { return this.millis; }
-    isValid(): boolean { return date.isValid(this.millis); }
-    getTime(): i64 { return this.millis; }
-    setTime(value: i64): i64 {
-        this.millis = value;
-        return this.millis;
-    }
-    isBefore(other: Date): boolean { return this.millis < other.millis; }
-    isAfter(other: Date): boolean { return this.millis > other.millis; }
-    isEqual(other: Date): boolean { return this.millis == other.millis; }
+    isValid(): boolean { return date.valid(this.t); }
+    isBefore(other: Date): boolean { return this.t < other.t; }
+    isAfter(other: Date): boolean { return this.t > other.t; }
+    isEqual(other: Date): boolean { return this.t == other.t; }
 
-    utcYear(): i32 { return date.year(this.millis); }
-    utcMonth(): i32 { return date.month(this.millis); }
-    utcDay(): i32 { return date.day(this.millis); }
-    utcHour(): i32 { return date.hour(this.millis); }
-    utcMinute(): i32 { return date.minute(this.millis); }
-    utcSecond(): i32 { return date.second(this.millis); }
-    utcMillisecond(): i32 { return date.millisecond(this.millis); }
-    utcWeekday(): i32 { return date.weekday(this.millis); }
-    utcDayOfYear(): i32 { return date.dayOfYear(this.millis); }
-    isoDate(): string { return date.isoDate(this.millis); }
-    isoDateTime(): string { return date.isoDateTime(this.millis); }
-    // The JS-named getters follow JS conventions, which differ from the
-    // calendar accessors above: months are 0-based and the weekday is
-    // 0-based from Sunday, where `utcMonth`/`utcWeekday` are 1-based and
-    // ISO (1 = Monday). Both used to return the calendar value directly,
-    // so `getUTCMonth()` was off by one and `getUTCDay()` gave 7 for the
-    // Sunday JS calls 0 — wrong answers rather than missing ones.
-    getUTCFullYear(): i32 { return this.utcYear(); }
-    getUTCMonth(): i32 { return this.utcMonth() - 1; }
-    getUTCDate(): i32 { return this.utcDay(); }
-    getUTCHours(): i32 { return this.utcHour(); }
-    getUTCMinutes(): i32 { return this.utcMinute(); }
-    getUTCSeconds(): i32 { return this.utcSecond(); }
-    getUTCMilliseconds(): i32 { return this.utcMillisecond(); }
+    getTime(): number { return this.t; }
+    valueOf(): number { return this.t; }
+    setTime(...a: any[]): number {
+        this.t = date.clip(a.length > 0 ? Number(a[0]) : NaN);
+        return this.t;
+    }
+
+    // Calendar accessors (1-based month, ISO weekday); the date must be valid.
+    utcYear(): i32 { return date.field(this.t, 0) as i32; }
+    utcMonth(): i32 { return (date.field(this.t, 1) + 1) as i32; }
+    utcDay(): i32 { return date.field(this.t, 2) as i32; }
+    utcHour(): i32 { return date.field(this.t, 3) as i32; }
+    utcMinute(): i32 { return date.field(this.t, 4) as i32; }
+    utcSecond(): i32 { return date.field(this.t, 5) as i32; }
+    utcMillisecond(): i32 { return date.field(this.t, 6) as i32; }
+    utcWeekday(): i32 {
+        const w: i32 = date.field(this.t, 7) as i32;
+        return w == 0 ? 7 : w;
+    }
+    utcDayOfYear(): i32 { return date.dayOfYear(this.t as i64); }
+    isoDate(): string { return this.toISOString().slice(0, 10); }
+    isoDateTime(): string { return this.toISOString(); }
+
+    getUTCFullYear(): number { return date.field(this.t, 0); }
+    getUTCMonth(): number { return date.field(this.t, 1); }
+    getUTCDate(): number { return date.field(this.t, 2); }
+    getUTCHours(): number { return date.field(this.t, 3); }
+    getUTCMinutes(): number { return date.field(this.t, 4); }
+    getUTCSeconds(): number { return date.field(this.t, 5); }
+    getUTCMilliseconds(): number { return date.field(this.t, 6); }
+    getUTCDay(): number { return date.field(this.t, 7); }
     getUTCWeekday(): i32 { return this.utcWeekday(); }
-    getUTCDay(): i32 { return this.utcWeekday() % 7; }
     getUTCDayOfYear(): i32 { return this.utcDayOfYear(); }
 
-    // UTC-only calendar, so local time is UTC and the offset is always zero.
-    // Reporting 0 is accurate here; it is not a stub.
-    getTimezoneOffset(): i32 { return 0 - date.localOffsetMinutes(this.millis, ""); }
-    // Local calendar fields: the UTC fields of `millis + offset` (host zone).
-    localMillis(): i64 { return this.millis + (date.localOffsetMinutes(this.millis, "") as i64) * 60000; }
-    locYear(): i32 { return date.year(this.localMillis()); }
-    locMonth(): i32 { return date.month(this.localMillis()); }
-    locDay(): i32 { return date.day(this.localMillis()); }
-    locHour(): i32 { return date.hour(this.localMillis()); }
-    locMinute(): i32 { return date.minute(this.localMillis()); }
-    locSecond(): i32 { return date.second(this.localMillis()); }
-    locMillisecond(): i32 { return date.millisecond(this.localMillis()); }
+    getTimezoneOffset(): number { return date.tzOffset(this.t); }
 
-    // Local-time getters. The VM has no platform timezone, so local == UTC and
-    // each delegates to the UTC-named getter (same 0-based month, 0-based-from-
-    // Sunday weekday conventions). They become distinct from the UTC getters
-    // only once a timezone intrinsic supplies a non-zero `getTimezoneOffset`.
-    getFullYear(): i32 { return this.locYear(); }
-    getMonth(): i32 { return this.locMonth() - 1; }
-    getDate(): i32 { return this.locDay(); }
-    getDay(): i32 { return date.weekday(this.localMillis()) % 7; }
-    getHours(): i32 { return this.locHour(); }
-    getMinutes(): i32 { return this.locMinute(); }
-    getSeconds(): i32 { return this.locSecond(); }
-    getMilliseconds(): i32 { return this.locMillisecond(); }
+    getFullYear(): number { return date.field(date.localTime(this.t), 0); }
+    getMonth(): number { return date.field(date.localTime(this.t), 1); }
+    getDate(): number { return date.field(date.localTime(this.t), 2); }
+    getDay(): number { return date.field(date.localTime(this.t), 7); }
+    getHours(): number { return date.field(date.localTime(this.t), 3); }
+    getMinutes(): number { return date.field(date.localTime(this.t), 4); }
+    getSeconds(): number { return date.field(date.localTime(this.t), 5); }
+    getMilliseconds(): number { return date.field(date.localTime(this.t), 6); }
 
-    // Setters rebuild the timestamp from the components, replacing one. Each
-    // returns the new timestamp, as JS does. Out-of-range values roll over
-    // (month 13 is January of the next year), also as JS does.
-    setUTCFullYear(value: i32): i64 {
-        this.millis = date.fromUTC(value as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
-        return this.millis;
+    // Shared setter core: replace up to `max` fields starting at field `start`
+    // (0 year, 1 month, 2 date, 3 hours, 4 minutes, 5 seconds, 6 ms) with the
+    // supplied arguments. No arguments at all means the first value is
+    // `undefined`, i.e. NaN. Extra arguments are ignored.
+    applyFields(start: number, max: number, a: any[], local: boolean): number {
+        let n: number = a.length as number;
+        let v0: number = NaN;
+        if (n > max) {
+            n = max;
+        }
+        if (n == 0) {
+            n = 1;
+        } else {
+            v0 = Number(a[0]);
+        }
+        const v1: number = n > 1 ? Number(a[1]) : 0;
+        const v2: number = n > 2 ? Number(a[2]) : 0;
+        const v3: number = n > 3 ? Number(a[3]) : 0;
+        if (local) {
+            const r: number = date.setFields(date.localTime(this.t), start, n, v0, v1, v2, v3);
+            this.t = date.utcFromLocal(r);
+        } else {
+            this.t = date.setFields(this.t, start, n, v0, v1, v2, v3);
+        }
+        return this.t;
     }
-    setUTCMonth(value: i32): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, (value + 1) as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
-        return this.millis;
-    }
-    setUTCDate(value: i32): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, value as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
-        return this.millis;
-    }
-    setUTCHours(value: i32): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, value as i64, this.utcMinute() as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
-        return this.millis;
-    }
-    setUTCMinutes(value: i32): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, value as i64, this.utcSecond() as i64, this.utcMillisecond() as i64);
-        return this.millis;
-    }
-    setUTCSeconds(value: i32): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, value as i64, this.utcMillisecond() as i64);
-        return this.millis;
-    }
-    setUTCMilliseconds(value: i32): i64 {
-        this.millis = date.fromUTC(this.utcYear() as i64, this.utcMonth() as i64, this.utcDay() as i64, this.utcHour() as i64, this.utcMinute() as i64, this.utcSecond() as i64, value as i64);
-        return this.millis;
-    }
-    // Local-time setters. The calendar is UTC-only (local == UTC, matching the
-    // local getters above), so each delegates to the same UTC component math as
-    // its `setUTC*` counterpart and returns the new timestamp. The optional
-    // trailing arguments follow ECMAScript: an omitted component keeps its
-    // current value (the default expression reads it back off `this` before the
-    // timestamp is rebuilt). `month`/`day` here are the JS-named 0-based month
-    // and 1-based date, as `getUTCMonth`/`getUTCDate` report them.
-    setFullYear(year: i32, month: i32 = this.getMonth(), day: i32 = this.getDate()): i64 {
-        this.millis = date.localToUtc(date.fromUTC(year as i64, (month + 1) as i64, day as i64, this.locHour() as i64, this.locMinute() as i64, this.locSecond() as i64, this.locMillisecond() as i64), "");
-        return this.millis;
-    }
-    setMonth(month: i32, day: i32 = this.getDate()): i64 {
-        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, (month + 1) as i64, day as i64, this.locHour() as i64, this.locMinute() as i64, this.locSecond() as i64, this.locMillisecond() as i64), "");
-        return this.millis;
-    }
-    setDate(day: i32): i64 {
-        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, day as i64, this.locHour() as i64, this.locMinute() as i64, this.locSecond() as i64, this.locMillisecond() as i64), "");
-        return this.millis;
-    }
-    setHours(hour: i32, minute: i32 = this.locMinute(), second: i32 = this.locSecond(), milli: i32 = this.locMillisecond()): i64 {
-        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, this.locDay() as i64, hour as i64, minute as i64, second as i64, milli as i64), "");
-        return this.millis;
-    }
-    setMinutes(minute: i32, second: i32 = this.locSecond(), milli: i32 = this.locMillisecond()): i64 {
-        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, this.locDay() as i64, this.locHour() as i64, minute as i64, second as i64, milli as i64), "");
-        return this.millis;
-    }
-    setSeconds(second: i32, milli: i32 = this.locMillisecond()): i64 {
-        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, this.locDay() as i64, this.locHour() as i64, this.locMinute() as i64, second as i64, milli as i64), "");
-        return this.millis;
-    }
-    setMilliseconds(milli: i32): i64 {
-        this.millis = date.localToUtc(date.fromUTC(this.locYear() as i64, this.locMonth() as i64, this.locDay() as i64, this.locHour() as i64, this.locMinute() as i64, this.locSecond() as i64, milli as i64), "");
-        return this.millis;
-    }
-    toLocaleString(locale: string = ""): string { return date.dateToLocaleString(this.millis, locale); }
-    toLocaleDateString(locale: string = ""): string { return date.dateToLocaleDateString(this.millis, locale); }
-    toLocaleTimeString(locale: string = ""): string { return date.dateToLocaleTimeString(this.millis, locale); }
-    toISOString(): string { return this.isoDateTime(); }
-    toJSON(): string { return this.toISOString(); }
-    toString(): string { return this.isoDateTime(); }
 
-    // JS statics. `now` and `parse` return a timestamp rather than a `Date`,
+    setUTCFullYear(...a: any[]): number { return this.applyFields(0, 3, a, false); }
+    setUTCMonth(...a: any[]): number { return this.applyFields(1, 2, a, false); }
+    setUTCDate(...a: any[]): number { return this.applyFields(2, 1, a, false); }
+    setUTCHours(...a: any[]): number { return this.applyFields(3, 4, a, false); }
+    setUTCMinutes(...a: any[]): number { return this.applyFields(4, 3, a, false); }
+    setUTCSeconds(...a: any[]): number { return this.applyFields(5, 2, a, false); }
+    setUTCMilliseconds(...a: any[]): number { return this.applyFields(6, 1, a, false); }
+
+    setFullYear(...a: any[]): number { return this.applyFields(0, 3, a, true); }
+    setMonth(...a: any[]): number { return this.applyFields(1, 2, a, true); }
+    setDate(...a: any[]): number { return this.applyFields(2, 1, a, true); }
+    setHours(...a: any[]): number { return this.applyFields(3, 4, a, true); }
+    setMinutes(...a: any[]): number { return this.applyFields(4, 3, a, true); }
+    setSeconds(...a: any[]): number { return this.applyFields(5, 2, a, true); }
+    setMilliseconds(...a: any[]): number { return this.applyFields(6, 1, a, true); }
+
+    toLocaleString(locale: string = ""): string {
+        if (!date.valid(this.t)) { return "Invalid Date"; }
+        return date.dateToLocaleString(this.t, locale);
+    }
+    toLocaleDateString(locale: string = ""): string {
+        if (!date.valid(this.t)) { return "Invalid Date"; }
+        return date.dateToLocaleDateString(this.t, locale);
+    }
+    toLocaleTimeString(locale: string = ""): string {
+        if (!date.valid(this.t)) { return "Invalid Date"; }
+        return date.dateToLocaleTimeString(this.t, locale);
+    }
+
+    toISOString(): string {
+        if (!date.valid(this.t)) {
+            throw new RangeError("Invalid time value");
+        }
+        return date.isoString(this.t);
+    }
+    toJSON(): any {
+        if (!date.valid(this.t)) { return null; }
+        return date.isoString(this.t);
+    }
+    toUTCString(): string {
+        if (!date.valid(this.t)) { return "Invalid Date"; }
+        return date.utcString(this.t);
+    }
+    toString(): string {
+        if (!date.valid(this.t)) { return "Invalid Date"; }
+        return date.dateString(this.t, 0);
+    }
+    toDateString(): string {
+        if (!date.valid(this.t)) { return "Invalid Date"; }
+        return date.dateString(this.t, 1);
+    }
+    toTimeString(): string {
+        if (!date.valid(this.t)) { return "Invalid Date"; }
+        return date.dateString(this.t, 2);
+    }
+
+    // The "number" hint yields the time value; "string" and "default" yield
+    // the string form (so `date + ""` concatenates and `date - 0` subtracts).
+    [Symbol.toPrimitive](hint: any): any {
+        if (hint === "number") {
+            return this.t;
+        }
+        if (hint === "string" || hint === "default") {
+            return this.toString();
+        }
+        throw new TypeError("Invalid hint: " + String(hint));
+    }
+
+    // JS statics. `now` and `parse` return a time value rather than a `Date`,
     // as they do in JS; the object-returning forms are named separately.
-    static now(): i64 { return time.nowMillis(); }
-    static parse(value: string): i64 { return date.parseIsoDateTime(value); }
-    static fromMillis(value: i64): Date { return new Date(value); }
-    static fromISO(value: string): Date { return new Date(date.parseIsoDateTime(value)); }
-    static fromISODate(value: string): Date { return new Date(date.parseIsoDate(value)); }
-    // `Date.UTC(year, month, ...)` takes a 0-based month, as JS does.
-    static UTC(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, milli: i32): i64 {
-        return date.fromUTC(year as i64, (month + 1) as i64, day as i64, hour as i64, minute as i64, second as i64, milli as i64);
+    static now(): number { return time.nowMillis() as number; }
+    static parse(value: string): number { return date.parseDate(value); }
+    static fromMillis(value: number): Date { return new Date(value); }
+    static fromISO(value: string): Date { return new Date(date.parseDate(value)); }
+    static fromISODate(value: string): Date { return new Date(date.parseDate(value)); }
+    // `Date.UTC(year, month?, ...)` takes a 0-based month; years 0-99 mean 19xx.
+    // Static members cannot take a rest parameter, so the optional arguments
+    // are `any` and an `undefined` slot means "omitted".
+    static UTC(year?: any, month?: any, day?: any, hour?: any, minute?: any, second?: any, milli?: any): number {
+        if (year === undefined) {
+            return NaN;
+        }
+        const mo: number = month === undefined ? 0 : Number(month);
+        const d: number = day === undefined ? 1 : Number(day);
+        const h: number = hour === undefined ? 0 : Number(hour);
+        const mi: number = minute === undefined ? 0 : Number(minute);
+        const s: number = second === undefined ? 0 : Number(second);
+        const ms: number = milli === undefined ? 0 : Number(milli);
+        return date.makeUtc(Number(year), mo, d, h, mi, s, ms, true);
     }
 }

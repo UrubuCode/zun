@@ -8825,6 +8825,19 @@ impl Checker<'_> {
                                 return hir::Expr { kind: hir::ExprKind::Boolean(present), ty: Ty::Boolean, span };
                             }
                         }
+                        // A well-known Symbol key (`Symbol.toPrimitive`) on a user class
+                        // prototype: present when the class declares that symbol method.
+                        if let (Some(owner), ast::Expr::Field { .. }) = (&proto_owner, &args[1]) {
+                            if let Some(&class_idx) = self.classes_by_name.get(owner) {
+                                if let Some(symbol) = self.well_known_symbol_of_key(&args[1]) {
+                                    let present = self
+                                        .class_symbol_methods
+                                        .iter()
+                                        .any(|&(c, s, _)| c == class_idx && s == symbol.id().get());
+                                    return hir::Expr { kind: hir::ExprKind::Boolean(present), ty: Ty::Boolean, span };
+                                }
+                            }
+                        }
                         let proto_owner = proto_owner;
                         if let (Some(owner), ast::Expr::String { .. }) = (proto_owner, &args[1]) {
                             if !self.classes_by_name.contains_key(&owner) {
@@ -9365,10 +9378,12 @@ impl Checker<'_> {
                                 return self.poison(span);
                             }
                             let optional_count = self.signatures[func as usize].optional_count;
-                            if args.len() <= param_tys.len()
-                                && args.len() >= param_tys.len().saturating_sub(optional_count)
-                            {
+                            // JS ignores surplus arguments: they are type-checked and dropped.
+                            if args.len() >= param_tys.len().saturating_sub(optional_count) {
                                 let mut checked = Vec::with_capacity(param_tys.len());
+                                for extra in args.iter().skip(param_tys.len()) {
+                                    let _ = self.check_expr(cx, extra);
+                                }
                                 for (arg, &expected) in args.iter().zip(&param_tys) {
                                     let mut value = self.check_expr(cx, arg);
                                     // The only argument-checking site that
@@ -13006,8 +13021,29 @@ impl Checker<'_> {
                     }
                     if ok {
                         parts.reverse();
-                        let shadowed = self.classes_by_name.contains_key(parts[0].as_str());
                         let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+                        // `Date.prototype.<m>.length` / `.name`: the spec arity of the
+                        // prelude `Date` methods (several take trailing optional
+                        // arguments through a rest parameter).
+                        if refs.len() == 3
+                            && refs[0] == "Date"
+                            && refs[1] == "prototype"
+                            && cx.lookup("Date").is_none()
+                            && self.classes_by_name.contains_key("Date")
+                        {
+                            if let Some(arity) = date_function_length(refs[2]) {
+                                return if fname == "length" {
+                                    hir::Expr { kind: hir::ExprKind::Number(arity), ty: Ty::F64, span }
+                                } else {
+                                    hir::Expr {
+                                        kind: hir::ExprKind::String(refs[2].to_string()),
+                                        ty: Ty::String,
+                                        span,
+                                    }
+                                };
+                            }
+                        }
+                        let shadowed = self.classes_by_name.contains_key(parts[0].as_str());
                         if !shadowed && cx.lookup(refs[0]).is_none() {
                             if let Some(arity) = builtin_function_length(&refs) {
                                 return if fname == "length" {
@@ -15758,6 +15794,24 @@ struct DecoratorTarget {
     replaces_method: bool,
     /// A returned function is the field's initializer transform.
     transforms_field: bool,
+}
+
+/// `Function.length` of the `Date.prototype` methods (spec arities).
+fn date_function_length(name: &str) -> Option<f64> {
+    Some(match name {
+        "setUTCFullYear" | "setFullYear" => 3.0,
+        "setUTCMonth" | "setMonth" | "setUTCSeconds" | "setSeconds" => 2.0,
+        "setUTCHours" | "setHours" => 4.0,
+        "setUTCMinutes" | "setMinutes" => 3.0,
+        "setUTCDate" | "setDate" | "setUTCMilliseconds" | "setMilliseconds" | "setTime" => 1.0,
+        "getTime" | "valueOf" | "toISOString" | "toString" | "toUTCString" | "getUTCFullYear"
+        | "getUTCMonth" | "getUTCDate" | "getUTCDay" | "getUTCHours" | "getUTCMinutes"
+        | "getUTCSeconds" | "getUTCMilliseconds" | "getFullYear" | "getMonth" | "getDate"
+        | "getDay" | "getHours" | "getMinutes" | "getSeconds" | "getMilliseconds"
+        | "getTimezoneOffset" | "toDateString" | "toTimeString" => 0.0,
+        "toJSON" => 1.0,
+        _ => return None,
+    })
 }
 
 /// `Function.length` of the `Math` methods (spec arities).

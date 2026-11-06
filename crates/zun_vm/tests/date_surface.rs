@@ -186,9 +186,9 @@ fn a_leap_day_survives_a_round_trip() {
 
 #[test]
 fn no_arg_construction_is_the_current_time() {
-    // `new Date()` builds from the `millis = time.nowMillis()` default, so its
-    // timestamp is positive and tracks `Date.now()`. `new Date(0)` still binds
-    // the epoch, proving the one-argument form is unaffected by the default.
+    // `new Date()` takes the current time (`time.nowMillis()`), so its time value
+    // is positive and tracks `Date.now()`. `new Date(0)` still binds the epoch,
+    // proving the one-argument form is unaffected.
     let out = run_source(
         r#"function main() {
             let now = Date.now();
@@ -291,4 +291,22 @@ fn dates_before_the_epoch_work() {
         }"#,
     );
     assert_eq!(out, vec!["1969-07-20T20:17:40.000Z", "1969", "6"]);
+}
+
+#[test]
+fn invalid_date_is_nan_and_setters_take_optional_trailing_arguments() {
+    // The time value is an f64: `new Date(NaN)` is Invalid Date (NaN time,
+    // `toJSON` null, `toISOString` throws). `setUTCHours` takes 1-4 arguments.
+    let out = run_source(
+        r#"function main() {
+            let bad = new Date(NaN);
+            print(bad.getTime());
+            print(bad.toString());
+            print(bad.toJSON() === null);
+            let d = new Date(0);
+            d.setUTCHours(1, 2, 3, 4);
+            print(d.toISOString());
+        }"#,
+    );
+    assert_eq!(out, vec!["NaN", "Invalid Date", "true", "1970-01-01T01:02:03.004Z"]);
 }
