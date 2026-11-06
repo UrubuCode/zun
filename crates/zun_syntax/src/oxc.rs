@@ -2332,6 +2332,24 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                     // `String.prototype.m.call(thisArg, ...rest)` becomes
                     // `__thisString(thisArg).m(...rest)` (the checker maps the
                     // `String.prototype` callee text onto the prelude helper).
+                    // `Promise.resolve.call(Promise, v)` is `Promise.resolve(v)`.
+                    if !member.optional && member.property.name == "call" && !args.is_empty() {
+                        if let (Expression::StaticMemberExpression(method_member), Expr::Ident(first)) = (&member.object, &args[0]) {
+                            if !method_member.optional
+                                && matches!(&method_member.object, Expression::Identifier(id) if id.name == "Promise")
+                                && source.get(first.span.start as usize..first.span.end as usize) == Some("Promise")
+                            {
+                                let mut rest = args;
+                                rest.remove(0);
+                                return Ok(Expr::MethodCall {
+                                    receiver: Box::new(convert_expression(source, &method_member.object)?),
+                                    method: Name { span: span(method_member.property.span) },
+                                    args: rest,
+                                    span: span(call.span),
+                                });
+                            }
+                        }
+                    }
                     if !member.optional && member.property.name == "call" {
                         if let Expression::StaticMemberExpression(method_member) = &member.object {
                             if let Expression::StaticMemberExpression(proto) = &method_member.object {

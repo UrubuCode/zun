@@ -2988,7 +2988,7 @@ impl<'a> Interp<'a> {
                                 .get((handle.method_rid() as usize).wrapping_sub(1))
                                 .map(|method| {
                                     let name = self.module.strings.get(method.name);
-                                    name.ends_with("@this>") || name.ends_with("@this")
+                                    name.ends_with("@this>") || name.ends_with("@this@rest>") || name.ends_with("@this")
                                 })
                                 .unwrap_or(false);
                         if takes_this {
@@ -3298,7 +3298,7 @@ impl<'a> Interp<'a> {
                             .tables
                             .method_defs
                             .get((handle.method_rid() as usize).wrapping_sub(1))
-                            .map(|method| self.module.strings.get(method.name).ends_with("@this>"))
+                            .map(|method| { let n = self.module.strings.get(method.name); n.ends_with("@this>") || n.ends_with("@this@rest>") })
                             .unwrap_or(false);
                         if takes_this {
                             call_args.insert(0, Value::Object(namespace));
@@ -5933,7 +5933,7 @@ impl<'a> Interp<'a> {
                 // A thenable object is adopted (its `then` runs as a job).
                 if let Some(obj) = object(value) {
                     let thenable = zun_gc::with_current_heap(|heap| {
-                        heap.dynamic_get_function(obj, "then").is_some()
+                        (heap.is_dynamic_object(obj) && heap.array_len(obj).is_none())
                             || (!heap.is_dynamic_object(obj) && self.instance_method_rid(obj, "then").is_some())
                     });
                     if thenable {
@@ -9663,12 +9663,27 @@ impl<'a> Interp<'a> {
             } else {
                 None
             };
+            // A plain object's `then` is read once, through its accessor and
+            // prototype chain, and adopted only when callable.
+            let dynamic_then = if typed_then.is_none()
+                && zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj) && heap.array_len(obj).is_none())
+            {
+                match self.dynamic_member_get(obj, "then") {
+                    Ok(Value::Function(handle)) => Some(Value::Function(handle)),
+                    Ok(Value::Any(any)) => zun_gc::with_current_heap(|heap| {
+                        match crate::collections::unbox_function_box(Value::unbox_any(any, heap).unwrap_or(Value::Void), heap) {
+                            Value::Function(handle) => Some(Value::Function(handle)),
+                            _ => None,
+                        }
+                    }),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             if let Some(then) = typed_then
                 .map(|rid| Value::Int(rid as i64, zun_il::NumKind::U32))
-                .or_else(|| {
-                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "then"))
-                        .map(Value::Function)
-                })
+                .or(dynamic_then)
             {
                 let dummy = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 let roots = [target, obj, dummy];
@@ -10139,10 +10154,12 @@ impl<'a> Interp<'a> {
                 } else if let Some(then) = as_function(&Some(then)) {
                     let resolve = self.make_promise_settler(roots[1], SETTLE_RESOLVE);
                     let reject = self.make_promise_settler(roots[1], SETTLE_REJECT);
-                    match self.invoke_function_value(
-                        then,
-                        vec![Value::Function(resolve), Value::Function(reject)],
-                    ) {
+                    let then_args = vec![Value::Function(resolve), Value::Function(reject)];
+                    let then_args = match as_object_ref(&thenable) {
+                        Some(receiver) => self.with_this_arg(then, receiver, then_args),
+                        None => then_args,
+                    };
+                    match self.invoke_function_value(then, then_args) {
                         Ok(_) => {}
                         Err(RunError::Thrown(thrown)) => {
                             let _ =

@@ -160,7 +160,7 @@ impl Interp<'_> {
             .tables
             .method_defs
             .get((handle.method_rid() as usize).wrapping_sub(1))
-            .map(|method| self.module.strings.get(method.name).ends_with("@this>"))
+            .map(|method| self.module.strings.get(method.name).ends_with("@this>") || self.module.strings.get(method.name).ends_with("@this@rest>"))
             .unwrap_or(false)
     }
 
