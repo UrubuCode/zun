@@ -1402,7 +1402,9 @@ fn async_function_without_await_returns_a_promise_through_tier0() {
 #[test]
 fn async_await_preserves_the_interpreter_fallback_boundary() {
     let module = compile(
-        "async function main(): Promise { let p = new Promise(); await p; return p; }",
+        // A top-level `await` parks the entry frame itself (an `async function` is a
+        // coroutine driven by the scheduler, so its entry returns a Promise).
+        "let p = new Promise(); await p;",
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
@@ -1428,7 +1430,7 @@ fn async_await_preserves_the_interpreter_fallback_boundary() {
     assert_eq!(session.heap_mut().promise_resolve(promise, boxed), Some(true));
     assert!(matches!(
         session.poll().expect("resumed poll"),
-        zun_interp::ResumeResult::Complete(Value::Object(_))
+        zun_interp::ResumeResult::Complete(Value::Void)
     ));
 }
 
@@ -1689,12 +1691,16 @@ fn typed_view_instance_accessors_preserve_interpreter_fallback_boundary() {
 
 #[test]
 fn switch_lowering_is_jit_equivalent() {
+    // `switch` stays on the interpreter fallback until verifier joins are
+    // lowered: the method is not JIT-compiled (the module still builds) and
+    // the interpreter produces the right result.
     let module = compile(
         "function main(): u64 { let value: u64 = 2; switch (value) { case 1: return 10; case 2: return 20; default: return 30; } }",
     );
-    let jit = zun_codegen::Jit::compile(&module);
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
     assert!(
-        jit.is_err(),
+        !jit.is_compiled(entry),
         "switch must remain on the interpreter fallback until verifier joins are lowered"
     );
     assert!(matches!(interp_entry(&module), Value::Int(20, _)));
@@ -1770,7 +1776,8 @@ fn optional_dynamic_access_uses_the_interpreter_fallback_boundary() {
         !jit.is_compiled(entry),
         "optional access requires Tier 0 fallback"
     );
-    assert!(matches!(interp_entry(&module), Value::Null));
+    // `null?.answer` short-circuits to `undefined` (JS semantics).
+    assert!(matches!(interp_entry(&module), Value::Void));
 }
 
 #[test]
@@ -3424,7 +3431,7 @@ fn string_is_consonant_keeps_interpreter_fallback() {
 #[test]
 fn string_is_quoted_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } } function main(): boolean { let value: string = \"\\\"zun\\\"\"; return value.isQuoted(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isQuoted(): boolean { if (this.length() < 2) { return false; } let zeroIndex: u64 = 0; let first: u32 = this.charCodeAt(zeroIndex); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } } function main(): boolean { let value: string = \"\\\"zun\\\"\"; return value.isQuoted(); }",
     )
     .expect("compile String isQuoted");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3436,7 +3443,7 @@ fn string_is_quoted_keeps_interpreter_fallback() {
 #[test]
 fn string_unquote_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt, substring } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; extern substring(start: u64, end: u64): string; isQuoted(): boolean { if (this.length() < 2) { return false; } let first: u32 = this.charCodeAt(0); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } unquote(): string { if (!this.isQuoted()) { return this; } return this.substring(1, this.length() - 1); } } function main(): string { let value: string = \"\\\"zun\\\"\"; return value.unquote(); }",
+        "import { length, charCodeAt, substring } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; extern substring(start: u64, end: u64): string; isQuoted(): boolean { if (this.length() < 2) { return false; } let zeroIndex: u64 = 0; let first: u32 = this.charCodeAt(zeroIndex); let last: u32 = this.charCodeAt(this.length() - 1); if (first == 34) { return last == 34; } if (first == 39) { return last == 39; } return false; } unquote(): string { if (!this.isQuoted()) { return this; } return this.substring(1, this.length() - 1); } } function main(): string { let value: string = \"\\\"zun\\\"\"; return value.unquote(); }",
     )
     .expect("compile String unquote");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3484,7 +3491,7 @@ fn string_is_control_keeps_interpreter_fallback() {
 #[test]
 fn string_is_signed_integer_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedInteger(): boolean { if (this.isEmpty()) { return false; } let start: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { start = 1; } if (first == 45) { start = 1; } if (start == this.length()) { return false; } let index: u64 = start; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"-2048\"; return value.isSignedInteger(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedInteger(): boolean { if (this.isEmpty()) { return false; } let start: u64 = 0; let zeroIndex: u64 = 0; let first: u32 = this.charCodeAt(zeroIndex); if (first == 43) { start = 1; } if (first == 45) { start = 1; } if (start == this.length()) { return false; } let index: u64 = start; while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code < 48) { return false; } if (code > 57) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"-2048\"; return value.isSignedInteger(); }",
     )
     .expect("compile String isSignedInteger");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3496,7 +3503,7 @@ fn string_is_signed_integer_keeps_interpreter_fallback() {
 #[test]
 fn string_is_signed_decimal_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedDecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let digits: u64 = 0; let dots: u64 = 0; let first: u32 = this.charCodeAt(0); if (first == 43) { index = 1; } if (first == 45) { index = 1; } while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 46) { dots = dots + 1; if (dots > 1) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } digits = digits + 1; } index = index + 1; } return digits > 0; } } function main(): boolean { let value: string = \"-12.50\"; return value.isSignedDecimal(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isSignedDecimal(): boolean { if (this.isEmpty()) { return false; } let index: u64 = 0; let digits: u64 = 0; let dots: u64 = 0; let zeroIndex: u64 = 0; let first: u32 = this.charCodeAt(zeroIndex); if (first == 43) { index = 1; } if (first == 45) { index = 1; } while (index < this.length()) { let code: u32 = this.charCodeAt(index); if (code == 46) { dots = dots + 1; if (dots > 1) { return false; } } else { if (code < 48) { return false; } if (code > 57) { return false; } digits = digits + 1; } index = index + 1; } return digits > 0; } } function main(): boolean { let value: string = \"-12.50\"; return value.isSignedDecimal(); }",
     )
     .expect("compile String isSignedDecimal");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3556,7 +3563,7 @@ fn string_is_kebab_case_keeps_interpreter_fallback() {
 #[test]
 fn string_is_camel_case_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isCamelCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 97) { return false; } if (first > 122) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zunRuntime2\"; return value.isCamelCase(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isCamelCase(): boolean { if (this.isEmpty()) { return false; } let zeroIndex: u64 = 0; let first: u32 = this.charCodeAt(zeroIndex); if (first < 97) { return false; } if (first > 122) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"zunRuntime2\"; return value.isCamelCase(); }",
     )
     .expect("compile String isCamelCase");
     let entry = module.entry_point.expect("entry point").rid();
@@ -3568,7 +3575,7 @@ fn string_is_camel_case_keeps_interpreter_fallback() {
 #[test]
 fn string_is_pascal_case_keeps_interpreter_fallback() {
     let module = zun_compiler::compile(
-        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPascalCase(): boolean { if (this.isEmpty()) { return false; } let first: u32 = this.charCodeAt(0); if (first < 65) { return false; } if (first > 90) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"ZunRuntime2\"; return value.isPascalCase(); }",
+        "import { length, charCodeAt } from \"zun:core\"; class String { extern length(): u64; extern charCodeAt(index: u64): u32; isEmpty(): boolean { return this.length() == 0; } isPascalCase(): boolean { if (this.isEmpty()) { return false; } let zeroIndex: u64 = 0; let first: u32 = this.charCodeAt(zeroIndex); if (first < 65) { return false; } if (first > 90) { return false; } let index: u64 = 1; while (index < this.length()) { let code: u32 = this.charCodeAt(index); let valid: boolean = false; if (code >= 48) { if (code <= 57) { valid = true; } } if (code >= 65) { if (code <= 90) { valid = true; } } if (code >= 97) { if (code <= 122) { valid = true; } } if (!valid) { return false; } index = index + 1; } return true; } } function main(): boolean { let value: string = \"ZunRuntime2\"; return value.isPascalCase(); }",
     )
     .expect("compile String isPascalCase");
     let entry = module.entry_point.expect("entry point").rid();
@@ -4374,7 +4381,7 @@ fn unsigned_comparison() {
     assert_equivalent(
         "function main(): int {\n\
             let x: u32 = 4000000000 as u32;\n\
-            if (x > 1 as u32) { return 1; }\n\
+            if (x > (1 as u32)) { return 1; }\n\
             return 0;\n\
          }",
     );
@@ -6340,12 +6347,13 @@ fn string_literal_plus_variable_is_jit_eligible() {
 }
 
 #[test]
-fn same_frame_try_catch_is_jit_eligible() {
-    // An explicit `throw new Error()` inside a `try`, caught by a typed catch of
-    // exactly that type, compiles to a same-frame branch to the catch block — no
-    // cross-frame unwinding. Verified in-process against both control-flow paths.
+fn same_frame_try_catch_falls_back_to_the_interpreter() {
+    // `catch (e: Error)` no longer filters by type: a TypeScript catch annotation
+    // is documentation only, so the handler is a catch-all (JS semantics). The
+    // typed same-frame JIT slice requires a typed catch, so the method stays on
+    // the interpreter fallback and both paths of the try/catch run there.
     let module = compile(
-        "class Error {} function classify(n: int): int { let result: int = 0; try { if (n < 0) { throw new Error(); } result = 1; } catch (e: Error) { result = 2; } return result; } function main(): int { return 0; }",
+        "class Error {} function classify(n: int): int { let result: int = 0; try { if (n < 0) { throw new Error(); } result = 1; } catch (e: Error) { result = 2; } return result; } function main(): int { return classify(5) * 10 + classify(-1); }",
     );
     let rid = module
         .tables
@@ -6354,34 +6362,22 @@ fn same_frame_try_catch_is_jit_eligible() {
         .position(|method| module.strings.get(method.name) == "classify")
         .expect("classify method") as u32
         + 1;
-    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(rid), "same-frame try/catch should be JIT-eligible");
-
-    let mut heap = zun_gc::Heap::new();
-    // n >= 0: no throw, normal path returns 1.
-    assert!(matches!(
-        jit.call_packed_with_heap(rid, &[5u64], &mut heap),
-        Ok(1)
-    ));
-    // n < 0: throw is caught in-frame, returns 2.
-    assert!(matches!(
-        jit.call_packed_with_heap(rid, &[(-1i64) as u64], &mut heap),
-        Ok(2)
-    ));
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(rid), "a catch-all handler requires Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Int(12, _)));
 }
-
 #[test]
 fn same_frame_try_catch_handles_subclass_and_multiple_throws() {
-    // Two throw points, one of a subclass of the catch type. Both are proven to
-    // land in this frame's `catch (e: Error)` (exact type or a subclass), so both
-    // lower to branches to the one catch block.
+    // Two throw points (one of a subclass of the annotated type), caught by one
+    // catch-all handler. The typed same-frame JIT slice no longer applies (see
+    // above), so the method runs on the interpreter fallback.
     let module = compile(
         "class Error {} class TypeError extends Error {} \
          function classify(n: int): int { let result: int = 0; \
            try { if (n < 0) { throw new TypeError(); } if (n == 0) { throw new Error(); } result = 1; } \
            catch (e: Error) { result = 2; } \
            return result; } \
-         function main(): int { return 0; }",
+         function main(): int { return classify(5) * 100 + classify(0) * 10 + classify(-1); }",
     );
     let rid = module
         .tables
@@ -6390,11 +6386,7 @@ fn same_frame_try_catch_handles_subclass_and_multiple_throws() {
         .position(|method| module.strings.get(method.name) == "classify")
         .expect("classify method") as u32
         + 1;
-    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(rid), "subclass/multi-throw try/catch should be JIT-eligible");
-
-    let mut heap = zun_gc::Heap::new();
-    assert!(matches!(jit.call_packed_with_heap(rid, &[5u64], &mut heap), Ok(1)));
-    assert!(matches!(jit.call_packed_with_heap(rid, &[0u64], &mut heap), Ok(2)));
-    assert!(matches!(jit.call_packed_with_heap(rid, &[(-1i64) as u64], &mut heap), Ok(2)));
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(rid), "a catch-all handler requires Tier 0");
+    assert!(matches!(interp_entry(&module), Value::Int(122, _)));
 }
