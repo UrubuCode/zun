@@ -20,100 +20,16 @@ pub(super) fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Re
     let saved_prelude = PENDING_PRELUDE.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
     let mut prev_start = 0usize;
     let ordered = hoist_function_declarations(source, body);
-    // Sibling function declarations that mention a *later* sibling (mutual
-    // recursion) cannot be ordered: the later name is pre-declared with a
-    // placeholder closure and its declaration becomes an assignment, so earlier
-    // closures capture the (cell-boxed) variable.
-    let mut forward_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-    {
-        let declared: Vec<&oxc_ast::ast::Function<'_>> = ordered
-            .iter()
-            .filter_map(|statement| match statement {
-                Statement::FunctionDeclaration(function) => Some(&**function),
-                _ => None,
-            })
-            .collect();
-        for (position, earlier) in declared.iter().enumerate() {
-            let Some(text) = source.get(earlier.span.start as usize..earlier.span.end as usize) else { continue };
-            for later in declared.iter().skip(position + 1) {
-                if let Some(id) = later.id.as_ref() {
-                    if contains_word(text, id.name.as_str()) {
-                        forward_names.insert(id.name.to_string());
-                    }
-                }
-            }
-        }
-    }
-    for statement in ordered.iter().copied() {
-        let Statement::FunctionDeclaration(function) = statement else { continue };
-        if let Some(id) = function.id.as_ref() {
-            if forward_names.contains(id.name.as_str()) {
-                let whole = span(function.span);
-                statements.push(Stmt::Let {
-                    name: Name { span: span(id.span) },
-                    ty: None,
-                    init: Expr::Function(FunctionExpr {
-                        params: Vec::new(),
-                        return_type: convert_type_annotation(source, None)?,
-                        body: Block { statements: Vec::new(), span: whole },
-                        is_arrow: true,
-                        is_async: false,
-                        is_generator: false,
-                        span: whole,
-                    }),
-                    span: whole,
-                });
-            }
-        }
-    }
+    let forward_names = forward_declared_names(source, &ordered);
+    predeclare_forward_functions(source, &ordered, &forward_names, &mut statements)?;
     prev_start = statements.len();
     for statement in ordered.iter().copied() {
         flush_prelude(&mut statements, prev_start);
         prev_start = statements.len();
         match statement {
             Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
-            Statement::VariableDeclaration(declaration)
-                if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var
-                    && declaration.declarations.iter().any(|d| match &d.id {
-                        BindingPattern::BindingIdentifier(id) => HOISTED_VARS.with(|stack| {
-                            stack
-                                .borrow()
-                                .last()
-                                .map(|set| set.contains(id.name.as_str()))
-                                .unwrap_or(false)
-                        }),
-                        _ => false,
-                    }) =>
-            {
-                for declarator in &declaration.declarations {
-                    let hoisted = match &declarator.id {
-                        BindingPattern::BindingIdentifier(id) => HOISTED_VARS.with(|stack| {
-                            stack
-                                .borrow()
-                                .last()
-                                .map(|set| set.contains(id.name.as_str()))
-                                .unwrap_or(false)
-                        }),
-                        _ => false,
-                    };
-                    if !hoisted {
-                        statements.extend(convert_declarator_stmts(source, declarator)?);
-                        continue;
-                    }
-                    // Hoisted: the declaration lives at function scope, so the
-                    // initializer becomes a plain assignment (and a bare
-                    // `var x;` leaves the value untouched).
-                    if let (Some(initializer), BindingPattern::BindingIdentifier(id)) =
-                        (declarator.init.as_ref(), &declarator.id)
-                    {
-                        let whole = span(declarator.span);
-                        statements.push(Stmt::Expr(Expr::Assign {
-                            target: Name { span: span(id.span) },
-                            value: Box::new(convert_expression(source, initializer)?),
-                            span: whole,
-                        }));
-                    }
-                }
+            Statement::VariableDeclaration(declaration) if declares_hoisted_var(declaration) => {
+                convert_hoisted_var_declaration(source, declaration, &mut statements)?;
             }
             Statement::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
@@ -129,26 +45,7 @@ pub(super) fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Re
                 span: span(return_statement.span),
             }),
             Statement::ExpressionStatement(expression_statement) => {
-                // A statement-level comma sequence (`a = 1, b = 2;`) is split
-                // into one statement per operand: same evaluation order, no
-                // closure per execution.
-                let mut inner = &expression_statement.expression;
-                while let Expression::ParenthesizedExpression(parenthesized) = inner {
-                    inner = &parenthesized.expression;
-                }
-                match inner {
-                    Expression::SequenceExpression(sequence)
-                        if !source[sequence.span.start as usize..sequence.span.end as usize].contains("yield") =>
-                    {
-                        for operand in sequence.expressions.iter() {
-                            statements.push(Stmt::Expr(convert_effect_expression(source, operand)?));
-                        }
-                    }
-                    _ => statements.push(Stmt::Expr(convert_effect_expression(
-                        source,
-                        &expression_statement.expression,
-                    )?)),
-                }
+                convert_expression_statement(source, expression_statement, &mut statements)?;
             }
             Statement::BreakStatement(break_statement) => statements.push(Stmt::Break {
                 label: break_statement.label.as_ref().map(|label| Name {
@@ -201,117 +98,16 @@ pub(super) fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Re
                 statements.push(convert_switch(source, switch)?);
             }
             Statement::LabeledStatement(labeled) => {
-                let span_all = span(labeled.span);
-                if let Statement::BlockStatement(block) = &labeled.body {
-                    // A labeled block: `if (true) { ... }` carries the whole block
-                    // as the single labeled statement.
-                    let body = Block {
-                        statements: convert_statement_list(source, &block.body)?,
-                        span: span(block.span),
-                    };
-                    statements.push(Stmt::Labeled {
-                        label: Name { span: span(labeled.label.span) },
-                        statement: Box::new(Stmt::If {
-                            cond: Expr::Bool { value: true, span: span(block.span) },
-                            then_block: body,
-                            else_block: None,
-                            span: span(block.span),
-                        }),
-                        span: span_all,
-                    });
-                    continue;
-                }
-                let inner = convert_statement_list(source, std::slice::from_ref(&labeled.body))?;
-                // The labelled body is a single statement; wrap a multi-statement
-                // body (rare) in a block-equivalent by taking the first.
-                let mut inner = inner;
-                let statement = inner
-                    .pop()
-                    .unwrap_or(Stmt::Expr(Expr::Null { span: span_all }));
-                statements.extend(inner);
-                statements.push(Stmt::Labeled {
-                    label: Name { span: span(labeled.label.span) },
-                    statement: Box::new(statement),
-                    span: span_all,
-                });
+                convert_labeled_statement(source, labeled, &mut statements)?;
             }
-            // A bare `{ … }` block. One that declares `let`/`const` keeps its own
-            // scope (modelled as `if (true) { … }`); other blocks are flattened.
             Statement::BlockStatement(block) => {
-                let shadows_top_level = TOP_LEVEL_BLOCK.with(|cell| cell.get()) == block.span.start
-                    && block.body.iter().any(|inner| {
-                        matches!(
-                            inner,
-                            Statement::VariableDeclaration(decl)
-                                if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
-                                    && decl.declarations.iter().any(|d| matches!(
-                                        &d.id,
-                                        BindingPattern::BindingIdentifier(id)
-                                            if TOP_LEVEL_NAMES.with(|names| names.borrow().contains(id.name.as_str()))
-                                    ))
-                        )
-                    });
-                let declares_lexical = (TOP_LEVEL_BLOCK.with(|cell| cell.get()) != block.span.start || shadows_top_level) && block.body.iter().any(|inner| {
-                    matches!(
-                        inner,
-                        Statement::VariableDeclaration(decl)
-                            if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
-                    )
-                });
-                let inner = convert_statement_list(source, &block.body)?;
-                if declares_lexical {
-                    statements.push(Stmt::If {
-                        cond: Expr::Bool { value: true, span: span(block.span) },
-                        then_block: Block { statements: inner, span: span(block.span) },
-                        else_block: None,
-                        span: span(block.span),
-                    });
-                } else {
-                    statements.extend(inner);
-                }
+                convert_bare_block(source, block, &mut statements)?;
             }
-            // A nested function declaration binds a function value (hoisting to
-            // the top of the scope is approximated by its textual position).
             Statement::FunctionDeclaration(function) => {
-                let Some(id) = function.id.as_ref() else {
-                    return Err("OXC adapter requires named function declarations".into());
-                };
-                // A declaration named like a parameter overrides it at entry:
-                // skipped here, emitted as an assignment at the body head.
-                if PARAM_SHADOWS.with(|names| names.borrow().iter().any(|n| n == id.name.as_str())) {
-                    if EMIT_SHADOW.with(|flag| flag.get()) {
-                        statements.push(Stmt::Expr(Expr::Assign {
-                            target: Name { span: span(id.span) },
-                            value: Box::new(convert_oxc_function(source, function)?),
-                            span: span(function.span),
-                        }));
-                    }
-                    continue;
-                }
-                if forward_names.contains(id.name.as_str()) {
-                    statements.push(Stmt::Expr(Expr::Assign {
-                        target: Name { span: span(id.span) },
-                        value: Box::new(convert_oxc_function(source, function)?),
-                        span: span(function.span),
-                    }));
-                    continue;
-                }
-                statements.push(Stmt::Let {
-                    name: Name { span: span(id.span) },
-                    ty: None,
-                    init: convert_oxc_function(source, function)?,
-                    span: span(function.span),
-                });
+                convert_function_declaration(source, function, &forward_names, &mut statements)?;
             }
-            // A block-local / nested named class declaration is hoisted to the
-            // program's class list (Zun classes are program-global); its name
-            // binds through `classes_by_name` in sema, so no statement is
-            // emitted here.
             Statement::ClassDeclaration(class_declaration) => {
-                let class = convert_class_declaration(source, class_declaration)
-                    .map_err(|errors| errors.join("; "))?;
-                HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
-                statements.extend(CLASS_TRAILING.with(|cells| std::mem::take(&mut *cells.borrow_mut())));
+                convert_class_statement(source, class_declaration, &mut statements)?;
             }
             other => {
                 let dbg = format!("{other:?}");
@@ -326,6 +122,291 @@ pub(super) fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Re
     flush_prelude(&mut statements, prev_start);
     PENDING_PRELUDE.with(|pending| *pending.borrow_mut() = saved_prelude);
     Ok(statements)
+}
+
+/// Sibling function declarations that mention a *later* sibling (mutual
+/// recursion) cannot be ordered: the later name is pre-declared with a
+/// placeholder closure and its declaration becomes an assignment, so earlier
+/// closures capture the (cell-boxed) variable. Returns those later names.
+fn forward_declared_names(
+    source: &str,
+    ordered: &[&Statement<'_>],
+) -> std::collections::HashSet<String> {
+    let mut forward_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    {
+        let declared: Vec<&oxc_ast::ast::Function<'_>> = ordered
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::FunctionDeclaration(function) => Some(&**function),
+                _ => None,
+            })
+            .collect();
+        for (position, earlier) in declared.iter().enumerate() {
+            let Some(text) = source.get(earlier.span.start as usize..earlier.span.end as usize) else { continue };
+            for later in declared.iter().skip(position + 1) {
+                if let Some(id) = later.id.as_ref() {
+                    if contains_word(text, id.name.as_str()) {
+                        forward_names.insert(id.name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    forward_names
+}
+
+/// Emit the placeholder `let` of every forward-referenced function name.
+fn predeclare_forward_functions(
+    source: &str,
+    ordered: &[&Statement<'_>],
+    forward_names: &std::collections::HashSet<String>,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    for statement in ordered.iter().copied() {
+        let Statement::FunctionDeclaration(function) = statement else { continue };
+        if let Some(id) = function.id.as_ref() {
+            if forward_names.contains(id.name.as_str()) {
+                let whole = span(function.span);
+                statements.push(Stmt::Let {
+                    name: Name { span: span(id.span) },
+                    ty: None,
+                    init: Expr::Function(FunctionExpr {
+                        params: Vec::new(),
+                        return_type: convert_type_annotation(source, None)?,
+                        body: Block { statements: Vec::new(), span: whole },
+                        is_arrow: true,
+                        is_async: false,
+                        is_generator: false,
+                        span: whole,
+                    }),
+                    span: whole,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether a `var` declaration declares a name hoisted to function scope.
+fn declares_hoisted_var(declaration: &oxc_ast::ast::VariableDeclaration<'_>) -> bool {
+    declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var
+        && declaration.declarations.iter().any(|d| match &d.id {
+            BindingPattern::BindingIdentifier(id) => HOISTED_VARS.with(|stack| {
+                stack
+                    .borrow()
+                    .last()
+                    .map(|set| set.contains(id.name.as_str()))
+                    .unwrap_or(false)
+            }),
+            _ => false,
+        })
+}
+
+fn convert_hoisted_var_declaration(
+    source: &str,
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    for declarator in &declaration.declarations {
+        let hoisted = match &declarator.id {
+            BindingPattern::BindingIdentifier(id) => HOISTED_VARS.with(|stack| {
+                stack
+                    .borrow()
+                    .last()
+                    .map(|set| set.contains(id.name.as_str()))
+                    .unwrap_or(false)
+            }),
+            _ => false,
+        };
+        if !hoisted {
+            statements.extend(convert_declarator_stmts(source, declarator)?);
+            continue;
+        }
+        // Hoisted: the declaration lives at function scope, so the
+        // initializer becomes a plain assignment (and a bare
+        // `var x;` leaves the value untouched).
+        if let (Some(initializer), BindingPattern::BindingIdentifier(id)) =
+            (declarator.init.as_ref(), &declarator.id)
+        {
+            let whole = span(declarator.span);
+            statements.push(Stmt::Expr(Expr::Assign {
+                target: Name { span: span(id.span) },
+                value: Box::new(convert_expression(source, initializer)?),
+                span: whole,
+            }));
+        }
+    }
+    Ok(())
+}
+
+fn convert_expression_statement(
+    source: &str,
+    expression_statement: &oxc_ast::ast::ExpressionStatement<'_>,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), String> {
+    // A statement-level comma sequence (`a = 1, b = 2;`) is split
+    // into one statement per operand: same evaluation order, no
+    // closure per execution.
+    let mut inner = &expression_statement.expression;
+    while let Expression::ParenthesizedExpression(parenthesized) = inner {
+        inner = &parenthesized.expression;
+    }
+    match inner {
+        Expression::SequenceExpression(sequence)
+            if !source[sequence.span.start as usize..sequence.span.end as usize].contains("yield") =>
+        {
+            for operand in sequence.expressions.iter() {
+                statements.push(Stmt::Expr(convert_effect_expression(source, operand)?));
+            }
+        }
+        _ => statements.push(Stmt::Expr(convert_effect_expression(
+            source,
+            &expression_statement.expression,
+        )?)),
+    }
+    Ok(())
+}
+
+fn convert_labeled_statement(
+    source: &str,
+    labeled: &oxc_ast::ast::LabeledStatement<'_>,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let span_all = span(labeled.span);
+    if let Statement::BlockStatement(block) = &labeled.body {
+        // A labeled block: `if (true) { ... }` carries the whole block
+        // as the single labeled statement.
+        let body = Block {
+            statements: convert_statement_list(source, &block.body)?,
+            span: span(block.span),
+        };
+        statements.push(Stmt::Labeled {
+            label: Name { span: span(labeled.label.span) },
+            statement: Box::new(Stmt::If {
+                cond: Expr::Bool { value: true, span: span(block.span) },
+                then_block: body,
+                else_block: None,
+                span: span(block.span),
+            }),
+            span: span_all,
+        });
+        return Ok(());
+    }
+    let inner = convert_statement_list(source, std::slice::from_ref(&labeled.body))?;
+    // The labelled body is a single statement; wrap a multi-statement
+    // body (rare) in a block-equivalent by taking the first.
+    let mut inner = inner;
+    let statement = inner
+        .pop()
+        .unwrap_or(Stmt::Expr(Expr::Null { span: span_all }));
+    statements.extend(inner);
+    statements.push(Stmt::Labeled {
+        label: Name { span: span(labeled.label.span) },
+        statement: Box::new(statement),
+        span: span_all,
+    });
+    Ok(())
+}
+
+/// A bare `{ … }` block. One that declares `let`/`const` keeps its own
+/// scope (modelled as `if (true) { … }`); other blocks are flattened.
+fn convert_bare_block(
+    source: &str,
+    block: &oxc_ast::ast::BlockStatement<'_>,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let shadows_top_level = TOP_LEVEL_BLOCK.with(|cell| cell.get()) == block.span.start
+        && block.body.iter().any(|inner| {
+            matches!(
+                inner,
+                Statement::VariableDeclaration(decl)
+                    if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
+                        && decl.declarations.iter().any(|d| matches!(
+                            &d.id,
+                            BindingPattern::BindingIdentifier(id)
+                                if TOP_LEVEL_NAMES.with(|names| names.borrow().contains(id.name.as_str()))
+                        ))
+            )
+        });
+    let declares_lexical = (TOP_LEVEL_BLOCK.with(|cell| cell.get()) != block.span.start || shadows_top_level) && block.body.iter().any(|inner| {
+        matches!(
+            inner,
+            Statement::VariableDeclaration(decl)
+                if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
+        )
+    });
+    let inner = convert_statement_list(source, &block.body)?;
+    if declares_lexical {
+        statements.push(Stmt::If {
+            cond: Expr::Bool { value: true, span: span(block.span) },
+            then_block: Block { statements: inner, span: span(block.span) },
+            else_block: None,
+            span: span(block.span),
+        });
+    } else {
+        statements.extend(inner);
+    }
+    Ok(())
+}
+
+/// A nested function declaration binds a function value (hoisting to the top
+/// of the scope is approximated by its textual position).
+fn convert_function_declaration(
+    source: &str,
+    function: &OxcFunction<'_>,
+    forward_names: &std::collections::HashSet<String>,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), String> {
+    let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let Some(id) = function.id.as_ref() else {
+        return Err("OXC adapter requires named function declarations".into());
+    };
+    // A declaration named like a parameter overrides it at entry:
+    // skipped here, emitted as an assignment at the body head.
+    if PARAM_SHADOWS.with(|names| names.borrow().iter().any(|n| n == id.name.as_str())) {
+        if EMIT_SHADOW.with(|flag| flag.get()) {
+            statements.push(Stmt::Expr(Expr::Assign {
+                target: Name { span: span(id.span) },
+                value: Box::new(convert_oxc_function(source, function)?),
+                span: span(function.span),
+            }));
+        }
+        return Ok(());
+    }
+    if forward_names.contains(id.name.as_str()) {
+        statements.push(Stmt::Expr(Expr::Assign {
+            target: Name { span: span(id.span) },
+            value: Box::new(convert_oxc_function(source, function)?),
+            span: span(function.span),
+        }));
+        return Ok(());
+    }
+    statements.push(Stmt::Let {
+        name: Name { span: span(id.span) },
+        ty: None,
+        init: convert_oxc_function(source, function)?,
+        span: span(function.span),
+    });
+    Ok(())
+}
+
+/// A block-local / nested named class declaration is hoisted to the program's
+/// class list (Zun classes are program-global); its name binds through
+/// `classes_by_name` in sema, so no statement is emitted here.
+fn convert_class_statement(
+    source: &str,
+    class_declaration: &oxc_ast::ast::Class<'_>,
+    statements: &mut Vec<Stmt>,
+) -> Result<(), String> {
+    let class = convert_class_declaration(source, class_declaration)
+        .map_err(|errors| errors.join("; "))?;
+    HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
+    statements.extend(CLASS_TRAILING.with(|cells| std::mem::take(&mut *cells.borrow_mut())));
+    Ok(())
 }
 
 /// Insert the statements queued by expression conversion (the `yield*` loop)
