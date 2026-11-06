@@ -14491,6 +14491,37 @@ impl Checker<'_> {
                 }
                 self.check_closure_expr(cx, function, span)
             }
+            ast::Expr::ComputedCall { callee, args, span: call_span } if matches!(
+                (callee.as_ref(), args.first()),
+                (ast::Expr::Index { object, index, .. }, Some(first))
+                    if matches!(object.as_ref(), ast::Expr::RegexLiteral { .. })
+                        && !matches!(first, ast::Expr::Spread { .. })
+                        && matches!(
+                            self.well_known_symbol_of_key(index),
+                            Some(zun_core::WellKnownSymbol::Split)
+                                | Some(zun_core::WellKnownSymbol::Replace)
+                                | Some(zun_core::WellKnownSymbol::Match)
+                                | Some(zun_core::WellKnownSymbol::Search)
+                        )
+            ) =>
+            {
+                // `/re/[Symbol.split](str, ...rest)` is `str.split(/re/, ...rest)`.
+                let ast::Expr::Index { object, index, .. } = callee.as_ref() else { unreachable!() };
+                let method = match index.as_ref() {
+                    ast::Expr::Field { field, .. } => *field,
+                    ast::Expr::StaticField { field, .. } => *field,
+                    _ => unreachable!(),
+                };
+                let mut rest = vec![(**object).clone()];
+                rest.extend(args.iter().skip(1).cloned());
+                let call = ast::Expr::MethodCall {
+                    receiver: Box::new(args[0].clone()),
+                    method,
+                    args: rest,
+                    span: *call_span,
+                };
+                self.check_expr(cx, &call)
+            }
             ast::Expr::ComputedCall { callee, args, .. } => {
                 if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
                     // `(arr.method as any)(...args)` on a typed array keeps its receiver:
@@ -15943,6 +15974,11 @@ fn builtin_function_length(path: &[&str]) -> Option<f64> {
         ["Object", "keys" | "values" | "entries" | "freeze" | "isFrozen" | "getPrototypeOf" | "fromEntries"] => 1.0,
         ["Object", "assign" | "defineProperty" ] => if path[1] == "assign" { 2.0 } else { 3.0 },
         ["Object", "getOwnPropertyDescriptor" | "hasOwn" | "setPrototypeOf"] => 2.0,
+        ["String", "prototype", "repeat" | "at" | "charAt" | "charCodeAt" | "codePointAt" | "normalize" | "indexOf" | "lastIndexOf" | "includes" | "startsWith" | "endsWith" | "concat" | "localeCompare"] => {
+            if path[2] == "normalize" { 0.0 } else { 1.0 }
+        }
+        ["String", "prototype", "padStart" | "padEnd" | "split" | "slice" | "substring" | "replace" | "replaceAll"] => 2.0,
+        ["String", "prototype", "trim" | "trimStart" | "trimEnd" | "toUpperCase" | "toLowerCase" | "toString" | "valueOf"] => 0.0,
         ["Array", "isArray" | "of"] => 1.0,
         ["Array", "from"] => 1.0,
         ["Number", "isInteger" | "isNaN" | "isFinite" | "isSafeInteger" | "parseFloat"] => 1.0,
