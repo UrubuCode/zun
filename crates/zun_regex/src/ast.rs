@@ -78,11 +78,11 @@ impl ClassItem {
     fn matches_exact(self, c: char) -> bool {
         match self {
             ClassItem::Range(lo, hi) => {
-                // A lone-surrogate stand-in (plane-16 U+10F800..) compares as
+                // A lone-surrogate stand-in (plane-15 U+F0000..) compares as
                 // the code unit it stands for.
                 let mut v = c as u32;
-                if (0x10F800..=0x10FFFF).contains(&v) {
-                    v = v - 0x10F800 + 0xD800;
+                if (0xF0000..=0xF07FF).contains(&v) {
+                    v = v - 0xF0000 + 0xD800;
                 }
                 lo as u32 <= v && v <= hi as u32
             }

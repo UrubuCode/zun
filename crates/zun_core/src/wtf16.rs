@@ -2,15 +2,15 @@
 //!
 //! Dynamic strings are stored as Rust `String`s, which cannot hold lone
 //! surrogates (U+D800..=U+DFFF). A lone surrogate code unit `u` is therefore
-//! stored as the plane-16 private-use scalar `U+10F800 + (u - 0xD800)`. The
+//! stored as the plane-15 private-use scalar `U+F0000 + (u - 0xD800)`. The
 //! helpers here translate between that storage form and real UTF-16 units so
 //! `length`, indexing, `charCodeAt`, and friends see one unit for a lone
 //! surrogate, exactly as ECMAScript does.
 
 use std::borrow::Cow;
 
-const LONE_BASE: u32 = 0x10F800;
-const LONE_END: u32 = 0x10FFFF;
+const LONE_BASE: u32 = 0xF0000;
+const LONE_END: u32 = 0xF07FF;
 
 /// The surrogate code unit a stored scalar stands for, if it is a lone-surrogate stand-in.
 pub fn lone_unit(c: char) -> Option<u16> {

@@ -1322,8 +1322,8 @@ fn convert_try_statement(
 }
 
 /// Convert a JS string literal to a Rust `String`. Lone surrogates (which Rust
-/// strings cannot hold) are mapped to the plane-16 private-use block
-/// `U+10F800 + (unit - 0xD800)`; the runtime maps them back when it needs the
+/// strings cannot hold) are mapped to the plane-15 private-use block
+/// `U+F0000 + (unit - 0xD800)`; the runtime maps them back when it needs the
 /// UTF-16 view of a string.
 fn js_str_to_string(value: oxc_str::JSStr<'_>) -> String {
     if let Some(text) = value.as_str() {
@@ -1333,7 +1333,7 @@ fn js_str_to_string(value: oxc_str::JSStr<'_>) -> String {
         .chars()
         .map(|c| match c.to_char() {
             Some(ch) => ch,
-            None => char::from_u32(0x10F800 + (c.to_u32() - 0xD800)).unwrap(),
+            None => char::from_u32(0xF0000 + (c.to_u32() - 0xD800)).unwrap(),
         })
         .collect()
 }
