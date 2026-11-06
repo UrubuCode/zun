@@ -3725,14 +3725,17 @@ mod tests {
             true,
         )
         .unwrap();
-        let crate::ast::Stmt::If { ref then_block, .. } = program.functions[0].body.statements[0]
-        else {
+        // `var` is function-scoped: the declaration hoists to the function head
+        // (as `undefined`), and the branch keeps the initializing assignment.
+        let statements = &program.functions[0].body.statements;
+        assert!(matches!(statements.first(), Some(crate::ast::Stmt::Let { .. })), "{statements:?}");
+        let Some(crate::ast::Stmt::If { then_block, .. }) = statements.iter().find(|s| matches!(s, crate::ast::Stmt::If { .. })) else {
             panic!("expected an if statement");
         };
-        assert!(matches!(
-            then_block.statements.first(),
-            Some(crate::ast::Stmt::Let { ty: Some(_), .. })
-        ));
+        assert!(
+            matches!(then_block.statements.as_slice(), [crate::ast::Stmt::Expr(crate::ast::Expr::Assign { .. })]),
+            "{then_block:?}"
+        );
     }
 
     #[test]
