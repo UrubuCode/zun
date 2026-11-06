@@ -31,7 +31,55 @@ enum ProxyRoute {
 }
 
 impl<'a> Interp<'a> {
+    /// Run `callback` over a Map / Set with a live cursor: entries appended
+    /// while iterating are visited, deleted entries are skipped.
+    fn collection_for_each(
+        &mut self,
+        object: zun_gc::Obj,
+        callback: zun_core::FunctionHandle,
+        is_set: bool,
+    ) -> Result<Value, RunError> {
+        let roots = [object];
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        zun_gc::with_current_heap_mut(|heap| heap.collection_pin(roots[0], true));
+        let mut outcome = Ok(Value::Void);
+        let mut index = 0usize;
+        loop {
+            let Some(slot) = zun_gc::with_current_heap(|heap| heap.collection_cursor(roots[0], index)) else {
+                break;
+            };
+            index += 1;
+            let Some((key, value)) = slot else { continue };
+            let receiver = Value::Any(zun_core::Any::object(roots[0].addr() as usize));
+            let callback_args = if is_set {
+                vec![Value::Any(key), Value::Any(key), receiver]
+            } else {
+                vec![Value::Any(value), Value::Any(key), receiver]
+            };
+            if let Err(error) = self.invoke_callback(callback, callback_args) {
+                outcome = Err(error);
+                break;
+            }
+        }
+        zun_gc::with_current_heap_mut(|heap| heap.collection_pin(roots[0], false));
+        outcome
+    }
+
     pub(crate) fn call_managed_collection(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+        let result = self.call_managed_collection_inner(name, args);
+        // A dynamic member call that resolved to nothing is a JS TypeError.
+        if matches!(result, Err(RunError::BadToken)) && name.starts_with("dynamicCall") {
+            if let Some(Value::Str(member)) = args.get(1) {
+                let member = member.to_string();
+                if let Some(object) = self.new_error_object("TypeError", &format!("{member} is not a function")) {
+                    return Err(RunError::Thrown(Value::Object(object)));
+                }
+            }
+        }
+        result
+    }
+
+    fn call_managed_collection_inner(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
         // The typed-array intrinsics are generated from the master table in
         // `zun_core`, so every kind the checker accepts runs on Tier 0.
         if let Some(result) = crate::typed_arrays::call(name, args) {
@@ -1374,43 +1422,15 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(iterator))
             }
             "mapForEach" => {
-                // `callback(value, key, map)` for each entry, in insertion
-                // order. Mirrors the Array callback path: entries are
-                // materialized into rooted arrays so a GC during callback
-                // re-entry relocates them transparently.
+                // `callback(value, key, map)` over a live cursor: entries added
+                // during iteration are visited, deleted ones are skipped.
                 let map_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let callback = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Function(handle) => *handle,
                     _ => return Err(RunError::BadToken),
                 };
-                let entries = zun_gc::with_current_heap(|heap| heap.map_entries(map_object))
-                    .ok_or(RunError::BadToken)?;
-                let length = entries.len();
-                let (keys, values) = zun_gc::with_current_heap_mut(|heap| {
-                    let keys = heap.alloc_array(length);
-                    let values = heap.alloc_array(length);
-                    for (index, (key, value)) in entries.into_iter().enumerate() {
-                        heap.array_set(keys, index, key);
-                        heap.array_set(values, index, value);
-                    }
-                    (keys, values)
-                });
-                let roots = [keys, values, map_object];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                for index in 0..length {
-                    let key = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
-                    let value = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], index))
-                        .ok_or(RunError::BadToken)?;
-                    let callback_args = vec![
-                        Value::Any(value),
-                        Value::Any(key),
-                        Value::Any(zun_core::Any::object(roots[2].addr() as usize)),
-                    ];
-                    self.invoke_callback(callback, callback_args)?;
-                }
-                Ok(Value::Void)
+                self.collection_for_each(map_object, callback, false)
             }
             "setNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
@@ -1462,7 +1482,9 @@ impl<'a> Interp<'a> {
                     }
                     return Ok(Value::Any(zun_core::Any::object(roots[0].addr() as usize)));
                 }
-                let source = object(arg).ok_or(RunError::BadToken)?;
+                let source = object(arg).ok_or_else(|| {
+                    RunError::Native("TypeError: value is not iterable".to_string())
+                })?;
                 // Snapshot the source elements into a rooted array, then drain
                 // it into the target set (the mapForEach materialization idiom:
                 // a GC during `set_add` relocates the rooted array transparently).
@@ -1713,15 +1735,8 @@ impl<'a> Interp<'a> {
             "setValues" => {
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let values = zun_gc::with_current_heap(|heap| heap.set_values(object))
-                    .ok_or(RunError::BadToken)?;
-                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(values.len()));
-                for (index, value) in values.into_iter().enumerate() {
-                    zun_gc::with_current_heap_mut(|heap| {
-                        heap.array_set(array, index, value);
-                    });
-                }
-                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
+                // A live cursor: deletions and additions during iteration are seen.
+                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_set_iterator(object))
                     .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
@@ -1751,37 +1766,14 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(iterator))
             }
             "setForEach" => {
-                // `callback(value, value, set)` for each element, in insertion
-                // order (Set passes the value twice per the spec).
+                // `callback(value, value, set)` over a live cursor.
                 let set_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let callback = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Function(handle) => *handle,
                     _ => return Err(RunError::BadToken),
                 };
-                let values = zun_gc::with_current_heap(|heap| heap.set_values(set_object))
-                    .ok_or(RunError::BadToken)?;
-                let length = values.len();
-                let holder = zun_gc::with_current_heap_mut(|heap| {
-                    let holder = heap.alloc_array(length);
-                    for (index, value) in values.into_iter().enumerate() {
-                        heap.array_set(holder, index, value);
-                    }
-                    holder
-                });
-                let roots = [holder, set_object];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                for index in 0..length {
-                    let value = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
-                    let callback_args = vec![
-                        Value::Any(value),
-                        Value::Any(value),
-                        Value::Any(zun_core::Any::object(roots[1].addr() as usize)),
-                    ];
-                    self.invoke_callback(callback, callback_args)?;
-                }
-                Ok(Value::Void)
+                self.collection_for_each(set_object, callback, true)
             }
             "weakMapNew" => {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_map());

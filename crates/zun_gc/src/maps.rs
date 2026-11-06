@@ -55,4 +55,27 @@ impl Heap {
     pub fn map_entries(&self, object: Obj) -> Option<Vec<(zun_core::Any, zun_core::Any)>> {
         Some(self.maps.get(&(object.addr() as usize))?.iter().collect())
     }
+
+    /// Pin or unpin the physical layout of a Map / Set for a live `forEach` cursor.
+    pub fn collection_pin(&mut self, object: Obj, pin: bool) {
+        let key = object.addr() as usize;
+        let table = match self.maps.get_mut(&key) {
+            Some(table) => Some(table),
+            None => self.sets.get_mut(&key),
+        };
+        if let Some(table) = table {
+            if pin { table.pin() } else { table.unpin() }
+        }
+    }
+
+    /// Physical slot `index` of a Map / Set: `None` once past the end, `Some(None)`
+    /// for a deleted slot, otherwise the (key, value) entry (a Set's value is `true`).
+    pub fn collection_cursor(&self, object: Obj, index: usize) -> Option<Option<(zun_core::Any, zun_core::Any)>> {
+        let key = object.addr() as usize;
+        let table = self.maps.get(&key).or_else(|| self.sets.get(&key))?;
+        if index >= table.physical_len() {
+            return None;
+        }
+        Some(table.physical_entry(index))
+    }
 }

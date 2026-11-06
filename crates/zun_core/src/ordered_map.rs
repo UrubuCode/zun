@@ -12,6 +12,9 @@ pub struct OrderedMap {
     tombstones: Vec<Option<(Any, u64)>>,
     live_len: usize,
     dead_len: usize,
+    /// Live cursors (`forEach`) pin the physical layout: while pinned the
+    /// table never compacts, so a cursor index stays valid across mutation.
+    pins: usize,
 }
 
 impl Default for OrderedMap {
@@ -20,7 +23,7 @@ impl Default for OrderedMap {
 
 impl OrderedMap {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), buckets: vec![None; 8], tombstones: vec![None; 8], live_len: 0, dead_len: 0 }
+        Self { entries: Vec::new(), buckets: vec![None; 8], tombstones: vec![None; 8], live_len: 0, dead_len: 0, pins: 0 }
     }
 
     pub fn len(&self) -> usize { self.live_len }
@@ -36,7 +39,7 @@ impl OrderedMap {
     }
 
     pub fn insert(&mut self, key: Any, value: Any, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
-        if self.dead_len >= 8 && self.dead_len > self.live_len { self.compact(); }
+        if self.pins == 0 && self.dead_len >= 8 && self.dead_len > self.live_len { self.compact(); }
         let (existing, insertion_slot) = self.find_insert_slot(hash, &equal);
         if let Some(index) = existing {
             return Some(self.entries[index].as_mut()
@@ -65,7 +68,7 @@ impl OrderedMap {
         }
         self.live_len -= 1;
         self.dead_len += 1;
-        if self.live_len == 0 || (self.dead_len >= 8 && self.dead_len > self.live_len) {
+        if self.pins == 0 && (self.live_len == 0 || (self.dead_len >= 8 && self.dead_len > self.live_len)) {
             self.compact();
         }
         Some((removed.0, removed.1))
@@ -93,7 +96,37 @@ impl OrderedMap {
         self.entries.iter().filter_map(|entry| entry.map(|(key, value, _)| (key, value))).nth(position)
     }
 
+    /// The first live entry at physical slot `from` or later, with its slot index.
+    pub fn physical_next(&self, from: usize) -> Option<(usize, Any, Any)> {
+        (from..self.entries.len()).find_map(|slot| {
+            self.entries[slot].map(|(key, value, _)| (slot, key, value))
+        })
+    }
+
+    pub fn pin(&mut self) { self.pins += 1; }
+
+    pub fn unpin(&mut self) { self.pins = self.pins.saturating_sub(1); }
+
+    /// Physical slot count (live entries plus tombstones).
+    pub fn physical_len(&self) -> usize { self.entries.len() }
+
+    /// The entry at physical slot `position`; `None` for a tombstone or past the end.
+    pub fn physical_entry(&self, position: usize) -> Option<(Any, Any)> {
+        self.entries.get(position).copied().flatten().map(|(key, value, _)| (key, value))
+    }
+
     pub fn clear(&mut self) {
+        if self.pins > 0 {
+            // A live cursor keeps its physical indices: blank the slots.
+            let slots = self.entries.len();
+            self.entries.clear();
+            self.entries.resize(slots, None);
+            self.buckets = vec![None; 8];
+            self.tombstones = vec![None; 8];
+            self.live_len = 0;
+            self.dead_len = slots;
+            return;
+        }
         self.entries.clear();
         self.buckets = vec![None; 8];
         self.tombstones = vec![None; 8];

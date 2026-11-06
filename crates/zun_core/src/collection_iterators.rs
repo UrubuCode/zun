@@ -10,13 +10,13 @@ impl MapIterator {
     pub fn new() -> Self { Self { next_index: 0 } }
 
     pub fn next(&mut self, map: &OrderedMap) -> Option<(Any, Any)> {
-        let entry = map.entry_at(self.next_index)?;
-        self.next_index += 1;
-        Some(entry)
+        let (slot, key, value) = map.physical_next(self.next_index)?;
+        self.next_index = slot + 1;
+        Some((key, value))
     }
 
     /// Whether all currently live entries have been consumed.
-    pub fn is_done(&self, map: &OrderedMap) -> bool { self.next_index >= map.len() }
+    pub fn is_done(&self, map: &OrderedMap) -> bool { map.physical_next(self.next_index).is_none() }
 }
 
 impl Default for MapIterator {
@@ -33,13 +33,13 @@ impl SetIterator {
     pub fn new() -> Self { Self { next_index: 0 } }
 
     pub fn next(&mut self, set: &OrderedMap) -> Option<Any> {
-        let (value, _) = set.entry_at(self.next_index)?;
-        self.next_index += 1;
+        let (slot, value, _) = set.physical_next(self.next_index)?;
+        self.next_index = slot + 1;
         Some(value)
     }
 
     /// Whether all currently live values have been consumed.
-    pub fn is_done(&self, set: &OrderedMap) -> bool { self.next_index >= set.len() }
+    pub fn is_done(&self, set: &OrderedMap) -> bool { set.physical_next(self.next_index).is_none() }
 }
 
 impl Default for SetIterator {
