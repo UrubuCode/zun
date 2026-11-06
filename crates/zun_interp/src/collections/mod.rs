@@ -30,6 +30,54 @@ enum ProxyRoute {
     NotProxy,
 }
 
+/// Resolve a value to a heap object, following an `Any` payload. Promoted from
+/// the preamble closure of `call_managed_collection_inner` so extracted helper
+/// submodules can share it.
+pub(super) fn object(value: &Value) -> Option<zun_gc::Obj> {
+    match value {
+        Value::Object(object) => Some(*object),
+        Value::Any(any) => any
+            .as_object()
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+        _ => None,
+    }
+}
+
+/// Box a value into a heap `Any` cell. Promoted from the preamble closure.
+pub(super) fn any(value: &Value) -> Option<zun_core::Any> {
+    zun_gc::with_current_heap_mut(|heap| value.box_any_cell(heap))
+}
+
+/// A valid weak key: an object (or a function, via its cell). Promoted from the
+/// preamble closure.
+pub(super) fn weak_key(value: &Value) -> Option<zun_gc::Obj> {
+    match value {
+        Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| heap.function_cell(*handle))),
+        // An unregistered symbol (user-created or well-known) is a legal weak key.
+        Value::Any(any) if any.as_symbol().is_some() => {
+            let id = any.as_symbol()?;
+            if zun_gc::with_current_heap(|heap| heap.symbol_key_for(id).is_some()) {
+                None
+            } else {
+                Some(zun_gc::with_current_heap_mut(|heap| heap.symbol_cell(id)))
+            }
+        }
+        other => object(other).filter(|candidate| {
+            zun_gc::with_current_heap(|heap| heap.bigint_value(*candidate).is_none())
+        }),
+    }
+}
+
+/// A Promise callback argument: a function value, or absent (the lowering
+/// passes `null`/`undefined` for an omitted `then`/`catch`/`finally` slot).
+/// Promoted from the preamble closure.
+pub(super) fn callback_arg(value: Option<&Value>) -> Option<zun_core::FunctionHandle> {
+    match value {
+        Some(Value::Function(handle)) => Some(*handle),
+        _ => None,
+    }
+}
+
 impl<'a> Interp<'a> {
     /// Run `callback` over a Map / Set with a live cursor: entries appended
     /// while iterating are visited, deleted entries are skipped.
@@ -137,36 +185,6 @@ impl<'a> Interp<'a> {
                 });
             }
         }
-        let object = |value: &Value| match value {
-            Value::Object(object) => Some(*object),
-            Value::Any(any) => any
-                .as_object()
-                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-            _ => None,
-        };
-        let any = |value: &Value| zun_gc::with_current_heap_mut(|heap| value.box_any_cell(heap));
-        // A valid weak key: an object (or a function, via its cell).
-        let weak_key = |value: &Value| match value {
-            Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| heap.function_cell(*handle))),
-            // An unregistered symbol (user-created or well-known) is a legal weak key.
-            Value::Any(any) if any.as_symbol().is_some() => {
-                let id = any.as_symbol()?;
-                if zun_gc::with_current_heap(|heap| heap.symbol_key_for(id).is_some()) {
-                    None
-                } else {
-                    Some(zun_gc::with_current_heap_mut(|heap| heap.symbol_cell(id)))
-                }
-            }
-            other => object(other).filter(|candidate| {
-                zun_gc::with_current_heap(|heap| heap.bigint_value(*candidate).is_none())
-            }),
-        };
-        // A Promise callback argument: a function value, or absent (the lowering
-        // passes `null`/`undefined` for an omitted `then`/`catch`/`finally` slot).
-        let callback_arg = |value: Option<&Value>| match value {
-            Some(Value::Function(handle)) => Some(*handle),
-            _ => None,
-        };
         match name {
             "bufferNew" => {
                 let length = match args.first().ok_or(RunError::BadToken)? {
