@@ -16725,11 +16725,7 @@ fn count_awaits_in_expr(expr: &ast::Expr) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-#[cfg(test)]
-#[path = "../tests.rs"]
 mod tests;
-}
 
 /// Where a runtime decorator applies, for the typed-context lowering.
 #[derive(Clone, Copy)]
