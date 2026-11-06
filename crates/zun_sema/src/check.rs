@@ -10990,7 +10990,17 @@ impl Checker<'_> {
                     _ => None,
                 });
                 if let Some((native_name, return_ty, expected)) = managed_method {
-                    // A callback method's optional `thisArg` is accepted and ignored.
+                    // A callback method's optional `thisArg` is bound onto the
+                    // callback (`cb.bind(thisArg)`) before the native runs.
+                    let this_arg_ast = if receiver.ty == Ty::Array
+                        && expected.len() == 1
+                        && args.len() == 2
+                        && expected[0] == Ty::Function(hir::DYNAMIC_FUNCTION)
+                    {
+                        args.get(1)
+                    } else {
+                        None
+                    };
                     let args = if receiver.ty == Ty::Array
                         && expected.len() == 1
                         && args.len() == 2
@@ -11024,6 +11034,23 @@ impl Checker<'_> {
                         }
                         let mut value = self.check_expr(cx, arg);
                         self.closure_param_hint = None;
+                        if expected_ty == Ty::Function(hir::DYNAMIC_FUNCTION) && matches!(value.ty, Ty::Function(_)) {
+                            if let (Some(this_ast), Some((bind_id, _))) =
+                                (this_arg_ast, zun_natives::resolve("collections", "functionBind"))
+                            {
+                                let checked = self.check_expr(cx, this_ast);
+                                let bound_this = self.box_function_argument(checked);
+                                value = hir::Expr {
+                                    span: value.span,
+                                    kind: hir::ExprKind::FunctionBind {
+                                        callee: Box::new(value),
+                                        args: vec![bound_this],
+                                        native_id: bind_id,
+                                    },
+                                    ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+                                };
+                            }
+                        }
                         coerce_numeric_literal(&mut value, expected_ty);
                         if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
                             self.error(

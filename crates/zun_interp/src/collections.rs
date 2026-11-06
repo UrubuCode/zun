@@ -3981,7 +3981,8 @@ impl<'a> Interp<'a> {
                     // `find`/`findIndex` visit holes as `undefined`; every other
                     // method skips holes and indices past a shrunken array.
                     let visits_holes = matches!(name, "arrayFind" | "arrayFindIndex");
-                    let element = match zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index)) {
+                    let raw_element = self.array_element_value(roots[0], index)?;
+                    let element = match raw_element {
                         Some(element) if !(element.is_hole() && !visits_holes) => element,
                         _ if visits_holes => zun_core::Any::void(),
                         _ => {
@@ -4085,8 +4086,13 @@ impl<'a> Interp<'a> {
                     } else {
                         length - 1 - step
                     };
-                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
+                    // Holes (and indices deleted or truncated meanwhile) are skipped.
+                    let Some(element) = self.array_element_value(roots[0], index)? else {
+                        continue;
+                    };
+                    if element.is_hole() {
+                        continue;
+                    }
                     let acc = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
                         .ok_or(RunError::BadToken)?;
                     let callback_args = vec![
@@ -8807,6 +8813,37 @@ impl<'a> Interp<'a> {
             crate::typed_arrays::write_element(roots[0], index, &produced);
         }
         Ok(Value::Object(roots[0]))
+    }
+
+    /// The logical element at `index`: an accessor element (installed by
+    /// `Object.defineProperty(array, "0", { get })`) runs its getter; `None`
+    /// past the end of the array. Holes come back as `Any::hole()`.
+    pub(crate) fn array_element_value(
+        &mut self,
+        array: zun_gc::Obj,
+        index: usize,
+    ) -> Result<Option<zun_core::Any>, RunError> {
+        let Some(element) = zun_gc::with_current_heap(|heap| heap.array_get(array, index)) else {
+            return Ok(None);
+        };
+        let Some(addr) = element.as_object() else {
+            return Ok(Some(element));
+        };
+        let record = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
+        let getter = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_has(record, "__elemAcc").then(|| heap.dynamic_accessor_getter(record, "v"))
+        });
+        match getter {
+            None => Ok(Some(element)),
+            Some(None) => Ok(Some(zun_core::Any::void())),
+            Some(Some(getter)) => {
+                let args = self.with_this_arg(getter, array, Vec::new());
+                let produced = self.invoke_function_value(getter, args)?;
+                let boxed = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
+                    .ok_or(RunError::BadToken)?;
+                Ok(Some(boxed))
+            }
+        }
     }
 
     pub(crate) fn invoke_callback(

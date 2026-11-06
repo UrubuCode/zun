@@ -549,7 +549,28 @@ impl Interp<'_> {
             (heap.array_len(array).unwrap_or(0), heap.array_integrity(array))
         });
         if desc.is_accessor() {
-            return false;
+            // An accessor on an existing array index is stored as a marker
+            // record in the element slot; iteration methods run its getter.
+            let Ok(index) = name.parse::<usize>() else {
+                return false;
+            };
+            if index >= len || array_refusal(level, ArrayOp::Write).is_some() {
+                return false;
+            }
+            zun_gc::with_current_heap_mut(|heap| {
+                let record = heap.alloc_dynamic();
+                heap.dynamic_set(record, "__elemAcc", zun_core::Any::bool(true));
+                heap.dynamic_define_accessor(
+                    record,
+                    "v",
+                    if desc.has_get { desc.get } else { None },
+                    if desc.has_set { desc.set } else { None },
+                    desc.enumerable.unwrap_or(false),
+                    desc.configurable.unwrap_or(false),
+                );
+                heap.array_set(array, index, zun_core::Any::object(record.addr() as usize));
+            });
+            return true;
         }
         if name == "length" {
             if let Some(value) = desc.value {
@@ -821,7 +842,18 @@ impl Interp<'_> {
         let Some(PropKey::Str(name)) = args.get(1).and_then(prop_key) else {
             return Ok(Value::Bool(true));
         };
-        if zun_gc::with_current_heap(|heap| heap.array_len(target).is_some()) {
+        if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(target)) {
+            // `delete arr[i]` leaves a hole at an in-range index.
+            if let Ok(index) = name.parse::<usize>() {
+                if index < len {
+                    if self.guard_array(target, crate::integrity::ArrayOp::Remove).is_err() {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot delete property of [object Array]".into(),
+                        ));
+                    }
+                    zun_gc::with_current_heap_mut(|heap| heap.array_set(target, index, zun_core::Any::hole()));
+                }
+            }
             return Ok(Value::Bool(true));
         }
         let allowed = zun_gc::with_current_heap(|heap| heap.dynamic_can_delete(target, &name));
