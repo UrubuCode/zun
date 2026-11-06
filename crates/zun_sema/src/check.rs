@@ -8987,14 +8987,19 @@ impl Checker<'_> {
                     if let Some(name) = array_method {
                         // `Array.prototype.push/pop.call(receiver, ...)` mutates an Array
                         // or an array-like through the generic algorithm.
-                        if (name == "push" || name == "pop")
+                        if (name == "push" || name == "pop" || name == "fill" || name == "reverse")
                             && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
                         {
-                            let native = if name == "push" { "arrayLikePush" } else { "arrayLikePop" };
+                            let native = match name.as_str() {
+                                "push" => "arrayLikePush",
+                                "fill" => "arrayLikeFill",
+                                "reverse" => "arrayLikeReverse",
+                                _ => "arrayLikePop",
+                            };
                             if let Some((id, _)) = zun_natives::resolve("array", native) {
                                 let source = self.check_expr(cx, &args[0]);
                                 let mut call_args = vec![Self::box_to_any(source)];
-                                if name == "push" {
+                                if name == "push" || name == "fill" || name == "reverse" {
                                     let literal = ast::Expr::ArrayLiteral {
                                         elements: args[1..].iter().cloned().map(ast::ArrayElement::Expr).collect(),
                                         span,
@@ -11345,6 +11350,10 @@ impl Checker<'_> {
                         // (`set.add(fn)`) must be boxed like any other value.
                         if expected_ty == Ty::Any && matches!(value.ty, Ty::Function(_)) {
                             value = Self::box_to_any(value);
+                        }
+                        // `any` flowing into a numeric array-method parameter runs ToNumber.
+                        if callback_receiver && expected_ty == Ty::F64 && value.ty == Ty::Any {
+                            value = self.to_number_expr(value);
                         }
                         call_args.push(value);
                     }
