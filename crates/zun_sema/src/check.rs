@@ -6139,13 +6139,8 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
-        if args.len() > 2 {
-            self.error(
-                span,
-                format!("`{name}` expects at most a message and an options object, found {}", args.len()),
-            );
-            return self.poison(span);
-        }
+        // Arguments beyond the message and the options object are ignored.
+        let args = &args[..args.len().min(2)];
         // `message`: arg0, defaulting to the empty string (JS `new Error()`).
         let mut message = match args.first() {
             Some(arg) => self.check_expr(cx, arg),

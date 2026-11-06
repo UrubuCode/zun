@@ -4025,8 +4025,70 @@ impl<'a> Interp<'a> {
                 // and return `ToBoolean` of the result; otherwise a dynamic
                 // object has no class identity, so the answer is `false`.
                 let value = args.first().ok_or(RunError::BadToken)?.clone();
+                // A class descriptor held in an `any` variable: a user (or prelude)
+                // class answers through the runtime class hierarchy.
+                if let Ok(Value::Any(descriptor)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
+                    if let Some(rid) = descriptor.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
+                        return self.call_managed_collection(
+                            "instanceofClass",
+                            &[value, Value::Int(rid as i64, zun_il::NumKind::I32)],
+                        );
+                    }
+                    // A realm base-type descriptor: resolve its global name, then the
+                    // class of that name (or the built-in constructor check).
+                    if let Some(token) = descriptor.as_class_descriptor() {
+                        let class_name = zun_gc::with_current_heap_mut(|heap| {
+                            let global = heap.global_object();
+                            heap.dynamic_entries(global).and_then(|entries| {
+                                entries
+                                    .into_iter()
+                                    .find(|(_, any)| any.as_class_descriptor() == Some(token))
+                                    .map(|(name, _)| name)
+                            })
+                        });
+                        if let Some(class_name) = class_name {
+                            let rid = self
+                                .module
+                                .tables
+                                .type_defs
+                                .iter()
+                                .position(|def| self.module.strings.get(def.name) == class_name)
+                                .map(|index| index as u32 + 1);
+                            if let Some(rid) = rid {
+                                return self.call_managed_collection(
+                                    "instanceofClass",
+                                    &[value, Value::Int(rid as i64, zun_il::NumKind::I32)],
+                                );
+                            }
+                            return self.call_managed_collection("instanceofBuiltin", &[value, Value::Str(class_name.into())]);
+                        }
+                        return Ok(Value::Bool(false));
+                    }
+                }
                 let rhs = object(args.get(1).ok_or(RunError::BadToken)?)
                     .ok_or(RunError::BadToken)?;
+                // A constructor record (`Error`, `Array` ... read through `any`): the
+                // class it names decides membership.
+                let (record_desc, record_name) = zun_gc::with_current_heap(|heap| {
+                    (
+                        heap.dynamic_get(rhs, "__classDesc"),
+                        heap.dynamic_get(rhs, "name").and_then(|any| match Value::unbox_any(any, heap) {
+                            Some(Value::Str(text)) => Some(text.to_string()),
+                            _ => None,
+                        }),
+                    )
+                });
+                if let Some(rid) = record_desc.and_then(|d| d.as_class_descriptor()).and_then(|t| self.user_class_rid(t)) {
+                    return self.call_managed_collection(
+                        "instanceofClass",
+                        &[value, Value::Int(rid as i64, zun_il::NumKind::I32)],
+                    );
+                }
+                if let Some(name) = record_name {
+                    if matches!(name.as_str(), "Array" | "Map" | "Set" | "Promise" | "RegExp" | "Object" | "Function" | "Date") {
+                        return self.call_managed_collection("instanceofBuiltin", &[value, Value::Str(name.into())]);
+                    }
+                }
                 let handler = zun_gc::with_current_heap(|heap| {
                     heap.dynamic_get_symbol_function(
                         rhs,
