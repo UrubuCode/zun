@@ -59,6 +59,8 @@ impl Checker<'_> {
             block_labels: Vec::new(),
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
+            tdz_names: HashSet::new(),
+            param_slot_count: 0,
             boxed: HashSet::new(),
             captures: captures
                 .iter()
@@ -289,7 +291,8 @@ impl Checker<'_> {
                     environment_slot: environment_slot as u16,
                     ty: cx.locals[outer_slot as usize],
                     mode: if cx.mutated.contains(&outer_slot)
-                        || cx.mutated_names.contains(&name)
+                        || (cx.mutated_names.contains(&name)
+                            && (cx.boxed.contains(&outer_slot) || (outer_slot as usize) >= cx.param_slot_count))
                         || uses.mutated.contains(&outer_slot)
                     {
                         hir::CaptureMode::ByCell

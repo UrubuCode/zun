@@ -468,6 +468,12 @@ struct FunctionCx {
     block_labels: Vec<String>,
     mutated: HashSet<hir::LocalSlot>,
     mutated_names: HashSet<String>,
+    /// Parameter names still in their temporal dead zone while a default
+    /// expression is being checked (later parameters and the parameter itself).
+    tdz_names: HashSet<String>,
+    /// Number of leading local slots that are parameters of a top-level function
+    /// (0 when unknown): an unboxed parameter is never captured by cell.
+    param_slot_count: usize,
     boxed: HashSet<hir::LocalSlot>,
     captures: HashMap<String, hir::Capture>,
     this_class: Option<u32>,
@@ -576,6 +582,8 @@ impl Checker<'_> {
             block_labels: Vec::new(),
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
+            tdz_names: HashSet::new(),
+            param_slot_count: 0,
             boxed: HashSet::new(),
             captures: HashMap::new(),
             this_class: None,
@@ -2095,6 +2103,8 @@ impl Checker<'_> {
             block_labels: Vec::new(),
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
+            tdz_names: HashSet::new(),
+            param_slot_count: 0,
             boxed: HashSet::new(),
             captures: HashMap::new(),
             this_class,
@@ -2117,11 +2127,30 @@ impl Checker<'_> {
             declared_params.push((pname, slot));
         }
         self.collect_mutated_names(&f.body.statements, &mut cx.mutated_names);
+        // A closure created in a default expression captures the parameter scope.
+        cx.param_slot_count = cx.locals.len();
+        let mut default_names: HashSet<String> = HashSet::new();
+        for parameter in &f.params {
+            if let Some(default_value) = parameter.default_value.as_deref() {
+                capture_analysis::collect_mutated_expr(self, default_value, &mut default_names);
+            }
+        }
+        cx.mutated_names.extend(default_names.iter().cloned());
         for (pname, slot) in declared_params {
-            if cx.mutated_names.contains(&pname)
-                && cx.mutated_names.contains(&format!("{pname}"))
-                && !matches!(cx.locals[slot as usize], Ty::Function(_))
-            {
+            // A body-level `var` of the same name is a separate binding (the
+            // parameter scope keeps the argument for default-value closures), so
+            // body closures never capture the parameter itself.
+            let shadowed_by_body = f.params.iter().any(|p| p.default_value.is_some() || p.is_rest)
+                && f.body.statements.iter().any(
+                    |statement| matches!(statement, ast::Stmt::Let { name, .. } if self.text(name) == pname),
+                );
+            let needs_cell = if shadowed_by_body {
+                default_names.contains(&pname) && default_names.contains(&format!("{pname}"))
+            } else {
+                cx.mutated_names.contains(&pname)
+                    && cx.mutated_names.contains(&format!("{pname}"))
+            };
+            if needs_cell && !matches!(cx.locals[slot as usize], Ty::Function(_)) {
                 cx.boxed.insert(slot);
             }
         }
@@ -2306,7 +2335,9 @@ impl Checker<'_> {
             .enumerate()
             .map(|(index, parameter)| {
                 parameter.default_value.as_deref().map(|value| {
+                    cx.tdz_names = f.params[index..].iter().map(|p| self.text(&p.name).to_string()).collect();
                     let mut checked = self.check_expr(&mut cx, value);
+                    cx.tdz_names.clear();
                     let expected = param_tys[index + usize::from(this_class.is_some())];
                     coerce_numeric_literal(&mut checked, expected);
                     if !checked.ty.is_error() && !self.is_assignable(checked.ty, expected) {
@@ -6976,6 +7007,19 @@ impl Checker<'_> {
             }
             ast::Expr::Ident(name) => {
                 let text = self.text(name).to_string();
+                if cx.tdz_names.contains(&text) {
+                    // Reading a parameter before its initialisation is a ReferenceError.
+                    if let Some((id, _)) = zun_natives::resolve("collections", "globalRead") {
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![Self::string_literal(format!("{text}"), span)],
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
+                }
                 match cx.lookup(&text) {
                     Some(slot) if self.reads_through_global(cx, &text, slot) => {
                         let read = self.global_get_expr(&text, span);

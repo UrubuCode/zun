@@ -463,8 +463,9 @@ fn lower_function<'a>(
     } else if f.is_async {
         gen.emit(Instruction::simple(Opcode::AsyncStart));
     }
-    gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16, &f.locals);
-    gen.stmts(&f.body);
+    let body_start = gen.emit_param_cells(&f.body, f.param_count);
+    gen.emit_defaults(&f.defaults, f.param_count - f.defaults.len() as u16, &f.locals, &f.body[..body_start]);
+    gen.stmts(&f.body[body_start..]);
     // Guarantee the body cannot run off its end: a void function gets an
     // implicit return. (Non-void paths are the verifier's job later.)
     if f.return_ty != Ty::Void && !matches!(f.body.last(), Some(Stmt::Return(_))) {
@@ -517,8 +518,9 @@ fn lower_closure_function<'a>(
     } else if f.is_async {
         gen.emit(Instruction::simple(Opcode::AsyncStart));
     }
-    gen.emit_defaults(&f.defaults, 1, &f.locals);
-    gen.stmts(&f.body);
+    let body_start = gen.emit_param_cells(&f.body, f.param_count);
+    gen.emit_defaults(&f.defaults, 1, &f.locals, &f.body[..body_start]);
+    gen.stmts(&f.body[body_start..]);
     if f.return_ty != Ty::Void && !matches!(f.body.last(), Some(Stmt::Return(_))) {
         // Running off the end of a value-returning body yields `undefined`.
         match f.return_ty {
@@ -587,10 +589,56 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
 
     /// Materialize omitted arguments before entering the function body. Calls
     /// use null sentinels so the framed ABI remains fixed-width.
-    fn emit_defaults(&mut self, defaults: &[Option<hir::Expr>], slot_offset: u16, locals: &[zun_sema::hir::Ty]) {
+    /// Emit the cells of closure-captured parameters (the leading `BoxedLet`s
+    /// the checker put at the head of the body) ahead of the default-value
+    /// prologue, so closures created by a default capture the live cell.
+    /// Returns how many leading body statements were consumed.
+    fn emit_param_cells(&mut self, body: &'a [Stmt], param_count: u16) -> usize {
+        let mut consumed = 0;
+        for statement in body {
+            match statement {
+                Stmt::BoxedLet { slot, init }
+                    if *slot < param_count
+                        && matches!(&init.kind, ExprKind::Local(local) if local == slot) =>
+                {
+                    self.stmt(statement);
+                    consumed += 1;
+                }
+                _ => break,
+            }
+        }
+        consumed
+    }
+
+    fn emit_defaults(
+        &mut self,
+        defaults: &[Option<hir::Expr>],
+        slot_offset: u16,
+        locals: &[zun_sema::hir::Ty],
+        cells: &[Stmt],
+    ) {
+        let is_cell = |slot: u16| cells.iter().any(|s| matches!(s, Stmt::BoxedLet { slot: cell, .. } if *cell == slot));
         for (index, default) in defaults.iter().enumerate() {
             let Some(default) = default else { continue };
             let slot = slot_offset + index as u16;
+            if is_cell(slot) {
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
+                self.emit_dynamic_load("$value");
+                if locals.get(slot as usize) == Some(&zun_sema::hir::Ty::Any) {
+                    self.emit(Instruction::simple(Opcode::ConstUndef));
+                } else {
+                    self.emit(Instruction::simple(Opcode::ConstNull));
+                }
+                self.emit(Instruction::simple(Opcode::CmpEq));
+                let skip = self.emit_branch(Opcode::BranchFalse);
+                self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
+                self.expr(default);
+                self.emit(Instruction::simple(Opcode::BoxAny));
+                self.emit_dynamic_store("$value");
+                self.emit(Instruction::simple(Opcode::Pop));
+                self.patch_to_here(skip);
+                continue;
+            }
             self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
             self.emit(Instruction::simple(Opcode::BoxAny));
             // Dynamic params use `undefined` as the omitted marker (an explicit
