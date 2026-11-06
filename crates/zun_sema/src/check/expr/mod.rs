@@ -13,6 +13,8 @@ mod call_sugar;
 mod field;
 mod ident;
 mod literal;
+mod mcall_namespaces;
+mod mcall_statics;
 mod member;
 mod method_call;
 mod new;
