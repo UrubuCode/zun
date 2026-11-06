@@ -450,6 +450,21 @@ impl Heap {
         cell
     }
 
+    /// The weak-key cell standing for an unregistered symbol: found by content, one
+    /// per symbol while it is alive.
+    pub fn symbol_cell(&mut self, symbol: zun_core::SymbolId) -> Obj {
+        let wanted = zun_core::Any::symbol(symbol);
+        let existing = self.dynamic_objects.iter().find_map(|(address, properties)| {
+            (properties.get(SYMBOL_CELL_KEY) == Some(wanted)).then_some(*address)
+        });
+        if let Some(address) = existing {
+            return unsafe { Obj::from_addr(address as *mut u64) };
+        }
+        let cell = self.alloc_dynamic();
+        self.dynamic_set(cell, SYMBOL_CELL_KEY, wanted);
+        cell
+    }
+
     /// The callable a function cell stands for, or `None` for any other object.
     pub fn function_of_cell(&self, object: Obj) -> Option<zun_core::FunctionHandle> {
         if self.dynamic_objects.is_empty() {
@@ -458,3 +473,6 @@ impl Heap {
         self.dynamic_get_function(object, FUNCTION_CELL_KEY)
     }
 }
+
+/// Property name under which a symbol-cell dynamic object stores its symbol.
+const SYMBOL_CELL_KEY: &str = "\u{1}sym";

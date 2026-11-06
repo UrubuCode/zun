@@ -148,6 +148,15 @@ impl<'a> Interp<'a> {
         // A valid weak key: an object (or a function, via its cell).
         let weak_key = |value: &Value| match value {
             Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| heap.function_cell(*handle))),
+            // An unregistered symbol (user-created or well-known) is a legal weak key.
+            Value::Any(any) if any.as_symbol().is_some() => {
+                let id = any.as_symbol()?;
+                if zun_gc::with_current_heap(|heap| heap.symbol_key_for(id).is_some()) {
+                    None
+                } else {
+                    Some(zun_gc::with_current_heap_mut(|heap| heap.symbol_cell(id)))
+                }
+            }
             other => object(other).filter(|candidate| {
                 zun_gc::with_current_heap(|heap| heap.bigint_value(*candidate).is_none())
             }),
