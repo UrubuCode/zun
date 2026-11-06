@@ -1321,7 +1321,39 @@ impl Interp<'_> {
                                         });
                                         match handle {
                                             Some(handle) => Value::Function(handle),
-                                            None => Value::Void,
+                                            None => {
+                                                // A symbol-keyed member installed on
+                                                // `Class.prototype` at run time is found
+                                                // by walking the class prototype chain.
+                                                let mut found = Value::Void;
+                                                if self.instance_class_prototype(object).is_some() {
+                                                    let mut rid = object.type_rid();
+                                                    while rid >= 1 {
+                                                        let proto = self.class_prototype_object(rid);
+                                                        let hit = zun_gc::with_current_heap(|heap| {
+                                                            heap.dynamic_get_symbol_function(proto, symbol)
+                                                                .map(Value::Function)
+                                                                .or_else(|| {
+                                                                    heap.dynamic_get_symbol(proto, symbol).map(|any| {
+                                                                        match any.as_object().and_then(|addr| heap.function_of_cell(unsafe { zun_gc::Obj::from_addr(addr as *mut u64) })) {
+                                                                            Some(function) => Value::Function(function),
+                                                                            None => Value::Any(any),
+                                                                        }
+                                                                    })
+                                                                })
+                                                        });
+                                                        if let Some(hit) = hit {
+                                                            found = hit;
+                                                            break;
+                                                        }
+                                                        rid = match self.module.tables.type_defs.get(rid as usize - 1) {
+                                                            Some(def) if def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null() => def.base.rid(),
+                                                            _ => 0,
+                                                        };
+                                                    }
+                                                }
+                                                found
+                                            }
                                         }
                                     }
                                 }

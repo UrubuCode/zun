@@ -652,6 +652,7 @@ fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<St
                 let class = convert_class_declaration(source, class_declaration)
                     .map_err(|errors| errors.join("; "))?;
                 HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
+                statements.extend(CLASS_TRAILING.with(|cells| std::mem::take(&mut *cells.borrow_mut())));
             }
             other => {
                 let dbg = format!("{other:?}");
@@ -2690,6 +2691,10 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                 IMMUTABLE_SELF_NAMES.with(|names| names.borrow_mut().pop());
             }
             let mut class = class.map_err(|errors| errors.join("; "))?;
+            let trailing = CLASS_TRAILING.with(|cells| std::mem::take(&mut *cells.borrow_mut()));
+            if !trailing.is_empty() {
+                PENDING_PRELUDE.with(|pending| pending.borrow_mut().extend(trailing));
+            }
             class.name = Name { span: name_span };
             HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
             Ok(Expr::Ident(Name { span: name_span }))
@@ -3101,6 +3106,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
         };
         if let Some(class_declaration) = class_declaration {
             classes.push(convert_class_declaration(source, class_declaration)?);
+            top_level.extend(CLASS_TRAILING.with(|cells| std::mem::take(&mut *cells.borrow_mut())));
             continue;
         }
         let function = match &statement {
@@ -4272,6 +4278,11 @@ thread_local! {
     /// threading a collector through every conversion function.
     static HOISTED_CLASSES: std::cell::RefCell<Vec<crate::ast::Class>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Statements that install class members with run-time computed keys
+    /// (`Object.defineProperty(C.prototype, key, ...)`), queued while a class
+    /// is converted and emitted right after the class declaration.
+    static CLASS_TRAILING: std::cell::RefCell<Vec<Stmt>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Convert a single OXC class declaration into the AST class (shared by the
@@ -4514,6 +4525,62 @@ fn convert_class_declaration_inner(source: &str, class_declaration: &oxc_ast::as
                             },
                             span: Span::new(method.span.start, method.span.end),
                         };
+                        // A computed key that is not a well-known `Symbol.x` is only known
+                        // at run time: the member is installed on the class (or its
+                        // prototype) by a statement emitted after the declaration.
+                        if let (Some(key), Some(class_id)) = (computed_key.as_ref(), class_declaration.id.as_ref()) {
+                            let well_known = matches!(key, Expr::Field { object, .. }
+                                if matches!(object.as_ref(), Expr::Ident(n) if source.get(n.span.start as usize..n.span.end as usize) == Some("Symbol")));
+                            if !well_known && !method.value.generator && !method.value.r#async {
+                                let function_value = convert_oxc_function(source, &method.value).map_err(|error| vec![error])?;
+                                let class_ref = Expr::Ident(Name { span: Span::new(class_id.span.start, class_id.span.end) });
+                                let target = if method.r#static {
+                                    class_ref
+                                } else {
+                                    Expr::Field {
+                                        object: Box::new(class_ref),
+                                        field: crate::ast::synthetic_ident("prototype"),
+                                        span: Span::new(method.span.start, method.span.end),
+                                    }
+                                };
+                                let flag = |name: &str, value: bool| {
+                                    crate::ast::ObjectMember::Property(crate::ast::ObjectProperty {
+                                        key: crate::ast::PropertyKey::Ident(crate::ast::synthetic_ident(name)),
+                                        value: Expr::Bool { value, span: Span::new(method.span.start, method.span.end) },
+                                        kind: crate::ast::PropertyKind::Init,
+                                    })
+                                };
+                                let slot = |name: &str, value: Expr| {
+                                    crate::ast::ObjectMember::Property(crate::ast::ObjectProperty {
+                                        key: crate::ast::PropertyKey::Ident(crate::ast::synthetic_ident(name)),
+                                        value,
+                                        kind: crate::ast::PropertyKind::Init,
+                                    })
+                                };
+                                let members = match method.kind {
+                                    MethodDefinitionKind::Get => vec![slot("get", function_value), flag("configurable", true)],
+                                    MethodDefinitionKind::Set => vec![slot("set", function_value), flag("configurable", true)],
+                                    _ => vec![slot("value", function_value), flag("writable", true), flag("configurable", true)],
+                                };
+                                let member_span = Span::new(method.span.start, method.span.end);
+                                CLASS_TRAILING.with(|cells| {
+                                    cells.borrow_mut().push(Stmt::Expr(Expr::MethodCall {
+                                        receiver: Box::new(Expr::Ident(crate::ast::synthetic_ident("Object"))),
+                                        method: crate::ast::synthetic_ident("defineProperty"),
+                                        args: vec![
+                                            target,
+                                            key.clone(),
+                                            Expr::ObjectLiteral {
+                                                properties: members,
+                                                span: member_span,
+                                            },
+                                        ],
+                                        span: member_span,
+                                    }))
+                                });
+                                continue;
+                            }
+                        }
                         match computed_key {
                             Some(key) => symbol_methods.push(crate::ast::ClassSymbolMethod {
                                 key,

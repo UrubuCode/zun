@@ -85,6 +85,8 @@ fn number_of(value: &Value) -> Option<f64> {
 /// A parsed property descriptor object.
 struct Desc {
     value: Option<zun_core::Any>,
+    /// A function-valued `value` (kept in the function slot, not as an `Any`).
+    value_fn: Option<zun_core::FunctionHandle>,
     writable: Option<bool>,
     enumerable: Option<bool>,
     configurable: Option<bool>,
@@ -96,7 +98,21 @@ struct Desc {
 
 impl Desc {
     fn parse(desc: zun_gc::Obj) -> Desc {
-        zun_gc::with_current_heap(|heap| {
+        zun_gc::with_current_heap_mut(|heap| {
+            // A function-valued `value` lives in the descriptor's function slot.
+            let mut value = heap.dynamic_get(desc, "value");
+            let mut value_fn = heap.dynamic_get_function(desc, "value");
+            if value_fn.is_some() {
+                value = None;
+            }
+            // A function stored as a cell object is unwrapped to its handle.
+            if let Some(cell) = value.and_then(|any| any.as_object()) {
+                let cell = unsafe { zun_gc::Obj::from_addr(cell as *mut u64) };
+                if let Some(function) = heap.function_of_cell(cell) {
+                    value = None;
+                    value_fn = Some(function);
+                }
+            }
             let flag = |name: &str| {
                 heap.dynamic_get(desc, name)
                     .map(|any| super::collections::is_truthy(&Value::Any(any), heap))
@@ -104,7 +120,8 @@ impl Desc {
             let get = heap.dynamic_get_function(desc, "get");
             let set = heap.dynamic_get_function(desc, "set");
             Desc {
-                value: heap.dynamic_get(desc, "value"),
+                value,
+                value_fn,
                 writable: flag("writable"),
                 enumerable: flag("enumerable"),
                 configurable: flag("configurable"),
@@ -119,7 +136,7 @@ impl Desc {
         self.has_get || self.has_set
     }
     fn is_data(&self) -> bool {
-        self.value.is_some() || self.writable.is_some()
+        self.value.is_some() || self.value_fn.is_some() || self.writable.is_some()
     }
 }
 
@@ -456,6 +473,12 @@ impl Interp<'_> {
         if desc.is_accessor() && desc.is_data() {
             return false;
         }
+        // A typed class instance receives expando properties in its bag.
+        if zun_gc::with_current_heap(|heap| !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none())
+            && self.instance_class_prototype(obj).is_some()
+        {
+            zun_gc::with_current_heap_mut(|heap| heap.ensure_instance_bag(obj));
+        }
         let name = match key {
             PropKey::Sym(symbol) => {
                 // Symbol-keyed data properties carry only an enumerable flag.
@@ -473,7 +496,11 @@ impl Interp<'_> {
                     });
                 }
                 return zun_gc::with_current_heap_mut(|heap| {
-                    heap.dynamic_define_symbol(obj, *symbol, value, enumerable)
+                    let ok = heap.dynamic_define_symbol(obj, *symbol, value, enumerable);
+                    if let (true, Some(function)) = (ok, desc.value_fn) {
+                        heap.dynamic_set_symbol_function(obj, *symbol, function);
+                    }
+                    ok
                 });
             }
             PropKey::Str(name) => name.as_str(),
@@ -492,14 +519,18 @@ impl Interp<'_> {
                 if desc.is_accessor() {
                     heap.dynamic_define_accessor(obj, name.to_owned(), desc.get, desc.set, enumerable, configurable)
                 } else {
-                    heap.dynamic_define_data(
+                    let ok = heap.dynamic_define_data(
                         obj,
                         name.to_owned(),
                         desc.value.unwrap_or_else(zun_core::Any::void),
                         desc.writable.unwrap_or(false),
                         enumerable,
                         configurable,
-                    )
+                    );
+                    if let (true, Some(function)) = (ok, desc.value_fn) {
+                        heap.dynamic_set_function(obj, name.to_owned(), function);
+                    }
+                    ok
                 }
             });
         };
@@ -795,6 +826,14 @@ impl Interp<'_> {
                     zun_gc::with_current_heap_mut(|heap| {
                         heap.dynamic_set(roots[1], field.to_owned(), zun_core::Any::bool(flag));
                     });
+                }
+                "value" if matches!(value, Value::Function(_)) => {
+                    has_data = true;
+                    if let Value::Function(handle) = value {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_set_function(roots[1], "value", handle);
+                        });
+                    }
                 }
                 "value" => {
                     has_data = true;

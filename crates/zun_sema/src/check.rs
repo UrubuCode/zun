@@ -154,6 +154,7 @@ fn check_impl(
         classes_with_iterator: HashSet::new(),
         closure_param_hint: None,
         closure_takes_this: false,
+        symbol_call_guard: false,
         static_this: HashMap::new(),
         cur_static_class: None,
         closure_self_name: None,
@@ -401,6 +402,9 @@ struct Checker<'a> {
     /// (named `this`) and is marked by an `@this` name suffix, which the
     /// interpreter reads to pass the receiver on a dynamic member call.
     closure_takes_this: bool,
+    /// Set while lowering the string-key arm of a `recv[key](...)` call whose
+    /// key may be a Symbol, so the arm is not split again.
+    symbol_call_guard: bool,
     /// Static methods whose body uses `this`/`super`: func index -> declaring
     /// class. They take the receiving class value as a hidden first parameter.
     static_this: HashMap<u32, u32>,
@@ -14749,6 +14753,78 @@ impl Checker<'_> {
                             let key_hir = self.check_expr(cx, key_ast);
                             let array_ok = !matches!(recv_hir.ty, Ty::Array | Ty::Map | Ty::Set | Ty::String)
                                 || matches!(key_hir.ty, Ty::String | Ty::Any);
+                            // A key of unknown type may be a Symbol: split on its run-time type;
+                            // a symbol key reads the member and calls it with the receiver as
+                            // `this`, any other key keeps the stringified member dispatch.
+                            if array_ok
+                                && !self.symbol_call_guard
+                                && matches!(key_hir.ty, Ty::Any | Ty::Symbol)
+                                && matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject)
+                            {
+                                let (recv_slot, recv_tmp) = self.synthetic_local(cx, Ty::Any);
+                                let (key_slot, key_tmp) = self.synthetic_local(cx, Ty::Any);
+                                let is_symbol = ast::Expr::Binary {
+                                    op: ast::BinaryOp::Eq,
+                                    lhs: Box::new(ast::Expr::Unary {
+                                        op: ast::UnaryOp::Typeof,
+                                        operand: Box::new(ast::Expr::Ident(key_tmp)),
+                                        span,
+                                    }),
+                                    rhs: Box::new(ast::Expr::String { value: "symbol".to_string(), span }),
+                                    span,
+                                };
+                                let mut symbol_args = vec![ast::Expr::Ident(recv_tmp)];
+                                symbol_args.extend(args.iter().cloned());
+                                let symbol_call = ast::Expr::MethodCall {
+                                    receiver: Box::new(ast::Expr::Index {
+                                        object: Box::new(ast::Expr::Ident(recv_tmp)),
+                                        index: Box::new(ast::Expr::Ident(key_tmp)),
+                                        span,
+                                    }),
+                                    method: ast::synthetic_ident("call"),
+                                    args: symbol_args,
+                                    span,
+                                };
+                                let string_call = ast::Expr::ComputedCall {
+                                    callee: Box::new(ast::Expr::Index {
+                                        object: Box::new(ast::Expr::Ident(recv_tmp)),
+                                        index: Box::new(ast::Expr::Ident(key_tmp)),
+                                        span,
+                                    }),
+                                    args: args.clone(),
+                                    span,
+                                };
+                                let chain = ast::Expr::Conditional {
+                                    condition: Box::new(is_symbol),
+                                    when_true: Box::new(symbol_call),
+                                    when_false: Box::new(string_call),
+                                    span,
+                                };
+                                self.symbol_call_guard = true;
+                                let body = self.check_expr(cx, &chain);
+                                self.symbol_call_guard = false;
+                                let ty = body.ty;
+                                let assign_key = hir::Expr {
+                                    kind: hir::ExprKind::Assign { slot: key_slot, value: Box::new(Self::box_to_any(key_hir)) },
+                                    ty: Ty::Any,
+                                    span,
+                                };
+                                let inner = hir::Expr {
+                                    kind: hir::ExprKind::Sequence { effect: Box::new(assign_key), value: Box::new(body) },
+                                    ty,
+                                    span,
+                                };
+                                let assign_recv = hir::Expr {
+                                    kind: hir::ExprKind::Assign { slot: recv_slot, value: Box::new(Self::box_to_any(recv_hir)) },
+                                    ty: Ty::Any,
+                                    span,
+                                };
+                                return hir::Expr {
+                                    kind: hir::ExprKind::Sequence { effect: Box::new(assign_recv), value: Box::new(inner) },
+                                    ty,
+                                    span,
+                                };
+                            }
                             if array_ok
                                 && (matches!(key_hir.ty, Ty::String | Ty::F64 | Ty::Any) || key_hir.ty.is_int())
                             {

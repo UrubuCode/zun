@@ -3278,6 +3278,25 @@ impl<'a> Interp<'a> {
                             .unwrap_or_else(zun_core::Any::void);
                         return Ok(Value::Any(boxed));
                     }
+                    // A function stored on `Class.prototype` (or a base class's)
+                    // at run time (`C.prototype[key] = fn`) is found by walking
+                    // the class prototype chain; it runs with the instance as `this`.
+                    if self.instance_class_prototype(namespace).is_some() {
+                        let mut rid = namespace.type_rid();
+                        while rid >= 1 {
+                            let proto = self.class_prototype_object(rid);
+                            if let Some(handle) = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(proto, &member)) {
+                                let result = self.invoke_function_value(handle, self.with_this_arg(handle, namespace, call_args))?;
+                                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                    .unwrap_or_else(zun_core::Any::void);
+                                return Ok(Value::Any(boxed));
+                            }
+                            rid = match self.module.tables.type_defs.get(rid as usize - 1) {
+                                Some(def) if def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null() => def.base.rid(),
+                                _ => 0,
+                            };
+                        }
+                    }
                 }
                 // A dynamic object may carry a callable member in its function
                 // slot (e.g. the `resolve`/`reject` of `Promise.withResolvers`,
