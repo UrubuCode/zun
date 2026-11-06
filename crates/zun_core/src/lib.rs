@@ -4,6 +4,7 @@
 //! heap implementation. It is the small Rust equivalent of the runtime-owned
 //! portion of `System.Private.CoreLib`.
 
+pub mod wtf16;
 mod typed_elements;
 #[path = "views.rs"]
 mod views;

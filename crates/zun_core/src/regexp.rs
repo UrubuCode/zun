@@ -215,7 +215,7 @@ impl RegexValue {
         match &self.engine {
             Engine::Re2(re) => Ok(re
                 .find(input)
-                .map(|m| input[..m.start()].encode_utf16().count())),
+                .map(|m| crate::wtf16::len16(&input[..m.start()]))),
             Engine::Backtrack(re) => {
                 let chars: Vec<char> = input.chars().collect();
                 Ok(re

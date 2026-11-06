@@ -46,11 +46,11 @@ pub struct StdoutOutput;
 
 impl Output for StdoutOutput {
     fn println(&mut self, line: &str) {
-        println!("{line}");
+        println!("{}", zun_core::wtf16::to_utf8_lossy(line));
     }
 
     fn eprintln(&mut self, line: &str) {
-        eprintln!("{line}");
+        eprintln!("{}", zun_core::wtf16::to_utf8_lossy(line));
     }
 
     fn read_line(&mut self) -> Option<String> {
@@ -73,14 +73,14 @@ impl Output for StdoutOutput {
     fn write_out(&mut self, text: &str) {
         use std::io::Write;
         let mut out = std::io::stdout();
-        let _ = write!(out, "{text}");
+        let _ = write!(out, "{}", zun_core::wtf16::to_utf8_lossy(text));
         let _ = out.flush();
     }
 
     fn write_err(&mut self, text: &str) {
         use std::io::Write;
         let mut err = std::io::stderr();
-        let _ = write!(err, "{text}");
+        let _ = write!(err, "{}", zun_core::wtf16::to_utf8_lossy(text));
         let _ = err.flush();
     }
 

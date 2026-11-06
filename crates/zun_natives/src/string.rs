@@ -4,7 +4,7 @@ use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
 
 fn length(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Int(value.encode_utf16().count() as i64)),
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Int(zun_core::wtf16::len16(value) as i64)),
         _ => Err(NativeError("length: expected a string".to_string())),
     }
 }
@@ -88,8 +88,8 @@ fn count(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
         Some(NativeArg::Str(needle)) => needle,
         _ => return Err(NativeError("count: expected a search string".to_string())),
     };
-    let value_units: Vec<u16> = value.encode_utf16().collect();
-    let needle_units: Vec<u16> = needle.encode_utf16().collect();
+    let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
+    let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
     if needle_units.is_empty() {
         return Ok(NativeValue::Int(0));
     }
@@ -115,8 +115,8 @@ fn index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
         Some(NativeArg::Str(needle)) => needle,
         _ => return Err(NativeError("indexOf: expected a search string".to_string())),
     };
-    let value_units: Vec<u16> = value.encode_utf16().collect();
-    let needle_units: Vec<u16> = needle.encode_utf16().collect();
+    let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
+    let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
     let index = if needle_units.is_empty() {
         0
     } else {
@@ -142,8 +142,8 @@ fn last_index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
             ))
         }
     };
-    let value_units: Vec<u16> = value.encode_utf16().collect();
-    let needle_units: Vec<u16> = needle.encode_utf16().collect();
+    let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
+    let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
     let index = if needle_units.is_empty() {
         value_units.len() as i64
     } else {
@@ -190,7 +190,7 @@ fn substring(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
             ))
         }
     };
-    let units: Vec<u16> = value.encode_utf16().collect();
+    let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let start = start.min(units.len());
     let end = end.min(units.len());
     let (start, end) = if start <= end {
@@ -198,7 +198,7 @@ fn substring(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     } else {
         (end, start)
     };
-    Ok(NativeValue::Str(String::from_utf16_lossy(
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(
         &units[start..end],
     )))
 }
@@ -224,20 +224,19 @@ fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
             ))
         }
     };
-    let length = value.encode_utf16().count();
+    let length = zun_core::wtf16::len16(value);
     if target <= length {
         return Ok(NativeValue::Str(value.to_string()));
     }
     let padding_units = target - length;
     let mut padding = String::new();
-    while padding.encode_utf16().count() < padding_units {
+    while zun_core::wtf16::len16(&padding) < padding_units {
         padding.push_str(fill);
     }
-    let padding = padding
-        .encode_utf16()
+    let padding = zun_core::wtf16::encode(&padding)
         .take(padding_units)
         .collect::<Vec<_>>();
-    let mut result = String::from_utf16_lossy(&padding);
+    let mut result = zun_core::wtf16::from_units(&padding);
     result.push_str(value);
     Ok(NativeValue::Str(result))
 }
@@ -263,21 +262,20 @@ fn pad_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
             ))
         }
     };
-    let length = value.encode_utf16().count();
+    let length = zun_core::wtf16::len16(value);
     if target <= length {
         return Ok(NativeValue::Str(value.to_string()));
     }
     let padding_units = target - length;
     let mut padding = String::new();
-    while padding.encode_utf16().count() < padding_units {
+    while zun_core::wtf16::len16(&padding) < padding_units {
         padding.push_str(fill);
     }
-    let padding = padding
-        .encode_utf16()
+    let padding = zun_core::wtf16::encode(&padding)
         .take(padding_units)
         .collect::<Vec<_>>();
     let mut result = value.to_string();
-    result.push_str(&String::from_utf16_lossy(&padding));
+    result.push_str(&zun_core::wtf16::from_units(&padding));
     Ok(NativeValue::Str(result))
 }
 
@@ -322,8 +320,7 @@ fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nat
             ))
         }
     };
-    value
-        .encode_utf16()
+    zun_core::wtf16::encode(value)
         .nth(index)
         .map(|unit| NativeValue::Int(unit as i64))
         .ok_or_else(|| NativeError(format!("charCodeAt: index {index} is out of bounds")))
@@ -375,9 +372,9 @@ fn reverse(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
         Some(NativeArg::Str(value)) => value,
         _ => return Err(NativeError("reverse: expected a string".to_string())),
     };
-    let mut units: Vec<u16> = value.encode_utf16().collect();
+    let mut units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     units.reverse();
-    Ok(NativeValue::Str(String::from_utf16_lossy(&units)))
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(&units)))
 }
 
 fn at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -392,7 +389,7 @@ fn at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> 
         Some(NativeArg::Int(index)) => *index as f64,
         _ => return Err(NativeError("at: expected a numeric index".to_string())),
     };
-    let units: Vec<u16> = value.encode_utf16().collect();
+    let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let len = units.len() as f64;
     let resolved = if relative < 0.0 { len + relative } else { relative };
     if resolved < 0.0 || resolved >= len {
@@ -400,7 +397,7 @@ fn at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> 
         return Ok(NativeValue::Void);
     }
     let index = resolved as usize;
-    Ok(NativeValue::Str(String::from_utf16_lossy(&units[index..index + 1])))
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(&units[index..index + 1])))
 }
 
 fn code_point_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -416,7 +413,7 @@ fn code_point_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
             ))
         }
     };
-    let units: Vec<u16> = value.encode_utf16().collect();
+    let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let Some(&first) = units.get(index) else {
         return Err(NativeError(format!("codePointAt: index {index} is out of bounds")));
     };
@@ -452,7 +449,7 @@ fn slice(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     let Some(end) = read(args.get(2)) else {
         return Err(NativeError("slice: expected a numeric end".to_string()));
     };
-    let units: Vec<u16> = value.encode_utf16().collect();
+    let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let len = units.len() as f64;
     // Negative indices count from the end; both ends clamp into range. An
     // absent `end` is passed as a value past any string length, so it clamps
@@ -466,7 +463,7 @@ fn slice(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     if begin >= finish {
         return Ok(NativeValue::Str(String::new()));
     }
-    Ok(NativeValue::Str(String::from_utf16_lossy(&units[begin..finish])))
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(&units[begin..finish])))
 }
 
 fn replace_all(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -493,7 +490,7 @@ fn from_char_code1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, 
         _ => return Err(NativeError("fromCharCode: expected a numeric code".to_string())),
     };
     // Each code is truncated to a UTF-16 code unit, per spec.
-    Ok(NativeValue::Str(String::from_utf16_lossy(&[code])))
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(&[code])))
 }
 
 fn from_code_point1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -508,7 +505,7 @@ fn from_code_point1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
     let code = code as u32;
     if code <= 0xFFFF {
         // Includes lone surrogates, which `from_utf16_lossy` renders faithfully.
-        Ok(NativeValue::Str(String::from_utf16_lossy(&[code as u16])))
+        Ok(NativeValue::Str(zun_core::wtf16::from_units(&[code as u16])))
     } else {
         match char::from_u32(code) {
             Some(scalar) => Ok(NativeValue::Str(scalar.to_string())),

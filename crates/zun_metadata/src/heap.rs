@@ -26,6 +26,40 @@ pub struct BlobIndex(pub u32);
 pub struct StringHeap {
     bytes: Vec<u8>,
     lookup: HashMap<Box<str>, StringIndex>,
+    /// Decoded text of entries that contain an interior NUL. On the wire an
+    /// interior NUL is stored as the overlong pair `C0 80` (modified UTF-8) so
+    /// that the NUL terminator stays unambiguous.
+    nul_entries: HashMap<u32, Box<str>>,
+}
+
+/// Encode interior NULs as `C0 80`.
+fn encode_nul(s: &str, out: &mut Vec<u8>) {
+    for &b in s.as_bytes() {
+        if b == 0 {
+            out.extend_from_slice(&[0xC0, 0x80]);
+        } else {
+            out.push(b);
+        }
+    }
+}
+
+/// Decode a wire entry; `None` when it has no encoded NUL.
+fn decode_nul(raw: &[u8]) -> Option<String> {
+    if !raw.windows(2).any(|w| w == [0xC0, 0x80]) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == 0xC0 && raw.get(i + 1) == Some(&0x80) {
+            out.push(0);
+            i += 2;
+        } else {
+            out.push(raw[i]);
+            i += 1;
+        }
+    }
+    Some(String::from_utf8(out).expect("string heap holds valid UTF-8"))
 }
 
 impl Default for StringHeap {
@@ -40,6 +74,7 @@ impl StringHeap {
         Self {
             bytes: vec![0],
             lookup: HashMap::new(),
+            nul_entries: HashMap::new(),
         }
     }
 
@@ -52,7 +87,12 @@ impl StringHeap {
             return idx;
         }
         let idx = StringIndex(self.bytes.len() as u32);
-        self.bytes.extend_from_slice(s.as_bytes());
+        if s.as_bytes().contains(&0u8) {
+            encode_nul(s, &mut self.bytes);
+            self.nul_entries.insert(idx.0, s.into());
+        } else {
+            self.bytes.extend_from_slice(s.as_bytes());
+        }
         self.bytes.push(0);
         self.lookup.insert(s.into(), idx);
         idx
@@ -60,6 +100,9 @@ impl StringHeap {
 
     /// Read back the string stored at `idx`.
     pub fn get(&self, idx: StringIndex) -> &str {
+        if let Some(text) = self.nul_entries.get(&idx.0) {
+            return text;
+        }
         let start = idx.0 as usize;
         let rest = &self.bytes[start..];
         let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
@@ -83,6 +126,7 @@ impl StringHeap {
             "string heap must start with the empty entry"
         );
         let mut lookup = HashMap::new();
+        let mut nul_entries = HashMap::new();
         let mut pos = 1usize;
         while pos < bytes.len() {
             let rest = &bytes[pos..];
@@ -90,11 +134,16 @@ impl StringHeap {
                 .iter()
                 .position(|&b| b == 0)
                 .expect("unterminated heap string");
-            let s = std::str::from_utf8(&rest[..end]).expect("string heap holds valid UTF-8");
-            lookup.insert(s.into(), StringIndex(pos as u32));
+            if let Some(decoded) = decode_nul(&rest[..end]) {
+                lookup.insert(decoded.as_str().into(), StringIndex(pos as u32));
+                nul_entries.insert(pos as u32, decoded.into_boxed_str());
+            } else {
+                let s = std::str::from_utf8(&rest[..end]).expect("string heap holds valid UTF-8");
+                lookup.insert(s.into(), StringIndex(pos as u32));
+            }
             pos += end + 1;
         }
-        Self { bytes, lookup }
+        Self { bytes, lookup, nul_entries }
     }
 }
 

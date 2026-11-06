@@ -81,7 +81,7 @@ impl Heap {
             self.array_set(array, index, value);
         }
         self.ensure_dynamic_entry(array);
-        let utf16_index = input[..start_byte.min(input.len())].encode_utf16().count();
+        let utf16_index = zun_core::wtf16::len16(&input[..start_byte.min(input.len())]);
         self.dynamic_set(array, "index".to_owned(), zun_core::Any::float(utf16_index as f64));
         let input_any = zun_core::Any::string(self.intern_string(input.into()));
         self.dynamic_set(array, "input".to_owned(), input_any);

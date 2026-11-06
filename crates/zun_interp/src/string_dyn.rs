@@ -11,11 +11,11 @@ use super::value::Value;
 use super::{Interp, RunError};
 
 fn units(text: &str) -> Vec<u16> {
-    text.encode_utf16().collect()
+    zun_core::wtf16::encode(text).collect()
 }
 
 fn from_units(units: &[u16]) -> String {
-    String::from_utf16_lossy(units)
+    zun_core::wtf16::from_units(units)
 }
 
 /// ToIntegerOrInfinity on an already-numeric value (`-0` folds to `+0`).

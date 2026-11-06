@@ -741,9 +741,8 @@ impl<'a> Interp<'a> {
                     _ => -1,
                 };
                 let mut pieces: Vec<String> = if separator.is_empty() {
-                    value
-                        .encode_utf16()
-                        .map(|unit| String::from_utf16_lossy(&[unit]))
+                    zun_core::wtf16::encode(&value)
+                        .map(|unit| zun_core::wtf16::from_units(&[unit]))
                         .collect()
                 } else {
                     value.split(separator.as_ref()).map(str::to_string).collect()
@@ -2659,7 +2658,7 @@ impl<'a> Interp<'a> {
                             None => to_any(Value::Void),
                         })
                         .collect();
-                    let offset = input[..start].encode_utf16().count();
+                    let offset = zun_core::wtf16::len16(&input[..start]);
                     call_args.push(to_any(Value::Float(offset as f64, zun_il::NumKind::F64)));
                     call_args.push(to_any(Value::Str(input.clone())));
                     let produced = self.invoke_callback(callback, call_args)?;
@@ -3833,9 +3832,8 @@ impl<'a> Interp<'a> {
                         }
                         (3, Value::Str(separator)) => {
                             let pieces: Vec<String> = if separator.is_empty() {
-                                receiver
-                                    .encode_utf16()
-                                    .map(|unit| String::from_utf16_lossy(&[unit]))
+                                zun_core::wtf16::encode(&receiver)
+                                    .map(|unit| zun_core::wtf16::from_units(&[unit]))
                                     .collect()
                             } else {
                                 receiver.split(separator.as_ref()).map(str::to_string).collect()
@@ -5949,7 +5947,7 @@ impl<'a> Interp<'a> {
                     Value::Object(obj) => obj,
                     other => {
                         let count = match &other {
-                            Value::Str(text) => text.chars().count(),
+                            Value::Str(text) => zun_core::wtf16::len16(&text),
                             _ => 0,
                         };
                         let array = zun_gc::with_current_heap_mut(|heap| {
@@ -6014,7 +6012,7 @@ impl<'a> Interp<'a> {
                 // primitives have no own properties, null/undefined throw.
                 match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
                     Value::Str(text) => {
-                        let count = text.chars().count();
+                        let count = zun_core::wtf16::len16(&text);
                         let array = zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(count);
                             for index in 0..count {

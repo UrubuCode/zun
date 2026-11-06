@@ -761,7 +761,7 @@ impl Interp<'_> {
                         match &concrete {
                             Value::Str(text) => {
                                 stack.push(Value::Float(
-                                    text.chars().count() as f64,
+                                    zun_core::wtf16::len16(&text) as f64,
                                     zun_il::NumKind::F64,
                                 ));
                                 continue;
@@ -1181,19 +1181,19 @@ impl Interp<'_> {
                                 Value::Int(..) | Value::Float(..) => {
                                     let at = match &key { Value::Int(n, _) => *n as f64, other => other.as_number() };
                                     if at >= 0.0 && at.fract() == 0.0 {
-                                        text.chars().nth(at as usize).map(|c| Value::Str(c.to_string().into()))
+                                        zun_core::wtf16::encode(&text).nth(at as usize).map(|u| Value::Str(zun_core::wtf16::from_units(&[u]).into()))
                                     } else {
                                         None
                                     }
                                 }
                                 Value::Str(name) if &**name == "length" => {
-                                    Some(Value::Float(text.chars().count() as f64, zun_il::NumKind::F64))
+                                    Some(Value::Float(zun_core::wtf16::len16(&text) as f64, zun_il::NumKind::F64))
                                 }
                                 Value::Str(name) => name
                                     .parse::<usize>()
                                     .ok()
-                                    .and_then(|at| text.chars().nth(at))
-                                    .map(|c| Value::Str(c.to_string().into())),
+                                    .and_then(|at| zun_core::wtf16::encode(&text).nth(at))
+                                    .map(|u| Value::Str(zun_core::wtf16::from_units(&[u]).into())),
                                 _ => None,
                             };
                             stack.push(answer.unwrap_or(Value::Void));

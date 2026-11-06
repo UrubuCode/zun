@@ -130,9 +130,7 @@ fn convert_binding_key(source: &str, property: &oxc_ast::ast::BindingProperty<'_
             Ok(crate::ast::PropertyKey::Ident(Name { span: span(identifier.span) }))
         }
         PropertyKey::StringLiteral(string) => {
-            let Some(value) = string.value.as_str() else {
-                return Err("OXC adapter cannot represent non-UTF-8 string keys".into());
-            };
+            let value = js_str_to_string(string.value);
             Ok(crate::ast::PropertyKey::String { value: value.to_owned(), span: span(string.span) })
         }
         PropertyKey::NumericLiteral(number) => {
@@ -1323,6 +1321,23 @@ fn convert_try_statement(
     })
 }
 
+/// Convert a JS string literal to a Rust `String`. Lone surrogates (which Rust
+/// strings cannot hold) are mapped to the plane-16 private-use block
+/// `U+10F800 + (unit - 0xD800)`; the runtime maps them back when it needs the
+/// UTF-16 view of a string.
+fn js_str_to_string(value: oxc_str::JSStr<'_>) -> String {
+    if let Some(text) = value.as_str() {
+        return text.to_owned();
+    }
+    value
+        .chars()
+        .map(|c| match c.to_char() {
+            Some(ch) => ch,
+            None => char::from_u32(0x10F800 + (c.to_u32() - 0xD800)).unwrap(),
+        })
+        .collect()
+}
+
 fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     match expression {
@@ -1335,9 +1350,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
             span: span(bigint.span),
         }),
         Expression::StringLiteral(string) => {
-            let Some(value) = string.value.as_str() else {
-                return Err("OXC adapter cannot represent non-UTF-8 string literals".into());
-            };
+            let value = js_str_to_string(string.value);
             Ok(Expr::String {
                 value: value.to_owned(),
                 span: span(string.span),
@@ -2387,11 +2400,7 @@ fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr,
                             })
                         }
                         PropertyKey::StringLiteral(string) => {
-                            let Some(value) = string.value.as_str() else {
-                                return Err(
-                                    "OXC adapter cannot represent non-UTF-8 string keys".into(),
-                                );
-                            };
+                            let value = js_str_to_string(string.value);
                             crate::ast::PropertyKey::String {
                                 value: value.to_owned(),
                                 span: span(string.span),
@@ -5399,9 +5408,7 @@ fn lower_assignment_target(
                                     crate::ast::PropertyKey::Ident(Name { span: span(identifier.span) })
                                 }
                                 PropertyKey::StringLiteral(string) => {
-                                    let Some(value) = string.value.as_str() else {
-                                        return Err("OXC adapter cannot represent non-UTF-8 string keys".into());
-                                    };
+                                    let value = js_str_to_string(string.value);
                                     crate::ast::PropertyKey::String { value: value.to_owned(), span: span(string.span) }
                                 }
                                 PropertyKey::NumericLiteral(number) => {

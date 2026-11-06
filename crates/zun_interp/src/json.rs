@@ -46,7 +46,10 @@ fn quote(text: &str) -> String {
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
+            c => match zun_core::wtf16::lone_unit(c) {
+                Some(unit) => out.push_str(&format!("\\u{:04x}", unit)),
+                None => out.push(c),
+            },
         }
     }
     out.push('"');
@@ -108,6 +111,18 @@ impl Interp<'_> {
             }
             _ => {}
         }
+        // A Number/String wrapper object as `space` counts as its primitive.
+        let space_arg = match as_obj(&space_arg) {
+            Some(obj) if matches!(self.json_class_name(obj).as_str(), "NumberObject" | "StringObject") => {
+                match self.instance_member_get(obj, "value")? {
+                    Some(Value::Any(any)) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                        .unwrap_or(Value::Void),
+                    Some(other) => other,
+                    None => space_arg,
+                }
+            }
+            _ => space_arg,
+        };
         let gap = match &space_arg {
             Value::Int(n, _) => " ".repeat((*n).clamp(0, 10) as usize),
             Value::Float(f, _) => " ".repeat(if f.is_nan() { 0 } else { f.clamp(0.0, 10.0) as usize }),
