@@ -2348,7 +2348,10 @@ mod tests {
         );
         let method = &module.tables.method_defs[0];
         let body = read_body(&module.code, method.body_offset).unwrap();
-        assert_eq!(body.handlers.len(), 2);
+        // One catch region, plus a finally region guarding the try body and another
+        // guarding the catch handler (a throw inside `catch` still runs `finally`).
+        assert_eq!(body.handlers.len(), 3, "{:?}", body.handlers);
+        assert_eq!(body.handlers.iter().filter(|h| h.kind == HandlerKind::Finally).count(), 2);
         assert!(body.handlers.iter().any(|h| h.kind == HandlerKind::Catch));
         assert!(body.handlers.iter().any(|h| h.kind == HandlerKind::Finally));
     }
