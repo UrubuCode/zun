@@ -5006,6 +5006,30 @@ impl Checker<'_> {
         }
     }
 
+    /// `new Array(...)` / `Array(...)` whose argument list is not a single
+    /// statically-integer length (several arguments, a spread, or a non-integer
+    /// single value): lowered to the prelude `__zunArrayCtor(argsArray)`.
+    fn array_ctor_dynamic(&mut self, cx: &mut FunctionCx, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
+        let func = *self.by_name.get("__zunArrayCtor")?;
+        let single_plain = args.len() == 1 && !matches!(args[0], ast::Expr::Spread { .. });
+        if single_plain {
+            let mut probe = self.check_expr(cx, &args[0]);
+            coerce_numeric_literal(&mut probe, Ty::INT);
+            if probe.ty.is_int() || probe.ty.is_error() {
+                return None;
+            }
+        }
+        let elements = args
+            .iter()
+            .map(|arg| match arg {
+                ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                other => ast::ArrayElement::Expr(other.clone()),
+            })
+            .collect();
+        let list = self.check_expr(cx, &ast::Expr::ArrayLiteral { elements, span });
+        Some(hir::Expr { kind: hir::ExprKind::Call { func, args: vec![list] }, ty: Ty::Array, span })
+    }
+
     /// Whether an argument is a `function (this: T, ...)` expression that
     /// declares the hidden receiver parameter.
     fn ast_function_takes_this(&self, expr: &ast::Expr) -> bool {
@@ -12665,9 +12689,8 @@ impl Checker<'_> {
                             };
                         }
                         CtorLowering::ArrayNew => {
-                            if args.len() != 1 {
-                                self.error(span, "`Array` expects one length argument");
-                                return self.poison(span);
+                            if let Some(call) = self.array_ctor_dynamic(cx, args, span) {
+                                return call;
                             }
                             let mut length = self.check_expr(cx, &args[0]);
                             coerce_numeric_literal(&mut length, Ty::INT);
@@ -13147,9 +13170,8 @@ impl Checker<'_> {
                     };
                 }
                 if name == "Array" || name == "array" {
-                    if args.len() != 1 {
-                        self.error(span, "`Array` expects one length argument");
-                        return self.poison(span);
+                    if let Some(call) = self.array_ctor_dynamic(cx, args, span) {
+                        return call;
                     }
                     let mut length = self.check_expr(cx, &args[0]);
                     coerce_numeric_literal(&mut length, Ty::INT);

@@ -332,6 +332,22 @@ function __zunErrorProtoToString(value: any): string {
     return name + ": " + message;
 }
 
+// `new Array(...args)` / `Array(...args)` with a runtime argument list: a single
+// number is a length (RangeError unless a valid array length); anything else
+// is the element list.
+function __zunArrayCtor(args: any[]): any[] {
+    if (args.length === 1 && typeof args[0] === "number") {
+        const length: number = args[0];
+        if (length < 0 || length !== Math.floor(length) || length > 4294967295) {
+            throw new RangeError("Invalid array length");
+        }
+        const out: any[] = [];
+        out.length = length;
+        return out;
+    }
+    return args.slice();
+}
+
 // `"".concat(...args)` / `String.prototype.concat.apply(s, args)`: each argument
 // goes through ToString (a Symbol throws) and is appended left to right.
 function __zunStringConcatArgs(base: string, args: any[]): string {
