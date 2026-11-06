@@ -6545,6 +6545,45 @@ impl Checker<'_> {
                     }
                     _ => hir::ObjectKey::Named(named_key.expect("named key")),
                 };
+                // A data property that replaces an accessor installed earlier in the
+                // same literal, or a string computed key (which never sets the
+                // prototype, even for `["__proto__"]`), is a definition: route it
+                // through `objectDefineProperty` instead of an assignment.
+                let define = self.resolve_collection(span, "objectDefineProperty");
+                let replaces_accessor = match (&key, define) {
+                    (hir::ObjectKey::Named(name), Some(define_id)) => entries.iter().any(|entry| {
+                        matches!(entry, hir::ObjectEntry::Install { builtin, args }
+                            if *builtin == define_id
+                                && matches!(args.first(), Some(hir::Expr { kind: hir::ExprKind::String(existing), .. }) if existing == name))
+                    }),
+                    _ => false,
+                };
+                let computed_string = matches!(&key, hir::ObjectKey::Computed(k) if k.ty == Ty::String);
+                if let (true, Some(define_id)) = (replaces_accessor || computed_string, define) {
+                    let key_expr = match key {
+                        hir::ObjectKey::Named(name) => Self::string_literal(name, span),
+                        hir::ObjectKey::Computed(k) => k,
+                    };
+                    {
+                        let descriptor = hir::Expr {
+                            kind: hir::ExprKind::DynamicObjectLiteral {
+                                entries: vec![
+                                    hir::ObjectEntry::Data {
+                                        key: hir::ObjectKey::Named("value".to_string()),
+                                        value,
+                                    },
+                                    decorator_context_entry("writable", hir::ExprKind::Boolean(true), Ty::Boolean, span),
+                                    decorator_context_entry("enumerable", hir::ExprKind::Boolean(true), Ty::Boolean, span),
+                                    decorator_context_entry("configurable", hir::ExprKind::Boolean(true), Ty::Boolean, span),
+                                ],
+                            },
+                            ty: Ty::DynamicObject,
+                            span,
+                        };
+                        entries.push(hir::ObjectEntry::Install { builtin: define_id, args: vec![key_expr, descriptor] });
+                        return;
+                    }
+                }
                 entries.push(hir::ObjectEntry::Data { key, value });
             }
             ast::PropertyKind::Method => {

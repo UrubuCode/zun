@@ -4713,6 +4713,7 @@ impl<'a> Interp<'a> {
                         let length = heap.array_len(src).unwrap_or(0);
                         for index in 0..length {
                             let Some(element) = heap.array_get(src, index) else { continue };
+                            if element.is_hole() { continue; }
                             let child = (depth > 0)
                                 .then(|| element.as_object())
                                 .flatten()
@@ -5264,9 +5265,10 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 let forward = name == "arrayReduceNoInit";
                 if length == 0 {
-                    return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                        "Reduce of empty array with no initial value",
-                    ))));
+                    return match self.new_error_object("TypeError", "Reduce of empty array with no initial value") {
+                        Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                        None => Err(RunError::BadToken),
+                    };
                 }
                 // Seed from the first (forward) or last (reverse) present element;
                 // holes are skipped, and an all-hole array has no seed.
@@ -5276,9 +5278,10 @@ impl<'a> Interp<'a> {
                         .is_some_and(|any| !any.is_hole())
                 });
                 let Some(seed_step) = seed_step else {
-                    return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                        "Reduce of empty array with no initial value",
-                    ))));
+                    return match self.new_error_object("TypeError", "Reduce of empty array with no initial value") {
+                        Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                        None => Err(RunError::BadToken),
+                    };
                 };
                 let seed_index = if forward { seed_step } else { length - 1 - seed_step };
                 let accumulator = zun_gc::with_current_heap_mut(|heap| {
@@ -7252,6 +7255,13 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(same_value(&left, &right)))
             }
             "objectHasOwn" => {
+                // A function value owns `name` and `length`; `prototype` is only
+                // modelled for constructible functions, which are not tracked here.
+                if let Ok(Value::Function(_)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
+                        return Ok(Value::Bool(matches!(key.as_ref(), "name" | "length")));
+                    }
+                }
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
                     Value::Str(key) => key.to_string(),
@@ -7270,7 +7280,9 @@ impl<'a> Interp<'a> {
                 };
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let has = if is_dynamic {
-                    zun_gc::with_current_heap(|heap| heap.dynamic_has(obj, &key))
+                    zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_has(obj, &key) || heap.dynamic_get_function(obj, &key).is_some()
+                    })
                 } else {
                     self.object_own_entries(obj)?.iter().any(|(name, _)| name == &key)
                 };
@@ -9539,9 +9551,10 @@ impl<'a> Interp<'a> {
             (args.get(2).ok_or(RunError::BadToken)?.clone(), 0usize)
         } else {
             if length == 0 {
-                return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
-                    "Reduce of empty array with no initial value",
-                ))));
+                return match self.new_error_object("TypeError", "Reduce of empty array with no initial value") {
+                        Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                        None => Err(RunError::BadToken),
+                    };
             }
             let seed = crate::typed_arrays::read_element(view, at(0)).ok_or(RunError::BadToken)?;
             (seed, 1usize)

@@ -2046,7 +2046,6 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                             let (id, _) = zun_natives::resolve("collections", "arrayPushHole")
                                 .expect("arrayPushHole intrinsic");
                             self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32)));
-                            self.emit(Instruction::simple(Opcode::Pop));
                         }
                         hir::ArrayPart::Spread { builtin, source } => {
                             self.expr(source);
