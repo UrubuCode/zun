@@ -90,7 +90,25 @@ impl FunctionHandle {
             None
         }
     }
+
+    /// A built-in method value with no code of its own (`RegExp.prototype[Symbol.replace]`
+    /// and friends); `kind` is the built-in's selector.
+    pub const fn new_builtin_method(kind: u32) -> Self {
+        Self { method_rid: 0, reserved: BUILTIN_METHOD_BASE + kind, environment: 0 }
+    }
+
+    /// The built-in selector when this handle is a built-in method value.
+    pub const fn builtin_method(self) -> Option<u32> {
+        if self.reserved >= BUILTIN_METHOD_BASE {
+            Some(self.reserved - BUILTIN_METHOD_BASE)
+        } else {
+            None
+        }
+    }
 }
+
+/// `reserved` base marking a built-in method value (identity only).
+const BUILTIN_METHOD_BASE: u32 = 1 << 16;
 
 #[cfg(test)]
 mod tests {

@@ -85,6 +85,8 @@ pub struct MatchFull {
     pub end16: usize,
     /// The whole match followed by the capture groups.
     pub groups: Vec<Option<String>>,
+    /// UTF-16 `[start, end)` of the whole match and each capture group.
+    pub group_spans16: Vec<Option<(usize, usize)>>,
 }
 
 /// UTF-8 byte offset of UTF-16 index `index` (clamped to the end; an index
@@ -518,6 +520,14 @@ impl RegexValue {
                     start16: crate::wtf16::len16(&input[..whole.start()]),
                     end16: crate::wtf16::len16(&input[..whole.end()]),
                     groups: captures.iter().map(|group| group.map(|m| m.as_str().to_owned())).collect(),
+                    group_spans16: captures
+                        .iter()
+                        .map(|group| {
+                            group.map(|m| {
+                                (crate::wtf16::len16(&input[..m.start()]), crate::wtf16::len16(&input[..m.end()]))
+                            })
+                        })
+                        .collect(),
                 }))
             }
             Engine::Backtrack(re) => {
@@ -557,6 +567,9 @@ impl RegexValue {
                         start16: units_before(start),
                         end16: units_before(end),
                         groups: (0..m.len()).map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b))).collect(),
+                        group_spans16: (0..m.len())
+                            .map(|i| m.group(i).map(|(a, b)| (units_before(a), units_before(b))))
+                            .collect(),
                     }
                 }))
             }

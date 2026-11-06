@@ -710,7 +710,10 @@ impl Interp<'_> {
                     // object are callable method values.
                     if matches!(name.as_str(), "next" | "return" | "throw") {
                         if let Value::Object(obj) = &concrete {
-                            if zun_gc::with_current_heap(|heap| heap.generator_state(*obj).is_some()) {
+                            if zun_gc::with_current_heap(|heap| {
+                                heap.generator_state(*obj).is_some()
+                                    || (name == "next" && heap.array_iterator_done(*obj).is_some())
+                            }) {
                                 let kind = match name.as_str() { "next" => 0, "return" => 1, _ => 2 };
                                 stack.push(Value::Function(zun_core::FunctionHandle::new_generator_method(
                                     kind,
@@ -1261,7 +1264,10 @@ impl Interp<'_> {
                     // is a callable method value, like the static-name read.
                     if let Value::Str(name) = &key {
                         if matches!(&**name, "next" | "return" | "throw")
-                            && zun_gc::with_current_heap(|heap| heap.generator_state(object).is_some())
+                            && zun_gc::with_current_heap(|heap| {
+                                heap.generator_state(object).is_some()
+                                    || (&**name == "next" && heap.array_iterator_done(object).is_some())
+                            })
                         {
                             let kind = match &**name { "next" => 0, "return" => 1, _ => 2 };
                             stack.push(Value::Function(zun_core::FunctionHandle::new_generator_method(

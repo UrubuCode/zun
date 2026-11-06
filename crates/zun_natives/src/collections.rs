@@ -332,7 +332,7 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "templateObject", params: &[Array, Array, I32, Str], ret: Array, imp: unavailable },
         NativeFn { name: "objectGroupBy", params: &[Array, Function], ret: DynamicObject, imp: unavailable },
         NativeFn { name: "objectIs", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
-        NativeFn { name: "objectHasOwn", params: &[Opaque, Str], ret: Bool, imp: unavailable },
+        NativeFn { name: "objectHasOwn", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         NativeFn { name: "objectIsPrototypeOf", params: &[Opaque, Opaque], ret: Bool, imp: unavailable },
         // `Function.prototype.apply`/`bind` reflective invokers. They re-enter
         // the interpreter (variadic over a managed Array of arguments), so the
@@ -638,6 +638,8 @@ pub const MODULE: crate::Module = crate::Module {
         NativeFn { name: "syncIterOpen", params: &[Opaque], ret: Opaque, imp: unavailable },
         // `replaceAll(regex, ...)` guard: TypeError unless the regex carries `g`; returns the regex.
         NativeFn { name: "regexpReplaceAllGuard", params: &[RegExp], ret: RegExp, imp: unavailable },
+        // `RegExp.prototype` as a value: the shared prototype singleton.
+        NativeFn { name: "regexpPrototype", params: &[], ret: Opaque, imp: unavailable },
     ],
 };
 

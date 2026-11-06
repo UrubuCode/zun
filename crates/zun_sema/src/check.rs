@@ -2007,6 +2007,26 @@ impl Checker<'_> {
 
     /// Recognize a computed class-member key that is a well-known Symbol
     /// (`Symbol.hasInstance`, `Symbol.iterator`, …).
+    /// `re[Symbol.replace|match|matchAll|split|search](str, ...)` on a RegExp
+    /// value (a literal, or any expression statically typed `RegExp`).
+    fn is_regex_symbol_call(&mut self, cx: &mut FunctionCx, callee: &ast::Expr, args: &[ast::Expr]) -> bool {
+        let (ast::Expr::Index { object, index, .. }, Some(first)) = (callee, args.first()) else { return false };
+        if matches!(first, ast::Expr::Spread { .. }) {
+            return false;
+        }
+        if !matches!(
+            self.well_known_symbol_of_key(index),
+            Some(zun_core::WellKnownSymbol::Split)
+                | Some(zun_core::WellKnownSymbol::Replace)
+                | Some(zun_core::WellKnownSymbol::Match)
+                | Some(zun_core::WellKnownSymbol::Search)
+                | Some(zun_core::WellKnownSymbol::MatchAll)
+        ) {
+            return false;
+        }
+        matches!(object.as_ref(), ast::Expr::RegexLiteral { .. }) || self.check_expr(cx, object).ty == Ty::RegExp
+    }
+
     fn well_known_symbol_of_key(&self, key: &ast::Expr) -> Option<zun_core::WellKnownSymbol> {
         let (object, field) = match key {
             ast::Expr::Field { object, field, .. } => {
@@ -13296,6 +13316,21 @@ impl Checker<'_> {
                             };
                         }
                     }
+                    // `RegExp.prototype` as a value: the shared prototype singleton
+                    // that owns the built-in `@@match`/`@@replace`/... methods.
+                    if self.text(class_name) == "RegExp"
+                        && fname == "prototype"
+                        && !self.classes_by_name.contains_key("RegExp")
+                        && cx.lookup("RegExp").is_none()
+                    {
+                        if let Some((id, _)) = zun_natives::resolve("collections", "regexpPrototype") {
+                            return hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                                ty: Ty::Any,
+                                span,
+                            };
+                        }
+                    }
                     if self.text(class_name) == "Math" && !self.classes_by_name.contains_key("Math") {
                         let constant = match fname.as_str() {
                             "PI" => Some(std::f64::consts::PI),
@@ -14165,6 +14200,19 @@ impl Checker<'_> {
                 }
                 let ast_object = object.clone();
                 let object = self.check_expr(cx, object);
+                // `re[Symbol.replace]` and friends read the shared RegExp.prototype slot.
+                let object = if object.ty == Ty::RegExp && self.well_known_symbol_of_key(index).is_some() {
+                    match zun_natives::resolve("collections", "regexpPrototype") {
+                        Some((id, _)) => hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                            ty: Ty::Any,
+                            span,
+                        },
+                        None => object,
+                    }
+                } else {
+                    object
+                };
                 // `str[i]`: the one-character string at `i` (a negative index is out of
                 // range, unlike `at`), or `undefined` past the end.
                 if object.ty == Ty::String {
@@ -14636,19 +14684,7 @@ impl Checker<'_> {
                 }
                 self.check_closure_expr(cx, function, span)
             }
-            ast::Expr::ComputedCall { callee, args, span: call_span } if matches!(
-                (callee.as_ref(), args.first()),
-                (ast::Expr::Index { object, index, .. }, Some(first))
-                    if matches!(object.as_ref(), ast::Expr::RegexLiteral { .. })
-                        && !matches!(first, ast::Expr::Spread { .. })
-                        && matches!(
-                            self.well_known_symbol_of_key(index),
-                            Some(zun_core::WellKnownSymbol::Split)
-                                | Some(zun_core::WellKnownSymbol::Replace)
-                                | Some(zun_core::WellKnownSymbol::Match)
-                                | Some(zun_core::WellKnownSymbol::Search)
-                        )
-            ) =>
+            ast::Expr::ComputedCall { callee, args, span: call_span } if self.is_regex_symbol_call(cx, callee, args) =>
             {
                 // `/re/[Symbol.split](str, ...rest)` is `str.split(/re/, ...rest)`.
                 let ast::Expr::Index { object, index, .. } = callee.as_ref() else { unreachable!() };
@@ -14657,6 +14693,24 @@ impl Checker<'_> {
                     ast::Expr::StaticField { field, .. } => *field,
                     _ => unreachable!(),
                 };
+                // A non-string subject is coerced with ToString first.
+                let subject = self.check_expr(cx, &args[0]);
+                let direct_match_all =
+                    matches!(self.well_known_symbol_of_key(index), Some(zun_core::WellKnownSymbol::MatchAll));
+                if (subject.ty != Ty::String && !subject.ty.is_error()) || direct_match_all {
+                    let kind = match self.well_known_symbol_of_key(index) {
+                        Some(zun_core::WellKnownSymbol::Match) => 0.0,
+                        Some(zun_core::WellKnownSymbol::Replace) => 1.0,
+                        Some(zun_core::WellKnownSymbol::Search) => 2.0,
+                        Some(zun_core::WellKnownSymbol::Split) => 3.0,
+                        _ => 6.0,
+                    };
+                    let subject = self.to_string_for_parse(subject);
+                    let regex = self.check_expr(cx, object);
+                    let regex = Self::box_to_any(regex);
+                    let extra = args.get(1).map(|arg| self.check_expr(cx, arg));
+                    return self.string_symbol_dispatch(*call_span, kind, subject, regex, extra);
+                }
                 let mut rest = vec![(**object).clone()];
                 rest.extend(args.iter().skip(1).cloned());
                 let call = ast::Expr::MethodCall {

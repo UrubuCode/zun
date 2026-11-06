@@ -141,6 +141,7 @@ impl Desc {
 }
 
 const OBJECT_PROTOTYPE_KEY: &str = "$Object.prototype";
+const REGEXP_PROTOTYPE_KEY: &str = "$RegExp.prototype";
 
 impl Interp<'_> {
     /// The realm's shared `Object.prototype` object: created on first use and
@@ -156,6 +157,40 @@ impl Interp<'_> {
             let any = zun_core::Any::object(root.addr() as usize);
             heap.dynamic_define(global, OBJECT_PROTOTYPE_KEY, any, false);
             root
+        })
+    }
+
+    /// The realm's shared `RegExp.prototype`: a dynamic object linked to
+    /// `Object.prototype` that owns the built-in symbol methods
+    /// (`@@match`, `@@matchAll`, `@@replace`, `@@search`, `@@split`).
+    pub(crate) fn regexp_prototype_singleton() -> zun_gc::Obj {
+        let root = Self::object_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap.dynamic_get(global, REGEXP_PROTOTYPE_KEY).and_then(|a| a.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
+            for (kind, symbol) in [
+                zun_core::WellKnownSymbol::Match,
+                zun_core::WellKnownSymbol::MatchAll,
+                zun_core::WellKnownSymbol::Replace,
+                zun_core::WellKnownSymbol::Search,
+                zun_core::WellKnownSymbol::Split,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                heap.dynamic_set_symbol_function(
+                    proto,
+                    symbol.id(),
+                    zun_core::FunctionHandle::new_builtin_method(kind as u32),
+                );
+            }
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, REGEXP_PROTOTYPE_KEY, any, false);
+            proto
         })
     }
 

@@ -510,7 +510,7 @@ impl<'a> Interp<'a> {
             1 | 5 => zun_core::WellKnownSymbol::Replace,
             2 => zun_core::WellKnownSymbol::Search,
             3 => zun_core::WellKnownSymbol::Split,
-            4 => zun_core::WellKnownSymbol::MatchAll,
+            4 | 6 => zun_core::WellKnownSymbol::MatchAll,
             _ => return Err(RunError::BadToken),
         };
         let regex_obj = match &arg {
@@ -553,7 +553,7 @@ impl<'a> Interp<'a> {
             self.invoke_function_value(handle, call_args)?
         } else {
             match kind {
-                0 | 2 | 4 => {
+                0 | 2 | 4 | 6 => {
                     let regex = match regex_obj {
                         Some(regex) => regex,
                         None => {
@@ -679,6 +679,7 @@ impl<'a> Interp<'a> {
             )
         });
         let unicode = flags.contains('u') || flags.contains('v');
+        let global = flags.contains('g');
         let input_units: Vec<u16> = units(input);
         let clone = zun_gc::with_current_heap_mut(|heap| {
             let clone = heap.alloc_regex_with_flags(source, flags)?;
@@ -709,13 +710,20 @@ impl<'a> Interp<'a> {
                 });
             }
             matches.push(array);
+            if !global {
+                break;
+            }
         }
         let iterator = zun_gc::with_current_heap_mut(|heap| {
             let outer = heap.alloc_array(matches.len());
             for (index, array) in matches.iter().enumerate() {
                 heap.array_set(outer, index, zun_core::Any::object(array.addr() as usize));
             }
-            heap.alloc_array_iterator(outer)
+            let iterator = heap.alloc_array_iterator(outer)?;
+            heap.ensure_dynamic_entry(iterator);
+            let tag = zun_core::Any::string(heap.intern_string("RegExp String Iterator".into()));
+            heap.dynamic_set_symbol(iterator, zun_core::WellKnownSymbol::ToStringTag.id(), tag);
+            Some(iterator)
         })
         .ok_or(RunError::BadToken)?;
         Ok(Value::Object(iterator))

@@ -35,17 +35,18 @@ impl Heap {
         input: &str,
     ) -> Option<Result<Obj, zun_core::RegexError>> {
         let names = self.regexes.get(&(object.addr() as usize))?.group_names();
+        let has_indices = self.regexes.get(&(object.addr() as usize))?.flags().contains('d');
         let spans = match self
             .regexes
             .get(&(object.addr() as usize))
-            .map(|regex| regex.match_spans16(input, true))?
+            .map(|regex| regex.match_all_full(input, true))?
         {
             Ok(spans) => spans,
             Err(error) => return Some(Err(error)),
         };
         let outer = self.alloc_array(spans.len());
-        for (index, (start, _end, groups)) in spans.into_iter().enumerate() {
-            let inner = self.alloc_match_array(input, start, groups, &names);
+        for (index, found) in spans.into_iter().enumerate() {
+            let inner = self.alloc_match_array(input, found.start16, found.groups, &names, has_indices.then_some(&found.group_spans16[..]));
             self.array_set(outer, index, zun_core::Any::object(inner.addr() as usize));
         }
         Some(Ok(outer))
@@ -59,6 +60,7 @@ impl Heap {
         start16: usize,
         groups: Vec<Option<String>>,
         names: &[Option<String>],
+        spans: Option<&[Option<(usize, usize)>]>,
     ) -> Obj {
         let array = self.alloc_array(groups.len());
         let mut named: Vec<(String, zun_core::Any)> = Vec::new();
@@ -87,6 +89,40 @@ impl Heap {
             zun_core::Any::object(object.addr() as usize)
         };
         self.dynamic_set(array, "groups".to_owned(), groups_any);
+        if let Some(spans) = spans {
+            // The `d` flag: `indices` holds `[start, end]` per group (and a
+            // null-prototype `groups` object keyed by group name).
+            let indices = self.alloc_array(spans.len());
+            let mut named_spans: Vec<(String, zun_core::Any)> = Vec::new();
+            for (index, span) in spans.iter().enumerate() {
+                let value = match span {
+                    Some((start, end)) => {
+                        let pair = self.alloc_array(2);
+                        self.array_set(pair, 0, zun_core::Any::float(*start as f64));
+                        self.array_set(pair, 1, zun_core::Any::float(*end as f64));
+                        zun_core::Any::object(pair.addr() as usize)
+                    }
+                    None => zun_core::Any::void(),
+                };
+                if let Some(Some(name)) = names.get(index) {
+                    named_spans.push((name.clone(), value));
+                }
+                self.array_set(indices, index, value);
+            }
+            self.ensure_dynamic_entry(indices);
+            let indices_groups = if named_spans.is_empty() {
+                zun_core::Any::void()
+            } else {
+                let object = self.alloc_dynamic();
+                self.dynamic_set_prototype(object, Some(zun_core::Any::null()));
+                for (name, value) in named_spans {
+                    self.dynamic_set(object, name, value);
+                }
+                zun_core::Any::object(object.addr() as usize)
+            };
+            self.dynamic_set(indices, "groups".to_owned(), indices_groups);
+            self.dynamic_set(array, "indices".to_owned(), zun_core::Any::object(indices.addr() as usize));
+        }
         array
     }
 
@@ -110,11 +146,11 @@ impl Heap {
     /// updates `lastIndex` for `g` / `y` regexes. Returns the match as
     /// (byte start, groups, group names).
     #[allow(clippy::type_complexity)]
-    fn regex_builtin_exec(
+    pub fn regex_builtin_exec(
         &mut self,
         object: Obj,
         input: &str,
-    ) -> Option<Result<Option<(usize, Vec<Option<String>>, Vec<Option<String>>)>, zun_core::RegexError>> {
+    ) -> Option<Result<Option<(zun_core::MatchFull, Vec<Option<String>>)>, zun_core::RegexError>> {
         let regex = self.regexes.get_mut(&(object.addr() as usize))?;
         let flags = regex.flags();
         let global = flags.contains('g');
@@ -145,7 +181,7 @@ impl Heap {
                 if stateful {
                     regex.set_last_index(found.end16 as f64);
                 }
-                Some(Ok(Some((found.start16, found.groups, names))))
+                Some(Ok(Some((found, names))))
             }
         }
     }
@@ -165,8 +201,15 @@ impl Heap {
         object: Obj,
         input: &str,
     ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
+        let has_indices = self.regexes.get(&(object.addr() as usize))?.flags().contains('d');
         match self.regex_builtin_exec(object, input)? {
-            Ok(Some((start, groups, names))) => Some(Ok(Some(self.alloc_match_array(input, start, groups, &names)))),
+            Ok(Some((found, names))) => Some(Ok(Some(self.alloc_match_array(
+                input,
+                found.start16,
+                found.groups,
+                &names,
+                has_indices.then_some(&found.group_spans16[..]),
+            )))),
             Ok(None) => Some(Ok(None)),
             Err(error) => Some(Err(error)),
         }
@@ -313,17 +356,23 @@ impl Heap {
         object: Obj,
         input: &str,
     ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
-        let (spans, names) = {
+        let (spans, names, has_indices) = {
             let regex = self.regexes.get(&(object.addr() as usize))?;
-            match regex.match_spans16(input, false) {
-                Ok(spans) => (spans, regex.group_names()),
+            match regex.match_all_full(input, false) {
+                Ok(spans) => (spans, regex.group_names(), regex.flags().contains('d')),
                 Err(error) => return Some(Err(error)),
             }
         };
-        let Some((start, _end, groups)) = spans.into_iter().next() else {
+        let Some(found) = spans.into_iter().next() else {
             return Some(Ok(None));
         };
-        Some(Ok(Some(self.alloc_match_array(input, start, groups, &names))))
+        Some(Ok(Some(self.alloc_match_array(
+            input,
+            found.start16,
+            found.groups,
+            &names,
+            has_indices.then_some(&found.group_spans16[..]),
+        ))))
     }
 }
 

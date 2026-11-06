@@ -1930,7 +1930,10 @@ impl<'a> Interp<'a> {
                 })
                 .ok_or(RunError::BadToken)?;
                 let found = if global {
-                    zun_gc::with_current_heap_mut(|heap| heap.regex_match_global(object, &input))
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.regex_set_last_index(object, 0.0);
+                        heap.regex_match_global(object, &input)
+                    })
                 } else {
                     zun_gc::with_current_heap_mut(|heap| heap.regex_exec(object, &input))
                 }
@@ -6688,6 +6691,10 @@ impl<'a> Interp<'a> {
                 let root = Self::object_prototype_singleton();
                 Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))
             }
+            "regexpPrototype" => {
+                let root = Self::regexp_prototype_singleton();
+                Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))
+            }
             "objectSetPrototypeOf" => {
                 let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let obj = match self.proxy_route(proxy, "setPrototypeOf") {
@@ -6852,9 +6859,20 @@ impl<'a> Interp<'a> {
             }
             "objectHasOwn" => {
                 let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                let key = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
                     Value::Str(key) => key.to_string(),
-                    _ => return Err(RunError::BadToken),
+                    Value::Any(any) if any.as_symbol().is_some() => {
+                        // A symbol key: own when the object carries it as a value,
+                        // a method or an accessor.
+                        let symbol = any.as_symbol().ok_or(RunError::BadToken)?;
+                        let has = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol(obj, symbol).is_some()
+                                || heap.dynamic_get_symbol_function(obj, symbol).is_some()
+                                || heap.dynamic_symbol_getter(obj, symbol).is_some()
+                        });
+                        return Ok(Value::Bool(has));
+                    }
+                    other => self.dyn_to_string(&other)?,
                 };
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let has = if is_dynamic {
@@ -8724,6 +8742,11 @@ impl<'a> Interp<'a> {
         handle: zun_core::FunctionHandle,
         call_args: Vec<Value>,
     ) -> Result<Value, RunError> {
+        if handle.builtin_method().is_some() {
+            return Err(RunError::Native(
+                "TypeError: RegExp.prototype method called on an incompatible receiver".into(),
+            ));
+        }
         if let Some(kind) = handle.generator_method() {
             let generator = handle
                 .environment()
