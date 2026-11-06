@@ -101,6 +101,9 @@ pub const EVENT_TARGET: &str = include_str!("../builtin/event_target.zun");
 
 /// The `AbortSignal` and `AbortController` classes (`builtin/abort.zun`); an
 /// `AbortSignal` owns an [`EVENT_TARGET`].
+/// Minimal WHATWG streams (`builtin/streams.zun`).
+pub const STREAMS: &str = include_str!("../builtin/streams.zun");
+
 pub const ABORT: &str = include_str!("../builtin/abort.zun");
 
 /// The `crypto` class (`builtin/crypto.zun`): Web Crypto `randomUUID` and
@@ -181,6 +184,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     EVENT,
     EVENT_TARGET,
     ABORT,
+    STREAMS,
     CRYPTO,
     HEADERS,
     RESPONSE,
