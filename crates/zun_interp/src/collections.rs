@@ -2184,6 +2184,14 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name,
                     _ => return Err(RunError::BadToken),
                 };
+                // An array answers for its elements (holes are absent) and `length`.
+                if zun_gc::with_current_heap(|heap| heap.array_len(object).is_some()) {
+                    let in_array = self.call_managed_collection("arrayHas", args)?;
+                    if matches!(in_array, Value::Bool(true)) || !zun_gc::with_current_heap(|heap| heap.dynamic_has(object, name)) {
+                        return Ok(in_array);
+                    }
+                    return Ok(Value::Bool(true));
+                }
                 // A dynamic object answers for its whole prototype chain.
                 if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(object)) {
                     return self.call_managed_collection("forInHas", args);
@@ -4760,6 +4768,9 @@ impl<'a> Interp<'a> {
                         Value::unbox_any(any, heap).unwrap_or(Value::Void)
                     };
                     let zero_aware = name == "arrayIncludes";
+                    // `indexOf`/`lastIndexOf` skip holes; `includes` reads them as undefined.
+                    let skip_holes = !zero_aware;
+                    let is_hole = |index: usize| heap.array_get(source, index).is_some_and(|any| any.is_hole());
                     let equal = |left: &Value, right: &Value| strict_equals(left, right, zero_aware);
                     if name == "arrayLastIndexOf" {
                         // `lastIndexOf` searches backwards from `from` (default
@@ -4776,7 +4787,7 @@ impl<'a> Interp<'a> {
                         }
                         let mut index = start as usize;
                         loop {
-                            if equal(&element(index), &needle) {
+                            if !(skip_holes && is_hole(index)) && equal(&element(index), &needle) {
                                 return Some(index);
                             }
                             if index == 0 {
@@ -4788,7 +4799,7 @@ impl<'a> Interp<'a> {
                     let start = resolve(from.unwrap_or(0.0));
                     let mut index = start as usize;
                     while (index as f64) < length {
-                        if equal(&element(index), &needle) {
+                        if !(skip_holes && is_hole(index)) && equal(&element(index), &needle) {
                             return Some(index);
                         }
                         index += 1;
@@ -4867,8 +4878,19 @@ impl<'a> Interp<'a> {
                         "Reduce of empty array with no initial value",
                     ))));
                 }
-                // Seed from the first (forward) or last (reverse) element.
-                let seed_index = if forward { 0 } else { length - 1 };
+                // Seed from the first (forward) or last (reverse) present element;
+                // holes are skipped, and an all-hole array has no seed.
+                let seed_step = (0..length).find(|&step| {
+                    let index = if forward { step } else { length - 1 - step };
+                    zun_gc::with_current_heap(|heap| heap.array_get(source, index))
+                        .is_some_and(|any| !any.is_hole())
+                });
+                let Some(seed_step) = seed_step else {
+                    return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
+                        "Reduce of empty array with no initial value",
+                    ))));
+                };
+                let seed_index = if forward { seed_step } else { length - 1 - seed_step };
                 let accumulator = zun_gc::with_current_heap_mut(|heap| {
                     let holder = heap.alloc_array(1);
                     let seed = heap.array_get(source, seed_index).unwrap_or_else(zun_core::Any::void);
@@ -4877,10 +4899,14 @@ impl<'a> Interp<'a> {
                 });
                 let roots = [source, accumulator];
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                for step in 1..length {
+                for step in (seed_step + 1)..length {
                     let index = if forward { step } else { length - 1 - step };
-                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
+                    let Some(element) = self.array_element_value(roots[0], index)? else {
+                        continue;
+                    };
+                    if element.is_hole() {
+                        continue;
+                    }
                     let acc = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
                         .ok_or(RunError::BadToken)?;
                     let callback_args = vec![
@@ -5483,9 +5509,22 @@ impl<'a> Interp<'a> {
                                         let length = length.unwrap_or(0);
                                         let array = heap.alloc_array(length);
                                         for index in 0..length {
-                                            let value = heap
-                                                .dynamic_get(source, &index.to_string())
-                                                .unwrap_or_else(zun_core::Any::void);
+                                            // Index reads walk the prototype chain
+                                            // (an inherited element fills the slot).
+                                            let key = index.to_string();
+                                            let mut cursor = Some(source);
+                                            let mut found = None;
+                                            while let Some(current) = cursor {
+                                                if let Some(value) = heap.dynamic_get(current, &key) {
+                                                    found = Some(value);
+                                                    break;
+                                                }
+                                                cursor = heap
+                                                    .dynamic_prototype(current)
+                                                    .and_then(|proto| proto.as_object())
+                                                    .map(|addr| unsafe { zun_gc::Obj::from_addr(addr as *mut u64) });
+                                            }
+                                            let value = found.unwrap_or_else(zun_core::Any::void);
                                             heap.array_set(array, index, value);
                                         }
                                         Some(array)
@@ -5512,6 +5551,8 @@ impl<'a> Interp<'a> {
                                 let value = heap
                                     .array_get(source, index)
                                     .unwrap_or_else(zun_core::Any::void);
+                                // Array.from materialises holes as undefined.
+                                let value = if value.is_hole() { zun_core::Any::void() } else { value };
                                 heap.array_set(array, index, value);
                             }
                             array
@@ -5586,6 +5627,8 @@ impl<'a> Interp<'a> {
                                 let value =
                                     zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
                                         .unwrap_or_else(zun_core::Any::void);
+                                // Spread materialises holes as undefined.
+                                let value = if value.is_hole() { zun_core::Any::void() } else { value };
                                 zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], value));
                             }
                         } else {
@@ -7296,7 +7339,12 @@ impl<'a> Interp<'a> {
             }
         }
         if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(obj)) {
-            let mut names: Vec<String> = (0..len).map(|index| index.to_string()).collect();
+            let mut names: Vec<String> = zun_gc::with_current_heap(|heap| {
+                (0..len)
+                    .filter(|&index| !heap.array_get(obj, index).is_some_and(|any| any.is_hole()))
+                    .map(|index| index.to_string())
+                    .collect()
+            });
             names.push("length".to_owned());
             let expandos = zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).unwrap_or_default();
             names.extend(expandos);

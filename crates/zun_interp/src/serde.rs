@@ -214,6 +214,10 @@ impl Interp<'_> {
                 out.push(Tag::Array.to_u8());
                 write_uvarint(out, elements.len() as u64);
                 for element in elements {
+                    if element.is_hole() {
+                        out.push(Tag::Hole.to_u8());
+                        continue;
+                    }
                     let value = self.any_to_value(element)?;
                     self.ser_value(&value, out, memo)?;
                 }
@@ -401,7 +405,7 @@ impl Interp<'_> {
             .ok_or_else(|| RunError::Native("deserialize: truncated or unknown tag".into()))?;
         match tag {
             Tag::Null => Ok(Value::Null),
-            Tag::Undefined => Ok(Value::Void),
+            Tag::Undefined | Tag::Hole => Ok(Value::Void),
             Tag::False => Ok(Value::Bool(false)),
             Tag::True => Ok(Value::Bool(true)),
             Tag::Int => {
@@ -500,6 +504,9 @@ impl Interp<'_> {
                 // Record the shell before filling so a self/back reference resolves.
                 memo.push(Value::Object(obj));
                 for i in 0..len {
+                    if reader.take_hole() {
+                        continue;
+                    }
                     let value = self.de_value(reader, memo)?;
                     let any = self.value_to_any(&value)?;
                     zun_gc::with_current_heap_mut(|heap| heap.array_set(obj, i, any));

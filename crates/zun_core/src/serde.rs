@@ -92,6 +92,8 @@ pub enum Tag {
     /// raw bytes), a uvarint `byteOffset`, a uvarint `byteLength`, and a
     /// one-byte length-tracking flag (`1` = tracks the buffer's length).
     DataView = 19,
+    /// An array hole (only valid as an array element): no payload.
+    Hole = 20,
 }
 
 impl Tag {
@@ -119,6 +121,7 @@ impl Tag {
             17 => Self::Ref,
             18 => Self::ObjectSym,
             19 => Self::DataView,
+            20 => Self::Hole,
             _ => return None,
         })
     }
@@ -168,6 +171,16 @@ impl<'a> Reader<'a> {
         let byte = *self.bytes.get(self.pos)?;
         self.pos += 1;
         Some(byte)
+    }
+
+    /// Consume the next byte only when it is the [`Tag::Hole`] marker.
+    pub fn take_hole(&mut self) -> bool {
+        if self.bytes.get(self.pos) == Some(&(Tag::Hole as u8)) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
     }
 
     /// Read a tag byte and decode it.

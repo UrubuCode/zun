@@ -10,7 +10,7 @@ pub struct ArrayStorage {
 
 impl ArrayStorage {
     /// Create an array with `length` initialized to `undefined`-like void values.
-    pub fn with_length(length: usize) -> Self { Self { elements: vec![Any::int(0); length], integrity: 0 } }
+    pub fn with_length(length: usize) -> Self { Self { elements: vec![Any::hole(); length], integrity: 0 } }
     pub fn len(&self) -> usize { self.elements.len() }
     pub fn integrity(&self) -> u8 { self.integrity }
     pub fn raise_integrity(&mut self, level: u8) { if level > self.integrity { self.integrity = level; } }

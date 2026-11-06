@@ -7485,6 +7485,16 @@ impl Checker<'_> {
                         &ast::Expr::New { class: *callee, args: args.clone(), span },
                     );
                 }
+                // `Array(n)` behaves exactly like `new Array(n)`.
+                if name == "Array"
+                    && !self.by_name.contains_key(&name)
+                    && cx.lookup(&name).is_none()
+                {
+                    return self.check_expr(
+                        cx,
+                        &ast::Expr::New { class: *callee, args: args.clone(), span },
+                    );
+                }
                 // Internal: the value of the `generator.return(v)` request being
                 // unwound (used by the `yield*` desugaring to forward it).
                 if name == "__generatorReturnValue" && args.is_empty() {
