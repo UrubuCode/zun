@@ -39,6 +39,13 @@ pub(super) fn call_builtin(
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
     }
+    // `Boolean(x)` needs the heap to see through a boxed string (the native
+    // only sees its handle), so truthiness is decided here.
+    if zun_natives::resolve_name("booleanCoerce").is_some_and(|(boolean_id, _)| boolean_id == id) {
+        let flag = zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&args[0], heap));
+        stack.push(Value::Bool(flag));
+        return Ok(());
+    }
     let native_args: Vec<zun_natives::NativeArg> = args.iter().map(to_native_arg).collect();
     let result = zun_natives::dispatch(id, &native_args, interp.output)
         .map_err(|e| native_error_to_run_error(interp, e.0))?;

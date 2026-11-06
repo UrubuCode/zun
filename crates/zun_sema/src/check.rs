@@ -7112,8 +7112,13 @@ impl Checker<'_> {
                     rhs.as_ref(),
                     ast::Expr::Number { span: s, .. } if *s == span
                 ) && matches!(op, ast::BinaryOp::Add | ast::BinaryOp::Sub);
+                let step_is_one = matches!(rhs.as_ref(), ast::Expr::Number { value, .. } if *value == 1.0);
                 let mut lhs = self.check_expr(cx, lhs);
                 let mut rhs = self.check_expr(cx, rhs);
+                // `++`/`--` on a dynamic operand is ToNumeric(x) ± 1, never concatenation.
+                if update_step && step_is_one && lhs.ty == Ty::Any {
+                    lhs = self.to_number_expr(lhs);
+                }
                 if update_step && lhs.ty == Ty::BigInt {
                     if let Some((id, native)) = zun_natives::resolve("collections", "bigIntNew") {
                         rhs = hir::Expr {

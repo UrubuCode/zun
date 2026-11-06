@@ -77,8 +77,8 @@ pub use runner::{
 fn number_index_key(key: &Value) -> String {
     match key {
         Value::Int(n, _) => n.to_string(),
-        Value::Float(n, _) if n.is_finite() && n.fract() == 0.0 => (*n as i64).to_string(),
-        Value::Float(n, _) => format!("{n}"),
+        Value::Float(n, _) if n.is_finite() && n.fract() == 0.0 && n.abs() < 9007199254740992.0 => (*n as i64).to_string(),
+        Value::Float(n, _) => Value::Float(*n, zun_il::NumKind::F64).display(),
         other => other.as_number().to_string(),
     }
 }
