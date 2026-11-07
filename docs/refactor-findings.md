@@ -151,6 +151,46 @@ speculative Tier1 monomorphic specialization with a cheap guard + deopt would
 therefore hit its fast path almost always (guards rarely fail), which is a
 strong signal that phase 6 is worth doing. Decision is the user's.
 
+## Typed floor is slow — two root causes, measured (2026-11-07)
+
+Triggered by the phase-5/6 time study. A "typed" `const s: string;
+s.charCodeAt(i % 26)` loop ran at ~11 µs/iter in debug; release 5-run medians
+(startup subtracted via a 0-iteration twin) isolate two independent defects.
+
+Release medians (2M iterations, `target/release/zun.exe`, startup ≈ 63 ms):
+- arith loop (`acc += i % 26`) **in `main`**: ~304 ns/iter.
+- same arith loop **in a called function `hot()`**: **~6.4 ns/iter** (JIT speed).
+- `s.charCodeAt(i % 26)` in `main`: ~987 ns/iter; in `hot()`: ~1003 ns/iter.
+- `any` `s.charCodeAt`: ~1151 ns/iter.
+
+**Root cause 1 — module entry (`main`) is not JIT-compiled.** The identical hot
+loop runs ~48× faster in a called function than in `main` (6.4 vs 304 ns/iter),
+so top-level/module-entry code runs on the Tier0 interpreter. Hot work written
+directly in `main` never tiers up.
+
+**Root cause 2 — `String.charCodeAt` has no typed JIT path for a realistic
+index.** Even in a JIT-able function and with a statically-typed `string`
+receiver, `charCodeAt` lowers to the dynamic `call.builtin 354`
+(`collections::stringMethod`, member name pushed as a string, result boxed then
+unboxed) — ~1000 ns/call regardless of container. Reason
+(`check/expr/mcall_string.rs:135`): the typed native (`managed_methods.rs:152`,
+index `U64`) is used only when the index `is_int()`, but loop counters and
+arithmetic are `f64` (number), and even a bitwise `i & 15` is `conv`-ed back to
+`f64` before the call. It is intentional (comment lines 133-134: the integer
+native cannot express JS out-of-range NaN/undefined — the same open typed-OOB
+finding). Net effect: typed char-access is only ~19% faster than `any` because
+both take the same dynamic path; the typed string floor is effectively absent
+for char-access.
+
+**Decision impact.** Per the user's rule, the typed floor must be fast before
+phase 6 is worthwhile: phase 6 would speculate a guard onto a "typed" path that
+today is itself dynamic. Priorities surfaced (not implemented): (1) make
+module-entry/`main` JIT-eligible or move its hot body onto a tierable method;
+(2) give `String.charCodeAt`/`charAt`/`codePointAt` a typed JIT path for `f64`
+indices (coerce + bounds-check producing JS NaN/undefined), so a typed string
+receiver leaves the dynamic `stringMethod` builtin. Measurement programs live in
+the session scratchpad; nothing here was committed as a fix.
+
 ## Conformance baseline correction: 83/167, not 84 (2026-11-07)
 
 Measured with the current `target/debug/zun.exe` via `scripts/tests_check.sh`
