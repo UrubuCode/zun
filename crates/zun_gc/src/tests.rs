@@ -1701,11 +1701,8 @@ fn active_stack_map_collection_includes_native_root_scopes() {
     }]);
     let _scope = unsafe { ActiveStackMapScope::enter(&registry) };
 
-    let reclaimed = unsafe {
-        heap.collect_with_active_native_frame(&[], 105, frame.as_ptr(), &|_| {
-            Vec::new()
-        })
-    };
+    let reclaimed =
+        unsafe { heap.collect_with_active_native_frame(&[], 105, frame.as_ptr(), &|_| Vec::new()) };
 
     assert_eq!(reclaimed, 0);
     assert_eq!(heap.live_count(), 1);

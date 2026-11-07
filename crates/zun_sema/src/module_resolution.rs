@@ -74,7 +74,8 @@ impl<'a> Checker<'a> {
             let _ = module;
             for binding in &import.names {
                 if binding.is_namespace {
-                    #[allow(clippy::if_same_then_else)] // the two resolution cases are kept distinct for clarity
+                    #[allow(clippy::if_same_then_else)]
+                    // the two resolution cases are kept distinct for clarity
                     if zun_natives::module(&import.module).is_some() {
                         self.namespace_imports
                             .insert(self.text(&binding.local).to_string(), import.module.clone());

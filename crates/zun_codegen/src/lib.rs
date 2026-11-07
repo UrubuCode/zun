@@ -996,9 +996,7 @@ impl Jit {
         if signature.returns == Some(JitKind::Other) {
             return Err(JitError::Ineligible(method_rid));
         }
-        if signature
-            .param_kinds.contains(&JitKind::Other)
-        {
+        if signature.param_kinds.contains(&JitKind::Other) {
             return Err(JitError::Ineligible(method_rid));
         }
         let param_kinds = signature.param_kinds;
@@ -1011,7 +1009,8 @@ impl Jit {
         let native_roots: Vec<zun_gc::Obj> = args
             .iter()
             .zip(param_kinds)
-            .filter(|&(&_arg, kind)| kind == JitKind::Object).map(|(&arg, _kind)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
+            .filter(|&(&_arg, kind)| kind == JitKind::Object)
+            .map(|(&arg, _kind)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
             .collect();
         // Keep managed arguments visible for the complete native call. The VM
         // hook also registers its Value-level roots; this scope protects direct
@@ -1380,9 +1379,11 @@ pub fn compile_object_for_target(
             detail: e.to_string(),
         })?;
         let sig = body_signature(&module, &body);
-        let linkage = if zm
-            .entry_point
-            .is_some_and(|token| token.rid() == rid) { Linkage::Export } else { Linkage::Local };
+        let linkage = if zm.entry_point.is_some_and(|token| token.rid() == rid) {
+            Linkage::Export
+        } else {
+            Linkage::Local
+        };
         let fid = module
             .declare_function(&format!("m{rid}"), linkage, &sig)
             .map_err(|e| JitError::Module(e.to_string()))?;

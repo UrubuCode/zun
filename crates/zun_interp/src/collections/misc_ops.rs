@@ -97,9 +97,10 @@ impl<'a> Interp<'a> {
                 // iterables). Throws `TypeError` when `src` is not iterable.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let iterator = match value {
-                    Value::Str(_) => {
-                        self.call_managed_collection("stringIteratorNew", std::slice::from_ref(&value))?
-                    }
+                    Value::Str(_) => self.call_managed_collection(
+                        "stringIteratorNew",
+                        std::slice::from_ref(&value),
+                    )?,
                     other => match as_object_ref(&other) {
                         Some(source) => Value::Object(self.resolve_iterator(source)?),
                         None => {

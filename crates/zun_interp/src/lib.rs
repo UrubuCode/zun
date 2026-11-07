@@ -954,13 +954,7 @@ impl Interp<'_> {
                     match self.coerce_relational_operands(stack) {
                         Ok(()) => {}
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(
-                                &body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(&body, stack, pc, next - size, &exception) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1090,13 +1084,7 @@ impl Interp<'_> {
                         ) {
                             Ok(value) => value,
                             Err(RunError::Thrown(exception)) => {
-                                if self.route_exception(
-                                    &body,
-                                    stack,
-                                    pc,
-                                    next - size,
-                                    &exception,
-                                ) {
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
                                     continue;
                                 }
                                 return Err(RunError::Thrown(exception));
@@ -1130,13 +1118,7 @@ impl Interp<'_> {
                     let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
                         ExecutionOutcome::Complete(value) => value,
                         ExecutionOutcome::Thrown(exception) => {
-                            if self.route_exception(
-                                &body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(&body, stack, pc, next - size, &exception) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1253,13 +1235,7 @@ impl Interp<'_> {
                         match self.new_error_object("TypeError", &message) {
                             Some(error) => {
                                 let exception = Value::Object(error);
-                                if self.route_exception(
-                                    &body,
-                                    stack,
-                                    pc,
-                                    next - size,
-                                    &exception,
-                                ) {
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
                                     continue;
                                 }
                                 return Err(RunError::Thrown(exception));
@@ -1293,13 +1269,7 @@ impl Interp<'_> {
                         {
                             ExecutionOutcome::Complete(value) => value,
                             ExecutionOutcome::Thrown(exception) => {
-                                if self.route_exception(
-                                    &body,
-                                    stack,
-                                    pc,
-                                    next - size,
-                                    &exception,
-                                ) {
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
                                     continue;
                                 }
                                 return Err(RunError::Thrown(exception));
@@ -1360,13 +1330,7 @@ impl Interp<'_> {
                         match self.dispatch_outcome(handle.method_rid(), call_args, Some(&link)) {
                             ExecutionOutcome::Complete(value) => value,
                             ExecutionOutcome::Thrown(exception) => {
-                                if self.route_exception(
-                                    &body,
-                                    stack,
-                                    pc,
-                                    next - size,
-                                    &exception,
-                                ) {
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
                                     continue;
                                 }
                                 return Err(RunError::Thrown(exception));
@@ -1401,26 +1365,14 @@ impl Interp<'_> {
                             let Some(exception) = exception else {
                                 return Err(RunError::Native(message));
                             };
-                            if self.route_exception(
-                                &body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(&body, stack, pc, next - size, &exception) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
                         }
                         Err(RunError::Thrown(exception)) => {
                             // A user callback invoked by the native threw.
-                            if self.route_exception(
-                                &body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(&body, stack, pc, next - size, &exception) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1526,13 +1478,7 @@ impl Interp<'_> {
                     let result = match self.dispatch_outcome(target, args, Some(&link)) {
                         ExecutionOutcome::Complete(value) => value,
                         ExecutionOutcome::Thrown(exception) => {
-                            if self.route_exception(
-                                &body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(&body, stack, pc, next - size, &exception) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1601,13 +1547,7 @@ impl Interp<'_> {
                     let result = match self.dispatch_outcome(target, values, Some(&link)) {
                         ExecutionOutcome::Complete(value) => value,
                         ExecutionOutcome::Thrown(exception) => {
-                            if self.route_exception(
-                                &body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(&body, stack, pc, next - size, &exception) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1645,13 +1585,7 @@ impl Interp<'_> {
                         // (finally / catch) exactly as `throw` does, rather than
                         // escaping the body unconditionally.
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(
-                                &body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(&body, stack, pc, next - size, &exception) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1662,8 +1596,7 @@ impl Interp<'_> {
                 Opcode::Yield => {
                     let value = pop(stack)?;
                     self.yielded = Some(value);
-                    self.suspended =
-                        Some(ExecutionFrame::snapshot(method_rid, *pc, stack, locals));
+                    self.suspended = Some(ExecutionFrame::snapshot(method_rid, *pc, stack, locals));
                     return Err(RunError::Suspended);
                 }
                 Opcode::ImportDynamic => match self.op_import_dynamic(stack)? {

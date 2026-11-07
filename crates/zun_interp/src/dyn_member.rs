@@ -74,8 +74,7 @@ impl Interp<'_> {
                         return Ok(ArmFlow::Continue);
                     }
                     Err(RunError::Thrown(exception)) => {
-                        if self.route_exception(body, stack, pc, next - size, &exception)
-                        {
+                        if self.route_exception(body, stack, pc, next - size, &exception) {
                             return Ok(ArmFlow::Continue);
                         }
                         return Err(RunError::Thrown(exception));
@@ -245,13 +244,7 @@ impl Interp<'_> {
                         }
                         Ok(None) => {}
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(
-                                body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
                                 return Ok(ArmFlow::Continue);
                             }
                             return Err(RunError::Thrown(exception));
@@ -437,8 +430,7 @@ impl Interp<'_> {
                         return Ok(ArmFlow::Continue);
                     }
                     Err(RunError::Thrown(exception)) => {
-                        if self.route_exception(body, stack, pc, next - size, &exception)
-                        {
+                        if self.route_exception(body, stack, pc, next - size, &exception) {
                             return Ok(ArmFlow::Continue);
                         }
                         return Err(RunError::Thrown(exception));
@@ -548,13 +540,7 @@ impl Interp<'_> {
                     ) {
                         Ok(_) => {}
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(
-                                body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
                                 return Ok(ArmFlow::Continue);
                             }
                             return Err(RunError::Thrown(exception));
@@ -586,13 +572,7 @@ impl Interp<'_> {
                         ) {
                             Ok(_) => {}
                             Err(RunError::Thrown(exception)) => {
-                                if self.route_exception(
-                                    body,
-                                    stack,
-                                    pc,
-                                    next - size,
-                                    &exception,
-                                ) {
+                                if self.route_exception(body, stack, pc, next - size, &exception) {
                                     return Ok(ArmFlow::Continue);
                                 }
                                 return Err(RunError::Thrown(exception));
@@ -674,8 +654,7 @@ impl Interp<'_> {
                 match self.new_error_object("TypeError", &message) {
                     Some(error) => {
                         let exception = Value::Object(error);
-                        if self.route_exception(body, stack, pc, next - size, &exception)
-                        {
+                        if self.route_exception(body, stack, pc, next - size, &exception) {
                             return Ok(ArmFlow::Continue);
                         }
                         return Err(RunError::Thrown(exception));
@@ -772,13 +751,7 @@ impl Interp<'_> {
                     Some(handle) => match self.invoke_function_value(handle, Vec::new()) {
                         Ok(value) => stack.push(value),
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(
-                                body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
                                 return Ok(ArmFlow::Continue);
                             }
                             return Err(RunError::Thrown(exception));
@@ -835,13 +808,7 @@ impl Interp<'_> {
                     match self.invoke_function_value(getter, call_args) {
                         Ok(v) => v,
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(
-                                body,
-                                stack,
-                                pc,
-                                next - size,
-                                &exception,
-                            ) {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
                                 return Ok(ArmFlow::Continue);
                             }
                             return Err(RunError::Thrown(exception));

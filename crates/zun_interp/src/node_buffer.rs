@@ -137,7 +137,9 @@ fn encode_utf16le(text: &str) -> Vec<u8> {
 fn decode_utf16le(bytes: &[u8]) -> String {
     // A trailing odd byte is dropped, matching Node's truncation.
     let units: Vec<u16> = bytes
-        .as_chunks::<2>().0.iter()
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16_lossy(&units)
@@ -470,7 +472,8 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let len = view_len(view).ok_or(RunError::BadToken)?;
             let writable = bytes.len().min(len.saturating_sub(offset));
             zun_gc::with_current_heap_mut(|heap| {
-                #[allow(clippy::needless_range_loop)] // index couples the view offset and source bytes
+                #[allow(clippy::needless_range_loop)]
+                // index couples the view offset and source bytes
                 for i in 0..writable {
                     heap.u8_array_set(view, offset + i, bytes[i]);
                 }

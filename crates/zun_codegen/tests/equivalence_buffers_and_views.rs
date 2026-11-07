@@ -1,7 +1,6 @@
 mod common;
 use common::*;
 
-
 #[test]
 fn array_buffer_length_uses_the_managed_object_abi() {
     let module = compile(

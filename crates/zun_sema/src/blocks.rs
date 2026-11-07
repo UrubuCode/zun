@@ -35,8 +35,8 @@ impl<'a> Checker<'a> {
                 if let ast::Stmt::Let { name, .. } = statement {
                     let name_text = self.text(name).to_string();
                     if self.module_globals.contains(&name_text) {
-                        if let hir::Stmt::Let { slot, init: _ } | hir::Stmt::BoxedLet { slot, init: _ } =
-                            &lowered
+                        if let hir::Stmt::Let { slot, init: _ }
+                        | hir::Stmt::BoxedLet { slot, init: _ } = &lowered
                         {
                             let slot = *slot;
                             let slot_ty = cx.locals[slot as usize];

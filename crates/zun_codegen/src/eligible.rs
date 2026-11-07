@@ -1169,10 +1169,12 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
             continue;
         };
         // Return and every local must be a representable JIT type.
-        if !kind_supported(body.return_kind) && body.returns_value
-            && JitKind::from_byte(body.return_kind) != JitKind::Other {
-                continue;
-            }
+        if !kind_supported(body.return_kind)
+            && body.returns_value
+            && JitKind::from_byte(body.return_kind) != JitKind::Other
+        {
+            continue;
+        }
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };

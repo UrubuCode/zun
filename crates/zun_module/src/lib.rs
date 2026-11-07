@@ -260,7 +260,9 @@ impl Module {
             return Err(ReadError::Truncated);
         }
         let sequence_points = debug
-            .as_chunks::<16>().0.iter()
+            .as_chunks::<16>()
+            .0
+            .iter()
             .map(|record| SequencePoint {
                 method_rid: u32::from_le_bytes(record[0..4].try_into().unwrap()),
                 pc: u32::from_le_bytes(record[4..8].try_into().unwrap()),
@@ -280,7 +282,9 @@ impl Module {
                 let n = u32::from_le_bytes(t[8..12].try_into().unwrap()) as usize;
                 let sites = t.get(12..12 + n * 8).ok_or(ReadError::Truncated)?;
                 codegen_sites = sites
-                    .as_chunks::<8>().0.iter()
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
                     .map(|c| {
                         (
                             u32::from_le_bytes(c[0..4].try_into().unwrap()),
