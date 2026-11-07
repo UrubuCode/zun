@@ -149,3 +149,21 @@ the only safe equivalent way — per crate, serially, one build at a time:
 `cargo {test,clippy,build} --workspace` and `--timings` are intentionally NOT run:
 they build many crates concurrently and freeze this machine (see the build-limits
 note). The per-crate serial results above are the faithful, safe equivalent.
+
+## Workspace clippy + full test run (machine free, recorded)
+
+Run with the machine idle (it only freezes under concurrent load):
+- `cargo test --workspace`: GREEN, except the 5 `zun_cli/tests/aot.rs`
+  interpreter-fallback tests, which link `zun_vm.lib` and have a guard that fails
+  if that artifact is older than the runtime sources. `--workspace` does not
+  rebuild the standalone `.lib` in the right order. Fix/flow: run
+  `cargo build -p zun_vm` before `cargo test -p zun_cli` (then aot = 20/20). Not
+  a regression — a build-artifact ordering quirk.
+- `cargo clippy --workspace --all-targets`: 0 ERRORS, ~442 warnings, ALL
+  pre-existing (zun_interp 231, zun_sema 36, zun_vm 32, zun_codegen 22, zun_gc 19,
+  …: missing `# Safety` docs, too_many_arguments, etc.). This refactor introduced
+  no new warnings (verified per crate vs baseline). `-- -D warnings` therefore
+  cannot pass without a SEPARATE lint-cleanup pass over the whole codebase
+  (~442 fixes, many via `clippy --fix`), which is out of scope for a
+  behavior-preserving reorganization.
+- `cargo fmt --all -- --check`: CLEAN (commit 124232b1).
