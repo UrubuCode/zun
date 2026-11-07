@@ -26,6 +26,8 @@ pub use collection_methods::{
     SET_OP_BOOL_HELPER, SET_OP_SET_HELPER,
 };
 mod collections;
+mod managed_methods;
+pub use managed_methods::{managed_method, ManagedMethod, ManagedTy};
 mod node_buffer;
 pub use collections::USER_CLASS_FLAG;
 mod date;

@@ -94,221 +94,68 @@ impl Checker<'_> {
                 return Some(descriptor);
             }
         }
-        match (receiver_ty, mname) {
-            (Ty::WeakMap, "set") => Some(("weakMapSet", Ty::WeakMap, vec![Ty::Any, Ty::Any])),
-            (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
-            (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
-            (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
-            (Ty::WeakSet, "add") => Some(("weakSetAdd", Ty::WeakSet, vec![Ty::Any])),
-            (Ty::WeakSet, "has") => Some(("weakSetHas", Ty::Boolean, vec![Ty::Any])),
-            (Ty::WeakSet, "delete") => Some(("weakSetDelete", Ty::Boolean, vec![Ty::Any])),
-            (Ty::WeakRef, "deref") => Some(("weakRefDeref", Ty::Any, vec![])),
-            (Ty::RegExp, "isMatch") => Some(("regexpIsMatch", Ty::Boolean, vec![Ty::String])),
-            (Ty::RegExp, "test") => Some(("regexpTest", Ty::Boolean, vec![Ty::String])),
-            (Ty::RegExp, "exec") => Some(("regexpExec", Ty::Array, vec![Ty::String])),
-            (Ty::RegExp, "source") => Some(("regexpSource", Ty::String, vec![])),
-            (Ty::BigInt, "add") => Some(("bigIntAdd", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "sub") => Some(("bigIntSub", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "mul") => Some(("bigIntMul", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "div") => Some(("bigIntDiv", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "rem") => Some(("bigIntRem", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "pow") => Some(("bigIntPow", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "neg") => Some(("bigIntNeg", Ty::BigInt, vec![])),
-            (Ty::BigInt, "and") => Some(("bigIntAnd", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "or") => Some(("bigIntOr", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "xor") => Some(("bigIntXor", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "not") => Some(("bigIntNot", Ty::BigInt, vec![])),
-            (Ty::BigInt, "shl") => Some(("bigIntShl", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "shr") => Some(("bigIntShr", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "compare") => {
-                Some(("bigIntCompare", Ty::Int(IntKind::I32), vec![Ty::BigInt]))
-            }
-            (Ty::BigInt, "toString") => Some(("bigIntToString", Ty::String, vec![])),
-            (Ty::Promise, "state") => Some(("promiseState", Ty::Int(IntKind::U8), vec![])),
-            (Ty::Promise, "result") => Some(("promiseResult", Ty::Any, vec![])),
-            (Ty::Promise, "isReady") => Some(("promiseIsReady", Ty::Boolean, vec![])),
-            (Ty::Promise, "resolve") => Some(("promiseResolve", Ty::Boolean, vec![Ty::Any])),
-            (Ty::Promise, "reject") => Some(("promiseReject", Ty::Boolean, vec![Ty::String])),
-            (Ty::String, "toInt") => Some(("toInt", Ty::Int(IntKind::I32), vec![])),
-            (Ty::String, "toFloat") => Some(("toFloat", Ty::F64, vec![])),
-            (Ty::String, "toBoolean") => Some(("toBoolean", Ty::Boolean, vec![])),
-            (Ty::String, "reverse") => Some(("reverse", Ty::String, vec![])),
-            (Ty::String, "length") => Some(("length", Ty::Int(IntKind::U64), vec![])),
-            (Ty::String, "toUpperCase") => Some(("toUpperCase", Ty::String, vec![])),
-            (Ty::String, "toLowerCase") => Some(("toLowerCase", Ty::String, vec![])),
-            (Ty::String, "trim") => Some(("trim", Ty::String, vec![])),
-            (Ty::String, "trimStart") => Some(("trimStart", Ty::String, vec![])),
-            (Ty::String, "trimEnd") => Some(("trimEnd", Ty::String, vec![])),
-            (Ty::String, "charCodeAt") => Some((
-                "charCodeAt",
-                Ty::Int(IntKind::U32),
-                vec![Ty::Int(IntKind::U64)],
-            )),
-            (Ty::String, "indexOf") => Some(("indexOf", Ty::Int(IntKind::I32), vec![Ty::String])),
-            (Ty::String, "lastIndexOf") => {
-                Some(("lastIndexOf", Ty::Int(IntKind::I32), vec![Ty::String]))
-            }
-            (Ty::String, "substring") => Some((
-                "substring",
-                Ty::String,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
-            )),
-            (Ty::String, "repeat") => Some(("repeat", Ty::String, vec![Ty::Int(IntKind::U64)])),
-            (Ty::String, "startsWith") => Some(("startsWith", Ty::Boolean, vec![Ty::String])),
-            (Ty::String, "endsWith") => Some(("endsWith", Ty::Boolean, vec![Ty::String])),
-            // ECMA-402 locale surface (NUCLEUS #1), ICU4X-backed.
-            // `localeCompare` returns the ECMAScript -1/0/1; v1 uses
-            // root collation and the root (`und`) locale for casing.
-            (Ty::String, "includes") => Some(("includes", Ty::Boolean, vec![Ty::String])),
-            // Index is a `number` so a negative value (from the end) can
-            // cross the boundary; out of range yields `undefined`.
-            (Ty::String, "at") => Some(("at", Ty::String, vec![Ty::F64])),
-            (Ty::String, "codePointAt") => Some((
-                "codePointAt",
-                Ty::Int(IntKind::U32),
-                vec![Ty::Int(IntKind::U64)],
-            )),
-            (Ty::String, "replaceAll") => {
-                Some(("replaceAll", Ty::String, vec![Ty::String, Ty::String]))
-            }
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getUint32") => Some((
-                "dataViewGetU32",
-                Ty::Int(IntKind::U32),
-                vec![Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setUint32") => Some((
-                "dataViewSetU32",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U32), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getUint16") => Some((
-                "dataViewGetU16",
-                Ty::Int(IntKind::U16),
-                vec![Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setUint16") => Some((
-                "dataViewSetU16",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U16), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getFloat64") => Some((
-                "dataViewGetF64",
-                Ty::F64,
-                vec![Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setFloat64") => Some((
-                "dataViewSetF64",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::F64, Ty::Boolean],
-            )),
-            // The remaining DataView element widths. JS names
-            // 64-bit access `getBigInt64`/`getBigUint64` and returns a
-            // BigInt; Zun has native 64-bit integers, so these return
-            // `i64`/`u64` and are named without the Big.
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getInt8") => Some((
-                "dataViewGetInt8",
-                Ty::Int(IntKind::I8),
-                vec![Ty::Int(IntKind::U64)],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setInt8") => Some((
-                "dataViewSetInt8",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::I8)],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getUint8") => Some((
-                "dataViewGetUint8",
-                Ty::Int(IntKind::U8),
-                vec![Ty::Int(IntKind::U64)],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setUint8") => Some((
-                "dataViewSetUint8",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U8)],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getInt16") => Some((
-                "dataViewGetInt16",
-                Ty::Int(IntKind::I16),
-                vec![Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setInt16") => Some((
-                "dataViewSetInt16",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::I16), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getInt32") => Some((
-                "dataViewGetInt32",
-                Ty::Int(IntKind::I32),
-                vec![Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setInt32") => Some((
-                "dataViewSetInt32",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::I32), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getFloat32") => Some((
-                "dataViewGetFloat32",
-                Ty::F32,
-                vec![Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setFloat32") => Some((
-                "dataViewSetFloat32",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::F32, Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getInt64") => Some((
-                "dataViewGetInt64",
-                Ty::Int(IntKind::I64),
-                vec![Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setInt64") => Some((
-                "dataViewSetInt64",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::I64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "getUint64") => Some((
-                "dataViewGetUint64",
-                Ty::Int(IntKind::U64),
-                vec![Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "setUint64") => Some((
-                "dataViewSetUint64",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64), Ty::Boolean],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "byteLength") => {
-                Some(("dataViewByteLength", Ty::Int(IntKind::U64), vec![]))
-            }
-            // `byteOffset`/`buffer`: the view's position in its
-            // backing buffer and a reference to that `ArrayBuffer`.
-            (Ty::BufferView(hir::BufferViewKind::DataView), "byteOffset") => {
-                Some(("dataViewByteOffset", Ty::Int(IntKind::U64), vec![]))
-            }
-            (Ty::BufferView(hir::BufferViewKind::DataView), "buffer") => {
-                Some(("dataViewBuffer", Ty::Buffer, vec![]))
-            }
-            // `ArrayBuffer`, which is what `Ty::Buffer` denotes. These
-            // are methods rather than the properties JS has, matching
-            // `String.length()` and `Map.size()` here; the divergence
-            // is recorded in NUCLEUS rather than special-cased.
-            (Ty::Buffer, "byteLength") => Some(("bufferLength", Ty::Int(IntKind::U64), vec![])),
-            (Ty::Buffer, "slice") => Some((
-                "bufferSlice",
-                Ty::Buffer,
-                vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
-            )),
-            // ES2024 resizable ArrayBuffer. As with `byteLength`, these
-            // JS properties are methods here (the divergence is in
-            // NUCLEUS). `resize` returns a boolean rather than JS's
-            // `undefined`; a rejected resize is a runtime error.
-            (Ty::Buffer, "maxByteLength") => {
-                Some(("bufferMaxByteLength", Ty::Int(IntKind::U64), vec![]))
-            }
-            (Ty::Buffer, "resizable") => Some(("bufferResizable", Ty::Boolean, vec![])),
-            (Ty::Buffer, "detached") => Some(("bufferDetached", Ty::Boolean, vec![])),
-            (Ty::Buffer, "resize") => {
-                Some(("bufferResize", Ty::Boolean, vec![Ty::Int(IntKind::U64)]))
-            }
-            _ => None,
+        // The remaining pure, fixed-arity managed-method rows (WeakMap /
+        // WeakSet / WeakRef / RegExp / BigInt / the Promise accessors / the
+        // fixed-arity String methods / DataView / ArrayBuffer) live in the one
+        // authoritative `zun_natives` table, mirroring the Array and Map/Set
+        // sections above; only the neutral-tag → `Ty` mapping stays here.
+        let tag = Self::managed_receiver_tag(receiver_ty)?;
+        let row = zun_natives::managed_method(tag, mname)?;
+        Some((
+            row.native,
+            Self::managed_ty_to_ty(row.ret),
+            row.args.iter().map(|arg| Self::managed_ty_to_ty(*arg)).collect(),
+        ))
+    }
+
+    /// Map a receiver type to its neutral [`zun_natives::ManagedTy`] tag for the
+    /// fixed-arity managed-method table lookup, or `None` for a receiver the
+    /// table never names (those are handled by the earlier typed-array, Array,
+    /// and Map/Set sections, or fall through to the primitive-tail interceptors).
+    fn managed_receiver_tag(receiver_ty: Ty) -> Option<zun_natives::ManagedTy> {
+        use zun_natives::ManagedTy as M;
+        Some(match receiver_ty {
+            Ty::WeakMap => M::WeakMap,
+            Ty::WeakSet => M::WeakSet,
+            Ty::WeakRef => M::WeakRef,
+            Ty::RegExp => M::RegExp,
+            Ty::BigInt => M::BigInt,
+            Ty::Promise => M::Promise,
+            Ty::String => M::Str,
+            Ty::Buffer => M::Buffer,
+            Ty::BufferView(hir::BufferViewKind::DataView) => M::DataView,
+            _ => return None,
+        })
+    }
+
+    /// Map a neutral [`zun_natives::ManagedTy`] tag from the managed-method table
+    /// back to the checker's own [`Ty`]. One-to-one with
+    /// [`Self::managed_receiver_tag`].
+    fn managed_ty_to_ty(tag: zun_natives::ManagedTy) -> Ty {
+        use zun_natives::ManagedTy as M;
+        match tag {
+            M::Any => Ty::Any,
+            M::Bool => Ty::Boolean,
+            M::Str => Ty::String,
+            M::F64 => Ty::F64,
+            M::F32 => Ty::F32,
+            M::I8 => Ty::Int(IntKind::I8),
+            M::I16 => Ty::Int(IntKind::I16),
+            M::I32 => Ty::Int(IntKind::I32),
+            M::I64 => Ty::Int(IntKind::I64),
+            M::U8 => Ty::Int(IntKind::U8),
+            M::U16 => Ty::Int(IntKind::U16),
+            M::U32 => Ty::Int(IntKind::U32),
+            M::U64 => Ty::Int(IntKind::U64),
+            M::Array => Ty::Array,
+            M::Buffer => Ty::Buffer,
+            M::WeakMap => Ty::WeakMap,
+            M::WeakSet => Ty::WeakSet,
+            M::WeakRef => Ty::WeakRef,
+            M::RegExp => Ty::RegExp,
+            M::BigInt => Ty::BigInt,
+            M::Promise => Ty::Promise,
+            M::DataView => Ty::BufferView(hir::BufferViewKind::DataView),
         }
     }
 
