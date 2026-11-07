@@ -215,7 +215,6 @@ impl Checker<'_> {
                 };
             }
         }
-        let ast_object = object.clone();
         let object = self.check_expr(cx, object);
         // `re[Symbol.replace]` and friends read the shared RegExp.prototype slot.
         let object = if object.ty == Ty::RegExp && self.well_known_symbol_of_key(index).is_some() {
@@ -233,16 +232,76 @@ impl Checker<'_> {
         } else {
             object
         };
-        // `str[i]`: the one-character string at `i` (a negative index is out of
-        // range, unlike `at`), or `undefined` past the end.
+        // `str[i]`: ECMAScript canonical array indexing. A numeric index is
+        // checked once here; a non-negative integer strictly inside the string
+        // yields the one-character string, and a fractional, negative, or
+        // out-of-range index yields `undefined` (distinct from `at`, which
+        // counts from the end and truncates). The index is checked exactly once.
         if object.ty == Ty::String {
-            let at = ast::Expr::MethodCall {
-                receiver: ast_object,
-                method: ast::synthetic_ident("at"),
-                args: vec![index.as_ref().clone()],
+            let index_hir = self.check_expr(cx, index);
+            if index_hir.ty == Ty::F64 || index_hir.ty.is_int() {
+                let idx = if index_hir.ty == Ty::F64 {
+                    index_hir
+                } else {
+                    let sp = index_hir.span;
+                    hir::Expr {
+                        kind: hir::ExprKind::Convert {
+                            value: Box::new(index_hir),
+                        },
+                        ty: Ty::F64,
+                        span: sp,
+                    }
+                };
+                let Some((id, _)) = zun_natives::resolve("string", "charIndex") else {
+                    self.error(span, "missing String intrinsic `charIndex`");
+                    return self.poison(span);
+                };
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![object, idx],
+                    },
+                    // `string | undefined`.
+                    ty: Ty::Any,
+                    span,
+                };
+            }
+            // A non-numeric key keeps the prior dynamic `at` behavior, reusing
+            // the already-checked index (no second `check_expr`): ToNumber is
+            // applied inside the native.
+            let Some((id, _)) = zun_natives::resolve("collections", "stringMethod") else {
+                self.error(span, "missing collection intrinsic `stringMethod`");
+                return self.poison(span);
+            };
+            let undefined = hir::Expr {
+                kind: hir::ExprKind::Unary {
+                    op: ast::UnaryOp::Void,
+                    operand: Box::new(hir::Expr {
+                        kind: hir::ExprKind::Number(0.0),
+                        ty: Ty::F64,
+                        span,
+                    }),
+                },
+                ty: Ty::Any,
                 span,
             };
-            return self.check_expr(cx, &at);
+            return hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![
+                        object,
+                        hir::Expr {
+                            kind: hir::ExprKind::String("at".to_string()),
+                            ty: Ty::String,
+                            span,
+                        },
+                        Self::box_to_any(index_hir),
+                        undefined,
+                    ],
+                },
+                ty: Ty::Any,
+                span,
+            };
         }
         if let ast::Expr::String { value: key, .. } = index.as_ref() {
             if let Ty::Instance(class) = object.ty {

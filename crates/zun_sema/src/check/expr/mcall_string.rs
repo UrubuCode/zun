@@ -122,6 +122,36 @@ impl Checker<'_> {
             && args.len() <= 2
         {
             let checked: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
+            // D3: `charCodeAt` / `charAt` with a JS `number` (`f64`) index take a
+            // typed native (ToIntegerOrInfinity, out-of-range -> NaN / ""), so a
+            // statically typed string receiver never falls into the dynamic
+            // `stringMethod` path and needs no boxing. An explicit integer index
+            // keeps the integer-typed native below (e.g. a `String` class method
+            // whose `charCodeAt` is declared `(u64) -> u32`); a non-numeric
+            // argument still goes dynamic (it needs ToNumber first).
+            if (mname == "charCodeAt" || mname == "charAt")
+                && checked.len() == 1
+                && checked[0].ty == Ty::F64
+            {
+                let index = checked.into_iter().next().expect("one argument");
+                let (native, result_ty) = if mname == "charCodeAt" {
+                    ("charCodeAtNum", Ty::F64)
+                } else {
+                    ("charAtNum", Ty::String)
+                };
+                let Some((id, _)) = zun_natives::resolve("string", native) else {
+                    self.error(span, "missing String intrinsic for typed char access");
+                    return Ok(self.poison(span));
+                };
+                return Ok(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, index],
+                    },
+                    ty: result_ty,
+                    span,
+                });
+            }
             let natural_literal = |e: &hir::Expr| matches!(e.kind, hir::ExprKind::Number(v) if e.ty == Ty::F64 && v.fract() == 0.0 && v >= 0.0);
             let static_ok = checked.iter().all(|e| !e.ty.is_error())
                 && match mname {
@@ -130,8 +160,11 @@ impl Checker<'_> {
                             && checked.iter().all(|e| e.ty.is_int() || natural_literal(e))
                     }
                     "slice" => checked.iter().all(|e| e.ty == Ty::F64),
-                    // A literal index may be out of range (NaN / undefined results),
-                    // which the integer-typed native cannot express.
+                    // An `f64` index for `charCodeAt` is handled above by the
+                    // typed `charCodeAtNum` native; an explicit integer index
+                    // still uses the integer-typed native here. `codePointAt`
+                    // keeps the integer path (its f64 audit is left for a later
+                    // PR, per D3 scope).
                     "charCodeAt" | "codePointAt" => checked.len() == 1 && checked[0].ty.is_int(),
                     "repeat" => {
                         checked.len() == 1

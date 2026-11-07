@@ -344,6 +344,83 @@ Rules (user): one PR per item; flag-gated when touching JIT or GC; interp==JIT
 and conformance no regression; bench before/after; phase 6 and Option B remain
 suspended; approval item by item.
 
+## D3 — typed f64-index char-access — DONE (option A, interp floor) (2026-11-07)
+
+Scope (authorized): `charCodeAt` / `charAt` / `s[i]` accept a JS `number` (f64)
+index with exact JS semantics; audit (not change) the other `is_int`-gated
+methods. No JIT-ABI (option A): the typed natives are interp-only this PR; JIT
+inlining is the C work, bundled with D2/D5.
+
+- New natives (`crates/zun_natives/src/string.rs`): `charCodeAtNum (Str,F64)->F64`
+  (NaN out of range), `charAtNum (Str,F64)->Str` ("" out of range),
+  `charIndex (Str,F64)->Str|undefined` (ECMAScript canonical index: non-negative
+  integer in range only; fractional/negative/OOB -> undefined). ToIntegerOrInfinity
+  via `string_ops::integer_or_infinity` (NaN->0); code unit read lazily with
+  `wtf16::encode(..).nth(i)` — no per-call allocation.
+- Sema: `check/expr/mcall_string.rs` routes `charCodeAt`/`charAt` with an `f64`
+  index to the typed natives (result F64/String, no boxing); an explicit integer
+  index keeps the existing U64->U32 native (so a `String` class method declared
+  `charCodeAt(u64): u32` still type-checks — the near-regression that proved this
+  gate matters). `check/expr/member.rs` lowers `str[i]` to `charIndex` (fixing the
+  prior `.at` desugaring, which wrongly counted negative-from-end and truncated
+  fractionals), reusing the already-checked index (no double `check_expr`).
+- **Semantics: byte-identical to Node** (committed fixture
+  `tests/string/char-access-f64-index.ts`): charCodeAt/charAt/`[]` across
+  fractional, negative, NaN, ±Infinity, OOB, and a surrogate pair.
+- **Perf (release, 5-run median, startup subtracted):** typed `charCodeAt` loop
+  **987 -> 497 ns/iter (-50%)** — the dynamic `stringMethod` path (member-name
+  clone + name-match dispatch + GC box) is gone, and removing a per-call
+  `Vec<u16>` collect (first cut 735 -> 497) took the rest at the interpreter
+  level. `hotcc2m` 1.07 s. The remaining cost is interpreter dispatch + the
+  out-of-line native call; a further ~90% needs machine-level JIT (C: inline
+  bounds-check + `movzx` + `cvtsi2sd`), which needs D1 for `main` and D5 first.
+- **Gates:** fmt clean; clippy `-D warnings` clean (touched crates); interp==JIT
+  equivalence all green; conformance **83 -> 85 / 168** (one new fixture + one
+  previously-divergent fixture now byte-identical; the lone remaining divergence
+  is the pre-existing flag-independent `web-streams-encoding`). `cargo test
+  --workspace` green except the two `zun_runtime/tests/shared.rs` tests, which
+  load the standalone `zun_runtime` cdylib and fail (`-2`) until it is rebuilt
+  (`cargo build -p zun_runtime`) — the same stale-artifact ordering quirk as
+  `zun_vm.lib`/aot, not a regression. No `.zm` change.
+
+## D5 — eligible-but-untranslatable methods recompile on every backedge (2026-11-07)
+
+**Latent, pre-existing JIT tiering defect** (found while wiring D3; independent
+of it). When a method is JIT-eligible but its body fails to translate, the
+failure is not memoized, so the lazy-tiering path retries a full Cranelift
+compilation on every interpreted loop backedge.
+
+Mechanism:
+- `is_compiled(rid)` is defined as merely "in the eligible set"
+  (`crates/zun_codegen/src/lib.rs:953-955` — `self.eligible.contains(&rid)`),
+  not "has a finalized body".
+- `Jit::define_method` returns `Err` on a translation failure and, by design,
+  resets the builder and leaves `rid` **out** of `self.defined`
+  (`crates/zun_codegen/src/lib.rs:830-856`); `ensure_compiled` propagates the
+  `Err` without recording it (`:787-817`). `rid` stays in `self.eligible`.
+- The interpreter raises `on_backedge` on every back-edge
+  (`crates/zun_interp/src/lib.rs:976-1015`); `JitHook::on_backedge`
+  (`crates/zun_vm/src/jit_hook.rs:390-398`) then sees
+  `is_compiled(rid) && !is_defined(rid)` true and calls `ensure_compiled`
+  **again** — one failing full compile per iteration.
+
+Measured: a JIT-eligible `hot()` whose body used a builtin with no lowering
+entry ran at **10.53 s / 2M iters**, vs ~2.07 s for the clean interpreter
+fallback and ~1.55 s once the builtin was removed from eligibility — a ~5× and
+~7× slowdown from pure recompilation churn, not wrong output (the result stayed
+byte-correct). It bites any method the eligibility predicate admits but the
+lowering table cannot translate (an easy `eligible.rs` vs `builtins_table.rs`
+mismatch).
+
+Fix (separate small PR, approved): negative-cache the failure (a `failed`
+set), mark the method so it returns to the interpreter exactly once, and make
+`is_compiled` mean "defined", not "listed". Add a regression test (an eligible
+method with translation forced to fail runs correctly on the interpreter and
+records exactly one compile attempt) and an invariant test (every builtin name
+in `eligible.rs` has a `builtins_table.rs` entry, failing if one is added
+without the other). The C work (JIT thunks for the D3 char-access natives) lands
+with D2 phase 1, which is the matching JIT-ABI effort.
+
 ## Conformance baseline correction: 83/167, not 84 (2026-11-07)
 
 Measured with the current `target/debug/zun.exe` via `scripts/tests_check.sh`

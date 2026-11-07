@@ -316,6 +316,83 @@ fn char_code_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nat
         .ok_or_else(|| NativeError(format!("charCodeAt: index {index} is out of bounds")))
 }
 
+/// `String.prototype.charCodeAt` with a JS `number` index: ToIntegerOrInfinity
+/// is applied, and an out-of-range index (negative, past the end, ±Infinity)
+/// yields `NaN` — never an error. Always returns a `number`, so the typed floor
+/// needs no boxing and no out-of-bounds error (unlike the integer-index native).
+fn char_code_at_num(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("charCodeAt: expected a string".to_string())),
+    };
+    let index = numeric_arg(args.get(1))?;
+    match unit_at(value, index) {
+        Some(unit) => Ok(NativeValue::Float(f64::from(unit))),
+        None => Ok(NativeValue::Float(f64::NAN)),
+    }
+}
+
+/// `String.prototype.charAt` with a JS `number` index: ToIntegerOrInfinity is
+/// applied, and an out-of-range index yields the empty string `""` (never an
+/// error, never `undefined`). Always returns a `string`.
+fn char_at_num(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("charAt: expected a string".to_string())),
+    };
+    let index = numeric_arg(args.get(1))?;
+    match unit_at(value, index) {
+        Some(unit) => Ok(NativeValue::Str(zun_core::wtf16::from_units(&[unit]))),
+        None => Ok(NativeValue::Str(String::new())),
+    }
+}
+
+/// `str[i]` — bracket indexing. Unlike `charAt`/`at`, this uses the ECMAScript
+/// canonical array-index rule: the key resolves to a character only when `i` is
+/// a non-negative integer strictly inside the string; a fractional, negative, or
+/// out-of-range index is simply a missing property and yields `undefined`.
+fn char_index(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+    let value = match args.first() {
+        Some(NativeArg::Str(value)) => value,
+        _ => return Err(NativeError("string index: expected a string".to_string())),
+    };
+    let index = numeric_arg(args.get(1))?;
+    // Canonical index: a non-negative integer in [0, len). Fractional or
+    // negative indices are non-canonical keys -> `undefined`. No `fract()`
+    // rounding (unlike `charAt`): `s[1.5]` is a missing property.
+    if index.is_finite() && index >= 0.0 && index.fract() == 0.0 {
+        match zun_core::wtf16::encode(value).nth(index as usize) {
+            Some(unit) => Ok(NativeValue::Str(zun_core::wtf16::from_units(&[unit]))),
+            None => Ok(NativeValue::Void),
+        }
+    } else {
+        Ok(NativeValue::Void)
+    }
+}
+
+/// Read a numeric native argument (an `int` or a `float`) as an `f64`.
+fn numeric_arg(arg: Option<&NativeArg>) -> Result<f64, NativeError> {
+    match arg {
+        Some(NativeArg::Float(index)) => Ok(*index),
+        Some(NativeArg::Int(index)) => Ok(*index as f64),
+        _ => Err(NativeError("expected a numeric index".to_string())),
+    }
+}
+
+/// The UTF-16 code unit of `value` at a JS `number` index, under
+/// `charCodeAt`/`charAt` semantics: ToIntegerOrInfinity is applied (`NaN` folds
+/// to `0`, `±Infinity` stays out of range), and the unit is read lazily with
+/// `nth` — no per-call allocation of the whole string. `None` when the index is
+/// negative, non-finite, or past the end (the caller maps that to `NaN` / `""`).
+fn unit_at(value: &str, index: f64) -> Option<u16> {
+    let i = zun_core::string_ops::integer_or_infinity(index);
+    if i.is_finite() && i >= 0.0 {
+        zun_core::wtf16::encode(value).nth(i as usize)
+    } else {
+        None
+    }
+}
+
 fn starts_with(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match (args.first(), args.get(1)) {
         (Some(NativeArg::Str(value)), Some(NativeArg::Str(prefix))) => {
@@ -890,6 +967,27 @@ pub const MODULE: crate::Module = crate::Module {
             params: &[Str, U64],
             ret: U32,
             imp: char_code_at,
+        },
+        // JS-`number`-index char access (ToIntegerOrInfinity, out-of-range ->
+        // NaN / "" / undefined). These keep a typed result so a statically typed
+        // string receiver leaves the dynamic `stringMethod` path.
+        NativeFn {
+            name: "charCodeAtNum",
+            params: &[Str, F64],
+            ret: F64,
+            imp: char_code_at_num,
+        },
+        NativeFn {
+            name: "charAtNum",
+            params: &[Str, F64],
+            ret: Str,
+            imp: char_at_num,
+        },
+        NativeFn {
+            name: "charIndex",
+            params: &[Str, F64],
+            ret: Str,
+            imp: char_index,
         },
         NativeFn {
             name: "startsWith",
