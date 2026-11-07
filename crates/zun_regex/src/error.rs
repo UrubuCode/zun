@@ -13,13 +13,20 @@ pub struct RegexParseError {
 
 impl RegexParseError {
     pub(crate) fn new(message: impl Into<String>, position: usize) -> Self {
-        RegexParseError { message: message.into(), position }
+        RegexParseError {
+            message: message.into(),
+            position,
+        }
     }
 }
 
 impl fmt::Display for RegexParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid regular expression: {} (at {})", self.message, self.position)
+        write!(
+            f,
+            "invalid regular expression: {} (at {})",
+            self.message, self.position
+        )
     }
 }
 

@@ -179,4 +179,3 @@ macro_rules! typed_array_surface {
 }
 
 zun_core::typed_element_table!(typed_array_surface);
-

@@ -385,7 +385,8 @@ fn std_prelude_numeric_helpers() {
 fn unknown_import_is_a_sema_error() {
     let src = "import { nope } from \"zun:ghost\";\nfunction main() {}";
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     zun_sema::check(src, &ast, &mut diags);
     assert!(diags.iter().any(|d| d.message.contains("unknown module")));
 }
@@ -426,7 +427,8 @@ fn adaptive_tiering_compiles_hot_methods() {
                    while (i < 5) { print(sq(i)); i = i + 1; }\n\
                }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty());
     let module = zun_ilgen::lower(&hir);
@@ -458,7 +460,8 @@ fn hot_interpreted_backedge_compiles_eligible_method() {
     let src = "function spin(n: int): int { let i: int = 0; let total: int = 0; while (i < n) { total = total + i; i = i + 1; } return total; }\n\
                function main(): int { return spin(5); }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty());
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty());
@@ -486,7 +489,8 @@ fn loop_with_exception_region_keeps_tier0_fallback() {
     let src = "class Error {} function guarded(n: int): int { let i: int = 0; try { while (i < n) { i = i + 1; } } catch (error: Error) { return -1; } return i; }\n\
                function main(): int { return guarded(5); }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty());
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty());
@@ -508,7 +512,8 @@ fn osr_rejects_snapshots_with_a_live_evaluation_stack() {
 
     let src = "function main(): int { return 1; }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     let hir = zun_sema::check(src, &ast, &mut diags);
     let module = zun_ilgen::lower(&hir);
     let loaded = zun_vm::load(&module.write()).unwrap();
@@ -539,7 +544,8 @@ fn osr_rejects_snapshots_inside_exception_regions() {
 
     let src = "class Error {} function main(): int { try { throw new Error(); } catch (error: Error) { return 42; } }";
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty());
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty());
@@ -559,4 +565,3 @@ fn osr_rejects_snapshots_inside_exception_regions() {
     };
     assert!(!hook.is_valid_osr_snapshot(&snapshot));
 }
-

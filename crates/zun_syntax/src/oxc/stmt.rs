@@ -2,7 +2,10 @@ use super::*;
 
 /// Convert an OXC statement list into Zun statements, reused by block
 /// statements and by object-method / function bodies.
-pub(super) fn convert_statement_list(source: &str, body: &[Statement<'_>]) -> Result<Vec<Stmt>, String> {
+pub(super) fn convert_statement_list(
+    source: &str,
+    body: &[Statement<'_>],
+) -> Result<Vec<Stmt>, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut statements = Vec::with_capacity(body.len());
     let saved_prelude = PENDING_PRELUDE.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
@@ -129,7 +132,10 @@ fn forward_declared_names(
             })
             .collect();
         for (position, earlier) in declared.iter().enumerate() {
-            let Some(text) = source.get(earlier.span.start as usize..earlier.span.end as usize) else { continue };
+            let Some(text) = source.get(earlier.span.start as usize..earlier.span.end as usize)
+            else {
+                continue;
+            };
             for later in declared.iter().skip(position + 1) {
                 if let Some(id) = later.id.as_ref() {
                     if contains_word(text, id.name.as_str()) {
@@ -151,17 +157,24 @@ fn predeclare_forward_functions(
 ) -> Result<(), String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     for statement in ordered.iter().copied() {
-        let Statement::FunctionDeclaration(function) = statement else { continue };
+        let Statement::FunctionDeclaration(function) = statement else {
+            continue;
+        };
         if let Some(id) = function.id.as_ref() {
             if forward_names.contains(id.name.as_str()) {
                 let whole = span(function.span);
                 statements.push(Stmt::Let {
-                    name: Name { span: span(id.span) },
+                    name: Name {
+                        span: span(id.span),
+                    },
                     ty: None,
                     init: Expr::Function(FunctionExpr {
                         params: Vec::new(),
                         return_type: convert_type_annotation(source, None)?,
-                        body: Block { statements: Vec::new(), span: whole },
+                        body: Block {
+                            statements: Vec::new(),
+                            span: whole,
+                        },
                         is_arrow: true,
                         is_async: false,
                         is_generator: false,
@@ -219,7 +232,9 @@ fn convert_hoisted_var_declaration(
         {
             let whole = span(declarator.span);
             statements.push(Stmt::Expr(Expr::Assign {
-                target: Name { span: span(id.span) },
+                target: Name {
+                    span: span(id.span),
+                },
                 value: Box::new(convert_expression(source, initializer)?),
                 span: whole,
             }));
@@ -242,7 +257,8 @@ fn convert_expression_statement(
     }
     match inner {
         Expression::SequenceExpression(sequence)
-            if !source[sequence.span.start as usize..sequence.span.end as usize].contains("yield") =>
+            if !source[sequence.span.start as usize..sequence.span.end as usize]
+                .contains("yield") =>
         {
             for operand in sequence.expressions.iter() {
                 statements.push(Stmt::Expr(convert_effect_expression(source, operand)?));
@@ -271,9 +287,14 @@ fn convert_labeled_statement(
             span: span(block.span),
         };
         statements.push(Stmt::Labeled {
-            label: Name { span: span(labeled.label.span) },
+            label: Name {
+                span: span(labeled.label.span),
+            },
             statement: Box::new(Stmt::If {
-                cond: Expr::Bool { value: true, span: span(block.span) },
+                cond: Expr::Bool {
+                    value: true,
+                    span: span(block.span),
+                },
                 then_block: body,
                 else_block: None,
                 span: span(block.span),
@@ -291,7 +312,9 @@ fn convert_labeled_statement(
         .unwrap_or(Stmt::Expr(Expr::Null { span: span_all }));
     statements.extend(inner);
     statements.push(Stmt::Labeled {
-        label: Name { span: span(labeled.label.span) },
+        label: Name {
+            span: span(labeled.label.span),
+        },
         statement: Box::new(statement),
         span: span_all,
     });
@@ -319,18 +342,26 @@ fn convert_bare_block(
                         ))
             )
         });
-    let declares_lexical = (TOP_LEVEL_BLOCK.with(|cell| cell.get()) != block.span.start || shadows_top_level) && block.body.iter().any(|inner| {
-        matches!(
-            inner,
-            Statement::VariableDeclaration(decl)
-                if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
-        )
-    });
+    let declares_lexical = (TOP_LEVEL_BLOCK.with(|cell| cell.get()) != block.span.start
+        || shadows_top_level)
+        && block.body.iter().any(|inner| {
+            matches!(
+                inner,
+                Statement::VariableDeclaration(decl)
+                    if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
+            )
+        });
     let inner = convert_statement_list(source, &block.body)?;
     if declares_lexical {
         statements.push(Stmt::If {
-            cond: Expr::Bool { value: true, span: span(block.span) },
-            then_block: Block { statements: inner, span: span(block.span) },
+            cond: Expr::Bool {
+                value: true,
+                span: span(block.span),
+            },
+            then_block: Block {
+                statements: inner,
+                span: span(block.span),
+            },
             else_block: None,
             span: span(block.span),
         });
@@ -357,7 +388,9 @@ fn convert_function_declaration(
     if PARAM_SHADOWS.with(|names| names.borrow().iter().any(|n| n == id.name.as_str())) {
         if EMIT_SHADOW.with(|flag| flag.get()) {
             statements.push(Stmt::Expr(Expr::Assign {
-                target: Name { span: span(id.span) },
+                target: Name {
+                    span: span(id.span),
+                },
                 value: Box::new(convert_oxc_function(source, function)?),
                 span: span(function.span),
             }));
@@ -366,14 +399,18 @@ fn convert_function_declaration(
     }
     if forward_names.contains(id.name.as_str()) {
         statements.push(Stmt::Expr(Expr::Assign {
-            target: Name { span: span(id.span) },
+            target: Name {
+                span: span(id.span),
+            },
             value: Box::new(convert_oxc_function(source, function)?),
             span: span(function.span),
         }));
         return Ok(());
     }
     statements.push(Stmt::Let {
-        name: Name { span: span(id.span) },
+        name: Name {
+            span: span(id.span),
+        },
         ty: None,
         init: convert_oxc_function(source, function)?,
         span: span(function.span),
@@ -389,8 +426,8 @@ fn convert_class_statement(
     class_declaration: &oxc_ast::ast::Class<'_>,
     statements: &mut Vec<Stmt>,
 ) -> Result<(), String> {
-    let class = convert_class_declaration(source, class_declaration)
-        .map_err(|errors| errors.join("; "))?;
+    let class =
+        convert_class_declaration(source, class_declaration).map_err(|errors| errors.join("; "))?;
     HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
     statements.extend(CLASS_TRAILING.with(|cells| std::mem::take(&mut *cells.borrow_mut())));
     Ok(())
@@ -442,10 +479,17 @@ pub(super) fn convert_switch(
                 .as_ref()
                 .map(|test| convert_expression(source, test))
                 .transpose()?,
-            body: Block { statements: stmts, span: span(case.span) },
+            body: Block {
+                statements: stmts,
+                span: span(case.span),
+            },
         });
     }
-    Ok(Stmt::Switch { discriminant, cases, span: whole })
+    Ok(Stmt::Switch {
+        discriminant,
+        cases,
+        span: whole,
+    })
 }
 
 pub(super) fn convert_if_statement(

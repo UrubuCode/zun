@@ -23,17 +23,27 @@ impl<'a> Interp<'a> {
     /// in the matching built-in iterator; a user value implementing
     /// `[Symbol.iterator]` (an object literal's symbol-function slot or a typed
     /// class's computed-symbol method) has it invoked to produce the iterator.
-    pub(crate) fn resolve_iterator(&mut self, source: zun_gc::Obj) -> Result<zun_gc::Obj, RunError> {
+    pub(crate) fn resolve_iterator(
+        &mut self,
+        source: zun_gc::Obj,
+    ) -> Result<zun_gc::Obj, RunError> {
         let iterator_id = zun_core::WellKnownSymbol::Iterator.id();
         let is_builtin_iter = zun_gc::with_current_heap(|heap| {
             heap.array_iterator_done(source).is_some()
                 || heap.set_iterator_done(source).is_some()
                 || heap.map_iterator_done(source).is_some()
         });
-        if is_builtin_iter || zun_gc::with_current_heap(|heap| heap.generator_state(source).is_some()) {
+        if is_builtin_iter
+            || zun_gc::with_current_heap(|heap| heap.generator_state(source).is_some())
+        {
             return Ok(source);
         }
-        if zun_gc::with_current_heap(|heap| heap.array_len(source).is_some() && heap.dynamic_get_symbol_function(source, iterator_id).is_none()) {
+        if zun_gc::with_current_heap(|heap| {
+            heap.array_len(source).is_some()
+                && heap
+                    .dynamic_get_symbol_function(source, iterator_id)
+                    .is_none()
+        }) {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(source))
                 .ok_or(RunError::BadToken);
         }
@@ -45,14 +55,13 @@ impl<'a> Interp<'a> {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_map_iterator(source))
                 .ok_or(RunError::BadToken);
         }
-        let handle = zun_gc::with_current_heap(|heap| {
-            heap.dynamic_get_symbol_function(source, iterator_id)
-        })
-        .or_else(|| {
-            self.class_symbol_methods
-                .get(&(source.type_rid(), iterator_id.get()))
-                .copied()
-        });
+        let handle =
+            zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(source, iterator_id))
+                .or_else(|| {
+                    self.class_symbol_methods
+                        .get(&(source.type_rid(), iterator_id.get()))
+                        .copied()
+                });
         let Some(handle) = handle else {
             return Err(RunError::Native("TypeError: value is not iterable".into()));
         };
@@ -68,11 +77,13 @@ impl<'a> Interp<'a> {
     /// its `next()` method called and the `{ value, done }` result read back.
     pub(crate) fn protocol_step(&mut self, it: zun_gc::Obj) -> Result<(Value, bool), RunError> {
         if zun_gc::with_current_heap(|heap| heap.generator_state(it).is_some()) {
-            let finished = self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
+            let finished =
+                self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
             if matches!(finished, Value::Bool(true)) {
                 return Ok((Value::Void, true));
             }
-            let value = self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?;
+            let value =
+                self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?;
             return Ok((value, false));
         }
         if let Some(done) = zun_gc::with_current_heap(|heap| heap.array_iterator_done(it)) {
@@ -104,14 +115,18 @@ impl<'a> Interp<'a> {
         }
         let next = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "next"));
         let Some(next) = next else {
-            return Err(RunError::Native("TypeError: iterator has no next() method".into()));
+            return Err(RunError::Native(
+                "TypeError: iterator has no next() method".into(),
+            ));
         };
         let roots = [it];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         let next_args = self.with_this_arg(next, it, Vec::new());
         let result = self.invoke_function_value(next, next_args)?;
         let Some(result_obj) = Self::value_object(&result) else {
-            return Err(RunError::Native("TypeError: iterator.next() did not return an object".into()));
+            return Err(RunError::Native(
+                "TypeError: iterator.next() did not return an object".into(),
+            ));
         };
         let done = zun_gc::with_current_heap(|heap| {
             heap.dynamic_get(result_obj, "done")
@@ -134,10 +149,7 @@ impl<'a> Interp<'a> {
     /// (`generatorIterator*` over a non-generator). It carries the resolved
     /// iterator (`__zun_it`) plus a one-slot cache (`__zun_cur` / `__zun_done` /
     /// `__zun_has`) so the desugared `done`/`next` pair reads one lookahead.
-    pub(crate) fn protocol_iterator_new(
-        &mut self,
-        source: zun_gc::Obj,
-    ) -> Result<Value, RunError> {
+    pub(crate) fn protocol_iterator_new(&mut self, source: zun_gc::Obj) -> Result<Value, RunError> {
         let it = self.resolve_iterator(source)?;
         let roots = [it];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
@@ -171,11 +183,19 @@ impl<'a> Interp<'a> {
             return Ok(Value::Bool(true));
         };
         let locals = zun_gc::with_current_heap(|heap| {
-            saved.locals.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
+            saved
+                .locals
+                .iter()
+                .map(|value| gen_unbox(*value, heap))
+                .collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let stack = zun_gc::with_current_heap(|heap| {
-            saved.eval_stack.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
+            saved
+                .eval_stack
+                .iter()
+                .map(|value| gen_unbox(*value, heap))
+                .collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let mut frame = ExecutionFrame::new(state.method_rid, locals);
@@ -206,18 +226,21 @@ impl<'a> Interp<'a> {
         let roots = [wrapper];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         let has = zun_gc::with_current_heap(|heap| {
-            heap.dynamic_get(roots[0], "__zun_has").and_then(|any| any.as_bool())
+            heap.dynamic_get(roots[0], "__zun_has")
+                .and_then(|any| any.as_bool())
         })
         .unwrap_or(false);
         let done_cached = zun_gc::with_current_heap(|heap| {
-            heap.dynamic_get(roots[0], "__zun_done").and_then(|any| any.as_bool())
+            heap.dynamic_get(roots[0], "__zun_done")
+                .and_then(|any| any.as_bool())
         })
         .unwrap_or(false);
         if has || done_cached {
             return Ok(Value::Bool(done_cached));
         }
         let it = zun_gc::with_current_heap(|heap| {
-            heap.dynamic_get(roots[0], "__zun_it").and_then(|any| any.as_object())
+            heap.dynamic_get(roots[0], "__zun_it")
+                .and_then(|any| any.as_object())
         })
         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
         .ok_or(RunError::BadToken)?;
@@ -278,7 +301,11 @@ impl<'a> Interp<'a> {
     /// `generator.return(value)`: resume a suspended generator as a return
     /// completion so its `finally` clauses run. A `finally` may override the
     /// result with its own `return` or suspend the completion with a `yield`.
-    pub(crate) fn generator_return(&mut self, generator: zun_gc::Obj, value: Value) -> Result<Value, RunError> {
+    pub(crate) fn generator_return(
+        &mut self,
+        generator: zun_gc::Obj,
+        value: Value,
+    ) -> Result<Value, RunError> {
         let mut state = zun_gc::with_current_heap_mut(|heap| heap.generator_state_take(generator))
             .ok_or(RunError::BadToken)?;
         let saved = if state.done { None } else { state.frame.take() };
@@ -290,11 +317,19 @@ impl<'a> Interp<'a> {
             return Ok(self.make_iter_result(value, true));
         };
         let locals = zun_gc::with_current_heap(|heap| {
-            saved.locals.iter().map(|v| gen_unbox(*v, heap)).collect::<Option<Vec<_>>>()
+            saved
+                .locals
+                .iter()
+                .map(|v| gen_unbox(*v, heap))
+                .collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let stack = zun_gc::with_current_heap(|heap| {
-            saved.eval_stack.iter().map(|v| gen_unbox(*v, heap)).collect::<Option<Vec<_>>>()
+            saved
+                .eval_stack
+                .iter()
+                .map(|v| gen_unbox(*v, heap))
+                .collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let mut frame = ExecutionFrame::new(state.method_rid, locals);
@@ -325,11 +360,19 @@ impl<'a> Interp<'a> {
                     "generator suspended without yielding a value".into(),
                 ))?;
                 let locals = zun_gc::with_current_heap_mut(|heap| {
-                    frame.locals.iter().map(|v| gen_box(v, heap)).collect::<Option<Vec<_>>>()
+                    frame
+                        .locals
+                        .iter()
+                        .map(|v| gen_box(v, heap))
+                        .collect::<Option<Vec<_>>>()
                 })
                 .ok_or(RunError::BadToken)?;
                 let eval_stack = zun_gc::with_current_heap_mut(|heap| {
-                    frame.stack.iter().map(|v| gen_box(v, heap)).collect::<Option<Vec<_>>>()
+                    frame
+                        .stack
+                        .iter()
+                        .map(|v| gen_box(v, heap))
+                        .collect::<Option<Vec<_>>>()
                 })
                 .ok_or(RunError::BadToken)?;
                 state.frame = Some(zun_gc::GeneratorFrame {
@@ -369,7 +412,8 @@ impl<'a> Interp<'a> {
         };
         match kind {
             0 => {
-                crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = args.first().map(|_| first.clone()));
+                crate::unwind::GENERATOR_SENT
+                    .with(|sent| *sent.borrow_mut() = args.first().map(|_| first.clone()));
                 let result = self.builtin_iterator_result(generator);
                 crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
                 Ok(result?.unwrap_or(Value::Void))
@@ -386,7 +430,8 @@ impl<'a> Interp<'a> {
                 if suspended {
                     // Raise the exception at the suspended `yield`; a surrounding
                     // try/catch in the generator may handle it and keep going.
-                    crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = Some(first));
+                    crate::unwind::GENERATOR_THROW_PENDING
+                        .with(|slot| *slot.borrow_mut() = Some(first));
                     let result = self.builtin_iterator_result(generator);
                     crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = None);
                     return Ok(result?.unwrap_or(Value::Void));
@@ -415,19 +460,24 @@ impl<'a> Interp<'a> {
             return Ok(None);
         }
         let (value, done) = if is_generator {
-            let finished = self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
+            let finished =
+                self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
             if matches!(finished, Value::Bool(true)) {
                 // The first completion reports the generator's return value
                 // (what `yield*` evaluates to); later ones report undefined.
                 let returned = zun_gc::with_current_heap_mut(|heap| {
-                    heap.generator_state_mut(it).map(|state| std::mem::replace(&mut state.current, zun_core::Any::void()))
+                    heap.generator_state_mut(it)
+                        .map(|state| std::mem::replace(&mut state.current, zun_core::Any::void()))
                 });
                 let value = returned
                     .and_then(|any| zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)))
                     .unwrap_or(Value::Void);
                 (value, true)
             } else {
-                (self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?, false)
+                (
+                    self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?,
+                    false,
+                )
             }
         } else {
             self.protocol_step(it)?
@@ -454,7 +504,9 @@ impl<'a> Interp<'a> {
             heap.dynamic_set(result, "done", zun_core::Any::bool(done));
             result
         });
-        Ok(Some(Value::Any(zun_core::Any::object(result.addr() as usize))))
+        Ok(Some(Value::Any(zun_core::Any::object(
+            result.addr() as usize
+        ))))
     }
 
     /// Drive `source` fully through the iteration protocol, handing each boxed
@@ -474,8 +526,7 @@ impl<'a> Interp<'a> {
         let setup = [target];
         let wrapper = {
             let _scope = unsafe { zun_gc::NativeRootScope::enter(&setup) };
-            Self::value_object(&self.protocol_iterator_new(source)?)
-                .ok_or(RunError::BadToken)?
+            Self::value_object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?
         };
         let roots = [wrapper, setup[0]];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
@@ -502,12 +553,18 @@ impl<'a> Interp<'a> {
         let mut current = receiver;
         for hop in 0..256 {
             // A typed class instance inherits from its class's prototype object.
-            let class_proto = if hop == 0 { self.instance_class_prototype(receiver) } else { None };
-            let Some(next) = class_proto.or_else(|| zun_gc::with_current_heap(|heap| {
-                heap.dynamic_prototype(current)
-                    .and_then(|any| any.as_object())
-                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-            })) else {
+            let class_proto = if hop == 0 {
+                self.instance_class_prototype(receiver)
+            } else {
+                None
+            };
+            let Some(next) = class_proto.or_else(|| {
+                zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_prototype(current)
+                        .and_then(|any| any.as_object())
+                        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                })
+            }) else {
                 return Ok(None);
             };
             current = next;
@@ -521,7 +578,8 @@ impl<'a> Interp<'a> {
                 if let Some(any) = heap.dynamic_get(current, name) {
                     Some(Value::Any(any))
                 } else {
-                    heap.dynamic_get_function(current, name).map(Value::Function)
+                    heap.dynamic_get_function(current, name)
+                        .map(Value::Function)
                 }
             });
             if found.is_some() {
@@ -541,7 +599,9 @@ impl<'a> Interp<'a> {
     pub(crate) fn builtin_constructor_record(class_name: &str) -> zun_gc::Obj {
         zun_gc::with_current_heap_mut(|heap| {
             let record = heap.alloc_dynamic();
-            let name_any = Value::Str(class_name.into()).box_any(heap).unwrap_or_else(zun_core::Any::null);
+            let name_any = Value::Str(class_name.into())
+                .box_any(heap)
+                .unwrap_or_else(zun_core::Any::null);
             heap.dynamic_set(record, "name", name_any);
             let global = heap.global_object();
             if let Some(desc) = heap.dynamic_get(global, class_name) {
@@ -559,7 +619,8 @@ impl<'a> Interp<'a> {
             return Some(Self::builtin_constructor_record(class_name));
         }
         let typed = zun_gc::with_current_heap(|heap| {
-            (!heap.is_dynamic_object(obj) || heap.is_instance_bag(obj)) && heap.array_len(obj).is_none()
+            (!heap.is_dynamic_object(obj) || heap.is_instance_bag(obj))
+                && heap.array_len(obj).is_none()
         });
         let type_rid = obj.type_rid();
         if !typed || type_rid < 1 {
@@ -570,9 +631,15 @@ impl<'a> Interp<'a> {
         let token = type_rid | zun_natives::USER_CLASS_FLAG;
         Some(zun_gc::with_current_heap_mut(|heap| {
             let record = heap.alloc_dynamic();
-            let name_any = Value::Str(class_name.into()).box_any(heap).unwrap_or_else(zun_core::Any::null);
+            let name_any = Value::Str(class_name.into())
+                .box_any(heap)
+                .unwrap_or_else(zun_core::Any::null);
             heap.dynamic_set(record, "name", name_any);
-            heap.dynamic_set(record, "__classDesc", zun_core::Any::class_descriptor(token));
+            heap.dynamic_set(
+                record,
+                "__classDesc",
+                zun_core::Any::class_descriptor(token),
+            );
             record
         }))
     }
@@ -588,7 +655,9 @@ impl<'a> Interp<'a> {
             }
         }
         if name == "size" {
-            let size = zun_gc::with_current_heap(|heap| heap.map_len(object).or_else(|| heap.set_len(object)));
+            let size = zun_gc::with_current_heap(|heap| {
+                heap.map_len(object).or_else(|| heap.set_len(object))
+            });
             if let Some(size) = size {
                 return Ok(Value::Float(size as f64, zun_il::NumKind::F64));
             }
@@ -619,7 +688,9 @@ impl<'a> Interp<'a> {
                 return Ok(value);
             }
         }
-        Ok(self.prototype_chain_get(object, name)?.unwrap_or(Value::Void))
+        Ok(self
+            .prototype_chain_get(object, name)?
+            .unwrap_or(Value::Void))
     }
 
     /// Arguments for invoking an object-literal accessor/method closure: a
@@ -627,15 +698,24 @@ impl<'a> Interp<'a> {
     /// `proxy.key` read through an `any` receiver: the handler's `get` trap
     /// (called as `(target, key, receiver)` with the handler as `this`), or the
     /// target's own property when there is none.
-    pub(crate) fn proxy_dynamic_get(&mut self, proxy: zun_gc::Obj, key: &str) -> Result<Value, RunError> {
+    pub(crate) fn proxy_dynamic_get(
+        &mut self,
+        proxy: zun_gc::Obj,
+        key: &str,
+    ) -> Result<Value, RunError> {
         let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
             return Err(RunError::BadToken);
         };
         let trap = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "get"));
         let result = match trap {
             Some(callback) => {
-                let handler = zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
-                let args = vec![Value::Object(target), Value::Str(key.into()), Value::Object(proxy)];
+                let handler =
+                    zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
+                let args = vec![
+                    Value::Object(target),
+                    Value::Str(key.into()),
+                    Value::Object(proxy),
+                ];
                 self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?
             }
             None => zun_gc::with_current_heap(|heap| {
@@ -646,25 +726,40 @@ impl<'a> Interp<'a> {
         };
         Ok(match result {
             Value::Function(_) | Value::Any(_) => result,
-            other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap)).map(Value::Any).unwrap_or(Value::Void),
+            other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap))
+                .map(Value::Any)
+                .unwrap_or(Value::Void),
         })
     }
 
     /// `proxy.key = value` through an `any` receiver: the `set` trap
     /// (`(target, key, value, receiver)`) or a plain store on the target.
-    pub(crate) fn proxy_dynamic_set(&mut self, proxy: zun_gc::Obj, key: &str, value: Value) -> Result<(), RunError> {
+    pub(crate) fn proxy_dynamic_set(
+        &mut self,
+        proxy: zun_gc::Obj,
+        key: &str,
+        value: Value,
+    ) -> Result<(), RunError> {
         let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
             return Err(RunError::BadToken);
         };
         let trap = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "set"));
         match trap {
             Some(callback) => {
-                let handler = zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
+                let handler =
+                    zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
                 let boxed = match &value {
                     Value::Function(_) | Value::Any(_) => value.clone(),
-                    other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap)).map(Value::Any).unwrap_or(Value::Void),
+                    other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap))
+                        .map(Value::Any)
+                        .unwrap_or(Value::Void),
                 };
-                let args = vec![Value::Object(target), Value::Str(key.into()), boxed, Value::Object(proxy)];
+                let args = vec![
+                    Value::Object(target),
+                    Value::Str(key.into()),
+                    boxed,
+                    Value::Object(proxy),
+                ];
                 self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?;
             }
             None => {
@@ -681,7 +776,11 @@ impl<'a> Interp<'a> {
     /// `length` / `name` of a class symbol-keyed method value (for example
     /// `Date.prototype[Symbol.toPrimitive]`), read off the method metadata.
     /// Other function values keep their existing expando-bag behavior.
-    pub(crate) fn function_meta(&self, handle: zun_core::FunctionHandle, name: &str) -> Option<Value> {
+    pub(crate) fn function_meta(
+        &self,
+        handle: zun_core::FunctionHandle,
+        name: &str,
+    ) -> Option<Value> {
         // A promise resolving function (`resolve` / `reject`): length 1, empty name.
         if self.settler_of(handle).is_some() {
             return Some(if name == "name" {
@@ -694,7 +793,11 @@ impl<'a> Interp<'a> {
             return None;
         }
         let rid = handle.method_rid();
-        let method = self.module.tables.method_defs.get((rid as usize).wrapping_sub(1))?;
+        let method = self
+            .module
+            .tables
+            .method_defs
+            .get((rid as usize).wrapping_sub(1))?;
         let method_name = self.module.strings.get(method.name);
         if !method_name.starts_with("[symbol]") {
             return None;
@@ -765,5 +868,4 @@ impl<'a> Interp<'a> {
         }
         self.call(method_rid, final_args, None)
     }
-
 }

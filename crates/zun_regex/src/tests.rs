@@ -16,7 +16,10 @@ fn s(a: usize, b: usize) -> Option<(usize, usize)> {
 }
 
 fn bad(pat: &str) {
-    assert!(Regex::new(pat, "").is_err(), "expected parse error for {pat:?}");
+    assert!(
+        Regex::new(pat, "").is_err(),
+        "expected parse error for {pat:?}"
+    );
 }
 
 // ---- quantifiers ----
@@ -149,8 +152,14 @@ fn alternation() {
 #[test]
 fn capture_groups() {
     assert_eq!(run("(a)(b)?", "", "ac"), Some(vec![s(0, 1), s(0, 1), None]));
-    assert_eq!(run("(a|ab)(c|bcd)(d*)", "", "abcd"), Some(vec![s(0, 4), s(0, 1), s(1, 4), s(4, 4)]));
-    assert_eq!(run("((a)(b))", "", "ab"), Some(vec![s(0, 2), s(0, 2), s(0, 1), s(1, 2)]));
+    assert_eq!(
+        run("(a|ab)(c|bcd)(d*)", "", "abcd"),
+        Some(vec![s(0, 4), s(0, 1), s(1, 4), s(4, 4)])
+    );
+    assert_eq!(
+        run("((a)(b))", "", "ab"),
+        Some(vec![s(0, 2), s(0, 2), s(0, 1), s(1, 2)])
+    );
     assert_eq!(run("(?:a)(b)", "", "ab"), Some(vec![s(0, 2), s(1, 2)]));
 }
 
@@ -181,7 +190,10 @@ fn named_groups() {
     assert_eq!(m.named("m"), s(8, 10));
     assert_eq!(m.group(1), s(3, 7));
     assert_eq!(m.named("nope"), None);
-    assert_eq!(re.group_names(), &[("y".to_string(), 1), ("m".to_string(), 2)]);
+    assert_eq!(
+        re.group_names(),
+        &[("y".to_string(), 1), ("m".to_string(), 2)]
+    );
     assert_eq!(re.group_count(), 2);
 }
 
@@ -217,7 +229,10 @@ fn backrefs_unset_and_forward() {
 
 #[test]
 fn backrefs_multi_digit() {
-    assert_eq!(span("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)\\10", "", "abcdefghijj"), s(0, 11));
+    assert_eq!(
+        span("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)\\10", "", "abcdefghijj"),
+        s(0, 11)
+    );
     // Fewer groups than the number: legacy octal / identity escape (Annex B).
     assert_eq!(span("\\8", "", "8"), s(0, 1));
     assert_eq!(span("\\101", "", "A"), s(0, 1));
@@ -244,7 +259,10 @@ fn lookahead_negative() {
 #[test]
 fn lookahead_is_atomic() {
     // Spec example: backtracking never re-enters the lookahead.
-    assert_eq!(run("(?=(a+))a*b\\1", "", "baaabac"), Some(vec![s(3, 6), s(3, 4)]));
+    assert_eq!(
+        run("(?=(a+))a*b\\1", "", "baaabac"),
+        Some(vec![s(3, 6), s(3, 4)])
+    );
     assert_eq!(span("(?=(a+))a*b\\1", "", "baaac"), None);
 }
 
@@ -281,7 +299,10 @@ fn lookbehind_variable_length() {
 #[test]
 fn lookbehind_captures_match_backward() {
     // Spec examples: lookbehind matches right-to-left.
-    assert_eq!(run("(?<=(\\d+)(\\d+))$", "", "1053"), Some(vec![s(4, 4), s(0, 1), s(1, 4)]));
+    assert_eq!(
+        run("(?<=(\\d+)(\\d+))$", "", "1053"),
+        Some(vec![s(4, 4), s(0, 1), s(1, 4)])
+    );
     assert_eq!(run("(?<=\\1(a))b", "", "aab"), Some(vec![s(2, 3), s(1, 2)]));
 }
 
@@ -315,7 +336,15 @@ fn flag_multiline_and_dotall() {
 #[test]
 fn flag_parsing() {
     let f = Flags::parse("gimsuyd").unwrap();
-    assert!(f.global && f.ignore_case && f.multiline && f.dot_all && f.unicode && f.sticky && f.has_indices);
+    assert!(
+        f.global
+            && f.ignore_case
+            && f.multiline
+            && f.dot_all
+            && f.unicode
+            && f.sticky
+            && f.has_indices
+    );
     assert!(Flags::parse("").unwrap() == Flags::default());
     assert!(Flags::parse("gg").is_err());
     assert!(Flags::parse("x").is_err());
@@ -338,7 +367,10 @@ fn match_at_is_anchored() {
     let re = Regex::new("b", "").unwrap();
     let chars: Vec<char> = "ab".chars().collect();
     assert!(re.match_at_chars(&chars, 0).unwrap().is_none());
-    assert_eq!(re.match_at_chars(&chars, 1).unwrap().unwrap().span(), (1, 2));
+    assert_eq!(
+        re.match_at_chars(&chars, 1).unwrap().unwrap().span(),
+        (1, 2)
+    );
 }
 
 #[test]
@@ -350,12 +382,27 @@ fn char_indices_not_bytes() {
 #[test]
 fn ast_shape() {
     let p = parse("a|b").unwrap();
-    assert_eq!(p.node, RegexNode::Alt(vec![RegexNode::Char('a'), RegexNode::Char('b')]));
+    assert_eq!(
+        p.node,
+        RegexNode::Alt(vec![RegexNode::Char('a'), RegexNode::Char('b')])
+    );
     let p = parse("(?<n>a)+?").unwrap();
     assert_eq!(p.group_count, 1);
     match p.node {
-        RegexNode::Repeat { min: 1, max: None, greedy: false, node } => {
-            assert!(matches!(*node, RegexNode::Group { index: 1, name: Some(_), .. }));
+        RegexNode::Repeat {
+            min: 1,
+            max: None,
+            greedy: false,
+            node,
+        } => {
+            assert!(matches!(
+                *node,
+                RegexNode::Group {
+                    index: 1,
+                    name: Some(_),
+                    ..
+                }
+            ));
         }
         other => panic!("unexpected {other:?}"),
     }
@@ -366,9 +413,32 @@ fn ast_shape() {
 #[test]
 fn invalid_patterns() {
     for p in [
-        "(", "(a", "a)", ")", "[a", "[b-a]", "*a", "+", "?", "a**", "a+*", "^*", "$+", "\\b+",
-        "(?<n>a)(?<n>b)", "(?<a>x)\\k<b>", "(?<a>x)\\k", "a{2,1}", "(?z)", "(?<>a)", "(?<1a>a)",
-        "\\", "(?<=a)*", "{1}", "a{1}{2}", "(?",
+        "(",
+        "(a",
+        "a)",
+        ")",
+        "[a",
+        "[b-a]",
+        "*a",
+        "+",
+        "?",
+        "a**",
+        "a+*",
+        "^*",
+        "$+",
+        "\\b+",
+        "(?<n>a)(?<n>b)",
+        "(?<a>x)\\k<b>",
+        "(?<a>x)\\k",
+        "a{2,1}",
+        "(?z)",
+        "(?<>a)",
+        "(?<1a>a)",
+        "\\",
+        "(?<=a)*",
+        "{1}",
+        "a{1}{2}",
+        "(?",
     ] {
         bad(p);
     }
@@ -397,7 +467,10 @@ fn catastrophic_pattern_hits_step_limit() {
     let r = re.find("aaaaaaaaaaaaaaaaaaaaaaaa!", 0);
     assert_eq!(r.unwrap_err(), RegexError::StepLimitExceeded);
     let re = Regex::new("(a+)+$", "").unwrap();
-    assert_eq!(re.is_match("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!"), Err(RegexError::StepLimitExceeded));
+    assert_eq!(
+        re.is_match("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!"),
+        Err(RegexError::StepLimitExceeded)
+    );
 }
 
 #[test]
@@ -406,7 +479,10 @@ fn step_limit_is_per_call_and_benign_inputs_pass() {
     assert!(re.is_match("aaaa").unwrap());
     assert!(re.is_match("aaaa").unwrap());
     let tiny = Regex::new("a*b", "").unwrap().with_step_limit(5);
-    assert_eq!(tiny.is_match("aaaaaaaaaaaaaaa"), Err(RegexError::StepLimitExceeded));
+    assert_eq!(
+        tiny.is_match("aaaaaaaaaaaaaaa"),
+        Err(RegexError::StepLimitExceeded)
+    );
 }
 
 // ---- prefilter equivalence ----
@@ -441,9 +517,9 @@ fn prefilter_matches_naive_scan() {
         ("\\w+@\\w+", ""),
         ("[a-z]+:", ""),
         ("\\d+#\\d+", ""),
-        ("\\d+5", ""),       // literal is also a class member
-        ("\\w{1,3}@", ""),   // bounded loop: must NOT use walk-back (bail to Set)
-        ("(\\w+)@", ""),     // capture group around the loop
+        ("\\d+5", ""),     // literal is also a class member
+        ("\\w{1,3}@", ""), // bounded loop: must NOT use walk-back (bail to Set)
+        ("(\\w+)@", ""),   // capture group around the loop
         // quantifiers (incl. empty-match)
         ("a*", ""),
         ("a+", ""),
@@ -495,17 +571,17 @@ fn prefilter_matches_naive_scan() {
         ("[a-z]{2,5}", ""),
         ("[a-z]{2,5}?", ""),
         ("[a-z]{3}", ""),
-        ("[a-z]+z", ""),   // greedy give-back into the run
-        ("\\w+@", ""),     // walk-back to the literal after the run
-        ("a+a", ""),       // run and trailing atom share the alphabet
-        ("a+?a", ""),      // lazy take-more into the run
+        ("[a-z]+z", ""), // greedy give-back into the run
+        ("\\w+@", ""),   // walk-back to the literal after the run
+        ("a+a", ""),     // run and trailing atom share the alphabet
+        ("a+?a", ""),    // lazy take-more into the run
         ("\\d+5", ""),
         ("[a-z]+[a-z]", ""),
         ("x*y", ""),
         // loops that MUST bail (capture / nested group): still correct.
         ("(\\w)+", ""),
         ("(ab)+", ""),
-        ("([a-z]+)x", ""),  // capture AROUND a bare loop: loop still fast
+        ("([a-z]+)x", ""), // capture AROUND a bare loop: loop still fast
         ("(a*)*", ""),
         // dotAll / any
         (".+", "s"),
@@ -583,5 +659,8 @@ fn prefilter_matches_naive_scan() {
 #[test]
 fn nested_quantifier_alternation_blowup_is_bounded() {
     let re = Regex::new("(a|aa)+$", "").unwrap().with_step_limit(500_000);
-    assert_eq!(re.is_match(&format!("{}!", "a".repeat(60))), Err(RegexError::StepLimitExceeded));
+    assert_eq!(
+        re.is_match(&format!("{}!", "a".repeat(60))),
+        Err(RegexError::StepLimitExceeded)
+    );
 }

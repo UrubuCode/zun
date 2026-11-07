@@ -25,7 +25,9 @@ pub(super) fn convert_update(
     value_used: bool,
 ) -> Result<Expr, String> {
     if value_used && !update.prefix {
-        if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = &update.argument {
+        if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
+            &update.argument
+        {
             // `tmp = ToNumeric(x); x = tmp ± 1; tmp` keeps the exact old value
             // (including -0), which `(x = x ± 1) ∓ 1` cannot.
             let whole = Span::new(update.span.start, update.span.end);
@@ -37,7 +39,9 @@ pub(super) fn convert_update(
             let boxed = Expr::Cast {
                 expr: Box::new(Expr::Ident(Name { span: id_span })),
                 ty: crate::ast::TypeAnnotation {
-                    name: Name { span: Span::new(update.span.start, update.span.start) },
+                    name: Name {
+                        span: Span::new(update.span.start, update.span.start),
+                    },
                     is_array: false,
                 },
                 span: whole,
@@ -45,16 +49,25 @@ pub(super) fn convert_update(
             let numeric = Expr::Binary {
                 op: BinaryOp::Sub,
                 lhs: Box::new(boxed),
-                rhs: Box::new(Expr::Number { value: 0.0, span: whole }),
+                rhs: Box::new(Expr::Number {
+                    value: 0.0,
+                    span: whole,
+                }),
                 span: whole,
             };
-            let root = || Expr::ChainRoot { depth: 0, span: whole };
+            let root = || Expr::ChainRoot {
+                depth: 0,
+                span: whole,
+            };
             let store = Expr::Assign {
                 target: Name { span: id_span },
                 value: Box::new(Expr::Binary {
                     op,
                     lhs: Box::new(root()),
-                    rhs: Box::new(Expr::Number { value: 1.0, span: whole }),
+                    rhs: Box::new(Expr::Number {
+                        value: 1.0,
+                        span: whole,
+                    }),
                     span: whole,
                 }),
                 span: whole,
@@ -65,7 +78,11 @@ pub(super) fn convert_update(
                 when_false: Box::new(root()),
                 span: whole,
             };
-            return Ok(Expr::TempBind { value: Box::new(numeric), body: Box::new(body), span: whole });
+            return Ok(Expr::TempBind {
+                value: Box::new(numeric),
+                body: Box::new(body),
+                span: whole,
+            });
         }
     }
     let updated = convert_update_assign(source, update)?;
@@ -78,7 +95,10 @@ pub(super) fn convert_update(
         return Ok(Expr::Binary {
             op: undo,
             lhs: Box::new(updated),
-            rhs: Box::new(Expr::Number { value: 1.0, span: whole }),
+            rhs: Box::new(Expr::Number {
+                value: 1.0,
+                span: whole,
+            }),
             span: whole,
         });
     }
@@ -96,8 +116,16 @@ pub(super) fn convert_update_assign(
         oxc_ast::ast::UpdateOperator::Decrement => BinaryOp::Sub,
     };
     let whole = span(update.span);
-    let one = || Expr::Number { value: 1.0, span: whole };
-    let step = |read: Expr| Expr::Binary { op, lhs: Box::new(read), rhs: Box::new(one()), span: whole };
+    let one = || Expr::Number {
+        value: 1.0,
+        span: whole,
+    };
+    let step = |read: Expr| Expr::Binary {
+        op,
+        lhs: Box::new(read),
+        rhs: Box::new(one()),
+        span: whole,
+    };
     let member = match &update.argument {
         SimpleAssignmentTarget::StaticMemberExpression(m) => Some(MemberRef::Static(m)),
         SimpleAssignmentTarget::ComputedMemberExpression(m) => Some(MemberRef::Computed(m)),
@@ -110,10 +138,14 @@ pub(super) fn convert_update_assign(
     }
     match &update.argument {
         SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
-            let target = Name { span: span(identifier.span) };
+            let target = Name {
+                span: span(identifier.span),
+            };
             Ok(Expr::Assign {
                 target,
-                value: Box::new(step(Expr::Ident(Name { span: span(identifier.span) }))),
+                value: Box::new(step(Expr::Ident(Name {
+                    span: span(identifier.span),
+                }))),
                 span: whole,
             })
         }
@@ -121,12 +153,16 @@ pub(super) fn convert_update_assign(
             let object = convert_expression(source, &member.object)?;
             let read = Expr::Field {
                 object: Box::new(convert_expression(source, &member.object)?),
-                field: Name { span: span(member.property.span) },
+                field: Name {
+                    span: span(member.property.span),
+                },
                 span: span(member.span),
             };
             Ok(Expr::FieldAssign {
                 object: Box::new(object),
-                field: Name { span: span(member.property.span) },
+                field: Name {
+                    span: span(member.property.span),
+                },
                 value: Box::new(step(read)),
                 span: whole,
             })
@@ -148,14 +184,18 @@ pub(super) fn convert_update_assign(
             let private = |source: &str| -> Result<Expr, String> {
                 Ok(Expr::PrivateField {
                     object: Box::new(convert_expression(source, &member.object)?),
-                    field: Name { span: span(member.field.span) },
+                    field: Name {
+                        span: span(member.field.span),
+                    },
                     span: span(member.span),
                 })
             };
             let read = private(source)?;
             Ok(Expr::FieldAssign {
                 object: Box::new(private(source)?),
-                field: Name { span: span(member.field.span) },
+                field: Name {
+                    span: span(member.field.span),
+                },
                 value: Box::new(step(read)),
                 span: whole,
             })

@@ -10,10 +10,17 @@ pub(super) fn collect_mutated_names(
             ast::Stmt::Let { init, .. }
             | ast::Stmt::Destructure { init, .. }
             | ast::Stmt::Expr(init) => collect_mutated_expr(checker, init, names),
-            ast::Stmt::If { cond, then_block, else_block, .. } => {
+            ast::Stmt::If {
+                cond,
+                then_block,
+                else_block,
+                ..
+            } => {
                 collect_mutated_expr(checker, cond, names);
                 collect_mutated_names(checker, &then_block.statements, names);
-                if let Some(block) = else_block { collect_mutated_names(checker, &block.statements, names); }
+                if let Some(block) = else_block {
+                    collect_mutated_names(checker, &block.statements, names);
+                }
             }
             ast::Stmt::While { cond, body, .. } => {
                 collect_mutated_expr(checker, cond, names);
@@ -23,11 +30,24 @@ pub(super) fn collect_mutated_names(
                 collect_mutated_names(checker, &body.statements, names);
                 collect_mutated_expr(checker, cond, names);
             }
-            ast::Stmt::For { init, extra_init, cond, update, body, .. } => {
-                if let Some(init) = init { collect_mutated_names(checker, std::slice::from_ref(init), names); }
+            ast::Stmt::For {
+                init,
+                extra_init,
+                cond,
+                update,
+                body,
+                ..
+            } => {
+                if let Some(init) = init {
+                    collect_mutated_names(checker, std::slice::from_ref(init), names);
+                }
                 collect_mutated_names(checker, extra_init, names);
-                if let Some(cond) = cond { collect_mutated_expr(checker, cond, names); }
-                if let Some(update) = update { collect_mutated_expr(checker, update, names); }
+                if let Some(cond) = cond {
+                    collect_mutated_expr(checker, cond, names);
+                }
+                if let Some(update) = update {
+                    collect_mutated_expr(checker, update, names);
+                }
                 collect_mutated_names(checker, &body.statements, names);
             }
             ast::Stmt::ForOf { iterable, body, .. } => {
@@ -38,23 +58,42 @@ pub(super) fn collect_mutated_names(
                 collect_mutated_expr(checker, object, names);
                 collect_mutated_names(checker, &body.statements, names);
             }
-            ast::Stmt::Switch { discriminant, cases, .. } => {
+            ast::Stmt::Switch {
+                discriminant,
+                cases,
+                ..
+            } => {
                 collect_mutated_expr(checker, discriminant, names);
                 for case in cases {
-                    if let Some(test) = &case.test { collect_mutated_expr(checker, test, names); }
+                    if let Some(test) = &case.test {
+                        collect_mutated_expr(checker, test, names);
+                    }
                     collect_mutated_names(checker, &case.body.statements, names);
                 }
             }
             ast::Stmt::Return { value, .. } => {
-                if let Some(value) = value { collect_mutated_expr(checker, value, names); }
+                if let Some(value) = value {
+                    collect_mutated_expr(checker, value, names);
+                }
             }
             ast::Stmt::Throw { value, .. } => collect_mutated_expr(checker, value, names),
-            ast::Stmt::Try { body, catches, finally, .. } => {
+            ast::Stmt::Try {
+                body,
+                catches,
+                finally,
+                ..
+            } => {
                 collect_mutated_names(checker, &body.statements, names);
-                for catch in catches { collect_mutated_names(checker, &catch.body.statements, names); }
-                if let Some(block) = finally { collect_mutated_names(checker, &block.statements, names); }
+                for catch in catches {
+                    collect_mutated_names(checker, &catch.body.statements, names);
+                }
+                if let Some(block) = finally {
+                    collect_mutated_names(checker, &block.statements, names);
+                }
             }
-            ast::Stmt::Labeled { statement, .. } => collect_mutated_names(checker, std::slice::from_ref(statement), names),
+            ast::Stmt::Labeled { statement, .. } => {
+                collect_mutated_names(checker, std::slice::from_ref(statement), names)
+            }
             ast::Stmt::Break { .. } | ast::Stmt::Continue { .. } => {}
         }
     }
@@ -74,7 +113,12 @@ pub(super) fn collect_mutated_expr(
             collect_mutated_expr(checker, lhs, names);
             collect_mutated_expr(checker, rhs, names);
         }
-        ast::Expr::Conditional { condition, when_true, when_false, .. } => {
+        ast::Expr::Conditional {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } => {
             collect_mutated_expr(checker, condition, names);
             collect_mutated_expr(checker, when_true, names);
             collect_mutated_expr(checker, when_false, names);
@@ -86,22 +130,33 @@ pub(super) fn collect_mutated_expr(
         ast::Expr::ImportCall { specifier, .. } => collect_mutated_expr(checker, specifier, names),
         ast::Expr::Yield { value, .. } => collect_mutated_expr(checker, value, names),
         ast::Expr::Call { args, .. } | ast::Expr::New { args, .. } => {
-            for arg in args { collect_mutated_expr(checker, arg, names); }
+            for arg in args {
+                collect_mutated_expr(checker, arg, names);
+            }
         }
-        ast::Expr::ComputedCall { callee, args, .. } | ast::Expr::NewDynamic { callee, args, .. } => {
+        ast::Expr::ComputedCall { callee, args, .. }
+        | ast::Expr::NewDynamic { callee, args, .. } => {
             collect_mutated_expr(checker, callee, names);
-            for arg in args { collect_mutated_expr(checker, arg, names); }
+            for arg in args {
+                collect_mutated_expr(checker, arg, names);
+            }
         }
         ast::Expr::MethodCall { receiver, args, .. } => {
             collect_mutated_expr(checker, receiver, names);
-            for arg in args { collect_mutated_expr(checker, arg, names); }
+            for arg in args {
+                collect_mutated_expr(checker, arg, names);
+            }
         }
         ast::Expr::OptionalMethodCall { object, args, .. } => {
             collect_mutated_expr(checker, object, names);
-            for arg in args { collect_mutated_expr(checker, arg, names); }
+            for arg in args {
+                collect_mutated_expr(checker, arg, names);
+            }
         }
         ast::Expr::StaticMethodCall { args, .. } => {
-            for arg in args { collect_mutated_expr(checker, arg, names); }
+            for arg in args {
+                collect_mutated_expr(checker, arg, names);
+            }
         }
         ast::Expr::StaticField { .. } => {}
         ast::Expr::Field { object, .. } | ast::Expr::Index { object, .. } => {
@@ -124,7 +179,9 @@ pub(super) fn collect_mutated_expr(
         }
         ast::Expr::OptionalCall { callee, args, .. } => {
             collect_mutated_expr(checker, callee, names);
-            for arg in args { collect_mutated_expr(checker, arg, names); }
+            for arg in args {
+                collect_mutated_expr(checker, arg, names);
+            }
         }
         ast::Expr::FieldAssign { object, value, .. } => {
             collect_mutated_expr(checker, object, names);
@@ -134,7 +191,12 @@ pub(super) fn collect_mutated_expr(
             collect_mutated_expr(checker, object, names);
             collect_mutated_expr(checker, value, names);
         }
-        ast::Expr::IndexAssign { object, index, value, .. } => {
+        ast::Expr::IndexAssign {
+            object,
+            index,
+            value,
+            ..
+        } => {
             collect_mutated_expr(checker, object, names);
             collect_mutated_expr(checker, index, names);
             collect_mutated_expr(checker, value, names);
@@ -162,10 +224,14 @@ pub(super) fn collect_mutated_expr(
                 }
             }
         }
-        ast::Expr::Ident(_) | ast::Expr::Number { .. }
+        ast::Expr::Ident(_)
+        | ast::Expr::Number { .. }
         | ast::Expr::BigInt { .. }
-        | ast::Expr::String { .. } | ast::Expr::Template { .. } | ast::Expr::RegexLiteral { .. }
-        | ast::Expr::Bool { .. } | ast::Expr::Null { .. } => {}
+        | ast::Expr::String { .. }
+        | ast::Expr::Template { .. }
+        | ast::Expr::RegexLiteral { .. }
+        | ast::Expr::Bool { .. }
+        | ast::Expr::Null { .. } => {}
         ast::Expr::TaggedTemplate { tag, exprs, .. } => {
             collect_mutated_expr(checker, tag, names);
             for expression in exprs {

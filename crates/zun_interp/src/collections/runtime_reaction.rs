@@ -58,7 +58,9 @@ impl<'a> Interp<'a> {
                 on_rejected,
             } => match self.promise_settlement_of(roots[0])? {
                 PromiseSettlement::Resolved(value) => match as_function(&on_fulfilled) {
-                    Some(callback) => self.run_then_callback(callback, Value::Any(value), &roots)?,
+                    Some(callback) => {
+                        self.run_then_callback(callback, Value::Any(value), &roots)?
+                    }
                     None => {
                         self.settle_promise_resolve(roots[1], value);
                     }
@@ -108,14 +110,21 @@ impl<'a> Interp<'a> {
                                     })
                                 });
                             if let Some(obj) = waits {
-                                let wait = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
+                                let wait =
+                                    zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                                 let wait_roots = [wait, obj, roots[0], roots[1]];
-                                let _wait_scope = unsafe { zun_gc::NativeRootScope::enter(&wait_roots) };
-                                self.settle_target_with(wait_roots[0], Value::Object(wait_roots[1]));
+                                let _wait_scope =
+                                    unsafe { zun_gc::NativeRootScope::enter(&wait_roots) };
+                                self.settle_target_with(
+                                    wait_roots[0],
+                                    Value::Object(wait_roots[1]),
+                                );
                                 self.attach_reaction(
                                     wait_roots[0],
                                     wait_roots[3],
-                                    ReactionKind::FinallyPass { original: Value::Object(wait_roots[2]) },
+                                    ReactionKind::FinallyPass {
+                                        original: Value::Object(wait_roots[2]),
+                                    },
                                 );
                                 return Ok(());
                             }
@@ -198,7 +207,10 @@ impl<'a> Interp<'a> {
                         self.attach_reaction(
                             source,
                             roots[1],
-                            ReactionKind::Then { on_fulfilled: None, on_rejected: None },
+                            ReactionKind::Then {
+                                on_fulfilled: None,
+                                on_rejected: None,
+                            },
                         );
                     }
                 } else if let Value::Int(rid, _) = then {
@@ -211,7 +223,8 @@ impl<'a> Interp<'a> {
                     ) {
                         Ok(_) => {}
                         Err(RunError::Thrown(thrown)) => {
-                            let _ = self.invoke_promise_settler(roots[1], SETTLE_REJECT, vec![thrown]);
+                            let _ =
+                                self.invoke_promise_settler(roots[1], SETTLE_REJECT, vec![thrown]);
                         }
                         Err(_) => {
                             self.settle_promise_reject(roots[1], "thenable.then failed".into());
@@ -338,7 +351,8 @@ impl<'a> Interp<'a> {
         if let Some(obj) = as_object_ref(value) {
             let thenable = zun_gc::with_current_heap(|heap| {
                 heap.dynamic_get_function(obj, "then").is_some()
-                    || (!heap.is_dynamic_object(obj) && self.instance_method_rid(obj, "then").is_some())
+                    || (!heap.is_dynamic_object(obj)
+                        && self.instance_method_rid(obj, "then").is_some())
             });
             if thenable {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
@@ -361,7 +375,11 @@ impl<'a> Interp<'a> {
     /// then attach a reaction to each input promise. The aggregate is settled
     /// per spec as the inputs settle through the scheduler, so pending inputs
     /// are handled (the eager path could only read already-settled inputs).
-    pub(crate) fn promise_combinator(&mut self, name: &str, array: zun_gc::Obj) -> Result<Value, RunError> {
+    pub(crate) fn promise_combinator(
+        &mut self,
+        name: &str,
+        array: zun_gc::Obj,
+    ) -> Result<Value, RunError> {
         let elements = self.read_array_values(array)?;
         let kind = match name {
             "promiseAll" => CombinatorKind::All,
@@ -376,7 +394,9 @@ impl<'a> Interp<'a> {
         // array (first settlement wins).
         let holder = match kind {
             CombinatorKind::All | CombinatorKind::AllSettled | CombinatorKind::Any => {
-                Value::Object(zun_gc::with_current_heap_mut(|heap| heap.alloc_array(elements.len())))
+                Value::Object(zun_gc::with_current_heap_mut(|heap| {
+                    heap.alloc_array(elements.len())
+                }))
             }
             CombinatorKind::Race => Value::Void,
         };
@@ -395,7 +415,11 @@ impl<'a> Interp<'a> {
         }
         for (index, element) in elements.iter().enumerate() {
             let source = self.as_input_promise(element);
-            self.attach_reaction(source, target, ReactionKind::Combinator { aggregate, index });
+            self.attach_reaction(
+                source,
+                target,
+                ReactionKind::Combinator { aggregate, index },
+            );
         }
         Ok(Value::Object(target))
     }
@@ -435,7 +459,11 @@ impl<'a> Interp<'a> {
     /// `builtin/error.zun`, compiled in only when a program imports it), so the
     /// combinator cannot depend on it. The shape matches the class surface, so
     /// `reason.errors` / `reason.message` / `reason.name` read the same.
-    pub(crate) fn build_aggregate_error(&mut self, errors: zun_gc::Obj, message: &str) -> zun_core::Any {
+    pub(crate) fn build_aggregate_error(
+        &mut self,
+        errors: zun_gc::Obj,
+        message: &str,
+    ) -> zun_core::Any {
         let roots = [errors];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         zun_gc::with_current_heap_mut(|heap| {
@@ -448,7 +476,11 @@ impl<'a> Interp<'a> {
                 .box_any(heap)
                 .unwrap_or_else(zun_core::Any::null);
             heap.dynamic_set(object, "message", message);
-            heap.dynamic_set(object, "errors", zun_core::Any::object(roots[0].addr() as usize));
+            heap.dynamic_set(
+                object,
+                "errors",
+                zun_core::Any::object(roots[0].addr() as usize),
+            );
             zun_core::Any::object(object.addr() as usize)
         })
     }

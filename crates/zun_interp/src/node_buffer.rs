@@ -136,8 +136,10 @@ fn encode_utf16le(text: &str) -> Vec<u8> {
 
 fn decode_utf16le(bytes: &[u8]) -> String {
     // A trailing odd byte is dropped, matching Node's truncation.
-    let units: Vec<u16> =
-        bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
     String::from_utf16_lossy(&units)
 }
 
@@ -151,7 +153,11 @@ fn decode_hex(text: &str) -> Vec<u8> {
             _ => None,
         })
         .collect();
-    digits.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0] << 4) | c[1]).collect()
+    digits
+        .chunks(2)
+        .filter(|c| c.len() == 2)
+        .map(|c| (c[0] << 4) | c[1])
+        .collect()
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -165,8 +171,16 @@ fn encode_base64(bytes: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(B64[(n >> 18 & 63) as usize] as char);
         out.push(B64[(n >> 12 & 63) as usize] as char);
-        out.push(if chunk.len() > 1 { B64[(n >> 6 & 63) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { B64[(n & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            B64[(n >> 6 & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64[(n & 63) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -200,7 +214,10 @@ fn decode_base64(text: &str) -> Vec<u8> {
         if chunk.len() < 2 {
             break;
         }
-        let n = chunk.iter().enumerate().fold(0u32, |acc, (i, &s)| acc | (s << (18 - 6 * i)));
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, &s)| acc | (s << (18 - 6 * i)));
         out.push((n >> 16 & 0xff) as u8);
         if chunk.len() >= 3 {
             out.push((n >> 8 & 0xff) as u8);
@@ -219,7 +236,11 @@ fn read_uint(view: Obj, offset: usize, width: usize, little_endian: bool) -> Opt
         let mut value: u64 = 0;
         for i in 0..width {
             let byte = heap.u8_array_get(view, offset + i)? as u64;
-            let shift = if little_endian { 8 * i } else { 8 * (width - 1 - i) };
+            let shift = if little_endian {
+                8 * i
+            } else {
+                8 * (width - 1 - i)
+            };
             value |= byte << shift;
         }
         Some(value)
@@ -228,10 +249,20 @@ fn read_uint(view: Obj, offset: usize, width: usize, little_endian: bool) -> Opt
 
 /// Write the low `width` bytes of `value` into `view` at `offset`. Returns the
 /// next offset (`offset + width`), as Node's `write*` do.
-fn write_uint(view: Obj, offset: usize, value: u64, width: usize, little_endian: bool) -> Option<usize> {
+fn write_uint(
+    view: Obj,
+    offset: usize,
+    value: u64,
+    width: usize,
+    little_endian: bool,
+) -> Option<usize> {
     zun_gc::with_current_heap_mut(|heap| {
         for i in 0..width {
-            let shift = if little_endian { 8 * i } else { 8 * (width - 1 - i) };
+            let shift = if little_endian {
+                8 * i
+            } else {
+                8 * (width - 1 - i)
+            };
             let byte = (value >> shift & 0xff) as u8;
             heap.u8_array_set(view, offset + i, byte)?;
         }
@@ -267,7 +298,12 @@ fn accessor(name: &str) -> Option<Accessor> {
     } else {
         return None;
     };
-    Some(Accessor { width, signed, little_endian, num_kind })
+    Some(Accessor {
+        width,
+        signed,
+        little_endian,
+        num_kind,
+    })
 }
 
 /// Scan `haystack` for `needle`, honoring a possibly-negative `byte_offset`
@@ -289,14 +325,24 @@ fn buffer_search(haystack: &[u8], needle: &[u8], byte_offset: i64, last: bool) -
     let max_start = len - needle.len();
     if last {
         // Highest start index to consider (byteOffset defaults to the length).
-        let start = if byte_offset < 0 { len as i64 + byte_offset } else { byte_offset };
+        let start = if byte_offset < 0 {
+            len as i64 + byte_offset
+        } else {
+            byte_offset
+        };
         if start < 0 {
             return None;
         }
         let start = (start as usize).min(max_start);
-        (0..=start).rev().find(|&i| &haystack[i..i + needle.len()] == needle)
+        (0..=start)
+            .rev()
+            .find(|&i| &haystack[i..i + needle.len()] == needle)
     } else {
-        let start = if byte_offset < 0 { (len as i64 + byte_offset).max(0) as usize } else { byte_offset as usize };
+        let start = if byte_offset < 0 {
+            (len as i64 + byte_offset).max(0) as usize
+        } else {
+            byte_offset as usize
+        };
         if start > max_start {
             return None;
         }
@@ -324,7 +370,8 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             buffer_from_bytes(&encode(&text, &encoding)).ok_or(RunError::BadToken)
         })()),
         "nodeBufferFromArray" => Some((|| {
-            let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let array =
+                object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
             let bytes = zun_gc::with_current_heap(|heap| {
                 let len = heap.array_len(array)?;
                 let mut bytes = Vec::with_capacity(len);
@@ -342,7 +389,8 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             buffer_from_bytes(&bytes).ok_or(RunError::BadToken)
         })()),
         "nodeBufferFromArrayBuffer" => Some((|| {
-            let buffer = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let buffer =
+                object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
             zun_gc::with_current_heap_mut(|heap| {
                 let len = heap.buffer_len(buffer)?;
                 let view = heap.alloc_typed_array(buffer, 0, len, zun_core::TypedElement::U8)?;
@@ -391,16 +439,27 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
         "nodeBufferByteLength" => Some((|| {
             let text = as_string(args.first()).ok_or(RunError::BadToken)?;
             let encoding = as_string(args.get(1)).unwrap_or_else(|| "utf8".into());
-            Ok(Value::Int(encode(&text, &encoding).len() as i64, NumKind::U64))
+            Ok(Value::Int(
+                encode(&text, &encoding).len() as i64,
+                NumKind::U64,
+            ))
         })()),
         "nodeBufferToString" => Some((|| {
             let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
             let encoding = as_string(args.get(1)).unwrap_or_else(|| "utf8".into());
             let bytes = view_bytes(view).ok_or(RunError::BadToken)?;
             let start = as_usize(args.get(2)).unwrap_or(0).min(bytes.len());
-            let end = as_usize(args.get(3)).unwrap_or(bytes.len()).min(bytes.len());
-            let slice = if start <= end { &bytes[start..end] } else { &[][..] };
-            Ok(Value::Str(std::rc::Rc::from(decode(slice, &encoding).as_str())))
+            let end = as_usize(args.get(3))
+                .unwrap_or(bytes.len())
+                .min(bytes.len());
+            let slice = if start <= end {
+                &bytes[start..end]
+            } else {
+                &[][..]
+            };
+            Ok(Value::Str(std::rc::Rc::from(
+                decode(slice, &encoding).as_str(),
+            )))
         })()),
         "nodeBufferWrite" => Some((|| {
             let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -424,8 +483,9 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let start = relative(as_i64(args.get(1)).unwrap_or(0), len);
             let end = relative(as_i64(args.get(2)).unwrap_or(len as i64), len);
             let end = end.max(start);
-            let child = zun_gc::with_current_heap_mut(|heap| heap.typed_array_subarray(view, start, end))
-                .ok_or(RunError::BadToken)?;
+            let child =
+                zun_gc::with_current_heap_mut(|heap| heap.typed_array_subarray(view, start, end))
+                    .ok_or(RunError::BadToken)?;
             Ok(Value::Object(child))
         })()),
         "nodeBufferFill" => Some((|| {
@@ -445,8 +505,10 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             Ok(Value::Bool(view_bytes(a) == view_bytes(b)))
         })()),
         "nodeBufferCopy" => Some((|| {
-            let source = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-            let target = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let source =
+                object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let target =
+                object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
             let source_bytes = view_bytes(source).ok_or(RunError::BadToken)?;
             let target_len = view_len(target).ok_or(RunError::BadToken)?;
             // Signed indices: a negative counts from the end (NUCLEUS #21).
@@ -497,7 +559,8 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
                 _ => return Err(RunError::BadToken),
             };
             let le = name.ends_with("LE");
-            let next = write_uint(view, offset, value.to_bits() as u64, 4, le).ok_or(RunError::BadToken)?;
+            let next = write_uint(view, offset, value.to_bits() as u64, 4, le)
+                .ok_or(RunError::BadToken)?;
             Ok(Value::Int(next as i64, NumKind::U64))
         })()),
         "nodeBufferWriteDoubleLE" | "nodeBufferWriteDoubleBE" => Some((|| {
@@ -509,14 +572,17 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
                 _ => return Err(RunError::BadToken),
             };
             let le = name.ends_with("LE");
-            let next = write_uint(view, offset, value.to_bits(), 8, le).ok_or(RunError::BadToken)?;
+            let next =
+                write_uint(view, offset, value.to_bits(), 8, le).ok_or(RunError::BadToken)?;
             Ok(Value::Int(next as i64, NumKind::U64))
         })()),
         // Variable-width integer readers/writers (`readUIntLE(offset, byteLength)`
         // etc., 1..=6 bytes in Node, incl. the 24/40/48-bit cases). The width is
         // a runtime argument. Reads yield a JS number (`F64`, which holds every
         // value up to 48 bits exactly); writes return the next offset.
-        "nodeBufferReadUIntLE" | "nodeBufferReadUIntBE" | "nodeBufferReadIntLE"
+        "nodeBufferReadUIntLE"
+        | "nodeBufferReadUIntBE"
+        | "nodeBufferReadIntLE"
         | "nodeBufferReadIntBE" => Some((|| {
             let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
             let offset = as_usize(args.get(1)).unwrap_or(0);
@@ -527,10 +593,16 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let le = name.ends_with("LE");
             let raw = read_uint(view, offset, width, le).ok_or(RunError::BadToken)?;
             let signed = name.contains("ReadInt");
-            let value = if signed { sign_extend(raw, width) as f64 } else { raw as f64 };
+            let value = if signed {
+                sign_extend(raw, width) as f64
+            } else {
+                raw as f64
+            };
             Ok(Value::Float(value, NumKind::F64))
         })()),
-        "nodeBufferWriteUIntLE" | "nodeBufferWriteUIntBE" | "nodeBufferWriteIntLE"
+        "nodeBufferWriteUIntLE"
+        | "nodeBufferWriteUIntBE"
+        | "nodeBufferWriteIntLE"
         | "nodeBufferWriteIntBE" => Some((|| {
             let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
             let offset = as_usize(args.get(1)).unwrap_or(0);
@@ -602,7 +674,10 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let found = buffer_search(&haystack, &needle, offset, last);
             match name {
                 "nodeBufferIncludes" => Ok(Value::Bool(found.is_some())),
-                _ => Ok(Value::Int(found.map(|i| i as i64).unwrap_or(-1), NumKind::I64)),
+                _ => Ok(Value::Int(
+                    found.map(|i| i as i64).unwrap_or(-1),
+                    NumKind::I64,
+                )),
             }
         })()),
         _ => {
@@ -620,19 +695,27 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
                         Some(Value::Float(value, _)) => *value as i64 as u64,
                         _ => return Some(Err(RunError::BadToken)),
                     };
-                    return Some(match write_uint(view, offset, value, acc.width, acc.little_endian) {
-                        Some(next) => Ok(Value::Int(next as i64, NumKind::U64)),
-                        None => Err(RunError::BadToken),
-                    });
+                    return Some(
+                        match write_uint(view, offset, value, acc.width, acc.little_endian) {
+                            Some(next) => Ok(Value::Int(next as i64, NumKind::U64)),
+                            None => Err(RunError::BadToken),
+                        },
+                    );
                 }
                 let offset = as_usize(args.get(1)).unwrap_or(0);
-                return Some(match read_uint(view, offset, acc.width, acc.little_endian) {
-                    Some(raw) => {
-                        let value = if acc.signed { sign_extend(raw, acc.width) } else { raw as i64 };
-                        Ok(Value::Int(value, acc.num_kind))
-                    }
-                    None => Err(RunError::BadToken),
-                });
+                return Some(
+                    match read_uint(view, offset, acc.width, acc.little_endian) {
+                        Some(raw) => {
+                            let value = if acc.signed {
+                                sign_extend(raw, acc.width)
+                            } else {
+                                raw as i64
+                            };
+                            Ok(Value::Int(value, acc.num_kind))
+                        }
+                        None => Err(RunError::BadToken),
+                    },
+                );
             }
             None
         }

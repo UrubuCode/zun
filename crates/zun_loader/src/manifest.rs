@@ -75,10 +75,12 @@ impl ModuleLock {
             )));
         }
         let mut capabilities: Vec<_> = capabilities.into_iter().collect();
-        if let Some(unknown) = capabilities
-            .iter()
-            .find(|capability| !matches!(capability.as_str(), "fs" | "net" | "screen" | "native" | "codegen"))
-        {
+        if let Some(unknown) = capabilities.iter().find(|capability| {
+            !matches!(
+                capability.as_str(),
+                "fs" | "net" | "screen" | "native" | "codegen"
+            )
+        }) {
             return Err(LoadError::InvalidManifest(format!(
                 "unknown capability `{unknown}` for `{name}`"
             )));

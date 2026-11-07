@@ -31,18 +31,29 @@ fn provision_extract_idempotent_and_repair() {
     let home = tmp("prov");
     let payload = b"synthetic runtime payload".repeat(100);
     let blob = zstd::stream::encode_all(&payload[..], 3).unwrap();
-    let target = home.join("modules").join(format!("zun-runtime.{}", runtime_ext()));
+    let target = home
+        .join("modules")
+        .join(format!("zun-runtime.{}", runtime_ext()));
 
-    assert_eq!(provision_blob(&home, &blob).unwrap(), Provision::Written(target.clone()));
+    assert_eq!(
+        provision_blob(&home, &blob).unwrap(),
+        Provision::Written(target.clone())
+    );
     assert_eq!(std::fs::read(&target).unwrap(), payload);
     let m1 = std::fs::metadata(&target).unwrap().modified().unwrap();
 
     std::thread::sleep(Duration::from_millis(50));
-    assert_eq!(provision_blob(&home, &blob).unwrap(), Provision::UpToDate(target.clone()));
+    assert_eq!(
+        provision_blob(&home, &blob).unwrap(),
+        Provision::UpToDate(target.clone())
+    );
     assert_eq!(std::fs::metadata(&target).unwrap().modified().unwrap(), m1);
 
     std::fs::write(&target, b"corrupt").unwrap();
-    assert_eq!(provision_blob(&home, &blob).unwrap(), Provision::Written(target.clone()));
+    assert_eq!(
+        provision_blob(&home, &blob).unwrap(),
+        Provision::Written(target.clone())
+    );
     assert_eq!(std::fs::read(&target).unwrap(), payload);
     let _ = std::fs::remove_dir_all(&home);
 }
@@ -50,7 +61,10 @@ fn provision_extract_idempotent_and_repair() {
 #[test]
 fn dev_build_without_embed_is_graceful() {
     let home = tmp("dev");
-    assert_eq!(provision_blob(&home, &[]).unwrap(), Provision::NoEmbeddedRuntime);
+    assert_eq!(
+        provision_blob(&home, &[]).unwrap(),
+        Provision::NoEmbeddedRuntime
+    );
     assert!(home.join("modules").is_dir());
     if !has_embedded_runtime() {
         assert_eq!(provision(&home).unwrap(), Provision::NoEmbeddedRuntime);

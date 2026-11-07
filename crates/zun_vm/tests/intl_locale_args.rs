@@ -6,7 +6,8 @@ use zun_interp::CaptureOutput;
 fn run_source(user: &str) -> Vec<String> {
     let src = &zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -57,6 +58,8 @@ fn date_to_locale_string_takes_a_locale() {
 
 #[test]
 fn bigint_value_of_is_identity() {
-    let out = run_source("function main() { print((5n).valueOf().toString()); print((5n).valueOf() == 5n); }");
+    let out = run_source(
+        "function main() { print((5n).valueOf().toString()); print((5n).valueOf() == 5n); }",
+    );
     assert_eq!(out, ["5", "true"]);
 }

@@ -246,10 +246,17 @@ fn string_receiver_loop_method_is_jit_equivalent() {
         .position(|method| module.strings.get(method.name) == "isAscii")
         .map(|index| index as u32 + 1)
         .expect("isAscii method");
-    assert!(jit.is_compiled(is_ascii), "string-receiver method should be JIT-eligible");
+    assert!(
+        jit.is_compiled(is_ascii),
+        "string-receiver method should be JIT-eligible"
+    );
     let mut heap = zun_gc::Heap::new();
     let value = heap.intern_string(std::rc::Rc::from("zun"));
-    assert_eq!(jit.call_packed_with_heap(is_ascii, &[value as u64], &mut heap).expect("jit isAscii"), 1);
+    assert_eq!(
+        jit.call_packed_with_heap(is_ascii, &[value as u64], &mut heap)
+            .expect("jit isAscii"),
+        1
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -270,7 +277,10 @@ fn string_includes_with_managed_parameters_is_jit_equivalent() {
         .map(|index| index as u32 + 1)
         .expect("contains method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds parameterized String includes");
-    assert!(jit.is_compiled(contains), "managed string parameters should use the direct JIT ABI");
+    assert!(
+        jit.is_compiled(contains),
+        "managed string parameters should use the direct JIT ABI"
+    );
 
     let mut heap = zun_gc::Heap::new();
     let value = heap.intern_string(std::rc::Rc::from("zun runtime"));
@@ -573,4 +583,3 @@ fn typed_string_conversions_use_native_lowering_when_receiver_is_string() {
         1
     );
 }
-

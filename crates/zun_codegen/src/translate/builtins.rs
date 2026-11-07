@@ -35,7 +35,10 @@ impl Translator<'_> {
                 let mut sig = Signature::new(self.builder.func.signature.call_conv);
                 sig.params.push(AbiParam::new(types::I64));
                 sig.returns.push(AbiParam::new(types::I32));
-                let fid = self.module.declare_function(helper_name, Linkage::Import, &sig).map_err(|e| e.to_string())?;
+                let fid = self
+                    .module
+                    .declare_function(helper_name, Linkage::Import, &sig)
+                    .map_err(|e| e.to_string())?;
                 builtin_ids.insert(helper_name, fid);
                 fid
             };
@@ -74,7 +77,9 @@ impl Translator<'_> {
             ));
             let out = self.builder.ins().stack_addr(types::I64, slot, 0);
             let helper = self.map_get_any_fref();
-            self.builder.ins().call(helper, &[map, key_tag, key_payload, out]);
+            self.builder
+                .ins()
+                .call(helper, &[map, key_tag, key_payload, out]);
             stack.push((out, JitKind::Other));
             return Ok(());
         }
@@ -107,7 +112,8 @@ impl Translator<'_> {
             "zun_jit_data_view_set_i8" | "zun_jit_data_view_set_u8" => {
                 vec![types::I64, types::I64, types::I8]
             }
-            "zun_jit_data_view_get_i16" | "zun_jit_data_view_get_i32"
+            "zun_jit_data_view_get_i16"
+            | "zun_jit_data_view_get_i32"
             | "zun_jit_data_view_get_f32" => {
                 vec![types::I64, types::I64, types::I32]
             }
@@ -128,20 +134,25 @@ impl Translator<'_> {
             "zun_jit_u32_array_set" => vec![types::I64, types::I64, types::I32],
             "zun_jit_f64_array_get" => vec![types::I64, types::I64],
             "zun_jit_f64_array_set" => vec![types::I64, types::I64, types::F64],
-            "zun_jit_map_has_f64" | "zun_jit_set_has_f64"
-            | "zun_jit_set_add_f64" | "zun_jit_map_delete_f64"
-            | "zun_jit_set_delete_f64" | "zun_jit_map_set_f64"
+            "zun_jit_map_has_f64"
+            | "zun_jit_set_has_f64"
+            | "zun_jit_set_add_f64"
+            | "zun_jit_map_delete_f64"
+            | "zun_jit_set_delete_f64"
+            | "zun_jit_map_set_f64"
             | "zun_jit_map_get_f64_or" => {
                 if name == "zun_jit_map_set_f64" {
                     vec![types::I64, types::F64, types::F64]
                 } else if name == "zun_jit_map_get_f64_or" {
                     vec![types::I64, types::F64, types::F64]
                 } else {
-                vec![types::I64, types::F64]
+                    vec![types::I64, types::F64]
                 }
             }
-            "zun_jit_map_has_i64" | "zun_jit_set_has_i64"
-            | "zun_jit_set_add_i64" | "zun_jit_map_delete_i64"
+            "zun_jit_map_has_i64"
+            | "zun_jit_set_has_i64"
+            | "zun_jit_set_add_i64"
+            | "zun_jit_map_delete_i64"
             | "zun_jit_set_delete_i64" => vec![types::I64, types::I64],
             "zun_jit_map_has_i32" | "zun_jit_set_has_i32" => vec![types::I64, types::I32],
             "zun_jit_set_add_i32" => vec![types::I64, types::I32],

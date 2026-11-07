@@ -149,7 +149,11 @@ impl StringHeap {
             }
             pos += end + 1;
         }
-        Self { bytes, lookup, nul_entries }
+        Self {
+            bytes,
+            lookup,
+            nul_entries,
+        }
     }
 }
 

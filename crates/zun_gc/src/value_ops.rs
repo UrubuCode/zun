@@ -6,11 +6,7 @@ pub(super) fn hash_bytes(bytes: &[u8]) -> u64 {
     })
 }
 
-pub(super) fn any_same_value_zero(
-    a: zun_core::Any,
-    b: zun_core::Any,
-    strings: &[Rc<str>],
-) -> bool {
+pub(super) fn any_same_value_zero(a: zun_core::Any, b: zun_core::Any, strings: &[Rc<str>]) -> bool {
     if a.tag() != b.tag() {
         return false;
     }

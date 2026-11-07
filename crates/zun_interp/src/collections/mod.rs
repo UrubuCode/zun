@@ -1,42 +1,44 @@
 //! Managed collection dispatch extracted from the interpreter core.
 
-pub(super) use super::{Interp, RunError};
+pub(super) use super::state::{
+    Aggregate, CombinatorKind, ExecutionFrame, ExecutionOutcome, Reaction, ReactionKind, TimerEntry,
+};
 pub(super) use super::value::Value;
-pub(super) use super::state::{Aggregate, CombinatorKind, ExecutionFrame, ExecutionOutcome, Reaction, ReactionKind, TimerEntry};
-pub(super) use zun_sched::{Continuation, ContinuationId, Settlement, TaskId};
-pub(super) use zun_module::read_body;
+pub(super) use super::{Interp, RunError};
 pub(super) use zun_il::{decode_one, Opcode};
+pub(super) use zun_module::read_body;
+pub(super) use zun_sched::{Continuation, ContinuationId, Settlement, TaskId};
 
+mod array_construct;
+mod array_iterate;
+mod array_mutate;
+mod dynamic_call;
 mod iterators;
 mod mapset;
 mod misc_ops;
-mod dynamic_call;
-mod array_iterate;
-mod array_mutate;
-mod array_construct;
 
 mod object_core;
 mod object_descriptor;
 
-mod regexp;
-mod reflect;
-mod proxy;
-mod string_num;
 mod function;
 mod promise;
+mod proxy;
+mod reflect;
+mod regexp;
+mod string_num;
 
-mod buffer;
-mod generator;
-mod weak;
 mod bigint;
+mod buffer;
 mod class_decorator;
-mod runtime_descriptor;
-mod runtime_class_proxy;
-mod runtime_iter;
-mod runtime_typed_array;
-mod runtime_coerce;
+mod generator;
 mod runtime_async;
+mod runtime_class_proxy;
+mod runtime_coerce;
+mod runtime_descriptor;
+mod runtime_iter;
 mod runtime_reaction;
+mod runtime_typed_array;
+mod weak;
 
 /// `Promise.withResolvers` settle modes, stored in the settler record's
 /// `__settleMode` slot (as a float `Any`).
@@ -83,7 +85,9 @@ pub(super) fn any(value: &Value) -> Option<zun_core::Any> {
 /// preamble closure.
 pub(super) fn weak_key(value: &Value) -> Option<zun_gc::Obj> {
     match value {
-        Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| heap.function_cell(*handle))),
+        Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| {
+            heap.function_cell(*handle)
+        })),
         // An unregistered symbol (user-created or well-known) is a legal weak key.
         Value::Any(any) if any.as_symbol().is_some() => {
             let id = any.as_symbol()?;
@@ -124,7 +128,9 @@ impl<'a> Interp<'a> {
         let mut outcome = Ok(Value::Void);
         let mut index = 0usize;
         loop {
-            let Some(slot) = zun_gc::with_current_heap(|heap| heap.collection_cursor(roots[0], index)) else {
+            let Some(slot) =
+                zun_gc::with_current_heap(|heap| heap.collection_cursor(roots[0], index))
+            else {
                 break;
             };
             index += 1;
@@ -144,7 +150,11 @@ impl<'a> Interp<'a> {
         outcome
     }
 
-    pub(crate) fn call_managed_collection(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+    pub(crate) fn call_managed_collection(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
         // `recv.m?.(..)` probe: a `?`-prefixed member is called if it resolves and
         // otherwise answers `undefined`.
         if name.starts_with("dynamicCall") {
@@ -167,7 +177,9 @@ impl<'a> Interp<'a> {
         if matches!(result, Err(RunError::BadToken)) && name.starts_with("dynamicCall") {
             if let Some(Value::Str(member)) = args.get(1) {
                 let member = member.to_string();
-                if let Some(object) = self.new_error_object("TypeError", &format!("{member} is not a function")) {
+                if let Some(object) =
+                    self.new_error_object("TypeError", &format!("{member} is not a function"))
+                {
                     return Err(RunError::Thrown(Value::Object(object)));
                 }
             }
@@ -175,7 +187,11 @@ impl<'a> Interp<'a> {
         result
     }
 
-    pub(super) fn call_managed_collection_inner(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+    pub(super) fn call_managed_collection_inner(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
         // The typed-array intrinsics are generated from the master table in
         // `zun_core`, so every kind the checker accepts runs on Tier 0.
         if let Some(result) = crate::typed_arrays::call(name, args) {
@@ -194,11 +210,26 @@ impl<'a> Interp<'a> {
         // Reflection over a regexp sees its `lastIndex` as a real own property.
         if matches!(
             name,
-            "reflectSet" | "reflectHas" | "reflectDelete" | "reflectOwnKeys" | "reflectDefineProperty"
-                | "objectDefineProperty" | "objectDefineProperties" | "objectGetOwnPropertyDescriptor"
-                | "objectGetOwnPropertyDescriptors" | "objectGetOwnPropertyNames" | "objectKeys"
-                | "objectValues" | "objectEntries" | "objectFreeze" | "objectIsFrozen" | "objectSeal"
-                | "objectIsSealed" | "objectPreventExtensions" | "objectIsExtensible" | "objectHasOwn"
+            "reflectSet"
+                | "reflectHas"
+                | "reflectDelete"
+                | "reflectOwnKeys"
+                | "reflectDefineProperty"
+                | "objectDefineProperty"
+                | "objectDefineProperties"
+                | "objectGetOwnPropertyDescriptor"
+                | "objectGetOwnPropertyDescriptors"
+                | "objectGetOwnPropertyNames"
+                | "objectKeys"
+                | "objectValues"
+                | "objectEntries"
+                | "objectFreeze"
+                | "objectIsFrozen"
+                | "objectSeal"
+                | "objectIsSealed"
+                | "objectPreventExtensions"
+                | "objectIsExtensible"
+                | "objectHasOwn"
                 | "deleteStrict"
         ) {
             let regex_target = match args.first() {
@@ -345,15 +376,20 @@ impl<'a> Interp<'a> {
             "bigIntNew" => self.col_bigint(name, args),
             "bigIntFromNumber" => self.col_bigint(name, args),
             "bigIntUshr" => self.col_bigint(name, args),
-            "bigIntPow" | "bigIntAnd" | "bigIntOr" | "bigIntXor" | "bigIntShl" | "bigIntShr" => self.col_bigint(name, args),
+            "bigIntPow" | "bigIntAnd" | "bigIntOr" | "bigIntXor" | "bigIntShl" | "bigIntShr" => {
+                self.col_bigint(name, args)
+            }
             "bigIntNot" => self.col_bigint(name, args),
             "bigIntAsIntN" | "bigIntAsUintN" => self.col_bigint(name, args),
-            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntDiv" | "bigIntRem" | "bigIntCompare"
-            | "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt" | "bigIntGe" => self.col_bigint(name, args),
+            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntDiv" | "bigIntRem"
+            | "bigIntCompare" | "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt"
+            | "bigIntGe" => self.col_bigint(name, args),
             "bigIntNeg" => self.col_bigint(name, args),
             "bigIntToString" => self.col_bigint(name, args),
             "regexpIsMatch" => self.col_regexp(name, args),
-            "regexpSearch" | "regexpSplit" | "regexpSplitLimit" | "regexpReplace" => self.col_regexp(name, args),
+            "regexpSearch" | "regexpSplit" | "regexpSplitLimit" | "regexpReplace" => {
+                self.col_regexp(name, args)
+            }
             "regexpSource" => self.col_regexp(name, args),
             "regexpFlags" | "regexpFlag" => self.col_regexp(name, args),
             "finalizationRegistryNew" => self.col_weak(name, args),
@@ -386,7 +422,8 @@ impl<'a> Interp<'a> {
             "proxyApply" => self.col_proxy(name, args),
             "replaceFn" => self.col_string_num(name, args),
             "stringMethod" => self.col_string_num(name, args),
-            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" | "dynamicCall5" | "dynamicCall6" => self.col_dynamic_call(name, args),
+            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4"
+            | "dynamicCall5" | "dynamicCall6" => self.col_dynamic_call(name, args),
             "dynamicConstruct" => self.col_class_decorator(name, args),
             "dynamicSetFunction" => self.col_class_decorator(name, args),
             "decoratorAddInitializer" => self.col_class_decorator(name, args),
@@ -407,7 +444,9 @@ impl<'a> Interp<'a> {
             "mathApply" => self.col_string_num(name, args),
             "numberCoerceStrict" => self.col_string_num(name, args),
             "looseEquals" => self.col_string_num(name, args),
-            "numberToFixedJs" | "numberToExponentialJs" | "numberToPrecisionJs"
+            "numberToFixedJs"
+            | "numberToExponentialJs"
+            | "numberToPrecisionJs"
             | "numberToStringRadixJs" => self.col_string_num(name, args),
             "stringSymbolDispatch" => self.col_string_num(name, args),
             "addAny" => {
@@ -418,13 +457,18 @@ impl<'a> Interp<'a> {
                 {
                     let big = |v: Option<&Value>| -> bool {
                         match v.and_then(|v| unbox_arg(v).ok()) {
-                            Some(Value::Object(obj)) => zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()),
+                            Some(Value::Object(obj)) => {
+                                zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some())
+                            }
                             _ => false,
                         }
                     };
                     let (a_big, b_big) = (big(args.first()), big(args.get(1)));
                     if a_big && b_big {
-                        return self.call_managed_collection("bigIntAdd", &[unbox_arg(&args[0])?, unbox_arg(&args[1])?]);
+                        return self.call_managed_collection(
+                            "bigIntAdd",
+                            &[unbox_arg(&args[0])?, unbox_arg(&args[1])?],
+                        );
                     }
                     if a_big || b_big {
                         let other = if a_big { args.get(1) } else { args.first() };
@@ -515,7 +559,9 @@ impl<'a> Interp<'a> {
             "arraySlice" => self.col_array_mutate(name, args),
             "arraySliceRange" => self.col_array_mutate(name, args),
             "arrayReverse" => self.col_array_mutate(name, args),
-            "arrayIndexOf" | "arrayLastIndexOf" | "arrayIncludes" => self.col_array_mutate(name, args),
+            "arrayIndexOf" | "arrayLastIndexOf" | "arrayIncludes" => {
+                self.col_array_mutate(name, args)
+            }
             "anyIsUndefined" => self.col_array_mutate(name, args),
             "coalesceUndefined" => self.col_array_mutate(name, args),
             "objectRest" => self.col_array_mutate(name, args),
@@ -550,7 +596,9 @@ impl<'a> Interp<'a> {
             "promiseFinally" => self.col_promise(name, args),
             "promiseResolveStatic" => self.col_promise(name, args),
             "promiseRejectStatic" => self.col_promise(name, args),
-            "promiseAll" | "promiseAllSettled" | "promiseRace" | "promiseAny" => self.col_promise(name, args),
+            "promiseAll" | "promiseAllSettled" | "promiseRace" | "promiseAny" => {
+                self.col_promise(name, args)
+            }
             "setTimeout" | "setInterval" | "setImmediate" => self.col_promise(name, args),
             "setTimeoutArgs" | "setIntervalArgs" => self.col_promise(name, args),
             "clearTimeout" | "clearInterval" => self.col_promise(name, args),
@@ -584,7 +632,9 @@ impl<'a> Interp<'a> {
             "objectIs" => self.col_object_descriptor(name, args),
             "objectHasOwn" => self.col_object_descriptor(name, args),
             "objectIsPrototypeOf" => self.col_object_descriptor(name, args),
-            "objectDefineProperty" | "reflectDefineProperty" => self.col_object_descriptor(name, args),
+            "objectDefineProperty" | "reflectDefineProperty" => {
+                self.col_object_descriptor(name, args)
+            }
             "objectDefineProperties" => self.col_object_descriptor(name, args),
             "objectGetOwnPropertyDescriptor" => self.col_object_descriptor(name, args),
             "objectGetOwnPropertyDescriptors" => self.col_object_descriptor(name, args),
@@ -605,7 +655,6 @@ impl<'a> Interp<'a> {
             _ => Err(RunError::BadToken),
         }
     }
-
 }
 
 /// Settlement of a managed Promise, read into owned data so it survives a
@@ -754,7 +803,9 @@ pub(super) fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<S
             let length = heap.array_len(obj)?;
             let parts: Vec<String> = (0..length)
                 .map(|index| {
-                    let element = heap.array_get(obj, index).unwrap_or_else(zun_core::Any::void);
+                    let element = heap
+                        .array_get(obj, index)
+                        .unwrap_or_else(zun_core::Any::void);
                     stringify_any(element, heap).unwrap_or_default()
                 })
                 .collect();
@@ -805,9 +856,7 @@ pub(crate) fn is_truthy(value: &Value, heap: &zun_gc::Heap) -> bool {
 /// parser; a failed parse is `NaN`.
 pub(super) fn js_string_to_number(text: &str) -> f64 {
     // ECMAScript StrWhiteSpace: includes U+FEFF, excludes U+0085.
-    let trimmed = text.trim_matches(|c: char| {
-        matches!(c, '﻿') || (c.is_whitespace() && c != '')
-    });
+    let trimmed = text.trim_matches(|c: char| matches!(c, '﻿') || (c.is_whitespace() && c != ''));
     if trimmed.is_empty() {
         return 0.0;
     }
@@ -831,7 +880,12 @@ pub(super) fn js_string_to_number(text: &str) -> f64 {
         "Infinity" | "+Infinity" => f64::INFINITY,
         "-Infinity" => f64::NEG_INFINITY,
         // Rust accepts `inf`/`infinity`/`nan` in any case; JS does not.
-        _ if trimmed.chars().any(|c| c.is_alphabetic() && c != 'e' && c != 'E') => f64::NAN,
+        _ if trimmed
+            .chars()
+            .any(|c| c.is_alphabetic() && c != 'e' && c != 'E') =>
+        {
+            f64::NAN
+        }
         _ => trimmed.parse::<f64>().unwrap_or(f64::NAN),
     }
 }
@@ -843,7 +897,9 @@ pub(crate) fn array_join_text(obj: zun_gc::Obj) -> Option<String> {
         let length = heap.array_len(obj)?;
         let mut parts = Vec::with_capacity(length);
         for index in 0..length {
-            let element = heap.array_get(obj, index).unwrap_or_else(zun_core::Any::void);
+            let element = heap
+                .array_get(obj, index)
+                .unwrap_or_else(zun_core::Any::void);
             parts.push(stringify_any(element, heap).unwrap_or_default());
         }
         Some(parts.join(","))
@@ -942,7 +998,10 @@ pub(super) fn gen_unbox(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<Value
 /// The built-in constructor name of a runtime-owned heap object (`Array`,
 /// `Map`, `Set`, `Promise`, `RegExp`, plain `Object`), or `None` for a typed
 /// class instance.
-pub(crate) fn builtin_constructor_name(heap: &zun_gc::Heap, obj: zun_gc::Obj) -> Option<&'static str> {
+pub(crate) fn builtin_constructor_name(
+    heap: &zun_gc::Heap,
+    obj: zun_gc::Obj,
+) -> Option<&'static str> {
     if heap.array_len(obj).is_some() {
         Some("Array")
     } else if heap.map_len(obj).is_some() {

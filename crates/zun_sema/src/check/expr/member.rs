@@ -1,24 +1,46 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_static_field(&mut self, _cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_static_field(
+        &mut self,
+        _cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::StaticField { class, field, .. } = expr else { unreachable!() };
+        let ast::Expr::StaticField { class, field, .. } = expr else {
+            unreachable!()
+        };
         let class_name = self.text(class).to_string();
         let Some(&class_index) = self.classes_by_name.get(&class_name) else {
             self.error(class.span, format!("unknown class `{class_name}`"));
             return self.poison(span);
         };
         let Some((field_slot, ty)) = self.static_field_of(class_index, self.text(field)) else {
-            self.error(field.span, format!("unknown static field `{}`", self.text(field)));
+            self.error(
+                field.span,
+                format!("unknown static field `{}`", self.text(field)),
+            );
             return self.poison(span);
         };
-        hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: self.static_field_owner(class_index, self.text(field)), field_slot }, ty, span }
+        hir::Expr {
+            kind: hir::ExprKind::StaticFieldGet {
+                class: self.static_field_owner(class_index, self.text(field)),
+                field_slot,
+            },
+            ty,
+            span,
+        }
     }
 
-    pub(in crate::check) fn check_private_field(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_private_field(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::PrivateField { object, field, .. } = expr else { unreachable!() };
+        let ast::Expr::PrivateField { object, field, .. } = expr else {
+            unreachable!()
+        };
         let object = &Box::new(self.peel_this_cast(cx, object));
         let ast_object = object.clone();
         // `Class.#static`: a private static field is an ordinary static slot
@@ -28,7 +50,14 @@ impl Checker<'_> {
                 if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
                     let internal = format!("#{}#{}", self.text(class_name), self.text(field));
                     if let Some((field_slot, ty)) = self.static_field_of(class_index, &internal) {
-                        return hir::Expr { kind: hir::ExprKind::StaticFieldGet { class: class_index, field_slot }, ty, span };
+                        return hir::Expr {
+                            kind: hir::ExprKind::StaticFieldGet {
+                                class: class_index,
+                                field_slot,
+                            },
+                            ty,
+                            span,
+                        };
                     }
                 }
             }
@@ -40,29 +69,55 @@ impl Checker<'_> {
         // Private accessor (`get #x()`): not a slot, so read it through
         // the ordinary member path under its `#`-prefixed name.
         if let Ty::Instance(class) = object.ty {
-            if self.private_field_of(class, &name).is_none() && self.has_private_member(class, &name) {
-                let fallback = ast::Expr::Field { object: ast_object, field: field.clone(), span };
+            if self.private_field_of(class, &name).is_none()
+                && self.has_private_member(class, &name)
+            {
+                let fallback = ast::Expr::Field {
+                    object: ast_object,
+                    field: field.clone(),
+                    span,
+                };
                 return self.check_expr(cx, &fallback);
             }
         }
-        let Some(class) = (match object.ty { Ty::Instance(class) => Some(class), _ => None }) else {
+        let Some(class) = (match object.ty {
+            Ty::Instance(class) => Some(class),
+            _ => None,
+        }) else {
             self.error(span, "private fields require an instance receiver");
             return self.poison(span);
         };
         if cx.this_class != Some(class) {
-            self.error(field.span, "private field is only accessible inside its declaring class");
+            self.error(
+                field.span,
+                "private field is only accessible inside its declaring class",
+            );
             return self.poison(span);
         }
         let Some((field_slot, ty)) = self.private_field_of(class, &name) else {
             self.error(field.span, format!("unknown private field `#{name}`"));
             return self.poison(span);
         };
-        hir::Expr { kind: hir::ExprKind::FieldGet { object: Box::new(object), class, field_slot }, ty, span }
+        hir::Expr {
+            kind: hir::ExprKind::FieldGet {
+                object: Box::new(object),
+                class,
+                field_slot,
+            },
+            ty,
+            span,
+        }
     }
 
-    pub(in crate::check) fn check_field(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_field(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Field { object, field, .. } = expr else { unreachable!() };
+        let ast::Expr::Field { object, field, .. } = expr else {
+            unreachable!()
+        };
         let fname = self.text(field).to_string();
         // Built-in metadata reads folded before the receiver is checked
         // (`Function.prototype.<m>`, `<Builtin>.<fn>.length`/`.name`, ...).
@@ -93,9 +148,15 @@ impl Checker<'_> {
         self.field_dispatch(object, fname, field, span)
     }
 
-    pub(in crate::check) fn check_index(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_index(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Index { object, index, .. } = expr else { unreachable!() };
+        let ast::Expr::Index { object, index, .. } = expr else {
+            unreachable!()
+        };
         // `Symbol[key]` with a runtime key: pick the well-known symbol by name.
         if matches!(object.as_ref(), ast::Expr::Ident(id) if self.text(id) == "Symbol" && cx.lookup("Symbol").is_none())
             && !matches!(index.as_ref(), ast::Expr::String { .. })
@@ -109,12 +170,21 @@ impl Checker<'_> {
                     operand: Box::new(ast::Expr::Number { value: 0.0, span }),
                     span,
                 };
-                for well_known in ["iterator", "asyncIterator", "hasInstance", "toPrimitive", "toStringTag"] {
+                for well_known in [
+                    "iterator",
+                    "asyncIterator",
+                    "hasInstance",
+                    "toPrimitive",
+                    "toStringTag",
+                ] {
                     chain = ast::Expr::Conditional {
                         condition: Box::new(ast::Expr::Binary {
                             op: ast::BinaryOp::Eq,
                             lhs: Box::new(ast::Expr::Ident(tmp)),
-                            rhs: Box::new(ast::Expr::String { value: well_known.to_string(), span }),
+                            rhs: Box::new(ast::Expr::String {
+                                value: well_known.to_string(),
+                                span,
+                            }),
                             span,
                         }),
                         when_true: Box::new(ast::Expr::Field {
@@ -131,7 +201,10 @@ impl Checker<'_> {
                 return hir::Expr {
                     kind: hir::ExprKind::Sequence {
                         effect: Box::new(hir::Expr {
-                            kind: hir::ExprKind::Assign { slot, value: Box::new(key_hir) },
+                            kind: hir::ExprKind::Assign {
+                                slot,
+                                value: Box::new(key_hir),
+                            },
                             ty: Ty::String,
                             span,
                         }),
@@ -148,7 +221,10 @@ impl Checker<'_> {
         let object = if object.ty == Ty::RegExp && self.well_known_symbol_of_key(index).is_some() {
             match zun_natives::resolve("collections", "regexpPrototype") {
                 Some((id, _)) => hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: Vec::new(),
+                    },
                     ty: Ty::Any,
                     span,
                 },
@@ -212,7 +288,10 @@ impl Checker<'_> {
             if let Some((native, ret, _)) = crate::typed_arrays::method(kind, "get") {
                 if let Some((id, _)) = zun_natives::resolve("buffer", native) {
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![object, index] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![object, index],
+                        },
                         ty: ret,
                         span,
                     };

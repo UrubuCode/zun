@@ -12,6 +12,7 @@ mod update;
 mod yield_star;
 
 use assign::*;
+pub(super) use call::convert_argument;
 use call::*;
 use chain::*;
 use function_expr::*;
@@ -19,12 +20,14 @@ use literal::*;
 use member::*;
 use object::*;
 use operators::*;
+pub(super) use update::convert_effect_expression;
 use update::*;
 use yield_star::*;
-pub(super) use call::convert_argument;
-pub(super) use update::convert_effect_expression;
 
-pub(super) fn convert_expression(source: &str, expression: &Expression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_expression(
+    source: &str,
+    expression: &Expression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     match expression {
         Expression::NumericLiteral(number) => Ok(Expr::Number {
@@ -88,7 +91,9 @@ pub(super) fn convert_expression(source: &str, expression: &Expression<'_>) -> R
             assertion.type_annotation.span(),
             assertion.span,
         ),
-        Expression::TSNonNullExpression(assertion) => convert_expression(source, &assertion.expression),
+        Expression::TSNonNullExpression(assertion) => {
+            convert_expression(source, &assertion.expression)
+        }
         Expression::StaticMemberExpression(member) => convert_static_member(source, member),
         Expression::ComputedMemberExpression(member) => convert_computed_member(source, member),
         Expression::PrivateFieldExpression(member) => convert_private_field(source, member),
@@ -120,9 +125,7 @@ pub(super) fn convert_expression(source: &str, expression: &Expression<'_>) -> R
                 span(assignment.span),
             )
         }
-        Expression::AssignmentExpression(assignment) => {
-            convert_assignment(source, assignment)
-        }
+        Expression::AssignmentExpression(assignment) => convert_assignment(source, assignment),
         Expression::CallExpression(call) => convert_call(source, call),
         Expression::ObjectExpression(object) => convert_object_literal(source, object),
         Expression::ArrayExpression(array) => convert_array_literal(source, array),
@@ -148,11 +151,16 @@ pub(super) fn convert_expression(source: &str, expression: &Expression<'_>) -> R
         // evaluates to `undefined` (the value it has in every plain call).
         Expression::NewTarget(meta) => {
             // The identifier text is `new.target`; the checker resolves it.
-            Ok(Expr::Ident(Name { span: span(meta.span) }))
+            Ok(Expr::Ident(Name {
+                span: span(meta.span),
+            }))
         }
         other => {
             let dbg = format!("{other:?}");
-            let kind = dbg.split(|c: char| !c.is_alphanumeric()).find(|s| !s.is_empty()).unwrap_or("?");
+            let kind = dbg
+                .split(|c: char| !c.is_alphanumeric())
+                .find(|s| !s.is_empty())
+                .unwrap_or("?");
             Err(format!("OXC adapter: unsupported expression `{kind}`"))
         }
     }

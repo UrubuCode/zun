@@ -3,8 +3,12 @@
 pub struct IntrinsicId(pub u32);
 
 impl IntrinsicId {
-    pub const fn new(raw: u32) -> Self { Self(raw) }
-    pub const fn get(self) -> u32 { self.0 }
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+    pub const fn get(self) -> u32 {
+        self.0
+    }
 }
 
 /// Stable positional identity for the runtime's built-in types.
@@ -37,5 +41,7 @@ impl CoreTypeId {
             _ => None,
         }
     }
-    pub const fn get(self) -> u8 { self as u8 }
+    pub const fn get(self) -> u8 {
+        self as u8
+    }
 }

@@ -19,7 +19,10 @@ fn number_bitwise_and_shift_operators_follow_js_int32_semantics() {
             print((-1) >>> 0);
         }"#,
     );
-    assert_eq!(out, ["1", "7", "5", "16", "-4", "15", "-6", "1", "4294967295"]);
+    assert_eq!(
+        out,
+        ["1", "7", "5", "16", "-4", "15", "-6", "1", "4294967295"]
+    );
 }
 
 #[test]
@@ -90,9 +93,7 @@ fn string_raw_tag_keeps_backslashes_literal() {
     // `String.raw` is the built-in template tag: the raw (un-escaped) literal
     // chunks are joined with the stringified substitutions, so `\n` stays a
     // literal backslash-n (NUCLEUS #1).
-    let out = run_with_std(
-        "function main(): void { print(String.raw`a\n${1.0}b`); }",
-    );
+    let out = run_with_std("function main(): void { print(String.raw`a\n${1.0}b`); }");
     assert_eq!(out, ["a\n1b"]);
 }
 

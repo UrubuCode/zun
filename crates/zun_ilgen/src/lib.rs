@@ -15,12 +15,14 @@
 //! - Branches patch forward displacements after the target is known
 //!   (displacements are relative to the end of the branch instruction).
 
-use zun_il::{decode_all, encode, Instruction, NumKind, Opcode, Operand};
 use zun_common::Span;
+use zun_il::{decode_all, encode, Instruction, NumKind, Opcode, Operand};
 use zun_metadata::{
     BlobIndex, FieldDef, MemberRef, MethodDef, ModuleRef, TableKind, Token, TypeDef,
 };
-use zun_module::{read_body, write_body, write_body_with_handlers, ExceptionHandler, HandlerKind, Module};
+use zun_module::{
+    read_body, write_body, write_body_with_handlers, ExceptionHandler, HandlerKind, Module,
+};
 use zun_regex::zil::MatcherNatives;
 use zun_sema::hir::{
     self, BinaryOp, CaptureMode, CaptureSource, ExprKind, FloatKind, IntKind, Stmt, Ty, UnaryOp,
@@ -127,8 +129,14 @@ pub(crate) fn numkind_of(ty: Ty) -> Option<NumKind> {
 
 fn ffi_type_tag(ty: Ty) -> u8 {
     match ty {
-        Ty::Int(IntKind { bits: 32, signed: true }) => 5,
-        Ty::Int(IntKind { bits: 32, signed: false }) => 6,
+        Ty::Int(IntKind {
+            bits: 32,
+            signed: true,
+        }) => 5,
+        Ty::Int(IntKind {
+            bits: 32,
+            signed: false,
+        }) => 6,
         Ty::Int(IntKind { bits: 64, .. }) => 1,
         Ty::Float(FloatKind::F64) => 2,
         Ty::Boolean => 3,
@@ -136,7 +144,6 @@ fn ffi_type_tag(ty: Ty) -> u8 {
         _ => 0,
     }
 }
-
 
 /// Tokens a lowered program needs to reference its own metadata.
 struct Layout {
@@ -162,7 +169,6 @@ enum RegexPlan {
         flags: String,
     },
 }
-
 
 /// A pending cleanup that an abrupt exit (`break`/`continue`/`return`) must run
 /// before leaving its scope: a `finally` body, or the iterator-close protocol of

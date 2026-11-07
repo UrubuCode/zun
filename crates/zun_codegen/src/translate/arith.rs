@@ -48,7 +48,11 @@ impl Translator<'_> {
 
         // The exponent as an unsigned i64 count: negative clamps to 0.
         let exp0 = if is_signed(k) {
-            let wide = if ty == types::I64 { b } else { self.builder.ins().sextend(types::I64, b) };
+            let wide = if ty == types::I64 {
+                b
+            } else {
+                self.builder.ins().sextend(types::I64, b)
+            };
             let zero = self.builder.ins().iconst(types::I64, 0);
             self.builder.ins().smax(wide, zero)
         } else if ty == types::I64 {
@@ -68,7 +72,11 @@ impl Translator<'_> {
 
         self.builder.ins().jump(
             header,
-            &[BlockArg::from(acc0), BlockArg::from(a), BlockArg::from(exp0)],
+            &[
+                BlockArg::from(acc0),
+                BlockArg::from(a),
+                BlockArg::from(exp0),
+            ],
         );
 
         self.builder.switch_to_block(header);

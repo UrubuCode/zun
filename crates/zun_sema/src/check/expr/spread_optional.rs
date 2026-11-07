@@ -26,7 +26,10 @@ impl Checker<'_> {
         self.box_function_array_elements(&mut array);
         let (id, _) = zun_natives::resolve("collections", "functionCallSpread")?;
         Some(hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![callee_hir, array] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![callee_hir, array],
+            },
             ty: Ty::Any,
             span,
         })
@@ -76,7 +79,10 @@ impl Checker<'_> {
             };
             let receiver_hir = self.check_expr(cx, &tmp_name);
             let ok = hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id: probe_id, args: vec![Self::box_to_any(receiver_hir)] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id: probe_id,
+                    args: vec![Self::box_to_any(receiver_hir)],
+                },
                 ty: Ty::Boolean,
                 span,
             };
@@ -118,7 +124,10 @@ impl Checker<'_> {
             return hir::Expr {
                 kind: hir::ExprKind::Sequence {
                     effect: Box::new(hir::Expr {
-                        kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                        kind: hir::ExprKind::Assign {
+                            slot,
+                            value: Box::new(bound),
+                        },
                         ty: Ty::Any,
                         span,
                     }),
@@ -148,7 +157,10 @@ impl Checker<'_> {
         hir::Expr {
             kind: hir::ExprKind::Sequence {
                 effect: Box::new(hir::Expr {
-                    kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                    kind: hir::ExprKind::Assign {
+                        slot,
+                        value: Box::new(bound),
+                    },
                     ty: Ty::Any,
                     span,
                 }),

@@ -117,10 +117,7 @@ impl<'a> Checker<'a> {
                         {
                             self.error(
                                 arg.span,
-                                format!(
-                                    "argument type {:?} does not match {expected:?}",
-                                    arg.ty
-                                ),
+                                format!("argument type {:?} does not match {expected:?}", arg.ty),
                             );
                         }
                     }
@@ -138,7 +135,10 @@ impl<'a> Checker<'a> {
             }
             "apply" => {
                 if args.len() != 2 {
-                    self.error(span, "`apply` expects a `this` argument and an arguments array");
+                    self.error(
+                        span,
+                        "`apply` expects a `this` argument and an arguments array",
+                    );
                     return self.poison(span);
                 }
                 let this_arg = self.check_expr(cx, &args[0]);
@@ -204,8 +204,10 @@ impl<'a> Checker<'a> {
                     ty: Ty::Any,
                     span: method_span,
                 };
-                let args: Vec<hir::Expr> =
-                    args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+                let args: Vec<hir::Expr> = args
+                    .iter()
+                    .map(|argument| self.check_expr(cx, argument))
+                    .collect();
                 hir::Expr {
                     kind: hir::ExprKind::IndirectCall {
                         callee: Box::new(callee),

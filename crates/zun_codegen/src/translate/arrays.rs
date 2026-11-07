@@ -65,7 +65,8 @@ impl Translator<'_> {
         };
         let inst = self.builder.ins().call(pop, &[array]);
         if pop_object {
-            self.builder.declare_value_needs_stack_map(self.builder.inst_results(inst)[0]);
+            self.builder
+                .declare_value_needs_stack_map(self.builder.inst_results(inst)[0]);
         }
         let result = self.builder.inst_results(inst)[0];
         if pop_narrow {
@@ -76,8 +77,22 @@ impl Translator<'_> {
             let result = self.builder.ins().ireduce(width, result);
             stack.push((result, self.method_return_kind));
         } else {
-            stack.push((result,
-                if pop_object { JitKind::Object } else if pop_bool { JitKind::Bool } else if pop_u64 { JitKind::Num(NumKind::U64) } else if pop_i64 { JitKind::Num(NumKind::I64) } else if pop_i32 { JitKind::Num(NumKind::I32) } else { JitKind::Num(NumKind::F64) }));
+            stack.push((
+                result,
+                if pop_object {
+                    JitKind::Object
+                } else if pop_bool {
+                    JitKind::Bool
+                } else if pop_u64 {
+                    JitKind::Num(NumKind::U64)
+                } else if pop_i64 {
+                    JitKind::Num(NumKind::I64)
+                } else if pop_i32 {
+                    JitKind::Num(NumKind::I32)
+                } else {
+                    JitKind::Num(NumKind::F64)
+                },
+            ));
         }
         Ok(())
     }
@@ -95,7 +110,13 @@ impl Translator<'_> {
         );
         let push_bool = value_kind == JitKind::Bool;
         if !matches!(array_kind, JitKind::Object | JitKind::Array)
-            || (!push_object && !push_u64 && !push_i64 && !push_i32 && !push_narrow && !push_bool && value_kind != JitKind::Num(NumKind::F64))
+            || (!push_object
+                && !push_u64
+                && !push_i64
+                && !push_i32
+                && !push_narrow
+                && !push_bool
+                && value_kind != JitKind::Num(NumKind::F64))
         {
             return Err("numeric array push requires object and f64/u64 value".into());
         }
@@ -105,10 +126,14 @@ impl Translator<'_> {
         }
         let push_value = if push_narrow {
             match value_kind {
-                JitKind::Num(NumKind::I8 | NumKind::U8) => self.builder.ins().uextend(types::I32, value),
+                JitKind::Num(NumKind::I8 | NumKind::U8) => {
+                    self.builder.ins().uextend(types::I32, value)
+                }
                 _ => self.builder.ins().sextend(types::I32, value),
             }
-        } else { value };
+        } else {
+            value
+        };
         let push = if push_object {
             self.array_push_object_fref()
         } else if push_bool {
@@ -121,7 +146,10 @@ impl Translator<'_> {
             self.array_push_f64_fref()
         };
         let inst = self.builder.ins().call(push, &[array, push_value]);
-        stack.push((self.builder.inst_results(inst)[0], JitKind::Num(NumKind::I64)));
+        stack.push((
+            self.builder.inst_results(inst)[0],
+            JitKind::Num(NumKind::I64),
+        ));
         Ok(())
     }
 
@@ -137,7 +165,6 @@ impl Translator<'_> {
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
-
     pub(crate) fn array_new_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
@@ -146,8 +173,7 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_new", Linkage::Import, &sig)
             .expect("declare zun_jit_array_new");
-        self.module
-            .declare_func_in_func(id, self.builder.func)
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     pub(crate) fn array_load_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
@@ -159,8 +185,7 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_load_f64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_load_f64");
-        self.module
-            .declare_func_in_func(id, self.builder.func)
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     pub(crate) fn array_load_u64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
@@ -180,7 +205,9 @@ impl Translator<'_> {
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I32));
-        let func = self.module.declare_function("zun_jit_array_load_i32", Linkage::Import, &sig)
+        let func = self
+            .module
+            .declare_function("zun_jit_array_load_i32", Linkage::Import, &sig)
             .expect("declare zun_jit_array_load_i32");
         self.module.declare_func_in_func(func, self.builder.func)
     }
@@ -232,8 +259,7 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_store_f64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_store_f64");
-        self.module
-            .declare_func_in_func(id, self.builder.func)
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     pub(crate) fn array_store_u64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
@@ -255,7 +281,9 @@ impl Translator<'_> {
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I32));
         sig.returns.push(AbiParam::new(types::I32));
-        let func = self.module.declare_function("zun_jit_array_store_i32", Linkage::Import, &sig)
+        let func = self
+            .module
+            .declare_function("zun_jit_array_store_i32", Linkage::Import, &sig)
             .expect("declare zun_jit_array_store_i32");
         self.module.declare_func_in_func(func, self.builder.func)
     }
@@ -307,8 +335,7 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_pop_f64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_pop_f64");
-        self.module
-            .declare_func_in_func(id, self.builder.func)
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     pub(crate) fn array_pop_u64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
@@ -326,7 +353,9 @@ impl Translator<'_> {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I32));
-        let func = self.module.declare_function("zun_jit_array_pop_i32", Linkage::Import, &sig)
+        let func = self
+            .module
+            .declare_function("zun_jit_array_pop_i32", Linkage::Import, &sig)
             .expect("declare zun_jit_array_pop_i32");
         self.module.declare_func_in_func(func, self.builder.func)
     }
@@ -335,7 +364,10 @@ impl Translator<'_> {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I32));
-        let func = self.module.declare_function("zun_jit_array_pop_bool", Linkage::Import, &sig).expect("declare zun_jit_array_pop_bool");
+        let func = self
+            .module
+            .declare_function("zun_jit_array_pop_bool", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_pop_bool");
         self.module.declare_func_in_func(func, self.builder.func)
     }
 
@@ -343,7 +375,10 @@ impl Translator<'_> {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
-        let id = self.module.declare_function("zun_jit_array_pop_object", Linkage::Import, &sig).expect("declare zun_jit_array_pop_object");
+        let id = self
+            .module
+            .declare_function("zun_jit_array_pop_object", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_pop_object");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
@@ -356,8 +391,7 @@ impl Translator<'_> {
             .module
             .declare_function("zun_jit_array_push_f64", Linkage::Import, &sig)
             .expect("declare zun_jit_array_push_f64");
-        self.module
-            .declare_func_in_func(id, self.builder.func)
+        self.module.declare_func_in_func(id, self.builder.func)
     }
 
     pub(crate) fn array_push_u64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
@@ -377,7 +411,9 @@ impl Translator<'_> {
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I32));
         sig.returns.push(AbiParam::new(types::I64));
-        let func = self.module.declare_function("zun_jit_array_push_i32", Linkage::Import, &sig)
+        let func = self
+            .module
+            .declare_function("zun_jit_array_push_i32", Linkage::Import, &sig)
             .expect("declare zun_jit_array_push_i32");
         self.module.declare_func_in_func(func, self.builder.func)
     }
@@ -387,7 +423,10 @@ impl Translator<'_> {
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I32));
         sig.returns.push(AbiParam::new(types::I64));
-        let func = self.module.declare_function("zun_jit_array_push_bool", Linkage::Import, &sig).expect("declare zun_jit_array_push_bool");
+        let func = self
+            .module
+            .declare_function("zun_jit_array_push_bool", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_push_bool");
         self.module.declare_func_in_func(func, self.builder.func)
     }
 
@@ -396,7 +435,10 @@ impl Translator<'_> {
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
-        let id = self.module.declare_function("zun_jit_array_push_object", Linkage::Import, &sig).expect("declare zun_jit_array_push_object");
+        let id = self
+            .module
+            .declare_function("zun_jit_array_push_object", Linkage::Import, &sig)
+            .expect("declare zun_jit_array_push_object");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 }

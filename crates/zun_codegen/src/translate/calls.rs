@@ -56,17 +56,10 @@ impl Translator<'_> {
         // A direct call to an ineligible (non-compiled) callee is
         // routed to the interpreter through the bridge. Eligibility
         // only admits this for a non-throwing, marshalable callee.
-        if instr.opcode == Opcode::Call
-            && self.bridge_enabled
-            && !self.func_ids.contains_key(&rid)
+        if instr.opcode == Opcode::Call && self.bridge_enabled && !self.func_ids.contains_key(&rid)
         {
             self.emit_bridge_call(rid, &arg_values, &callee, stack)?;
-            self.after_call_pending_check(
-                block_sigs,
-                stack,
-                offset_of_index[i],
-                index_of_offset,
-            )?;
+            self.after_call_pending_check(block_sigs, stack, offset_of_index[i], index_of_offset)?;
             return Ok(());
         }
         let direct_string_call = instr.opcode == Opcode::CallVirt
@@ -74,12 +67,15 @@ impl Translator<'_> {
                 .first()
                 .is_some_and(|(_, kind)| *kind == JitKind::String);
         let inst = if instr.opcode == Opcode::CallVirt && !direct_string_call {
-            let receiver = arg_values.first().map(|(value, _)| *value).ok_or("virtual call receiver")?;
+            let receiver = arg_values
+                .first()
+                .map(|(value, _)| *value)
+                .ok_or("virtual call receiver")?;
             let slot = self.types.virtual_slot(rid).ok_or("virtual method slot")?;
-            let type_rid =
-                self.builder
-                    .ins()
-                    .load(types::I32, MemFlags::trusted(), receiver, 0);
+            let type_rid = self
+                .builder
+                .ins()
+                .load(types::I32, MemFlags::trusted(), receiver, 0);
             let type_rid = self.builder.ins().uextend(types::I64, type_rid);
             let ptrs = self
                 .builder
@@ -87,22 +83,21 @@ impl Translator<'_> {
                 .iconst(types::I64, self.virtual_table_ptrs as i64);
             let ptr_offset = self.builder.ins().imul_imm(type_rid, 8);
             let table_ptr_addr = self.builder.ins().iadd(ptrs, ptr_offset);
-            let table = self.builder.ins().load(
-                types::I64,
-                MemFlags::trusted(),
-                table_ptr_addr,
-                0,
-            );
+            let table = self
+                .builder
+                .ins()
+                .load(types::I64, MemFlags::trusted(), table_ptr_addr, 0);
             let address = self.builder.ins().iadd_imm(table, (slot * 8) as i64);
-            let target =
-                self.builder
-                    .ins()
-                    .load(types::I64, MemFlags::trusted(), address, 0);
+            let target = self
+                .builder
+                .ins()
+                .load(types::I64, MemFlags::trusted(), address, 0);
             let mut sig = Signature::new(self.builder.func.signature.call_conv);
             let mut call_args = Vec::new();
-            for ((value, _kind), &param_kind_byte) in arg_values.iter().zip(
-                &callee.local_kinds[..callee.param_count as usize],
-            ) {
+            for ((value, _kind), &param_kind_byte) in arg_values
+                .iter()
+                .zip(&callee.local_kinds[..callee.param_count as usize])
+            {
                 let param_kind = JitKind::from_byte(param_kind_byte);
                 if param_kind == JitKind::Other {
                     sig.params.push(AbiParam::new(types::I64));
@@ -134,7 +129,9 @@ impl Translator<'_> {
                 }
             }
             let sig_ref = self.builder.import_signature(sig);
-            self.builder.ins().call_indirect(sig_ref, target, &call_args)
+            self.builder
+                .ins()
+                .call_indirect(sig_ref, target, &call_args)
         } else {
             let fid = *self
                 .func_ids
@@ -142,9 +139,10 @@ impl Translator<'_> {
                 .ok_or("call to non-compiled method")?;
             let fref = self.module.declare_func_in_func(fid, self.builder.func);
             let mut call_args = Vec::new();
-            for ((value, _kind), &param_kind_byte) in arg_values.iter().zip(
-                &callee.local_kinds[..callee.param_count as usize],
-            ) {
+            for ((value, _kind), &param_kind_byte) in arg_values
+                .iter()
+                .zip(&callee.local_kinds[..callee.param_count as usize])
+            {
                 if JitKind::from_byte(param_kind_byte) == JitKind::Other {
                     call_args.push(self.builder.ins().load(
                         types::I64,
@@ -197,12 +195,7 @@ impl Translator<'_> {
         }
         // A direct/virtual callee may itself have propagated a throw
         // (through a bridged call); check and unwind/route if so.
-        self.after_call_pending_check(
-            block_sigs,
-            stack,
-            offset_of_index[i],
-            index_of_offset,
-        )?;
+        self.after_call_pending_check(block_sigs, stack, offset_of_index[i], index_of_offset)?;
         Ok(())
     }
 
@@ -250,12 +243,7 @@ impl Translator<'_> {
             return_kind,
             stack,
         )?;
-        self.after_call_pending_check(
-            block_sigs,
-            stack,
-            offset_of_index[i],
-            index_of_offset,
-        )?;
+        self.after_call_pending_check(block_sigs, stack, offset_of_index[i], index_of_offset)?;
         Ok(())
     }
 
@@ -400,7 +388,10 @@ impl Translator<'_> {
         self.builder.declare_value_needs_stack_map(environment);
         let fref = self.call_indirect_fref();
         let argc_c = self.builder.ins().iconst(types::I64, argc as i64);
-        let call = self.builder.ins().call(fref, &[identity, environment, buf, argc_c]);
+        let call = self
+            .builder
+            .ins()
+            .call(fref, &[identity, environment, buf, argc_c]);
         let result = self.builder.inst_results(call)[0];
         if let Some(kind) = return_kind {
             if kind == JitKind::Other {

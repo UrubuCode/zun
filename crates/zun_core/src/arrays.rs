@@ -12,14 +12,36 @@ pub struct ArrayStorage {
 
 impl ArrayStorage {
     /// Create an array with `length` initialized to `undefined`-like void values.
-    pub fn with_length(length: usize) -> Self { Self { elements: vec![Any::hole(); length], integrity: 0, is_arguments: false } }
-    pub fn is_arguments(&self) -> bool { self.is_arguments }
-    pub fn mark_arguments(&mut self) { self.is_arguments = true; }
-    pub fn len(&self) -> usize { self.elements.len() }
-    pub fn integrity(&self) -> u8 { self.integrity }
-    pub fn raise_integrity(&mut self, level: u8) { if level > self.integrity { self.integrity = level; } }
-    pub fn is_empty(&self) -> bool { self.elements.is_empty() }
-    pub fn get(&self, index: usize) -> Option<Any> { self.elements.get(index).copied() }
+    pub fn with_length(length: usize) -> Self {
+        Self {
+            elements: vec![Any::hole(); length],
+            integrity: 0,
+            is_arguments: false,
+        }
+    }
+    pub fn is_arguments(&self) -> bool {
+        self.is_arguments
+    }
+    pub fn mark_arguments(&mut self) {
+        self.is_arguments = true;
+    }
+    pub fn len(&self) -> usize {
+        self.elements.len()
+    }
+    pub fn integrity(&self) -> u8 {
+        self.integrity
+    }
+    pub fn raise_integrity(&mut self, level: u8) {
+        if level > self.integrity {
+            self.integrity = level;
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+    pub fn get(&self, index: usize) -> Option<Any> {
+        self.elements.get(index).copied()
+    }
 
     pub fn set(&mut self, index: usize, value: Any) -> Option<Any> {
         let slot = self.elements.get_mut(index)?;
@@ -31,11 +53,17 @@ impl ArrayStorage {
         self.elements.push(value);
         index
     }
-    pub fn pop(&mut self) -> Option<Any> { self.elements.pop() }
-    pub fn resize(&mut self, new_length: usize) { self.elements.resize(new_length, Any::hole()); }
+    pub fn pop(&mut self) -> Option<Any> {
+        self.elements.pop()
+    }
+    pub fn resize(&mut self, new_length: usize) {
+        self.elements.resize(new_length, Any::hole());
+    }
 
     pub fn insert(&mut self, index: usize, value: Any) -> bool {
-        if index > self.elements.len() { return false; }
+        if index > self.elements.len() {
+            return false;
+        }
         self.elements.insert(index, value);
         true
     }
@@ -43,7 +71,9 @@ impl ArrayStorage {
     pub fn remove(&mut self, index: usize) -> Option<Any> {
         (index < self.elements.len()).then(|| self.elements.remove(index))
     }
-    pub fn iter(&self) -> impl Iterator<Item = Any> + '_ { self.elements.iter().copied() }
+    pub fn iter(&self) -> impl Iterator<Item = Any> + '_ {
+        self.elements.iter().copied()
+    }
     pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
         self.elements.iter().filter_map(|value| value.as_object())
     }
@@ -52,7 +82,10 @@ impl ArrayStorage {
         let mut rewritten = 0;
         for value in &mut self.elements {
             let mapped = value.map_object_address(map);
-            if mapped != *value { rewritten += 1; *value = mapped; }
+            if mapped != *value {
+                rewritten += 1;
+                *value = mapped;
+            }
         }
         rewritten
     }
@@ -67,9 +100,21 @@ pub struct ArrayIterator {
 }
 
 impl ArrayIterator {
-    pub fn new() -> Self { Self { next_index: 0, mode: 0 } }
-    pub fn with_mode(mode: u8) -> Self { Self { next_index: 0, mode } }
-    pub fn mode(&self) -> u8 { self.mode }
+    pub fn new() -> Self {
+        Self {
+            next_index: 0,
+            mode: 0,
+        }
+    }
+    pub fn with_mode(mode: u8) -> Self {
+        Self {
+            next_index: 0,
+            mode,
+        }
+    }
+    pub fn mode(&self) -> u8 {
+        self.mode
+    }
     /// Read the element at the cursor and advance, returning its index too.
     pub fn advance(&mut self, array: &ArrayStorage) -> Option<(usize, Any)> {
         let index = self.next_index;
@@ -82,9 +127,13 @@ impl ArrayIterator {
         self.next_index += 1;
         Some(value)
     }
-    pub fn is_done(&self, array: &ArrayStorage) -> bool { self.next_index >= array.len() }
+    pub fn is_done(&self, array: &ArrayStorage) -> bool {
+        self.next_index >= array.len()
+    }
 }
 
 impl Default for ArrayIterator {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

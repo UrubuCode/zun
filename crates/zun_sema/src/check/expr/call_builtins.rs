@@ -61,13 +61,15 @@ impl Checker<'_> {
                 ty: Ty::F64,
                 span,
             };
-            let is_callback = |arg: &hir::Expr| {
-                matches!(arg.ty, Ty::Function(_)) || arg.ty.is_error()
-            };
+            let is_callback =
+                |arg: &hir::Expr| matches!(arg.ty, Ty::Function(_)) || arg.ty.is_error();
             let (built_args, ret) = match name {
                 "setTimeout" | "setInterval" => {
                     if args.is_empty() {
-                        self.error(span, format!("`{name}` expects a callback and an optional delay"));
+                        self.error(
+                            span,
+                            format!("`{name}` expects a callback and an optional delay"),
+                        );
                         return Some(self.poison(span));
                     }
                     let mut it = args.into_iter();
@@ -102,7 +104,10 @@ impl Checker<'_> {
                             span,
                         };
                         return Some(hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id: args_id, args: vec![cb, ms, array] },
+                            kind: hir::ExprKind::CallBuiltin {
+                                id: args_id,
+                                args: vec![cb, ms, array],
+                            },
                             ty: Ty::F64,
                             span,
                         });
@@ -117,7 +122,11 @@ impl Checker<'_> {
                     if !is_callback(&cb) {
                         self.error(cb.span, format!("`{name}` expects a function callback"));
                     }
-                    let ret = if name == "setImmediate" { Ty::F64 } else { Ty::Void };
+                    let ret = if name == "setImmediate" {
+                        Ty::F64
+                    } else {
+                        Ty::Void
+                    };
                     (vec![cb], ret)
                 }
                 // clearTimeout / clearInterval
@@ -135,7 +144,10 @@ impl Checker<'_> {
                 }
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: built_args },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: built_args,
+                },
                 ty: ret,
                 span,
             });
@@ -173,11 +185,17 @@ impl Checker<'_> {
                     && !(matches!(expected, Ty::Function(_)) && matches!(arg.ty, Ty::Function(_)))
                     && !self.is_assignable(arg.ty, expected)
                 {
-                    self.error(arg.span, format!("`{name}` argument does not match {expected:?}"));
+                    self.error(
+                        arg.span,
+                        format!("`{name}` argument does not match {expected:?}"),
+                    );
                 }
             }
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: std::mem::take(args) },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: std::mem::take(args),
+                },
                 ty: native_ty(native.ret),
                 span,
             });
@@ -187,9 +205,7 @@ impl Checker<'_> {
             // Prelude plumbing for the typed `DecoratorContext`
             // (builtin/decorators.zun).
             let expected = usize::from(name == "decoratorAddInitializer");
-            if args.len() != expected
-                || (expected == 1 && !matches!(args[0].ty, Ty::Function(_)))
-            {
+            if args.len() != expected || (expected == 1 && !matches!(args[0].ty, Ty::Function(_))) {
                 self.error(span, format!("`{name}` has an invalid argument list"));
                 return Some(self.poison(span));
             }
@@ -197,7 +213,10 @@ impl Checker<'_> {
                 return Some(self.poison(span));
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: std::mem::take(args) },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: std::mem::take(args),
+                },
                 ty: native_ty(native.ret),
                 span,
             });
@@ -205,7 +224,10 @@ impl Checker<'_> {
 
         if name == "dynamicSetFunction" {
             if args.len() != 3 {
-                self.error(span, "dynamicSetFunction expects an object, name, and function");
+                self.error(
+                    span,
+                    "dynamicSetFunction expects an object, name, and function",
+                );
                 return Some(self.poison(span));
             }
             let Some((id, native)) = zun_natives::resolve("collections", name) else {
@@ -215,11 +237,17 @@ impl Checker<'_> {
                 || args[1].ty != Ty::String
                 || !matches!(args[2].ty, Ty::Function(_))
             {
-                self.error(span, "dynamicSetFunction expects (dynamic, string, function)");
+                self.error(
+                    span,
+                    "dynamicSetFunction expects (dynamic, string, function)",
+                );
                 return Some(self.poison(span));
             }
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: std::mem::take(args) },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: std::mem::take(args),
+                },
                 ty: native_ty(native.ret),
                 span,
             });
@@ -227,7 +255,10 @@ impl Checker<'_> {
 
         if name == "dynamicSetSymbolFunction" {
             if args.len() != 3 {
-                self.error(span, "dynamicSetSymbolFunction expects an object, symbol, and function");
+                self.error(
+                    span,
+                    "dynamicSetSymbolFunction expects an object, symbol, and function",
+                );
                 return Some(self.poison(span));
             }
             let Some((id, native)) = zun_natives::resolve("collections", name) else {
@@ -237,11 +268,17 @@ impl Checker<'_> {
                 || args[1].ty != Ty::Symbol
                 || !matches!(args[2].ty, Ty::Function(_))
             {
-                self.error(span, "dynamicSetSymbolFunction expects (dynamic, symbol, function)");
+                self.error(
+                    span,
+                    "dynamicSetSymbolFunction expects (dynamic, symbol, function)",
+                );
                 return Some(self.poison(span));
             }
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: std::mem::take(args) },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: std::mem::take(args),
+                },
                 ty: native_ty(native.ret),
                 span,
             });
@@ -300,16 +337,25 @@ impl Checker<'_> {
                         // runtime by passing them through as `Any`.
                         value = hir::Expr {
                             span: value.span,
-                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            kind: hir::ExprKind::BoxAny {
+                                value: Box::new(value),
+                            },
                             ty: Ty::Any,
                         };
                     }
                     value
                 }
-                None => hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+                None => hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: Ty::Any,
+                    span,
+                },
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![description] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![description],
+                },
                 ty: Ty::Symbol,
                 span,
             });
@@ -325,28 +371,24 @@ impl Checker<'_> {
         args: &mut Vec<hir::Expr>,
         span: Span,
     ) -> Option<hir::Expr> {
-        let dynamic_property = |checker: &mut Checker<'_>,
-                                args: &mut Vec<hir::Expr>,
-                                span: Span| {
-            if args.len() != 2
-                || args[0].ty != Ty::DynamicObject
-                || args[1].ty != Ty::String
-            {
-                checker.error(span, "dynamic property access expects (dynamic, string)");
-                return None;
-            }
-            let name = match &args[1].kind {
-                hir::ExprKind::String(name) => name.clone(),
-                _ => {
-                    checker.error(
-                        args[1].span,
-                        "dynamic property name must be a string literal",
-                    );
+        let dynamic_property =
+            |checker: &mut Checker<'_>, args: &mut Vec<hir::Expr>, span: Span| {
+                if args.len() != 2 || args[0].ty != Ty::DynamicObject || args[1].ty != Ty::String {
+                    checker.error(span, "dynamic property access expects (dynamic, string)");
                     return None;
                 }
+                let name = match &args[1].kind {
+                    hir::ExprKind::String(name) => name.clone(),
+                    _ => {
+                        checker.error(
+                            args[1].span,
+                            "dynamic property name must be a string literal",
+                        );
+                        return None;
+                    }
+                };
+                Some((args.remove(0), name))
             };
-            Some((args.remove(0), name))
-        };
 
         if name == "dynamic_get" || name == "reflect_get" {
             if name == "reflect_get"
@@ -448,8 +490,7 @@ impl Checker<'_> {
     ) -> Option<hir::Expr> {
         // An imported intrinsic: check against its native signature.
         if let Some((intrinsic_id, intrinsic)) = self.imports.get(name).copied() {
-            let param_tys: Vec<Ty> =
-                intrinsic.params.iter().map(|&t| native_ty(t)).collect();
+            let param_tys: Vec<Ty> = intrinsic.params.iter().map(|&t| native_ty(t)).collect();
             if args.len() != param_tys.len() {
                 self.error(
                     span,
@@ -468,10 +509,7 @@ impl Checker<'_> {
                     {
                         self.error(
                             arg.span,
-                            format!(
-                                "argument type {:?} does not match {expected:?}",
-                                arg.ty
-                            ),
+                            format!("argument type {:?} does not match {expected:?}", arg.ty),
                         );
                     }
                 }
@@ -505,10 +543,7 @@ impl Checker<'_> {
                     {
                         self.error(
                             arg.span,
-                            format!(
-                                "argument type {:?} does not match {expected:?}",
-                                arg.ty
-                            ),
+                            format!("argument type {:?} does not match {expected:?}", arg.ty),
                         );
                     }
                 }

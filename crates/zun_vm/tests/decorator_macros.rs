@@ -33,13 +33,11 @@ fn assert_compile_fails_with(src: &str, code: &str) {
 fn auto_to_string_macro_output_runs() {
     // `@autoToString` generates `toString()` returning the class name. Calling
     // it on an instance prints that name — the generated code really executes.
-    let out = run(
-        "@autoToString\n\
+    let out = run("@autoToString\n\
          class Widget { size: number; }\n\
          function main() {\n\
             print(new Widget(1.0).toString());\n\
-         }",
-    );
+         }");
     assert_eq!(out, ["Widget"]);
 }
 
@@ -47,19 +45,15 @@ fn auto_to_string_macro_output_runs() {
 fn an_undecorated_class_does_not_gain_tostring_behavior() {
     // Without the decorator the macro does not run; a hand-written toString is
     // the only source of that string, proving the decorator is what adds it.
-    let decorated = run(
-        "@autoToString\n\
+    let decorated = run("@autoToString\n\
          class Account { balance: number; }\n\
-         function main() { print(new Account(10.0).toString()); }",
-    );
+         function main() { print(new Account(10.0).toString()); }");
     assert_eq!(decorated, ["Account"]);
 
-    let undecorated = run(
-        "class Account { balance: number;\n\
+    let undecorated = run("class Account { balance: number;\n\
             toString(): string { return \"hand-written\"; }\n\
          }\n\
-         function main() { print(new Account(10.0).toString()); }",
-    );
+         function main() { print(new Account(10.0).toString()); }");
     assert_eq!(undecorated, ["hand-written"]);
 }
 

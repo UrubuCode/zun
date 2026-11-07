@@ -6,12 +6,13 @@ use zun_interp::value::Value;
 
 #[test]
 fn realm_global_binding_remains_on_the_tier0_fallback() {
-    let module = compile(
-        "function main(): boolean { return globalThis == global; }",
-    );
+    let module = compile("function main(): boolean { return globalThis == global; }");
     let entry = module.entry_point.expect("entry point");
     let jit = zun_codegen::Jit::compile(&module).expect("JIT eligibility analysis");
-    assert!(!jit.is_compiled(entry.rid()), "realm object access requires Tier 0");
+    assert!(
+        !jit.is_compiled(entry.rid()),
+        "realm object access requires Tier 0"
+    );
 }
 
 #[test]
@@ -37,7 +38,11 @@ fn typed_string_receiver_call_is_jit_equivalent() {
     assert!(jit.is_compiled(measure));
     let mut heap = zun_gc::Heap::new();
     let value = heap.intern_string(std::rc::Rc::from("zun"));
-    assert_eq!(jit.call_packed_with_heap(measure, &[value as u64], &mut heap).unwrap(), 1);
+    assert_eq!(
+        jit.call_packed_with_heap(measure, &[value as u64], &mut heap)
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -64,21 +69,22 @@ fn typed_string_receiver_chain_preserves_managed_result() {
     assert!(jit.is_compiled(measure));
     let mut heap = zun_gc::Heap::new();
     let value = heap.intern_string(std::rc::Rc::from(" zun "));
-    assert_eq!(jit.call_packed_with_heap(measure, &[value as u64], &mut heap).unwrap(), 1);
+    assert_eq!(
+        jit.call_packed_with_heap(measure, &[value as u64], &mut heap)
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
 fn collection_allocation_ids_only_apply_to_call_builtins() {
     let (map_new, _) = zun_natives::resolve("collections", "mapNew").expect("mapNew intrinsic");
-    let source = format!(
-        "function main(): i32 {{ return {map_new} as i32; }}"
-    );
+    let source = format!("function main(): i32 {{ return {map_new} as i32; }}");
     let module = compile(&source);
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("constant does not look like allocation");
     assert!(jit.is_compiled(entry));
 }
-
 
 #[test]
 fn static_class_method_uses_direct_call_without_receiver() {
@@ -116,7 +122,10 @@ fn generic_set_has_preserves_interpreter_fallback_boundary() {
         .expect("contains method") as u32
         + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with fallback");
-    assert!(!jit.is_compiled(contains), "generic Set.has must remain Tier 0");
+    assert!(
+        !jit.is_compiled(contains),
+        "generic Set.has must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -135,7 +144,10 @@ fn generic_map_has_preserves_interpreter_fallback_boundary() {
         .expect("contains method") as u32
         + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with fallback");
-    assert!(!jit.is_compiled(contains), "generic Map.has must remain Tier 0");
+    assert!(
+        !jit.is_compiled(contains),
+        "generic Map.has must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -152,7 +164,10 @@ fn checked_string_array_unbox_preserves_tier0_fallback_boundary() {
         .expect("read method") as u32
         + 1;
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(read), "checked string unbox must remain Tier 0");
+    assert!(
+        !jit.is_compiled(read),
+        "checked string unbox must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -169,7 +184,11 @@ fn interned_string_length_uses_the_typed_jit_abi() {
         .expect("measure method") as u32
         + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(rid), "measure RID {rid}, methods: {:?}", module.tables.method_defs);
+    assert!(
+        jit.is_compiled(rid),
+        "measure RID {rid}, methods: {:?}",
+        module.tables.method_defs
+    );
 
     let mut heap = zun_gc::Heap::new();
     let handle = heap.intern_string(std::rc::Rc::from("hé"));
@@ -195,6 +214,8 @@ fn aliased_intrinsic_import_uses_the_local_binding() {
     assert!(jit.is_compiled(rid));
     let mut heap = zun_gc::Heap::new();
     let handle = heap.intern_string(std::rc::Rc::from("alias"));
-    assert!(matches!(jit.call_packed_with_heap(rid, &[handle as u64], &mut heap), Ok(5)));
+    assert!(matches!(
+        jit.call_packed_with_heap(rid, &[handle as u64], &mut heap),
+        Ok(5)
+    ));
 }
-

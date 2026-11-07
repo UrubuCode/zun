@@ -40,10 +40,9 @@ impl<'a> Interp<'a> {
                 };
                 let begin = index_at(1)?;
                 let end = index_at(2)?;
-                let copy = zun_gc::with_current_heap_mut(|heap| {
-                    heap.buffer_slice(object, begin, end)
-                })
-                .ok_or(RunError::BadToken)?;
+                let copy =
+                    zun_gc::with_current_heap_mut(|heap| heap.buffer_slice(object, begin, end))
+                        .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(copy))
             }
             "bufferResizableNew" => {
@@ -56,10 +55,9 @@ impl<'a> Interp<'a> {
                 let length = int_at(0)?;
                 let max = int_at(1)?;
                 // `maxByteLength < byteLength` is a construction-time error.
-                let object = zun_gc::with_current_heap_mut(|heap| {
-                    heap.alloc_resizable_buffer(length, max)
-                })
-                .ok_or(RunError::BadToken)?;
+                let object =
+                    zun_gc::with_current_heap_mut(|heap| heap.alloc_resizable_buffer(length, max))
+                        .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(object))
             }
             "bufferResize" => {
@@ -69,8 +67,9 @@ impl<'a> Interp<'a> {
                     Value::Int(value, _) => *value as usize,
                     _ => return Err(RunError::BadToken),
                 };
-                let ok = zun_gc::with_current_heap_mut(|heap| heap.buffer_resize(object, new_length))
-                    .ok_or(RunError::BadToken)?;
+                let ok =
+                    zun_gc::with_current_heap_mut(|heap| heap.buffer_resize(object, new_length))
+                        .ok_or(RunError::BadToken)?;
                 // A fixed-length buffer or an out-of-range length is a
                 // `RangeError`; surfaced through the project's native-error
                 // convention (as with other rejected buffer ops).
@@ -92,9 +91,10 @@ impl<'a> Interp<'a> {
                 // A detached source, or a destination length that exceeds a
                 // resizable cap, is a `TypeError`/`RangeError`, surfaced through
                 // the project's native-error convention.
-                let transferred =
-                    zun_gc::with_current_heap_mut(|heap| heap.buffer_transfer(object, new_length, fixed))
-                        .ok_or(RunError::BadToken)?;
+                let transferred = zun_gc::with_current_heap_mut(|heap| {
+                    heap.buffer_transfer(object, new_length, fixed)
+                })
+                .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(transferred))
             }
             "bufferDetached" => {
@@ -242,20 +242,37 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(view))
             }
             "dataViewLength" => {
-                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_len(view)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+                let view =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(
+                    zun_gc::with_current_heap(|heap| heap.data_view_len(view))
+                        .ok_or(RunError::BadToken)? as i64,
+                    zun_il::NumKind::U64,
+                ))
             }
             "dataViewByteLength" => {
-                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_byte_len(view)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+                let view =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(
+                    zun_gc::with_current_heap(|heap| heap.data_view_byte_len(view))
+                        .ok_or(RunError::BadToken)? as i64,
+                    zun_il::NumKind::U64,
+                ))
             }
             "dataViewByteOffset" => {
-                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                Ok(Value::Int(zun_gc::with_current_heap(|heap| heap.data_view_byte_offset(view)).ok_or(RunError::BadToken)? as i64, zun_il::NumKind::U64))
+                let view =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                Ok(Value::Int(
+                    zun_gc::with_current_heap(|heap| heap.data_view_byte_offset(view))
+                        .ok_or(RunError::BadToken)? as i64,
+                    zun_il::NumKind::U64,
+                ))
             }
             "dataViewBuffer" => {
-                let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let buffer = zun_gc::with_current_heap(|heap| heap.data_view_buffer(view)).ok_or(RunError::BadToken)?;
+                let view =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let buffer = zun_gc::with_current_heap(|heap| heap.data_view_buffer(view))
+                    .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(buffer))
             }
             "isView" => {
@@ -316,10 +333,8 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 Ok(Value::Int(
-                    zun_gc::with_current_heap(|heap| {
-                        heap.data_view_get_i8(view, relative)
-                    })
-                    .ok_or(RunError::BadToken)? as i64,
+                    zun_gc::with_current_heap(|heap| heap.data_view_get_i8(view, relative))
+                        .ok_or(RunError::BadToken)? as i64,
                     zun_il::NumKind::I8,
                 ))
             }
@@ -349,10 +364,8 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 Ok(Value::Int(
-                    zun_gc::with_current_heap(|heap| {
-                        heap.data_view_get_u8(view, relative)
-                    })
-                    .ok_or(RunError::BadToken)? as i64,
+                    zun_gc::with_current_heap(|heap| heap.data_view_get_u8(view, relative))
+                        .ok_or(RunError::BadToken)? as i64,
                     zun_il::NumKind::U8,
                 ))
             }

@@ -291,4 +291,3 @@ fn date_surface_converts_iso_weekday_to_ecmascript_day() {
     assert!(matches!((jit_result, interp_entry(&module)),
         (RetVal::Int(a), Value::Int(b, _)) if a == b && a == 1));
 }
-

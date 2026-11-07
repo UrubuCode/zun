@@ -18,8 +18,8 @@
 mod array_ext;
 mod boolean;
 mod buffer;
-mod node_buffer;
 mod collections;
+mod node_buffer;
 pub use collections::USER_CLASS_FLAG;
 mod date;
 mod date_f64;
@@ -33,10 +33,10 @@ mod number;
 pub use number::{js_to_exponential, js_to_fixed, js_to_precision, js_to_radix_string};
 mod string;
 pub use string::normalize_form as string_normalize_form;
-mod time;
-mod timers;
 mod promise;
 mod serde;
+mod time;
+mod timers;
 mod typeinfo;
 
 use std::collections::HashMap;
@@ -506,7 +506,11 @@ fn short_member(prefix: &str, name: &str) -> Option<String> {
     let rest = name.strip_prefix(prefix)?;
     let mut chars = rest.chars();
     let first = chars.next()?;
-    Some(core::iter::once(first.to_ascii_lowercase()).chain(chars).collect())
+    Some(
+        core::iter::once(first.to_ascii_lowercase())
+            .chain(chars)
+            .collect(),
+    )
 }
 
 /// `namespace -> (short member name -> id)` index. The public member surface of
@@ -529,7 +533,10 @@ fn core_short_index() -> &'static HashMap<&'static str, HashMap<String, u32>> {
                     continue;
                 };
                 let id = global_id(module_index, function_index);
-                if let Some(previous) = index.entry(namespace).or_default().insert(short.clone(), id)
+                if let Some(previous) = index
+                    .entry(namespace)
+                    .or_default()
+                    .insert(short.clone(), id)
                 {
                     // Two distinct natives collapsing onto one (namespace, short)
                     // name would silently shadow one another; refuse to build.
@@ -620,7 +627,9 @@ pub fn format_float(n: f64) -> String {
     let sign = if n < 0.0 { "-" } else { "" };
     // `{:e}` yields the shortest round-trip digits: `d.ddde<exp>`.
     let sci = format!("{:e}", n.abs());
-    let (mantissa, exp) = sci.split_once('e').expect("scientific form has an exponent");
+    let (mantissa, exp) = sci
+        .split_once('e')
+        .expect("scientific form has an exponent");
     let exp: i32 = exp.parse().expect("integer exponent");
     let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
     let k = digits.len() as i32;
@@ -628,12 +637,20 @@ pub fn format_float(n: f64) -> String {
     let body = if k <= point && point <= 21 {
         format!("{digits}{}", "0".repeat((point - k) as usize))
     } else if 0 < point && point <= 21 {
-        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+        format!(
+            "{}.{}",
+            &digits[..point as usize],
+            &digits[point as usize..]
+        )
     } else if -6 < point && point <= 0 {
         format!("0.{}{digits}", "0".repeat((-point) as usize))
     } else {
         let e = point - 1;
-        let e_text = if e < 0 { format!("-{}", -e) } else { format!("+{e}") };
+        let e_text = if e < 0 {
+            format!("-{}", -e)
+        } else {
+            format!("+{e}")
+        };
         if k == 1 {
             format!("{digits}e{e_text}")
         } else {
@@ -708,7 +725,11 @@ mod tests {
             ("regexp", "isMatch", "regexpIsMatch"),
             ("regexp", "source", "regexpSource"),
             ("finalizationRegistry", "register", "finalizationRegister"),
-            ("finalizationRegistry", "unregister", "finalizationUnregister"),
+            (
+                "finalizationRegistry",
+                "unregister",
+                "finalizationUnregister",
+            ),
             ("bigint", "add", "bigIntAdd"),
             ("promise", "resolve", "promiseResolve"),
             ("reflect", "has", "reflectHas"),
@@ -717,7 +738,10 @@ mod tests {
         for (namespace, short, full) in cases {
             let short_id = resolve_core(namespace, short).expect("short member").0;
             let full_id = resolve_core(namespace, full).expect("full member").0;
-            assert_eq!(short_id, full_id, "{namespace}.{short} != {namespace}.{full}");
+            assert_eq!(
+                short_id, full_id,
+                "{namespace}.{short} != {namespace}.{full}"
+            );
         }
         // Short names are namespace-relative, never global: `get` is ambiguous
         // across namespaces and resolves differently per namespace.
@@ -1056,7 +1080,12 @@ mod tests {
             NativeValue::Str(v) if v == "o"
         ));
         assert!(matches!(
-            dispatch(at_id, &[NativeArg::Str("hello"), NativeArg::Float(9.0)], &mut sink).unwrap(),
+            dispatch(
+                at_id,
+                &[NativeArg::Str("hello"), NativeArg::Float(9.0)],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Void
         ));
         let (slice_id, _) = resolve("string", "slice").unwrap();
@@ -1075,7 +1104,12 @@ mod tests {
             NativeValue::Int(0x1F600)
         ));
         assert!(matches!(
-            dispatch(cp_id, &[NativeArg::Str("héllo"), NativeArg::Int(1)], &mut sink).unwrap(),
+            dispatch(
+                cp_id,
+                &[NativeArg::Str("héllo"), NativeArg::Int(1)],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Int(0xE9)
         ));
         let (replace_all_id, _) = resolve("string", "replaceAll").unwrap();
@@ -1195,7 +1229,12 @@ mod tests {
             NativeValue::Bool(false)
         ));
         assert!(matches!(
-            dispatch(is_safe, &[NativeArg::Float(9_007_199_254_740_992.0)], &mut sink).unwrap(),
+            dispatch(
+                is_safe,
+                &[NativeArg::Float(9_007_199_254_740_992.0)],
+                &mut sink
+            )
+            .unwrap(),
             NativeValue::Bool(false)
         ));
     }
@@ -1251,7 +1290,12 @@ mod tests {
             dispatch(to_string, &[NativeArg::Float(f64::INFINITY), NativeArg::Int(2)], &mut sink).unwrap(),
             NativeValue::Str(v) if v == "Infinity"
         ));
-        assert!(dispatch(to_string, &[NativeArg::Float(1.0), NativeArg::Int(40)], &mut sink).is_err());
+        assert!(dispatch(
+            to_string,
+            &[NativeArg::Float(1.0), NativeArg::Int(40)],
+            &mut sink
+        )
+        .is_err());
     }
 
     #[test]

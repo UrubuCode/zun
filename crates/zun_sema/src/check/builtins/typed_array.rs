@@ -49,7 +49,9 @@ impl Checker<'_> {
             } else {
                 hir::Expr {
                     span: value.span,
-                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(value),
+                    },
                     ty: Ty::Any,
                 }
             }
@@ -59,7 +61,14 @@ impl Checker<'_> {
                 checker.error(span, format!("missing typed-array intrinsic `{native}`"));
                 return checker.poison(span);
             };
-            hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: call_args }, ty, span }
+            hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
+                ty,
+                span,
+            }
         };
         // An optional integer argument with a default, coerced to `ty`.
         macro_rules! opt_int {
@@ -80,7 +89,13 @@ impl Checker<'_> {
         // A required callback argument.
         let check_callback = |checker: &mut Self, cx: &mut FunctionCx| -> Option<hir::Expr> {
             if args.len() != 1 {
-                checker.error(span, format!("`{mname}` expects 1 argument (a callback), found {}", args.len()));
+                checker.error(
+                    span,
+                    format!(
+                        "`{mname}` expects 1 argument (a callback), found {}",
+                        args.len()
+                    ),
+                );
                 return None;
             }
             let callback = checker.check_expr(cx, &args[0]);
@@ -95,21 +110,33 @@ impl Checker<'_> {
                 // the bulk `set(source, offset?)`; two numeric arguments are
                 // the indexed `set(index, value)`.
                 if args.is_empty() || args.len() > 2 {
-                    self.error(span, format!("`set` expects 1 or 2 arguments, found {}", args.len()));
+                    self.error(
+                        span,
+                        format!("`set` expects 1 or 2 arguments, found {}", args.len()),
+                    );
                     return self.poison(span);
                 }
                 let first = self.check_expr(cx, &args[0]);
                 let is_bulk = matches!(first.ty, Ty::Array | Ty::BufferView(_));
                 if is_bulk {
                     let offset = opt_int!(1, u64_ty, 0.0);
-                    call(self, "typedArraySetFrom", vec![receiver, first, offset], Ty::Boolean)
+                    call(
+                        self,
+                        "typedArraySetFrom",
+                        vec![receiver, first, offset],
+                        Ty::Boolean,
+                    )
                 } else {
                     // Indexed set: the generic per-kind `<native>Set`.
                     if args.len() != 2 {
-                        self.error(span, "indexed `set(index, value)` expects 2 arguments".to_string());
+                        self.error(
+                            span,
+                            "indexed `set(index, value)` expects 2 arguments".to_string(),
+                        );
                         return self.poison(span);
                     }
-                    let Some((native, _ret, params)) = crate::typed_arrays::method(kind, "set") else {
+                    let Some((native, _ret, params)) = crate::typed_arrays::method(kind, "set")
+                    else {
                         self.error(span, "missing typed-array `set` intrinsic".to_string());
                         return self.poison(span);
                     };
@@ -122,7 +149,10 @@ impl Checker<'_> {
                     let mut value = self.check_expr(cx, &args[1]);
                     coerce_numeric_literal(&mut value, elem_param);
                     if !value.ty.is_error() && !self.is_assignable(value.ty, elem_param) {
-                        self.error(value.span, format!("typed-array element must be {elem_param:?}"));
+                        self.error(
+                            value.span,
+                            format!("typed-array element must be {elem_param:?}"),
+                        );
                     }
                     call(self, native, vec![receiver, index, value], Ty::Boolean)
                 }
@@ -144,7 +174,12 @@ impl Checker<'_> {
                 let target = opt_int!(0, i64_ty, 0.0);
                 let start = opt_int!(1, i64_ty, 0.0);
                 let end = opt_int!(2, i64_ty, length_sentinel);
-                call(self, "typedArrayCopyWithin", vec![receiver, target, start, end], view_ty)
+                call(
+                    self,
+                    "typedArrayCopyWithin",
+                    vec![receiver, target, start, end],
+                    view_ty,
+                )
             }
             "indexOf" | "includes" => {
                 if args.is_empty() || args.len() > 2 {
@@ -154,9 +189,19 @@ impl Checker<'_> {
                 let needle = box_any(self.check_expr(cx, &args[0]));
                 let from = opt_int!(1, i64_ty, 0.0);
                 if mname == "indexOf" {
-                    call(self, "typedArrayIndexOf", vec![receiver, needle, from], i64_ty)
+                    call(
+                        self,
+                        "typedArrayIndexOf",
+                        vec![receiver, needle, from],
+                        i64_ty,
+                    )
                 } else {
-                    call(self, "typedArrayIncludes", vec![receiver, needle, from], Ty::Boolean)
+                    call(
+                        self,
+                        "typedArrayIncludes",
+                        vec![receiver, needle, from],
+                        Ty::Boolean,
+                    )
                 }
             }
             "join" => {
@@ -174,10 +219,20 @@ impl Checker<'_> {
                     }
                     None => string_lit(",", span),
                 };
-                call(self, "typedArrayJoin", vec![receiver, separator], Ty::String)
+                call(
+                    self,
+                    "typedArrayJoin",
+                    vec![receiver, separator],
+                    Ty::String,
+                )
             }
             "forEach" => match check_callback(self, cx) {
-                Some(callback) => call(self, "typedArrayForEach", vec![receiver, callback], Ty::Void),
+                Some(callback) => call(
+                    self,
+                    "typedArrayForEach",
+                    vec![receiver, callback],
+                    Ty::Void,
+                ),
                 None => self.poison(span),
             },
             "map" => match check_callback(self, cx) {
@@ -189,19 +244,36 @@ impl Checker<'_> {
                 None => self.poison(span),
             },
             "find" => match check_callback(self, cx) {
-                Some(callback) => call(self, "typedArrayFind", vec![receiver, callback], element_ty),
+                Some(callback) => {
+                    call(self, "typedArrayFind", vec![receiver, callback], element_ty)
+                }
                 None => self.poison(span),
             },
             "findIndex" => match check_callback(self, cx) {
-                Some(callback) => call(self, "typedArrayFindIndex", vec![receiver, callback], i64_ty),
+                Some(callback) => call(
+                    self,
+                    "typedArrayFindIndex",
+                    vec![receiver, callback],
+                    i64_ty,
+                ),
                 None => self.poison(span),
             },
             "some" => match check_callback(self, cx) {
-                Some(callback) => call(self, "typedArraySome", vec![receiver, callback], Ty::Boolean),
+                Some(callback) => call(
+                    self,
+                    "typedArraySome",
+                    vec![receiver, callback],
+                    Ty::Boolean,
+                ),
                 None => self.poison(span),
             },
             "every" => match check_callback(self, cx) {
-                Some(callback) => call(self, "typedArrayEvery", vec![receiver, callback], Ty::Boolean),
+                Some(callback) => call(
+                    self,
+                    "typedArrayEvery",
+                    vec![receiver, callback],
+                    Ty::Boolean,
+                ),
                 None => self.poison(span),
             },
             "reduce" | "reduceRight" => {
@@ -209,12 +281,18 @@ impl Checker<'_> {
                 // form `(cb)` (which seeds from the first/last element and
                 // throws on an empty typed array, NUCLEUS #19).
                 if args.is_empty() || args.len() > 2 {
-                    self.error(span, format!("`{mname}` expects a callback and an optional initial value"));
+                    self.error(
+                        span,
+                        format!("`{mname}` expects a callback and an optional initial value"),
+                    );
                     return self.poison(span);
                 }
                 let callback = self.check_expr(cx, &args[0]);
                 if !matches!(callback.ty, Ty::Function(_)) && !callback.ty.is_error() {
-                    self.error(callback.span, format!("typed-array `{mname}` callback must be a function"));
+                    self.error(
+                        callback.span,
+                        format!("typed-array `{mname}` callback must be a function"),
+                    );
                 }
                 let (native, call_args) = match (mname, args.len()) {
                     ("reduce", 2) => (
@@ -293,7 +371,10 @@ impl Checker<'_> {
         if args.len() < fixed || args.len() > max {
             self.error(
                 span,
-                format!("`{mname}` expects {fixed} or {max} argument(s), found {}", args.len()),
+                format!(
+                    "`{mname}` expects {fixed} or {max} argument(s), found {}",
+                    args.len()
+                ),
             );
             return self.poison(span);
         }
@@ -303,7 +384,13 @@ impl Checker<'_> {
         // JS ToIndex: a `number` offset is truncated to an unsigned index.
         if offset.ty.is_float() {
             let span = offset.span;
-            offset = hir::Expr { kind: hir::ExprKind::Convert { value: Box::new(offset) }, ty: u64_ty, span };
+            offset = hir::Expr {
+                kind: hir::ExprKind::Convert {
+                    value: Box::new(offset),
+                },
+                ty: u64_ty,
+                span,
+            };
         }
         if !offset.ty.is_int() && !offset.ty.is_error() {
             self.error(offset.span, "DataView byte offset must be an integer");
@@ -336,7 +423,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: call_args,
+            },
             ty: ret,
             span,
         }
@@ -352,7 +442,10 @@ impl Checker<'_> {
     ) -> hir::Expr {
         let view_ty = Ty::BufferView(kind);
         let Some(discriminant) = crate::typed_arrays::element_index(kind) else {
-            self.error(span, "typed-array statics require an element kind".to_string());
+            self.error(
+                span,
+                "typed-array statics require an element kind".to_string(),
+            );
             return self.poison(span);
         };
         let kind_lit = hir::Expr {
@@ -365,7 +458,14 @@ impl Checker<'_> {
                 checker.error(span, format!("missing typed-array intrinsic `{native}`"));
                 return checker.poison(span);
             };
-            hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: call_args }, ty: view_ty, span }
+            hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
+                ty: view_ty,
+                span,
+            }
         };
         match method {
             "of" => {
@@ -384,7 +484,10 @@ impl Checker<'_> {
             }
             "from" => {
                 if args.is_empty() || args.len() > 2 {
-                    self.error(span, format!("`from` expects 1 or 2 arguments, found {}", args.len()));
+                    self.error(
+                        span,
+                        format!("`from` expects 1 or 2 arguments, found {}", args.len()),
+                    );
                     return self.poison(span);
                 }
                 let source = self.check_expr(cx, &args[0]);

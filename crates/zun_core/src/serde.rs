@@ -216,7 +216,9 @@ impl<'a> Reader<'a> {
 
     /// Read a length-prefixed UTF-8 string.
     pub fn read_str(&mut self) -> Option<String> {
-        core::str::from_utf8(self.read_bytes()?).ok().map(str::to_owned)
+        core::str::from_utf8(self.read_bytes()?)
+            .ok()
+            .map(str::to_owned)
     }
 
     /// Read a little-endian `i64`.

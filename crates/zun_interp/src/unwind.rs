@@ -1,7 +1,7 @@
 //! Exception-region routing for the Tier 0 interpreter.
 
-use crate::value::Value;
 use super::Interp;
+use crate::value::Value;
 
 impl Interp<'_> {
     pub(super) fn route_exception(

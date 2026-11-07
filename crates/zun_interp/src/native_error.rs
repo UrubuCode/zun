@@ -9,13 +9,22 @@ use super::value::{self, Value};
 use super::Interp;
 
 /// Prelude error classes a native may raise.
-const ERROR_CLASSES: [&str; 5] = ["TypeError", "RangeError", "SyntaxError", "ReferenceError", "URIError"];
+const ERROR_CLASSES: [&str; 5] = [
+    "TypeError",
+    "RangeError",
+    "SyntaxError",
+    "ReferenceError",
+    "URIError",
+];
 
 /// Split a native failure message into `(class, message)` when it names a
 /// prelude error class.
 pub(super) fn split_native_error(message: &str) -> Option<(&'static str, &str)> {
     for class in ERROR_CLASSES {
-        if let Some(rest) = message.strip_prefix(class).and_then(|r| r.strip_prefix(": ")) {
+        if let Some(rest) = message
+            .strip_prefix(class)
+            .and_then(|r| r.strip_prefix(": "))
+        {
             return Some((class, rest));
         }
     }

@@ -38,7 +38,11 @@ fn response_blob(response: ureq::Response) -> String {
         }
     }
     let mut bytes = Vec::new();
-    if let Err(e) = response.into_reader().take(64 * 1024 * 1024).read_to_end(&mut bytes) {
+    if let Err(e) = response
+        .into_reader()
+        .take(64 * 1024 * 1024)
+        .read_to_end(&mut bytes)
+    {
         return error_blob(&format!("failed to read response body: {e}"));
     }
     let body = String::from_utf8_lossy(&bytes);

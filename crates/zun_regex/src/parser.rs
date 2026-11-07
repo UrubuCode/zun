@@ -20,12 +20,23 @@ pub struct ParsedPattern {
 pub fn parse(pattern: &str) -> Result<ParsedPattern, RegexParseError> {
     let s: Vec<char> = pattern.chars().collect();
     let (group_total, scanned_names) = prescan(&s);
-    let mut p = Parser { s, i: 0, group_total, scanned_names, names: Vec::new(), next_group: 0 };
+    let mut p = Parser {
+        s,
+        i: 0,
+        group_total,
+        scanned_names,
+        names: Vec::new(),
+        next_group: 0,
+    };
     let node = p.disjunction(0)?;
     if p.i < p.s.len() {
         return Err(p.err("unmatched ')'"));
     }
-    Ok(ParsedPattern { node, group_count: p.next_group, names: p.names })
+    Ok(ParsedPattern {
+        node,
+        group_count: p.next_group,
+        names: p.names,
+    })
 }
 
 /// Counts capturing groups and collects group names without building a tree
@@ -43,7 +54,8 @@ fn prescan(s: &[char]) -> (usize, Vec<(String, usize)>) {
             ']' => in_class = false,
             '(' if !in_class => {
                 if s.get(i + 1) == Some(&'?') {
-                    if s.get(i + 2) == Some(&'<') && !matches!(s.get(i + 3), Some('=') | Some('!')) {
+                    if s.get(i + 2) == Some(&'<') && !matches!(s.get(i + 3), Some('=') | Some('!'))
+                    {
                         count += 1;
                         let mut j = i + 3;
                         let mut name = String::new();
@@ -112,7 +124,11 @@ impl Parser {
         while self.eat('|') {
             alts.push(self.alternative(depth)?);
         }
-        Ok(if alts.len() == 1 { alts.pop().unwrap() } else { RegexNode::Alt(alts) })
+        Ok(if alts.len() == 1 {
+            alts.pop().unwrap()
+        } else {
+            RegexNode::Alt(alts)
+        })
     }
 
     fn alternative(&mut self, depth: usize) -> Result<RegexNode, RegexParseError> {
@@ -171,7 +187,12 @@ impl Parser {
                     return Err(self.err("nothing to repeat"));
                 }
                 let greedy = !self.eat('?');
-                Ok(RegexNode::Repeat { node: Box::new(atom), min, max, greedy })
+                Ok(RegexNode::Repeat {
+                    node: Box::new(atom),
+                    min,
+                    max,
+                    greedy,
+                })
             }
         }
     }
@@ -304,10 +325,22 @@ impl Parser {
             return Err(self.err("unterminated group"));
         }
         Ok(match look {
-            Some((behind, negate)) => {
-                (RegexNode::Look { behind, negate, node: Box::new(body) }, !behind)
-            }
-            None if capturing => (RegexNode::Group { index, name, node: Box::new(body) }, true),
+            Some((behind, negate)) => (
+                RegexNode::Look {
+                    behind,
+                    negate,
+                    node: Box::new(body),
+                },
+                !behind,
+            ),
+            None if capturing => (
+                RegexNode::Group {
+                    index,
+                    name,
+                    node: Box::new(body),
+                },
+                true,
+            ),
             None => (body, true),
         })
     }
@@ -321,7 +354,12 @@ impl Parser {
                     self.i += 1;
                     break;
                 }
-                Some(c) if c.is_alphabetic() || c == '_' || c == '$' || (!name.is_empty() && c.is_alphanumeric()) => {
+                Some(c)
+                    if c.is_alphabetic()
+                        || c == '_'
+                        || c == '$'
+                        || (!name.is_empty() && c.is_alphanumeric()) =>
+                {
                     name.push(c);
                     self.i += 1;
                 }
@@ -336,8 +374,15 @@ impl Parser {
 
     fn atom_escape(&mut self) -> Result<(RegexNode, bool), RegexParseError> {
         self.i += 1; // backslash
-        let c = self.peek().ok_or_else(|| self.err("\\ at end of pattern"))?;
-        let set = |item| RegexNode::Class(CharClass { items: vec![item], negated: false });
+        let c = self
+            .peek()
+            .ok_or_else(|| self.err("\\ at end of pattern"))?;
+        let set = |item| {
+            RegexNode::Class(CharClass {
+                items: vec![item],
+                negated: false,
+            })
+        };
         let r = match c {
             'b' => {
                 self.i += 1;
@@ -406,7 +451,9 @@ impl Parser {
 
     /// Parses the escape after a backslash (cursor on the char following it).
     fn char_escape(&mut self, in_class: bool) -> Result<char, RegexParseError> {
-        let c = self.peek().ok_or_else(|| self.err("\\ at end of pattern"))?;
+        let c = self
+            .peek()
+            .ok_or_else(|| self.err("\\ at end of pattern"))?;
         self.i += 1;
         Ok(match c {
             'n' => '\n',
@@ -419,7 +466,10 @@ impl Parser {
                 self.i -= 1;
                 self.legacy_octal()
             }
-            'x' => match (self.peek().and_then(hex_val), self.peek_at(1).and_then(hex_val)) {
+            'x' => match (
+                self.peek().and_then(hex_val),
+                self.peek_at(1).and_then(hex_val),
+            ) {
                 (Some(a), Some(b)) => {
                     self.i += 2;
                     char::from_u32(a * 16 + b).unwrap()

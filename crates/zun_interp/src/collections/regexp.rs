@@ -23,12 +23,14 @@ impl<'a> Interp<'a> {
                 let object = zun_gc::with_current_heap_mut(|heap| {
                     heap.alloc_regex_with_flags(source, flags)
                 })
-                .map_err(|error| RunError::Native(format!("SyntaxError: Invalid regular expression: {error}")))?;
+                .map_err(|error| {
+                    RunError::Native(format!("SyntaxError: Invalid regular expression: {error}"))
+                })?;
                 Ok(Value::Object(object))
             }
             "regexpExec" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let input = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(input) => input.clone(),
                     _ => return Err(RunError::BadToken),
@@ -42,8 +44,8 @@ impl<'a> Interp<'a> {
                 }
             }
             "regexpTest" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let input = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(input) => input.clone(),
                     _ => return Err(RunError::BadToken),
@@ -55,23 +57,25 @@ impl<'a> Interp<'a> {
                 ))
             }
             "regexpLastIndex" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = zun_gc::with_current_heap(|heap| heap.regex_last_index_any(object))
                     .ok_or(RunError::BadToken)?;
                 Ok(Value::Any(value))
             }
             "regexpSetLastIndex" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = args.get(1).ok_or(RunError::BadToken)?.clone();
-                let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap)).ok_or(RunError::BadToken)?;
+                let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                    .ok_or(RunError::BadToken)?;
                 zun_gc::with_current_heap_mut(|heap| heap.regex_assign_last_index(object, any))
                     .map_err(|error| RunError::Native(error.to_string()))?;
                 Ok(Value::Any(any))
             }
             "regexpReplaceAllGuard" => {
-                let regex = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let regex =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let global = zun_gc::with_current_heap(|heap| {
                     heap.regex_flags(regex).map(|flags| flags.contains('g'))
                 })
@@ -84,8 +88,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(regex))
             }
             "regexpMatch" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let input = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(input) => input.clone(),
                     _ => return Err(RunError::BadToken),
@@ -95,9 +99,11 @@ impl<'a> Interp<'a> {
                 })
                 .ok_or(RunError::BadToken)?;
                 let found = if global {
-                    zun_gc::with_current_heap_mut(|heap| match heap.regex_store_last_index(object, 0.0) {
-                        Ok(()) => heap.regex_match_global(object, &input),
-                        Err(error) => Some(Err(error)),
+                    zun_gc::with_current_heap_mut(|heap| {
+                        match heap.regex_store_last_index(object, 0.0) {
+                            Ok(()) => heap.regex_match_global(object, &input),
+                            Err(error) => Some(Err(error)),
+                        }
                     })
                 } else {
                     zun_gc::with_current_heap_mut(|heap| heap.regex_exec(object, &input))
@@ -110,8 +116,8 @@ impl<'a> Interp<'a> {
                 }
             }
             "stringMatchAll" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let input = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(input) => input.clone(),
                     _ => return Err(RunError::BadToken),
@@ -134,8 +140,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(array))
             }
             "regexpIsMatch" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let input = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(input) => input,
                     _ => return Err(RunError::BadToken),
@@ -147,8 +153,8 @@ impl<'a> Interp<'a> {
                 ))
             }
             "regexpSearch" | "regexpSplit" | "regexpSplitLimit" | "regexpReplace" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let input = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(input) => input.clone(),
                     _ => return Err(RunError::BadToken),
@@ -163,13 +169,16 @@ impl<'a> Interp<'a> {
                     }
                     "regexpSplit" | "regexpSplitLimit" => {
                         let limit = match (name, args.get(2)) {
-                            ("regexpSplitLimit", Some(Value::Int(n, _))) => Some((*n as u64 & 0xFFFF_FFFF) as usize),
+                            ("regexpSplitLimit", Some(Value::Int(n, _))) => {
+                                Some((*n as u64 & 0xFFFF_FFFF) as usize)
+                            }
                             _ => None,
                         };
-                        let array =
-                            zun_gc::with_current_heap_mut(|heap| heap.regex_split(object, &input, limit))
-                                .ok_or(RunError::BadToken)?
-                                .map_err(|error| RunError::Native(error.to_string()))?;
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            heap.regex_split(object, &input, limit)
+                        })
+                        .ok_or(RunError::BadToken)?
+                        .map_err(|error| RunError::Native(error.to_string()))?;
                         Ok(Value::Object(array))
                     }
                     _ => {
@@ -183,7 +192,10 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?
                         .map_err(|error| RunError::Native(error.to_string()))?;
                         zun_gc::with_current_heap_mut(|heap| {
-                            if heap.regex_flags(object).is_some_and(|flags| flags.contains('g')) {
+                            if heap
+                                .regex_flags(object)
+                                .is_some_and(|flags| flags.contains('g'))
+                            {
                                 heap.regex_store_last_index(object, 0.0)
                             } else {
                                 Ok(())
@@ -195,25 +207,24 @@ impl<'a> Interp<'a> {
                 }
             }
             "regexpSource" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let source = zun_gc::with_current_heap(|heap| {
-                    heap.regex_source(object).map(str::to_owned)
-                })
-                .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let source =
+                    zun_gc::with_current_heap(|heap| heap.regex_source(object).map(str::to_owned))
+                        .ok_or(RunError::BadToken)?;
                 Ok(Value::Str(source.into()))
             }
             "regexpFlags" | "regexpFlag" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let flags = zun_gc::with_current_heap(|heap| {
-                    heap.regex_flags(object).map(str::to_owned)
-                })
-                .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let flags =
+                    zun_gc::with_current_heap(|heap| heap.regex_flags(object).map(str::to_owned))
+                        .ok_or(RunError::BadToken)?;
                 if name == "regexpFlags" {
                     // The `flags` accessor reports canonical (alphabetical
                     // by spec order) `dgimsuvy`.
-                    let ordered: String = "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect();
+                    let ordered: String =
+                        "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect();
                     return Ok(Value::Str(ordered.into()));
                 }
                 let flag = match args.get(1) {

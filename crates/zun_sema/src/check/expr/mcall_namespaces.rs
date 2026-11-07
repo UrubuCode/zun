@@ -22,7 +22,9 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        let ast::Expr::Ident(class) = receiver else { return None };
+        let ast::Expr::Ident(class) = receiver else {
+            return None;
+        };
         let class_name = self.text(class).to_string();
         if let Some(expr) = self.mcall_builtin_statics_1(cx, &class_name, method, args, span) {
             return Some(expr);
@@ -141,9 +143,7 @@ impl Checker<'_> {
         // `String.fromCharCode(...)` / `String.fromCodePoint(...)`.
         // Recognized by receiver name only for the known statics;
         // anything else on `String` falls through to class dispatch.
-        if class_name == "String"
-            && matches!(self.text(method), "fromCharCode" | "fromCodePoint")
-        {
+        if class_name == "String" && matches!(self.text(method), "fromCharCode" | "fromCodePoint") {
             return Some(self.check_string_static(
                 cx,
                 &self.text(method).to_string(),
@@ -170,9 +170,7 @@ impl Checker<'_> {
         // mapFn?)`. Recognized by receiver name for the known statics
         // (the `Array` class exists for its instance surface, like
         // `Number`); anything else on `Array` falls through.
-        if class_name == "Array"
-            && matches!(self.text(method), "isArray" | "of" | "from")
-        {
+        if class_name == "Array" && matches!(self.text(method), "isArray" | "of" | "from") {
             return Some(self.check_array_static(
                 cx,
                 &self.text(method).to_string(),
@@ -203,11 +201,17 @@ impl Checker<'_> {
             };
             let mut arg = self.check_expr(cx, &args[0]);
             if !arg.ty.is_error() && !self.is_assignable(arg.ty, arg_ty) {
-                self.error(arg.span, format!("`Symbol.{member}` expects a {arg_ty:?} argument"));
+                self.error(
+                    arg.span,
+                    format!("`Symbol.{member}` expects a {arg_ty:?} argument"),
+                );
             }
             coerce_numeric_literal(&mut arg, arg_ty);
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: ret_ty,
                 span,
             });
@@ -216,9 +220,7 @@ impl Checker<'_> {
         // value)`. The `BigInt` class exists (instance helpers), so
         // recognition keys on the receiver name and method pair; any
         // other member falls through to class dispatch.
-        if class_name == "BigInt"
-            && matches!(self.text(method), "asIntN" | "asUintN")
-        {
+        if class_name == "BigInt" && matches!(self.text(method), "asIntN" | "asUintN") {
             let member = self.text(method).to_string();
             let native = if member == "asIntN" {
                 "bigIntAsIntN"
@@ -239,20 +241,31 @@ impl Checker<'_> {
                 // A `number` width is truncated (ToIndex).
                 let bits_span = bits.span;
                 bits = hir::Expr {
-                    kind: hir::ExprKind::Convert { value: Box::new(bits) },
+                    kind: hir::ExprKind::Convert {
+                        value: Box::new(bits),
+                    },
                     ty: Ty::Int(IntKind::I64),
                     span: bits_span,
                 };
             }
             if !bits.ty.is_error() && !bits.ty.is_int() {
-                self.error(bits.span, format!("`BigInt.{member}` bit width must be an integer"));
+                self.error(
+                    bits.span,
+                    format!("`BigInt.{member}` bit width must be an integer"),
+                );
             }
             let value = self.check_expr(cx, &args[1]);
             if !value.ty.is_error() && value.ty != Ty::BigInt {
-                self.error(value.span, format!("`BigInt.{member}` expects a BigInt value"));
+                self.error(
+                    value.span,
+                    format!("`BigInt.{member}` expects a BigInt value"),
+                );
             }
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![bits, value] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![bits, value],
+                },
                 ty: Ty::BigInt,
                 span,
             });
@@ -278,7 +291,10 @@ impl Checker<'_> {
             && !self.classes_by_name.contains_key("ArrayBuffer")
         {
             if args.len() != 1 {
-                self.error(span, "`ArrayBuffer.isView` expects one argument".to_string());
+                self.error(
+                    span,
+                    "`ArrayBuffer.isView` expects one argument".to_string(),
+                );
                 return Some(self.poison(span));
             }
             let Some((id, _)) = zun_natives::resolve("buffer", "isView") else {
@@ -289,12 +305,17 @@ impl Checker<'_> {
             if arg.ty != Ty::Any && !arg.ty.is_error() {
                 arg = hir::Expr {
                     span: arg.span,
-                    kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(arg),
+                    },
                     ty: Ty::Any,
                 };
             }
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: Ty::Boolean,
                 span,
             });
@@ -331,21 +352,46 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        if let Some(&namespace) = self.core_namespaces.get(class_name).filter(|_| cx.lookup(class_name).is_none()) {
+        if let Some(&namespace) = self
+            .core_namespaces
+            .get(class_name)
+            .filter(|_| cx.lookup(class_name).is_none())
+        {
             let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
-                self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
+                self.error(
+                    method.span,
+                    format!(
+                        "`zun:core` namespace `{}` has no member `{}`",
+                        namespace,
+                        self.text(method)
+                    ),
+                );
                 return Some(self.poison(span));
             };
             if native.params.len() != args.len() {
-                self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), native.params.len(), args.len()));
+                self.error(
+                    span,
+                    format!(
+                        "`{}` expects {} argument(s), found {}",
+                        self.text(method),
+                        native.params.len(),
+                        args.len()
+                    ),
+                );
                 return Some(self.poison(span));
             }
             let mut checked = Vec::with_capacity(args.len());
-            for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+            for (arg, expected) in args
+                .iter()
+                .zip(native.params.iter().map(|ty| native_ty(*ty)))
+            {
                 let mut value = self.check_expr(cx, arg);
                 coerce_numeric_literal(&mut value, expected);
                 if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
-                    self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                    self.error(
+                        value.span,
+                        format!("argument type {:?} does not match {expected:?}", value.ty),
+                    );
                 }
                 checked.push(value);
             }
@@ -360,19 +406,36 @@ impl Checker<'_> {
                 // Source-module namespaces are handled below.
             } else {
                 let Some((id, native)) = zun_natives::resolve(&module, self.text(method)) else {
-                    self.error(method.span, format!("`{}` has no export named `{}`", module, self.text(method)));
+                    self.error(
+                        method.span,
+                        format!("`{}` has no export named `{}`", module, self.text(method)),
+                    );
                     return Some(self.poison(span));
                 };
                 if native.params.len() != args.len() {
-                    self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), native.params.len(), args.len()));
+                    self.error(
+                        span,
+                        format!(
+                            "`{}` expects {} argument(s), found {}",
+                            self.text(method),
+                            native.params.len(),
+                            args.len()
+                        ),
+                    );
                     return Some(self.poison(span));
                 }
                 let mut checked = Vec::with_capacity(args.len());
-                for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+                for (arg, expected) in args
+                    .iter()
+                    .zip(native.params.iter().map(|ty| native_ty(*ty)))
+                {
                     let mut value = self.check_expr(cx, arg);
                     coerce_numeric_literal(&mut value, expected);
                     if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
-                        self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                        self.error(
+                            value.span,
+                            format!("argument type {:?} does not match {expected:?}", value.ty),
+                        );
                     }
                     checked.push(value);
                 }
@@ -390,7 +453,15 @@ impl Checker<'_> {
                 .cloned()
             {
                 if external.params.len() != args.len() {
-                    self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), external.params.len(), args.len()));
+                    self.error(
+                        span,
+                        format!(
+                            "`{}` expects {} argument(s), found {}",
+                            self.text(method),
+                            external.params.len(),
+                            args.len()
+                        ),
+                    );
                     return Some(self.poison(span));
                 }
                 let mut checked = Vec::with_capacity(args.len());
@@ -398,7 +469,10 @@ impl Checker<'_> {
                     let mut value = self.check_expr(cx, arg);
                     coerce_numeric_literal(&mut value, expected);
                     if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
-                        self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                        self.error(
+                            value.span,
+                            format!("argument type {:?} does not match {expected:?}", value.ty),
+                        );
                     }
                     checked.push(value);
                 }
@@ -437,7 +511,10 @@ impl Checker<'_> {
                 if !self.signatures[func as usize].is_static {
                     self.error(
                         method.span,
-                        format!("instance method `{}` must be called through an object", self.text(method)),
+                        format!(
+                            "instance method `{}` must be called through an object",
+                            self.text(method)
+                        ),
                     );
                     return Some(self.poison(span));
                 }
@@ -485,7 +562,10 @@ impl Checker<'_> {
                         checked.insert(0, self.realm_descriptor_expr(token, span));
                     }
                     return Some(hir::Expr {
-                        kind: hir::ExprKind::StaticCall { func, args: checked },
+                        kind: hir::ExprKind::StaticCall {
+                            func,
+                            args: checked,
+                        },
                         ty: return_ty,
                         span,
                     });
@@ -494,5 +574,4 @@ impl Checker<'_> {
         }
         None
     }
-
 }

@@ -9,7 +9,8 @@ use zun_ilgen::MATH_MACHINE_OPS;
 /// Compile a source file and return `main`'s opcode sequence.
 fn opcodes_of(src: &str, function: &str) -> Vec<Opcode> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema: {diags:?}");
@@ -59,7 +60,10 @@ fn sqrt_lowers_to_the_machine_op() {
         function main(): number { return root(16.0); }"#,
         "root",
     );
-    assert!(ops.contains(&Opcode::SqrtF64), "expected sqrt.f64 in {ops:?}");
+    assert!(
+        ops.contains(&Opcode::SqrtF64),
+        "expected sqrt.f64 in {ops:?}"
+    );
     assert!(
         !ops.contains(&Opcode::CallBuiltin),
         "sqrt should not call a native any more: {ops:?}"

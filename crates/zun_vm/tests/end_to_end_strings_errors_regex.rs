@@ -308,7 +308,6 @@ fn error_subclass_throws_as_realm_global() {
 
 // --- Static-regex lowering (the `[GeneratedRegex]` analog) ------------------
 
-
 #[test]
 fn static_regex_literal_test_matches_js_semantics() {
     // A regex literal used directly by `.test` lowers to the synthesized ZIL
@@ -322,7 +321,10 @@ fn static_regex_literal_test_matches_js_semantics() {
             if (!/zzz/.test("")) { print("empty-false"); }
         }"#,
     );
-    assert_eq!(out, ["hit-mid", "no-partial", "alt", "class", "empty-false"]);
+    assert_eq!(
+        out,
+        ["hit-mid", "no-partial", "alt", "class", "empty-false"]
+    );
 }
 
 #[test]
@@ -385,7 +387,10 @@ fn static_regex_injects_jit_eligible_matcher_method() {
         .position(|m| module.strings.get(m.name).starts_with("matchAt$"))
         .map(|i| i as u32 + 1)
         .expect("matchAt present");
-    assert!(eligible.contains(&match_rid), "synthesized matchAt must be JIT-eligible");
+    assert!(
+        eligible.contains(&match_rid),
+        "synthesized matchAt must be JIT-eligible"
+    );
 }
 
 #[test]
@@ -423,7 +428,8 @@ fn a_concrete_stored_function_value_is_jit_eligible_and_runs() {
 // or native. Kept as a regression guard for that work.
 #[test]
 fn closure_captures_a_local_is_returned_and_called() {
-    let user = "function makeAdder(n: number): (x: number) => number { return (x: number) => x + n; } \
+    let user =
+        "function makeAdder(n: number): (x: number) => number { return (x: number) => x + n; } \
          function main(): void { let add5 = makeAdder(5.0); let add1 = makeAdder(1.0); \
                                  print(add5(10.0)); print(add5(2.0)); print(add1(10.0)); }";
     // Each call closes over a distinct captured `n`, so the two closures stay
@@ -451,4 +457,3 @@ fn closure_captures_a_local_is_returned_and_called() {
 // ---------------------------------------------------------------------------
 // Operator tokens: `**`, bitwise `& | ^ ~`, shifts `<< >> >>>`, and `void`.
 // ---------------------------------------------------------------------------
-

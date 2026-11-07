@@ -23,7 +23,9 @@ fn upgrade_swaps_and_reprovisions() {
     assert_eq!(std::fs::read(bin.join(outdated_name())).unwrap(), b"old");
     assert_eq!(std::fs::read(bin.join(bin_name())).unwrap(), b"new");
     assert!(bin.join(UPGRADED_SENTINEL).exists());
-    let rt = home.join("modules").join(format!("zun-runtime.{}", runtime_ext()));
+    let rt = home
+        .join("modules")
+        .join(format!("zun-runtime.{}", runtime_ext()));
     assert_eq!(std::fs::read(rt).unwrap(), payload);
     let _ = std::fs::remove_dir_all(&home);
 }
@@ -35,7 +37,10 @@ fn upgrade_without_prior_install_and_missing_source() {
     let new = home.join("new-zun");
     std::fs::write(&new, b"new").unwrap();
     upgrade_with(&home, &new, &[]).unwrap();
-    assert_eq!(std::fs::read(home.join("bin").join(bin_name())).unwrap(), b"new");
+    assert_eq!(
+        std::fs::read(home.join("bin").join(bin_name())).unwrap(),
+        b"new"
+    );
     let _ = std::fs::remove_dir_all(&home);
 }
 

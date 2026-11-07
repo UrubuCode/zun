@@ -62,7 +62,10 @@ fn make_time(hour: f64, minute: f64, second: f64, milli: f64) -> f64 {
     if !(hour.is_finite() && minute.is_finite() && second.is_finite() && milli.is_finite()) {
         return f64::NAN;
     }
-    hour.trunc() * 3_600_000.0 + minute.trunc() * 60_000.0 + second.trunc() * 1_000.0 + milli.trunc()
+    hour.trunc() * 3_600_000.0
+        + minute.trunc() * 60_000.0
+        + second.trunc() * 1_000.0
+        + milli.trunc()
 }
 
 /// ECMAScript MakeDate.
@@ -106,7 +109,9 @@ pub(crate) fn f_clip(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue
 
 pub(crate) fn f_field(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let which = int(args, 1).clamp(0, 7) as usize;
-    Ok(NativeValue::Float(fields_of(num(args, 0)).map_or(f64::NAN, |f| f[which])))
+    Ok(NativeValue::Float(
+        fields_of(num(args, 0)).map_or(f64::NAN, |f| f[which]),
+    ))
 }
 
 /// `Date.UTC` / constructor-from-parts core. The 0-99 year remap applies when the flag is set.
@@ -126,7 +131,10 @@ pub(crate) fn f_make_utc(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeV
 
 /// Replace the `count` fields starting at `start` (0 year .. 6 ms) of `t` and
 /// recompose. A NaN time value is treated as +0 only when the year is set.
-pub(crate) fn f_set_fields(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+pub(crate) fn f_set_fields(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     let t = num(args, 0);
     let start = int(args, 1).clamp(0, 6) as usize;
     let count = int(args, 2).clamp(0, 4) as usize;
@@ -162,7 +170,10 @@ fn year_text(year: i64) -> String {
     }
 }
 
-pub(crate) fn f_iso_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+pub(crate) fn f_iso_string(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     let f = fields_of(num(args, 0)).ok_or_else(|| NativeError("isoString: invalid date".into()))?;
     Ok(NativeValue::Str(format!(
         "{}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
@@ -177,7 +188,9 @@ pub(crate) fn f_iso_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<Nativ
 }
 
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 fn signed_year(year: i64) -> String {
     if year < 0 {
@@ -187,7 +200,10 @@ fn signed_year(year: i64) -> String {
     }
 }
 
-pub(crate) fn f_utc_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+pub(crate) fn f_utc_string(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     let f = fields_of(num(args, 0)).ok_or_else(|| NativeError("utcString: invalid date".into()))?;
     Ok(NativeValue::Str(format!(
         "{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
@@ -209,7 +225,10 @@ fn offset_minutes(t: f64) -> i64 {
 }
 
 /// `toString` (kind 0), `toDateString` (1), `toTimeString` (2) in the host zone.
-pub(crate) fn f_date_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+pub(crate) fn f_date_string(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     let t = num(args, 0);
     let offset = offset_minutes(t);
     let f = fields_of(t + (offset * 60_000) as f64)
@@ -222,7 +241,11 @@ pub(crate) fn f_date_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<Nati
         signed_year(f[0] as i64)
     );
     let sign = if offset < 0 { '-' } else { '+' };
-    let zone = if offset == 0 { " (Coordinated Universal Time)" } else { "" };
+    let zone = if offset == 0 {
+        " (Coordinated Universal Time)"
+    } else {
+        ""
+    };
     let time = format!(
         "{:02}:{:02}:{:02} GMT{}{:02}{:02}{}",
         f[3] as i64,
@@ -240,7 +263,10 @@ pub(crate) fn f_date_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<Nati
     }))
 }
 
-pub(crate) fn f_local_time(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+pub(crate) fn f_local_time(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     let t = num(args, 0);
     Ok(NativeValue::Float(if t.is_finite() {
         t + (offset_minutes(t) * 60_000) as f64
@@ -253,20 +279,35 @@ fn utc_from_local(local: f64) -> f64 {
     if !local.is_finite() || local.abs() > MAX_TIME + MS_PER_DAY * 2.0 {
         return time_clip(local);
     }
-    let converted = jiff::Timestamp::from_millisecond(local as i64).ok().and_then(|ts| {
-        let civil = ts.to_zoned(jiff::tz::TimeZone::UTC).datetime();
-        zone_of(&[]).to_zoned(civil).ok().map(|z| z.timestamp().as_millisecond() as f64)
-    });
+    let converted = jiff::Timestamp::from_millisecond(local as i64)
+        .ok()
+        .and_then(|ts| {
+            let civil = ts.to_zoned(jiff::tz::TimeZone::UTC).datetime();
+            zone_of(&[])
+                .to_zoned(civil)
+                .ok()
+                .map(|z| z.timestamp().as_millisecond() as f64)
+        });
     time_clip(converted.unwrap_or(local))
 }
 
-pub(crate) fn f_utc_from_local(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+pub(crate) fn f_utc_from_local(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     Ok(NativeValue::Float(utc_from_local(num(args, 0))))
 }
 
-pub(crate) fn f_tz_offset(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+pub(crate) fn f_tz_offset(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     let t = num(args, 0);
-    Ok(NativeValue::Float(if t.is_finite() { (-offset_minutes(t)) as f64 + 0.0 } else { f64::NAN }))
+    Ok(NativeValue::Float(if t.is_finite() {
+        (-offset_minutes(t)) as f64 + 0.0
+    } else {
+        f64::NAN
+    }))
 }
 
 /// ISO 8601 / ECMAScript date-time string format. Date-only forms are UTC;
@@ -337,7 +378,11 @@ fn parse_iso(text: &str) -> Option<f64> {
                 if i == start {
                     return None;
                 }
-                let mut frac: String = std::str::from_utf8(&b[start..i]).ok()?.chars().take(3).collect();
+                let mut frac: String = std::str::from_utf8(&b[start..i])
+                    .ok()?
+                    .chars()
+                    .take(3)
+                    .collect();
                 while frac.len() < 3 {
                     frac.push('0');
                 }
@@ -374,7 +419,8 @@ fn parse_iso(text: &str) -> Option<f64> {
         return None;
     }
     let days = days_from_civil(year, month, day) as f64;
-    let local = days * MS_PER_DAY + (hour * 3_600_000 + minute * 60_000 + second * 1_000 + milli) as f64;
+    let local =
+        days * MS_PER_DAY + (hour * 3_600_000 + minute * 60_000 + second * 1_000 + milli) as f64;
     Some(match offset {
         Some(minutes) => time_clip(local - (minutes * 60_000) as f64),
         None if has_time => utc_from_local(local),
@@ -382,7 +428,10 @@ fn parse_iso(text: &str) -> Option<f64> {
     })
 }
 
-pub(crate) fn f_parse_date(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+pub(crate) fn f_parse_date(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => *value,
         _ => return Ok(NativeValue::Float(f64::NAN)),

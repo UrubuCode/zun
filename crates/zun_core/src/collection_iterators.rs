@@ -7,7 +7,9 @@ pub struct MapIterator {
 }
 
 impl MapIterator {
-    pub fn new() -> Self { Self { next_index: 0 } }
+    pub fn new() -> Self {
+        Self { next_index: 0 }
+    }
 
     pub fn next(&mut self, map: &OrderedMap) -> Option<(Any, Any)> {
         let (slot, key, value) = map.physical_next(self.next_index)?;
@@ -16,11 +18,15 @@ impl MapIterator {
     }
 
     /// Whether all currently live entries have been consumed.
-    pub fn is_done(&self, map: &OrderedMap) -> bool { map.physical_next(self.next_index).is_none() }
+    pub fn is_done(&self, map: &OrderedMap) -> bool {
+        map.physical_next(self.next_index).is_none()
+    }
 }
 
 impl Default for MapIterator {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// State for the default `Set[Symbol.iterator]()` protocol.
@@ -30,7 +36,9 @@ pub struct SetIterator {
 }
 
 impl SetIterator {
-    pub fn new() -> Self { Self { next_index: 0 } }
+    pub fn new() -> Self {
+        Self { next_index: 0 }
+    }
 
     pub fn next(&mut self, set: &OrderedMap) -> Option<Any> {
         let (slot, value, _) = set.physical_next(self.next_index)?;
@@ -39,9 +47,13 @@ impl SetIterator {
     }
 
     /// Whether all currently live values have been consumed.
-    pub fn is_done(&self, set: &OrderedMap) -> bool { set.physical_next(self.next_index).is_none() }
+    pub fn is_done(&self, set: &OrderedMap) -> bool {
+        set.physical_next(self.next_index).is_none()
+    }
 }
 
 impl Default for SetIterator {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

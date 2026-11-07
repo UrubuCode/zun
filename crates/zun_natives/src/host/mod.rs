@@ -48,7 +48,9 @@ fn env_get(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
 
 /// Whether an environment variable is set.
 fn env_has(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Ok(NativeValue::Bool(std::env::var_os(args[0].as_str()).is_some()))
+    Ok(NativeValue::Bool(
+        std::env::var_os(args[0].as_str()).is_some(),
+    ))
 }
 
 /// The process working directory (lossy UTF-8); `""` if it cannot be read.
@@ -71,7 +73,9 @@ fn arg_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
         NativeArg::Int(n) if *n >= 0 => *n as usize,
         _ => return Ok(NativeValue::Str(String::new())),
     };
-    Ok(NativeValue::Str(std::env::args().nth(index).unwrap_or_default()))
+    Ok(NativeValue::Str(
+        std::env::args().nth(index).unwrap_or_default(),
+    ))
 }
 
 /// Whether standard output is attached to a terminal.
@@ -99,16 +103,71 @@ fn crypto_random_u64(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, N
 pub const MODULE: crate::Module = crate::Module {
     name: "host",
     functions: &[
-        NativeFn { name: "stdinLine", params: &[], ret: Str, imp: stdin_line },
-        NativeFn { name: "stdoutWrite", params: &[Str], ret: Void, imp: stdout_write },
-        NativeFn { name: "stderrWrite", params: &[Str], ret: Void, imp: stderr_write },
-        NativeFn { name: "exitProcess", params: &[I64], ret: Void, imp: exit_process },
-        NativeFn { name: "envGet", params: &[Str], ret: Str, imp: env_get },
-        NativeFn { name: "envHas", params: &[Str], ret: Bool, imp: env_has },
-        NativeFn { name: "cwd", params: &[], ret: Str, imp: cwd },
-        NativeFn { name: "argCount", params: &[], ret: I64, imp: arg_count },
-        NativeFn { name: "argAt", params: &[I64], ret: Str, imp: arg_at },
-        NativeFn { name: "isTty", params: &[], ret: Bool, imp: is_tty },
-        NativeFn { name: "cryptoRandomU64", params: &[], ret: I64, imp: crypto_random_u64 },
+        NativeFn {
+            name: "stdinLine",
+            params: &[],
+            ret: Str,
+            imp: stdin_line,
+        },
+        NativeFn {
+            name: "stdoutWrite",
+            params: &[Str],
+            ret: Void,
+            imp: stdout_write,
+        },
+        NativeFn {
+            name: "stderrWrite",
+            params: &[Str],
+            ret: Void,
+            imp: stderr_write,
+        },
+        NativeFn {
+            name: "exitProcess",
+            params: &[I64],
+            ret: Void,
+            imp: exit_process,
+        },
+        NativeFn {
+            name: "envGet",
+            params: &[Str],
+            ret: Str,
+            imp: env_get,
+        },
+        NativeFn {
+            name: "envHas",
+            params: &[Str],
+            ret: Bool,
+            imp: env_has,
+        },
+        NativeFn {
+            name: "cwd",
+            params: &[],
+            ret: Str,
+            imp: cwd,
+        },
+        NativeFn {
+            name: "argCount",
+            params: &[],
+            ret: I64,
+            imp: arg_count,
+        },
+        NativeFn {
+            name: "argAt",
+            params: &[I64],
+            ret: Str,
+            imp: arg_at,
+        },
+        NativeFn {
+            name: "isTty",
+            params: &[],
+            ret: Bool,
+            imp: is_tty,
+        },
+        NativeFn {
+            name: "cryptoRandomU64",
+            params: &[],
+            ret: I64,
+            imp: crypto_random_u64,
+        },
     ],
 };

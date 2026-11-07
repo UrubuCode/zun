@@ -60,7 +60,10 @@ pub(super) fn name_is_reassigned(source: &str, name: &str) -> bool {
             cursor += 1;
         }
         // `(name as any) = v`: skip the cast and the closing parenthesis.
-        if bytes[cursor..].starts_with(b"as ") && start > 0 && bytes[..start].trim_ascii_end().ends_with(b"(") {
+        if bytes[cursor..].starts_with(b"as ")
+            && start > 0
+            && bytes[..start].trim_ascii_end().ends_with(b"(")
+        {
             if let Some(close) = source[cursor..].find(')') {
                 cursor += close + 1;
                 while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
@@ -93,7 +96,11 @@ pub(super) fn is_plain_identifier(text: &str) -> bool {
 /// capitalized identifier such as `Map` or `Object`.
 pub(super) fn peels_to_global_namespace(expression: &Expression<'_>) -> bool {
     match expression {
-        Expression::Identifier(id) => id.name.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
+        Expression::Identifier(id) => id
+            .name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_uppercase()),
         Expression::ParenthesizedExpression(inner) => peels_to_global_namespace(&inner.expression),
         Expression::TSAsExpression(inner) => peels_to_global_namespace(&inner.expression),
         _ => false,
@@ -107,24 +114,38 @@ pub(super) fn is_immutable_self_name(name: &str) -> bool {
 /// An assignment to an immutable binding: evaluates the value, then throws
 /// `TypeError: Assignment to constant variable.`
 pub(super) fn throw_const_assignment(value: Expr, whole: Span) -> Expr {
-    let message = Expr::String { value: "Assignment to constant variable.".to_owned(), span: whole };
+    let message = Expr::String {
+        value: "Assignment to constant variable.".to_owned(),
+        span: whole,
+    };
     let statements = vec![
         Stmt::Expr(value),
         Stmt::Throw {
-            value: Expr::New { class: crate::ast::synthetic_ident("TypeError"), args: vec![message], span: whole },
+            value: Expr::New {
+                class: crate::ast::synthetic_ident("TypeError"),
+                args: vec![message],
+                span: whole,
+            },
             span: whole,
         },
     ];
     let iife = Expr::Function(FunctionExpr {
         params: Vec::new(),
         return_type: None,
-        body: Block { statements, span: whole },
+        body: Block {
+            statements,
+            span: whole,
+        },
         is_arrow: true,
         is_async: false,
         is_generator: false,
         span: whole,
     });
-    Expr::ComputedCall { callee: Box::new(iife), args: Vec::new(), span: whole }
+    Expr::ComputedCall {
+        callee: Box::new(iife),
+        args: Vec::new(),
+        span: whole,
+    }
 }
 
 pub(super) fn peel_parens<'a, 'b>(expression: &'a Expression<'b>) -> &'a Expression<'b> {

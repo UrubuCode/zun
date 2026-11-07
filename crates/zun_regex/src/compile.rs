@@ -10,26 +10,59 @@ use crate::flags::Flags;
 #[derive(Clone, Debug)]
 pub(crate) enum Inst {
     /// Literal char (already canonicalized when `ignore_case`).
-    Char { c: char, back: bool },
-    Any { back: bool },
-    Class { idx: usize, back: bool },
+    Char {
+        c: char,
+        back: bool,
+    },
+    Any {
+        back: bool,
+    },
+    Class {
+        idx: usize,
+        back: bool,
+    },
     /// Try `first`, on failure `second`.
-    Split { first: usize, second: usize },
+    Split {
+        first: usize,
+        second: usize,
+    },
     Jmp(usize),
     Save(usize),
     Assert(AssertKind),
-    BackRef { group: usize, back: bool },
+    BackRef {
+        group: usize,
+        back: bool,
+    },
     /// Zero-width assertion; body follows at `pc + 1` and ends with `LookEnd`.
-    Look { negate: bool, end: usize },
+    Look {
+        negate: bool,
+        end: usize,
+    },
     LookEnd,
     /// Reset loop counter register `ctr` to 0.
-    LoopInit { ctr: usize },
+    LoopInit {
+        ctr: usize,
+    },
     /// Decide between another iteration (`pc + 1`) and `exit`.
-    LoopTest { ctr: usize, min: u32, max: u32, greedy: bool, exit: usize },
+    LoopTest {
+        ctr: usize,
+        min: u32,
+        max: u32,
+        greedy: bool,
+        exit: usize,
+    },
     /// Start of an iteration: remember position, clear inner captures.
-    LoopBody { pos_reg: usize, clear: Option<(usize, usize)> },
+    LoopBody {
+        pos_reg: usize,
+        clear: Option<(usize, usize)>,
+    },
     /// End of an iteration: empty-iteration check, count, jump back to `test`.
-    LoopEnd { ctr: usize, pos_reg: usize, min: u32, test: usize },
+    LoopEnd {
+        ctr: usize,
+        pos_reg: usize,
+        min: u32,
+        test: usize,
+    },
     Match,
 }
 
@@ -238,7 +271,11 @@ impl Prefilter {
                 }
                 None
             }
-            Prefilter::LoopLiteral { class, min_zero, lit } => {
+            Prefilter::LoopLiteral {
+                class,
+                min_zero,
+                lit,
+            } => {
                 let mut f = from;
                 loop {
                     let p = memfind_char(input, f, *lit)?;
@@ -306,19 +343,26 @@ pub(crate) fn compile(node: &RegexNode, group_count: usize, flags: Flags) -> Pro
 fn compute_fast_runs(insts: &[Inst]) -> Vec<Option<FastRun>> {
     let mut out = vec![None; insts.len()];
     for pc in 0..insts.len() {
-        let Inst::LoopInit { ctr } = insts[pc] else { continue };
+        let Inst::LoopInit { ctr } = insts[pc] else {
+            continue;
+        };
         // LoopTest at pc+1, exit must be exactly pc+5 (the 5-instruction shape).
         let (min, max, greedy) = match insts.get(pc + 1) {
-            Some(Inst::LoopTest { ctr: c, min, max, greedy, exit })
-                if *c == ctr && *exit == pc + 5 =>
-            {
-                (*min, *max, *greedy)
-            }
+            Some(Inst::LoopTest {
+                ctr: c,
+                min,
+                max,
+                greedy,
+                exit,
+            }) if *c == ctr && *exit == pc + 5 => (*min, *max, *greedy),
             _ => continue,
         };
         // LoopBody with no capture clears (bare body) and the expected pos_reg.
         match insts.get(pc + 2) {
-            Some(Inst::LoopBody { pos_reg, clear: None }) if *pos_reg == ctr + 1 => {}
+            Some(Inst::LoopBody {
+                pos_reg,
+                clear: None,
+            }) if *pos_reg == ctr + 1 => {}
             _ => continue,
         }
         // Exactly one forward consuming atom.
@@ -330,11 +374,21 @@ fn compute_fast_runs(insts: &[Inst]) -> Vec<Option<FastRun>> {
         };
         // LoopEnd closing this loop and jumping back to the test.
         match insts.get(pc + 4) {
-            Some(Inst::LoopEnd { ctr: c, pos_reg, min: m, test })
-                if *c == ctr && *pos_reg == ctr + 1 && *m == min && *test == pc + 1 => {}
+            Some(Inst::LoopEnd {
+                ctr: c,
+                pos_reg,
+                min: m,
+                test,
+            }) if *c == ctr && *pos_reg == ctr + 1 && *m == min && *test == pc + 1 => {}
             _ => continue,
         }
-        out[pc] = Some(FastRun { atom, min, max, greedy, exit: pc + 5 });
+        out[pc] = Some(FastRun {
+            atom,
+            min,
+            max,
+            greedy,
+            exit: pc + 5,
+        });
     }
     out
 }
@@ -374,7 +428,11 @@ fn compute_prefilter(insts: &[Inst], classes: &[CharClass], flags: Flags) -> Pre
                 }
             }
             let mut ascii_mask: u128 = 0;
-            let set = FirstSet { ascii_mask: 0, members, icase: flags.ignore_case };
+            let set = FirstSet {
+                ascii_mask: 0,
+                members,
+                icase: flags.ignore_case,
+            };
             for i in 0u32..128 {
                 if set.test(char::from(i as u8)) {
                     ascii_mask |= 1u128 << i;
@@ -433,18 +491,28 @@ fn required_literal(insts: &[Inst], classes: &[CharClass], flags: Flags) -> Opti
     if let Inst::LoopInit { ctr } = insts[pc] {
         let test = pc + 1;
         let (min, max) = match insts.get(test)? {
-            Inst::LoopTest { ctr: c, min, max, exit, .. } if *c == ctr && *exit == pc + 5 => {
-                (*min, *max)
-            }
+            Inst::LoopTest {
+                ctr: c,
+                min,
+                max,
+                exit,
+                ..
+            } if *c == ctr && *exit == pc + 5 => (*min, *max),
             _ => return None,
         };
         if max != u32::MAX {
             return None; // bounded loop: walk-back to run start is unsound.
         }
-        let Inst::LoopBody { .. } = insts.get(pc + 2)? else { return None };
-        let Inst::Class { idx, back: false } = insts.get(pc + 3)? else { return None };
+        let Inst::LoopBody { .. } = insts.get(pc + 2)? else {
+            return None;
+        };
+        let Inst::Class { idx, back: false } = insts.get(pc + 3)? else {
+            return None;
+        };
         match insts.get(pc + 4)? {
-            Inst::LoopEnd { ctr: c, test: t, .. } if *c == ctr && *t == test => {}
+            Inst::LoopEnd {
+                ctr: c, test: t, ..
+            } if *c == ctr && *t == test => {}
             _ => return None,
         }
         // After the loop (at pc + 5) a required literal char, possibly behind
@@ -552,7 +620,10 @@ impl Compiler {
             }
             RegexNode::Class(cls) => {
                 let mut cls = cls.clone();
-                if self.fold_word && !cls.negated && cls.items.contains(&crate::ast::ClassItem::Word) {
+                if self.fold_word
+                    && !cls.negated
+                    && cls.items.contains(&crate::ast::ClassItem::Word)
+                {
                     cls.items.push(crate::ast::ClassItem::Range('ſ', 'ſ'));
                     cls.items.push(crate::ast::ClassItem::Range('K', 'K'));
                 }
@@ -571,11 +642,17 @@ impl Compiler {
                 let mut jumps = Vec::new();
                 for (k, a) in alts.iter().enumerate() {
                     if k + 1 < alts.len() {
-                        let split = self.emit(Inst::Split { first: 0, second: 0 });
+                        let split = self.emit(Inst::Split {
+                            first: 0,
+                            second: 0,
+                        });
                         self.node(a, back);
                         jumps.push(self.emit(Inst::Jmp(0)));
                         let next = self.insts.len();
-                        self.insts[split] = Inst::Split { first: split + 1, second: next };
+                        self.insts[split] = Inst::Split {
+                            first: split + 1,
+                            second: next,
+                        };
                     } else {
                         self.node(a, back);
                     }
@@ -587,7 +664,11 @@ impl Compiler {
             }
             RegexNode::Group { index, node, .. } => {
                 // Backward matching reaches the end of the group first.
-                let (first, last) = if back { (2 * index + 1, 2 * index) } else { (2 * index, 2 * index + 1) };
+                let (first, last) = if back {
+                    (2 * index + 1, 2 * index)
+                } else {
+                    (2 * index, 2 * index + 1)
+                };
                 self.emit(Inst::Save(first));
                 self.node(node, back);
                 self.emit(Inst::Save(last));
@@ -598,14 +679,29 @@ impl Compiler {
             RegexNode::BackRef(g) => {
                 self.emit(Inst::BackRef { group: *g, back });
             }
-            RegexNode::Look { behind, negate, node } => {
-                let look = self.emit(Inst::Look { negate: *negate, end: 0 });
+            RegexNode::Look {
+                behind,
+                negate,
+                node,
+            } => {
+                let look = self.emit(Inst::Look {
+                    negate: *negate,
+                    end: 0,
+                });
                 self.node(node, *behind);
                 self.emit(Inst::LookEnd);
                 let end = self.insts.len();
-                self.insts[look] = Inst::Look { negate: *negate, end };
+                self.insts[look] = Inst::Look {
+                    negate: *negate,
+                    end,
+                };
             }
-            RegexNode::Repeat { node, min, max, greedy } => {
+            RegexNode::Repeat {
+                node,
+                min,
+                max,
+                greedy,
+            } => {
                 if *max == Some(0) {
                     return;
                 }
@@ -619,9 +715,17 @@ impl Compiler {
                     greedy: *greedy,
                     exit: 0,
                 });
-                self.emit(Inst::LoopBody { pos_reg: ctr + 1, clear: node.group_range() });
+                self.emit(Inst::LoopBody {
+                    pos_reg: ctr + 1,
+                    clear: node.group_range(),
+                });
                 self.node(node, back);
-                self.emit(Inst::LoopEnd { ctr, pos_reg: ctr + 1, min: *min, test });
+                self.emit(Inst::LoopEnd {
+                    ctr,
+                    pos_reg: ctr + 1,
+                    min: *min,
+                    test,
+                });
                 let exit = self.insts.len();
                 self.insts[test] = Inst::LoopTest {
                     ctr,

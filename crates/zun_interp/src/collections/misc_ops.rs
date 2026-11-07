@@ -10,14 +10,22 @@ impl<'a> Interp<'a> {
         match name {
             "arrayDeleteIndex" => {
                 // `delete arr[i]`: leave a hole at an in-range index.
-                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let index = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
                     Value::Int(value, _) if value >= 0 => value as usize,
-                    Value::Float(value, _) if value >= 0.0 && value.fract() == 0.0 => value as usize,
+                    Value::Float(value, _) if value >= 0.0 && value.fract() == 0.0 => {
+                        value as usize
+                    }
                     _ => return Ok(Value::Bool(true)),
                 };
-                if self.guard_array(array, crate::integrity::ArrayOp::Remove).is_err() {
-                    return Err(RunError::Native("TypeError: Cannot delete property of [object Array]".into()));
+                if self
+                    .guard_array(array, crate::integrity::ArrayOp::Remove)
+                    .is_err()
+                {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot delete property of [object Array]".into(),
+                    ));
                 }
                 zun_gc::with_current_heap_mut(|heap| {
                     if heap.array_len(array).is_some_and(|len| index < len) {
@@ -27,17 +35,21 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(true))
             }
             "arrayMakeHole" => {
-                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let index = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
                     Value::Int(value, _) => value as usize,
                     Value::Float(value, _) => value as usize,
                     _ => return Err(RunError::BadToken),
                 };
-                zun_gc::with_current_heap_mut(|heap| heap.array_set(array, index, zun_core::Any::hole()));
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.array_set(array, index, zun_core::Any::hole())
+                });
                 Ok(Value::Bool(true))
             }
             "arrayPushHole" => {
-                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 zun_gc::with_current_heap_mut(|heap| heap.array_push(array, zun_core::Any::hole()));
                 Ok(Value::Bool(true))
             }
@@ -53,7 +65,8 @@ impl<'a> Interp<'a> {
             "argumentsObject" => {
                 // Trim the `[p1, ..., ...rest]` array to the number of arguments
                 // actually passed (omitted defaults are not counted).
-                let array = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let actual = crate::unwind::CALL_ARGC_CURRENT.with(|current| current.get());
                 zun_gc::with_current_heap_mut(|heap| {
                     if let Some(len) = heap.array_len(array) {
@@ -101,7 +114,8 @@ impl<'a> Interp<'a> {
                 // `source[Symbol.asyncIterator]()` when the source carries that
                 // method (own symbol slot or a class symbol method); `undefined`
                 // otherwise so the prelude falls back to the sync iterator.
-                let Some(source) = as_object_ref(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?)
+                let Some(source) =
+                    as_object_ref(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?)
                 else {
                     return Ok(Value::Void);
                 };
@@ -123,9 +137,9 @@ impl<'a> Interp<'a> {
                 let result = self.invoke_function_value(handle, call_args)?;
                 match as_object_ref(&unbox_arg(&result)?) {
                     Some(obj) => Ok(Value::Any(zun_core::Any::object(obj.addr() as usize))),
-                    None => Err(RunError::Native(
-                        format!("TypeError: [Symbol.asyncIterator]() did not return an object ({result:?})"),
-                    )),
+                    None => Err(RunError::Native(format!(
+                        "TypeError: [Symbol.asyncIterator]() did not return an object ({result:?})"
+                    ))),
                 }
             }
             "generatorSent" => Ok(crate::unwind::GENERATOR_SENT
@@ -134,7 +148,9 @@ impl<'a> Interp<'a> {
             "forInHas" => {
                 // for-in liveness: is `key` still a property of `object` (own or
                 // inherited)? Unknown receivers answer `true` (never skip).
-                let Value::Object(mut current) = unbox_arg(args.first().ok_or(RunError::BadToken)?)? else {
+                let Value::Object(mut current) =
+                    unbox_arg(args.first().ok_or(RunError::BadToken)?)?
+                else {
                     return Ok(Value::Bool(true));
                 };
                 let Value::Str(key) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? else {
@@ -153,7 +169,9 @@ impl<'a> Interp<'a> {
                             } else if let Ok(index) = key.parse::<usize>() {
                                 if index.to_string() == key {
                                     found = index < len
-                                        && heap.array_get(current, index).is_some_and(|any| !any.is_hole());
+                                        && heap
+                                            .array_get(current, index)
+                                            .is_some_and(|any| !any.is_hole());
                                 }
                             }
                         }
@@ -161,7 +179,9 @@ impl<'a> Interp<'a> {
                             found = heap.dynamic_has(current, &key)
                                 || heap.dynamic_get_function(current, &key).is_some()
                                 || heap.dynamic_accessor_getter(current, &key).is_some()
-                                || heap.dynamic_keys(current).is_some_and(|keys| keys.iter().any(|k| *k == key));
+                                || heap
+                                    .dynamic_keys(current)
+                                    .is_some_and(|keys| keys.iter().any(|k| *k == key));
                         }
                         (array_len.is_some(), dynamic, found)
                     });
@@ -188,8 +208,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(present))
             }
             "arrayHas" => {
-                let array = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.to_string(),
                     _ => return Err(RunError::BadToken),

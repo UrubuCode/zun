@@ -1,8 +1,8 @@
 //! Metadata lookup helpers used by interpreter execution.
 
-use super::{Interp, RunError};
 use super::operands::operand_strref;
 use super::value::Value;
+use super::{Interp, RunError};
 use zun_il::Operand;
 
 impl<'a> Interp<'a> {
@@ -35,11 +35,21 @@ impl<'a> Interp<'a> {
         if token.table() != Some(zun_metadata::TableKind::FieldDef) || token.rid() == 0 {
             return Err(RunError::BadToken);
         }
-        let field = self.module.tables.field_defs.get(token.rid() as usize - 1).ok_or(RunError::BadToken)?;
+        let field = self
+            .module
+            .tables
+            .field_defs
+            .get(token.rid() as usize - 1)
+            .ok_or(RunError::BadToken)?;
         if !field.is_static {
             return Err(RunError::BadToken);
         }
-        let owner = self.module.tables.type_defs.iter().enumerate()
+        let owner = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .enumerate()
             .find(|(_, ty)| ty.field_start <= token.rid() && token.rid() < ty.field_end)
             .map(|(index, _)| index as u32 + 1)
             .ok_or(RunError::BadToken)?;
@@ -48,10 +58,7 @@ impl<'a> Interp<'a> {
 
     /// The declared value-type code of a static field, used to restore the exact
     /// numeric width when loading it back from the width-erasing `Any` store.
-    pub(crate) fn static_field_kind(
-        &self,
-        token: zun_metadata::Token,
-    ) -> Result<u8, RunError> {
+    pub(crate) fn static_field_kind(&self, token: zun_metadata::Token) -> Result<u8, RunError> {
         if token.table() != Some(zun_metadata::TableKind::FieldDef) || token.rid() == 0 {
             return Err(RunError::BadToken);
         }
@@ -68,7 +75,12 @@ impl<'a> Interp<'a> {
     /// arguments are packed into the array the callee expects; omitted fixed
     /// parameters carry the null sentinel its default prologue consumes.
     pub(crate) fn pack_rest_call_args(&self, rid: u32, mut args: Vec<Value>) -> Vec<Value> {
-        let Some(method) = self.module.tables.method_defs.get((rid as usize).wrapping_sub(1)) else {
+        let Some(method) = self
+            .module
+            .tables
+            .method_defs
+            .get((rid as usize).wrapping_sub(1))
+        else {
             return args;
         };
         if method.signature.0 == 0 || self.module.blobs.get(method.signature) != b"R" {
@@ -174,7 +186,12 @@ impl Interp<'_> {
     /// Assign member `name` of a typed class instance reached through `any`
     /// when it names a declared instance field (searching base classes too).
     /// Returns whether a declared field took the value.
-    pub(crate) fn instance_member_set(&mut self, object: zun_gc::Obj, name: &str, value: &Value) -> bool {
+    pub(crate) fn instance_member_set(
+        &mut self,
+        object: zun_gc::Obj,
+        name: &str,
+        value: &Value,
+    ) -> bool {
         let mut current = object.type_rid();
         for _ in 0..64 {
             if current == 0 {
@@ -196,8 +213,10 @@ impl Interp<'_> {
                 };
                 let (slot, kind) = (layout.slot, layout.kind);
                 let value = match value {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                        .unwrap_or(Value::Void),
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     other => other.clone(),
                 };
                 zun_gc::with_current_heap_mut(|heap| {

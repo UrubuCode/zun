@@ -18,8 +18,7 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if receiver.ty == Ty::FinalizationRegistry
-            && (mname == "register" || mname == "unregister")
+        if receiver.ty == Ty::FinalizationRegistry && (mname == "register" || mname == "unregister")
         {
             let null_sentinel = |span| hir::Expr {
                 kind: hir::ExprKind::Null,
@@ -30,7 +29,10 @@ impl Checker<'_> {
                 if args.len() != 2 && args.len() != 3 {
                     self.error(
                         span,
-                        format!("`register` expects 2 or 3 argument(s), found {}", args.len()),
+                        format!(
+                            "`register` expects 2 or 3 argument(s), found {}",
+                            args.len()
+                        ),
                     );
                     return Ok(self.poison(span));
                 }
@@ -47,7 +49,9 @@ impl Checker<'_> {
                 } else {
                     hir::Expr {
                         span: held.span,
-                        kind: hir::ExprKind::BoxAny { value: Box::new(held) },
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(held),
+                        },
                         ty: Ty::Any,
                     }
                 };
@@ -55,8 +59,7 @@ impl Checker<'_> {
                     Some(arg) => self.check_expr(cx, arg),
                     None => null_sentinel(span),
                 };
-                let Some((id, _)) =
-                    zun_natives::resolve("collections", "finalizationRegister")
+                let Some((id, _)) = zun_natives::resolve("collections", "finalizationRegister")
                 else {
                     self.error(span, "missing intrinsic `finalizationRegister`");
                     return Ok(self.poison(span));
@@ -79,8 +82,7 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             }
             let token = self.check_expr(cx, &args[0]);
-            let Some((id, _)) =
-                zun_natives::resolve("collections", "finalizationUnregister")
+            let Some((id, _)) = zun_natives::resolve("collections", "finalizationUnregister")
             else {
                 self.error(span, "missing intrinsic `finalizationUnregister`");
                 return Ok(self.poison(span));
@@ -149,14 +151,7 @@ impl Checker<'_> {
                         | "every"
                 )
             {
-                return Ok(self.check_typed_array_method(
-                    cx,
-                    receiver,
-                    kind,
-                    mname,
-                    args,
-                    span,
-                ));
+                return Ok(self.check_typed_array_method(cx, receiver, kind, mname, args, span));
             }
         }
         Err(receiver)
@@ -176,8 +171,7 @@ impl Checker<'_> {
         // spec requires. Previously the flag was mandatory, so
         // `view.getUint32(0)` failed to type-check; the single-byte
         // accessors never take one.
-        if receiver.ty == Ty::BufferView(hir::BufferViewKind::DataView)
-            && data_view_accessor(mname)
+        if receiver.ty == Ty::BufferView(hir::BufferViewKind::DataView) && data_view_accessor(mname)
         {
             return Ok(self.check_data_view_method(cx, receiver, mname, args, span));
         }
@@ -187,12 +181,21 @@ impl Checker<'_> {
             && args.len() == 1
             && matches!(
                 mname,
-                "union" | "intersection" | "difference" | "symmetricDifference"
-                    | "isSubsetOf" | "isSupersetOf" | "isDisjointFrom"
+                "union"
+                    | "intersection"
+                    | "difference"
+                    | "symmetricDifference"
+                    | "isSubsetOf"
+                    | "isSupersetOf"
+                    | "isDisjointFrom"
             )
         {
             let predicate = mname.starts_with("is");
-            let helper = if predicate { "__zunSetOpBool" } else { "__zunSetOpSet" };
+            let helper = if predicate {
+                "__zunSetOpBool"
+            } else {
+                "__zunSetOpSet"
+            };
             if let Some(&func) = self.by_name.get(helper) {
                 let argument = self.check_expr(cx, &args[0]);
                 let op = hir::Expr {
@@ -216,9 +219,7 @@ impl Checker<'_> {
         // table because `newLength` is optional: when omitted, a `-1`
         // sentinel is synthesized meaning "keep the source length".
         // Both detach the source and yield a fresh `Buffer`.
-        if receiver.ty == Ty::Buffer
-            && (mname == "transfer" || mname == "transferToFixedLength")
-        {
+        if receiver.ty == Ty::Buffer && (mname == "transfer" || mname == "transferToFixedLength") {
             if args.len() > 1 {
                 self.error(
                     span,
@@ -251,7 +252,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, new_length] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, new_length],
+                },
                 ty: Ty::Buffer,
                 span,
             });

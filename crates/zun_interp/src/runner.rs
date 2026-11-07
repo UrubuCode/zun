@@ -1,6 +1,6 @@
 use super::gc_policy::GC_INTERVAL;
-use super::{CallHook, Interp, Output, RunError, Value};
 use super::state::{AsyncState, ExecutionFrame, ExecutionOutcome, Microstep};
+use super::{CallHook, Interp, Output, RunError, Value};
 use zun_il::{decode_one, Opcode};
 use zun_module::{read_body, Module};
 
@@ -47,7 +47,14 @@ pub struct OwnedGeneratorSession<'a> {
 impl<'a> OwnedGeneratorSession<'a> {
     pub fn new(module: &'a Module, method_rid: u32, args: Vec<Value>) -> Result<Self, RunError> {
         let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
-        Ok(Self { module, heap: zun_gc::Heap::new(), types, method_rid, args: Some(args), pending: None })
+        Ok(Self {
+            module,
+            heap: zun_gc::Heap::new(),
+            types,
+            method_rid,
+            args: Some(args),
+            pending: None,
+        })
     }
 
     pub fn resume(
@@ -104,7 +111,9 @@ impl<'a> OwnedGeneratorSession<'a> {
         }
     }
 
-    pub fn heap_mut(&mut self) -> &mut zun_gc::Heap { &mut self.heap }
+    pub fn heap_mut(&mut self) -> &mut zun_gc::Heap {
+        &mut self.heap
+    }
 
     /// Compact the owned generator heap between resume steps.
     ///
@@ -271,10 +280,7 @@ impl<'a> GeneratorSession<'a> {
     /// Advance the generator using the source-level iterator result shape.
     pub fn next_result(&mut self) -> Result<GeneratorIteratorResult, RunError> {
         match self.next()? {
-            GeneratorResult::Yielded(value) => Ok(GeneratorIteratorResult {
-                value,
-                done: false,
-            }),
+            GeneratorResult::Yielded(value) => Ok(GeneratorIteratorResult { value, done: false }),
             GeneratorResult::Complete(value) => Ok(GeneratorIteratorResult { value, done: true }),
         }
     }
@@ -289,7 +295,9 @@ impl<'a> GeneratorSession<'a> {
     ) -> Result<GeneratorResult, RunError> {
         if self.done {
             return Ok(GeneratorResult::Complete(
-                self.completion.clone().expect("completed generator stores its result"),
+                self.completion
+                    .clone()
+                    .expect("completed generator stores its result"),
             ));
         }
         match self.owned.resume(output, hook, loader)? {
@@ -741,8 +749,7 @@ impl Interp<'_> {
     /// closure environments and managed arguments remain valid.
     fn deliver_finalization_callbacks(&mut self) -> Result<(), RunError> {
         loop {
-            let records =
-                zun_gc::with_current_heap_mut(|heap| heap.finalization_drain_records());
+            let records = zun_gc::with_current_heap_mut(|heap| heap.finalization_drain_records());
             if records.is_empty() {
                 return Ok(());
             }
@@ -753,10 +760,8 @@ impl Interp<'_> {
                 // The held value is delivered as it was registered: an `Any`
                 // carrier unboxed back into a runtime value (object, string,
                 // number, …), falling back to the raw `Any` if it cannot unbox.
-                let held = zun_gc::with_current_heap(|heap| {
-                    Value::unbox_any(record.held, heap)
-                })
-                .unwrap_or(Value::Any(record.held));
+                let held = zun_gc::with_current_heap(|heap| Value::unbox_any(record.held, heap))
+                    .unwrap_or(Value::Any(record.held));
                 let environment = callback
                     .environment()
                     .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });

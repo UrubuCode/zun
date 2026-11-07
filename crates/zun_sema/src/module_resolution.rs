@@ -31,7 +31,12 @@ impl<'a> Checker<'a> {
                     && matches!(import.module.as_str(), "zun:prelude" | "zun:std")
                 {
                     for binding in &import.names {
-                        let imported = if binding.is_default { "default" } else { self.text(&binding.imported) }.to_owned();
+                        let imported = if binding.is_default {
+                            "default"
+                        } else {
+                            self.text(&binding.imported)
+                        }
+                        .to_owned();
                         match self.external_functions.get(&imported) {
                             Some(external) if external.module == import.module => {}
                             Some(external) => self.error(
@@ -43,7 +48,7 @@ impl<'a> Checker<'a> {
                             ),
                             None => self.error(
                                 binding.imported.span,
-                                    format!("`{}` has no export named `{imported}`", import.module),
+                                format!("`{}` has no export named `{imported}`", import.module),
                             ),
                         }
                     }
@@ -70,21 +75,25 @@ impl<'a> Checker<'a> {
             for binding in &import.names {
                 if binding.is_namespace {
                     if zun_natives::module(&import.module).is_some() {
-                        self.namespace_imports.insert(
-                            self.text(&binding.local).to_string(),
-                            import.module.clone(),
-                        );
+                        self.namespace_imports
+                            .insert(self.text(&binding.local).to_string(), import.module.clone());
                     } else if allow_external_modules && !import.module.starts_with("zun:") {
-                        self.namespace_imports.insert(
-                            self.text(&binding.local).to_string(),
-                            import.module.clone(),
-                        );
+                        self.namespace_imports
+                            .insert(self.text(&binding.local).to_string(), import.module.clone());
                     } else {
-                        self.error(binding.local.span, format!("unknown module `{}`", import.module));
+                        self.error(
+                            binding.local.span,
+                            format!("unknown module `{}`", import.module),
+                        );
                     }
                     continue;
                 }
-                let imported = if binding.is_default { "default" } else { self.text(&binding.imported) }.to_owned();
+                let imported = if binding.is_default {
+                    "default"
+                } else {
+                    self.text(&binding.imported)
+                }
+                .to_owned();
                 let local = self.text(&binding.local).to_string();
                 if binding.is_default && import.module == "extended-string" {
                     self.type_aliases.insert(local, super::hir::Ty::String);

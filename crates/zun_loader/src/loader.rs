@@ -5,9 +5,9 @@ use zun_metadata::{TableKind, Token};
 use zun_module::Module;
 
 use crate::{
-    content_id, ContentId, Export, LoadError, MemberKind, ModuleCache, ModuleFetcher,
-    ModuleIndex, ModuleLock, ModuleManifest, ModuleScope, ResolvedMember, SignedModuleIndex,
-    SignedModuleLock, TrustedKeySet, Zmlib,
+    content_id, ContentId, Export, LoadError, MemberKind, ModuleCache, ModuleFetcher, ModuleIndex,
+    ModuleLock, ModuleManifest, ModuleScope, ResolvedMember, SignedModuleIndex, SignedModuleLock,
+    TrustedKeySet, Zmlib,
 };
 
 /// Registry of loaded module scopes, keyed by their manifest identity.

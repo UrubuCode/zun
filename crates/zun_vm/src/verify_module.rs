@@ -55,9 +55,11 @@ pub fn verify_loaded_module(
     loader: &ModuleLoader,
 ) -> Result<(), ModuleVerifyError> {
     let module = scope.module();
-    verify_module_with(module, 1..module.tables.method_defs.len() as u32 + 1, |opcode, operand| {
-        resolve_loaded_call(scope, loader, opcode, operand)
-    })
+    verify_module_with(
+        module,
+        1..module.tables.method_defs.len() as u32 + 1,
+        |opcode, operand| resolve_loaded_call(scope, loader, opcode, operand),
+    )
 }
 
 fn verify_module_with(

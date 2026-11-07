@@ -9,7 +9,9 @@ impl Checker<'_> {
             inner = next;
         }
         match inner {
-            ast::Expr::Ident(name) if cx.this_class.is_some() && self.text(name) == "this" => inner.clone(),
+            ast::Expr::Ident(name) if cx.this_class.is_some() && self.text(name) == "this" => {
+                inner.clone()
+            }
             _ => expr.clone(),
         }
     }
@@ -18,17 +20,26 @@ impl Checker<'_> {
     /// the checker only knows as `any` (`other.#x` after a `v is Point` guard)
     /// is downcast to that class; a wrong-brand value then fails the cast with a
     /// TypeError at run time.
-    pub(in crate::check) fn assume_private_receiver(&mut self, cx: &FunctionCx, object: hir::Expr, name: &str) -> hir::Expr {
+    pub(in crate::check) fn assume_private_receiver(
+        &mut self,
+        cx: &FunctionCx,
+        object: hir::Expr,
+        name: &str,
+    ) -> hir::Expr {
         if !matches!(object.ty, Ty::Any | Ty::DynamicObject) {
             return object;
         }
-        let Some(class) = cx.this_class else { return object };
+        let Some(class) = cx.this_class else {
+            return object;
+        };
         if self.private_field_of(class, name).is_none() && !self.has_private_member(class, name) {
             return object;
         }
         let span = object.span;
         hir::Expr {
-            kind: hir::ExprKind::Convert { value: Box::new(Self::box_to_any(object)) },
+            kind: hir::ExprKind::Convert {
+                value: Box::new(Self::box_to_any(object)),
+            },
             ty: Ty::Instance(class),
             span,
         }
@@ -36,7 +47,11 @@ impl Checker<'_> {
 
     /// An expression that throws a `TypeError` when evaluated (calling
     /// `undefined`), used for writes the language rejects at run time.
-    pub(in crate::check) fn runtime_type_error(&mut self, cx: &mut FunctionCx, span: Span) -> hir::Expr {
+    pub(in crate::check) fn runtime_type_error(
+        &mut self,
+        cx: &mut FunctionCx,
+        span: Span,
+    ) -> hir::Expr {
         let callee = self.check_expr(
             cx,
             &ast::Expr::Unary {
@@ -46,7 +61,11 @@ impl Checker<'_> {
             },
         );
         hir::Expr {
-            kind: hir::ExprKind::IndirectCall { callee: Box::new(callee), args: Vec::new(), func: hir::DYNAMIC_FUNCTION },
+            kind: hir::ExprKind::IndirectCall {
+                callee: Box::new(callee),
+                args: Vec::new(),
+                func: hir::DYNAMIC_FUNCTION,
+            },
             ty: Ty::Any,
             span,
         }
@@ -61,7 +80,10 @@ impl Checker<'_> {
         let span = source.span;
         match zun_natives::resolve("array", "arrayFrom") {
             Some((id, _)) => hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(source)] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![Self::box_to_any(source)],
+                },
                 ty: Ty::Array,
                 span,
             },
@@ -78,7 +100,10 @@ impl Checker<'_> {
         let span = source.span;
         match zun_natives::resolve("array", "arrayFromArrayLike") {
             Some((id, _)) => hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(source)] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![Self::box_to_any(source)],
+                },
                 ty: Ty::Array,
                 span,
             },
@@ -110,9 +135,16 @@ impl Checker<'_> {
             self.error(span, "missing collection intrinsic `replaceFn`");
             return self.poison(span);
         };
-        let flag = hir::Expr { kind: hir::ExprKind::Boolean(all), ty: Ty::Boolean, span };
+        let flag = hir::Expr {
+            kind: hir::ExprKind::Boolean(all),
+            ty: Ty::Boolean,
+            span,
+        };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![search, receiver, callback, flag] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![search, receiver, callback, flag],
+            },
             ty: Ty::String,
             span,
         }
@@ -127,17 +159,31 @@ impl Checker<'_> {
         cond: &ast::Expr,
     ) -> Option<(String, hir::LocalSlot, Ty)> {
         let (ident, narrowed) = match cond {
-            ast::Expr::Binary { op: ast::BinaryOp::Eq, lhs, rhs, .. } => {
+            ast::Expr::Binary {
+                op: ast::BinaryOp::Eq,
+                lhs,
+                rhs,
+                ..
+            } => {
                 let (typeof_side, literal_side) = match (&**lhs, &**rhs) {
                     (ast::Expr::Unary { .. }, ast::Expr::String { .. }) => (&**lhs, &**rhs),
                     (ast::Expr::String { .. }, ast::Expr::Unary { .. }) => (&**rhs, &**lhs),
                     _ => return None,
                 };
-                let ast::Expr::Unary { op: ast::UnaryOp::Typeof, operand, .. } = typeof_side else {
+                let ast::Expr::Unary {
+                    op: ast::UnaryOp::Typeof,
+                    operand,
+                    ..
+                } = typeof_side
+                else {
                     return None;
                 };
-                let ast::Expr::Ident(name) = &**operand else { return None };
-                let ast::Expr::String { value, .. } = literal_side else { return None };
+                let ast::Expr::Ident(name) = &**operand else {
+                    return None;
+                };
+                let ast::Expr::String { value, .. } = literal_side else {
+                    return None;
+                };
                 let narrowed = match value.as_str() {
                     "string" => Ty::String,
                     "number" => Ty::F64,
@@ -146,18 +192,32 @@ impl Checker<'_> {
                 };
                 (*name, narrowed)
             }
-            ast::Expr::StaticMethodCall { class, method, args, .. }
-                if self.text(class) == "Array" && self.text(method) == "isArray" && args.len() == 1 =>
+            ast::Expr::StaticMethodCall {
+                class,
+                method,
+                args,
+                ..
+            } if self.text(class) == "Array"
+                && self.text(method) == "isArray"
+                && args.len() == 1 =>
             {
-                let ast::Expr::Ident(name) = &args[0] else { return None };
+                let ast::Expr::Ident(name) = &args[0] else {
+                    return None;
+                };
                 (*name, Ty::Array)
             }
-            ast::Expr::MethodCall { receiver, method, args, .. }
-                if matches!(&**receiver, ast::Expr::Ident(class) if self.text(class) == "Array")
-                    && self.text(method) == "isArray"
-                    && args.len() == 1 =>
+            ast::Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } if matches!(&**receiver, ast::Expr::Ident(class) if self.text(class) == "Array")
+                && self.text(method) == "isArray"
+                && args.len() == 1 =>
             {
-                let ast::Expr::Ident(name) = &args[0] else { return None };
+                let ast::Expr::Ident(name) = &args[0] else {
+                    return None;
+                };
                 (*name, Ty::Array)
             }
             _ => return None,
@@ -177,7 +237,9 @@ impl Checker<'_> {
         if value.ty == Ty::Any && matches!(target, Ty::F64 | Ty::Boolean | Ty::String) {
             let span = value.span;
             return hir::Expr {
-                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                kind: hir::ExprKind::Convert {
+                    value: Box::new(value),
+                },
                 ty: target,
                 span,
             };
@@ -191,7 +253,9 @@ impl Checker<'_> {
         } else {
             let span = value.span;
             hir::Expr {
-                kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                kind: hir::ExprKind::BoxAny {
+                    value: Box::new(value),
+                },
                 ty: Ty::Any,
                 span,
             }
@@ -200,7 +264,12 @@ impl Checker<'_> {
 
     /// Whether a read of the module-scope local `name` (in slot `slot`) must go
     /// through the realm store because a function body assigns that global.
-    pub(in crate::check) fn reads_through_global(&self, cx: &FunctionCx, name: &str, slot: hir::LocalSlot) -> bool {
+    pub(in crate::check) fn reads_through_global(
+        &self,
+        cx: &FunctionCx,
+        name: &str,
+        slot: hir::LocalSlot,
+    ) -> bool {
         cx.is_module_scope
             && self.fn_mutated_globals.contains(name)
             && cx.scopes.get(1).and_then(|s| s.get(name).copied()) == Some(slot)
@@ -213,11 +282,20 @@ impl Checker<'_> {
 
     /// A `Ty::String` HIR literal.
     pub(in crate::check) fn string_literal(text: String, span: Span) -> hir::Expr {
-        hir::Expr { kind: hir::ExprKind::String(text), ty: Ty::String, span }
+        hir::Expr {
+            kind: hir::ExprKind::String(text),
+            ty: Ty::String,
+            span,
+        }
     }
 
     /// `globalSet(name, box(value), false)` — store a module global.
-    pub(in crate::check) fn global_set_expr(&self, name: &str, value: hir::Expr, span: Span) -> hir::Expr {
+    pub(in crate::check) fn global_set_expr(
+        &self,
+        name: &str,
+        value: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
         let (id, _) = zun_natives::resolve("collections", "globalSet")
             .expect("globalSet intrinsic must exist");
         hir::Expr {
@@ -226,7 +304,11 @@ impl Checker<'_> {
                 args: vec![
                     Self::string_literal(name.to_string(), span),
                     Self::box_to_any(value),
-                    hir::Expr { kind: hir::ExprKind::Boolean(false), ty: Ty::Boolean, span },
+                    hir::Expr {
+                        kind: hir::ExprKind::Boolean(false),
+                        ty: Ty::Boolean,
+                        span,
+                    },
                 ],
             },
             ty: Ty::Any,

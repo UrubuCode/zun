@@ -23,14 +23,17 @@ impl Checker<'_> {
             && !matches!(self.text(method), "call" | "apply" | "bind")
             && !matches!(receiver, ast::Expr::Ident(_) | ast::Expr::Field { .. } | ast::Expr::StaticField { .. } if false)
         {
-            let is_namespace = matches!(receiver, ast::Expr::Ident(n) if cx.lookup(self.text(n)).is_none());
+            let is_namespace =
+                matches!(receiver, ast::Expr::Ident(n) if cx.lookup(self.text(n)).is_none());
             if !is_namespace {
                 let probe = self.check_expr(cx, receiver);
                 if matches!(probe.ty, Ty::Any | Ty::DynamicObject) {
                     let elements = args
                         .iter()
                         .map(|arg| match arg {
-                            ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                            ast::Expr::Spread { expr, .. } => {
+                                ast::ArrayElement::Spread((**expr).clone())
+                            }
                             other => ast::ArrayElement::Expr(other.clone()),
                         })
                         .collect();
@@ -68,9 +71,16 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        if self.text(method) == "call" && args.len() == 2 && !self.classes_by_name.contains_key("Object") {
+        if self.text(method) == "call"
+            && args.len() == 2
+            && !self.classes_by_name.contains_key("Object")
+        {
             let is_has_own_call = match receiver {
-                ast::Expr::Field { object: proto, field: member, .. } => {
+                ast::Expr::Field {
+                    object: proto,
+                    field: member,
+                    ..
+                } => {
                     self.text(member) == "hasOwnProperty"
                         && (matches!(proto.as_ref(),
                             ast::Expr::Field { object: base, field: p, .. }
@@ -86,13 +96,17 @@ impl Checker<'_> {
                 // `Object.prototype.hasOwnProperty.call(Ctor.prototype, "name")` on a
                 // built-in constructor: answered from the built-in method table.
                 let proto_owner = match &args[0] {
-                    ast::Expr::Field { object: base, field: p, .. } if self.text(p) == "prototype" => match base.as_ref() {
+                    ast::Expr::Field {
+                        object: base,
+                        field: p,
+                        ..
+                    } if self.text(p) == "prototype" => match base.as_ref() {
                         ast::Expr::Ident(n) => Some(self.text(n).to_string()),
                         _ => None,
                     },
-                    ast::Expr::StaticField { class, field: p, .. } if self.text(p) == "prototype" => {
-                        Some(self.text(class).to_string())
-                    }
+                    ast::Expr::StaticField {
+                        class, field: p, ..
+                    } if self.text(p) == "prototype" => Some(self.text(class).to_string()),
                     _ => None,
                 };
                 if let (Some(owner), ast::Expr::String { value, .. }) = (&proto_owner, &args[1]) {
@@ -101,12 +115,21 @@ impl Checker<'_> {
                     if let Some(&class_idx) = self.classes_by_name.get(owner) {
                         let own = &self.methods_by_class[class_idx as usize];
                         let present = value == "constructor"
-                            || [value.clone(), format!("get_{value}"), format!("set_{value}")]
-                                .iter()
-                                .any(|n| {
-                                    own.get(n).is_some_and(|&f| !self.signatures[f as usize].is_static)
-                                });
-                        return Some(hir::Expr { kind: hir::ExprKind::Boolean(present), ty: Ty::Boolean, span });
+                            || [
+                                value.clone(),
+                                format!("get_{value}"),
+                                format!("set_{value}"),
+                            ]
+                            .iter()
+                            .any(|n| {
+                                own.get(n)
+                                    .is_some_and(|&f| !self.signatures[f as usize].is_static)
+                            });
+                        return Some(hir::Expr {
+                            kind: hir::ExprKind::Boolean(present),
+                            ty: Ty::Boolean,
+                            span,
+                        });
                     }
                 }
                 // A well-known Symbol key (`Symbol.toPrimitive`) on a user class
@@ -118,7 +141,11 @@ impl Checker<'_> {
                                 .class_symbol_methods
                                 .iter()
                                 .any(|&(c, s, _)| c == class_idx && s == symbol.id().get());
-                            return Some(hir::Expr { kind: hir::ExprKind::Boolean(present), ty: Ty::Boolean, span });
+                            return Some(hir::Expr {
+                                kind: hir::ExprKind::Boolean(present),
+                                ty: Ty::Boolean,
+                                span,
+                            });
                         }
                     }
                 }
@@ -126,8 +153,18 @@ impl Checker<'_> {
                 if let (Some(owner), ast::Expr::String { .. }) = (proto_owner, &args[1]) {
                     if !self.classes_by_name.contains_key(&owner) {
                         if let ast::Expr::String { value, .. } = &args[1] {
-                            if builtin_function_length(&[owner.as_str(), "prototype", value.as_str()]).is_some() {
-                                return Some(hir::Expr { kind: hir::ExprKind::Boolean(true), ty: Ty::Boolean, span });
+                            if builtin_function_length(&[
+                                owner.as_str(),
+                                "prototype",
+                                value.as_str(),
+                            ])
+                            .is_some()
+                            {
+                                return Some(hir::Expr {
+                                    kind: hir::ExprKind::Boolean(true),
+                                    ty: Ty::Boolean,
+                                    span,
+                                });
                             }
                         }
                     }
@@ -149,14 +186,20 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        if self.text(method) == "call" && !args.is_empty() && !self.classes_by_name.contains_key("Array") {
+        if self.text(method) == "call"
+            && !args.is_empty()
+            && !self.classes_by_name.contains_key("Array")
+        {
             let array_method = match receiver {
-                ast::Expr::Field { object: proto, field: member, .. }
-                    if matches!(proto.as_ref(),
+                ast::Expr::Field {
+                    object: proto,
+                    field: member,
+                    ..
+                } if matches!(proto.as_ref(),
                         ast::Expr::Field { object: base, field: p, .. }
                             if self.text(p) == "prototype"
                                 && matches!(base.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Array"))
-                        || matches!(proto.as_ref(),
+                    || matches!(proto.as_ref(),
                             ast::Expr::StaticField { class, field: p, .. }
                                 if self.text(p) == "prototype" && self.text(class) == "Array") =>
                 {
@@ -165,9 +208,29 @@ impl Checker<'_> {
                 _ => None,
             };
             const READ_ONLY: &[&str] = &[
-                "reduce", "reduceRight", "map", "filter", "forEach", "some", "every", "find",
-                "findIndex", "findLast", "findLastIndex", "indexOf", "lastIndexOf", "includes",
-                "join", "slice", "concat", "at", "flat", "flatMap", "entries", "keys", "values",
+                "reduce",
+                "reduceRight",
+                "map",
+                "filter",
+                "forEach",
+                "some",
+                "every",
+                "find",
+                "findIndex",
+                "findLast",
+                "findLastIndex",
+                "indexOf",
+                "lastIndexOf",
+                "includes",
+                "join",
+                "slice",
+                "concat",
+                "at",
+                "flat",
+                "flatMap",
+                "entries",
+                "keys",
+                "values",
             ];
             if let Some(name) = array_method {
                 // `Array.prototype.push/pop.call(receiver, ...)` mutates an Array
@@ -186,21 +249,31 @@ impl Checker<'_> {
                         let mut call_args = vec![Self::box_to_any(source)];
                         if name == "push" || name == "fill" || name == "reverse" {
                             let literal = ast::Expr::ArrayLiteral {
-                                elements: args[1..].iter().cloned().map(ast::ArrayElement::Expr).collect(),
+                                elements: args[1..]
+                                    .iter()
+                                    .cloned()
+                                    .map(ast::ArrayElement::Expr)
+                                    .collect(),
                                 span,
                             };
                             let list = self.check_expr(cx, &literal);
                             call_args.push(list);
                         }
                         return Some(hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: call_args,
+                            },
                             ty: Ty::Any,
                             span,
                         });
                     }
                 }
-                if READ_ONLY.contains(&name.as_str()) && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
-                    if let Some((from_id, _)) = zun_natives::resolve("array", "arrayFromArrayLike") {
+                if READ_ONLY.contains(&name.as_str())
+                    && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                {
+                    if let Some((from_id, _)) = zun_natives::resolve("array", "arrayFromArrayLike")
+                    {
                         let source = self.check_expr(cx, &args[0]);
                         let (slot, tmp) = self.synthetic_local(cx, Ty::Array);
                         let call = ast::Expr::MethodCall {
@@ -251,9 +324,16 @@ impl Checker<'_> {
         span: Span,
     ) -> Option<hir::Expr> {
         // `String.prototype.concat.apply(base, args)`.
-        if self.text(method) == "apply" && args.len() == 2 && !self.classes_by_name.contains_key("String") {
+        if self.text(method) == "apply"
+            && args.len() == 2
+            && !self.classes_by_name.contains_key("String")
+        {
             let is_string_concat = match receiver {
-                ast::Expr::Field { object: proto, field: member, .. } => {
+                ast::Expr::Field {
+                    object: proto,
+                    field: member,
+                    ..
+                } => {
                     self.text(member) == "concat"
                         && matches!(proto.as_ref(),
                             ast::Expr::Field { object: base, field: p, .. }
@@ -273,7 +353,10 @@ impl Checker<'_> {
                     let list = self.check_expr(cx, &args[1]);
                     let list = self.spread_source_to_array(list);
                     return Some(hir::Expr {
-                        kind: hir::ExprKind::Call { func, args: vec![base, list] },
+                        kind: hir::ExprKind::Call {
+                            func,
+                            args: vec![base, list],
+                        },
                         ty: Ty::String,
                         span,
                     });
@@ -283,7 +366,11 @@ impl Checker<'_> {
         // `Error.prototype.toString.call(value)`.
         if self.text(method) == "call" && args.len() == 1 {
             let is_error_proto_to_string = match receiver {
-                ast::Expr::Field { object: proto, field: member, .. } => {
+                ast::Expr::Field {
+                    object: proto,
+                    field: member,
+                    ..
+                } => {
                     self.text(member) == "toString"
                         && matches!(proto.as_ref(),
                             ast::Expr::Field { object: base, field: p, .. }
@@ -299,7 +386,10 @@ impl Checker<'_> {
                 if let Some(&func) = self.by_name.get("__zunErrorProtoToString") {
                     let value = self.check_expr(cx, &args[0]);
                     return Some(hir::Expr {
-                        kind: hir::ExprKind::Call { func, args: vec![Self::box_to_any(value)] },
+                        kind: hir::ExprKind::Call {
+                            func,
+                            args: vec![Self::box_to_any(value)],
+                        },
                         ty: Ty::String,
                         span,
                     });
@@ -307,18 +397,29 @@ impl Checker<'_> {
             }
         }
         // `Object.prototype.toString.call(value)`.
-        if self.text(method) == "call" && args.len() == 1 && !self.classes_by_name.contains_key("Object") {
+        if self.text(method) == "call"
+            && args.len() == 1
+            && !self.classes_by_name.contains_key("Object")
+        {
             let is_proto_to_string = match receiver {
-                ast::Expr::Field { object: proto, field: member, .. } => {
+                ast::Expr::Field {
+                    object: proto,
+                    field: member,
+                    ..
+                } => {
                     self.text(member) == "toString"
                         && match proto.as_ref() {
-                            ast::Expr::Field { object: base, field: p, .. } => {
+                            ast::Expr::Field {
+                                object: base,
+                                field: p,
+                                ..
+                            } => {
                                 self.text(p) == "prototype"
                                     && matches!(base.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Object")
                             }
-                            ast::Expr::StaticField { class, field: p, .. } => {
-                                self.text(p) == "prototype" && self.text(class) == "Object"
-                            }
+                            ast::Expr::StaticField {
+                                class, field: p, ..
+                            } => self.text(p) == "prototype" && self.text(class) == "Object",
                             _ => false,
                         }
                 }
@@ -332,12 +433,17 @@ impl Checker<'_> {
                     } else {
                         hir::Expr {
                             span: value.span,
-                            kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                            kind: hir::ExprKind::BoxAny {
+                                value: Box::new(value),
+                            },
                             ty: Ty::Any,
                         }
                     };
                     return Some(hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![value],
+                        },
                         ty: Ty::String,
                         span,
                     });
@@ -356,7 +462,12 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
-        if let ast::Expr::Field { object: inner_obj, field: inner_field, .. } = receiver {
+        if let ast::Expr::Field {
+            object: inner_obj,
+            field: inner_field,
+            ..
+        } = receiver
+        {
             if let ast::Expr::Ident(m) = inner_obj.as_ref() {
                 let m_name = self.text(m);
                 let verb = self.text(method).to_string();
@@ -396,8 +507,7 @@ impl Checker<'_> {
             if let Some((pattern, flags)) = self.static_regex(receiver) {
                 let mut subject = self.check_expr(cx, &args[0]);
                 coerce_numeric_literal(&mut subject, Ty::String);
-                if !subject.ty.is_error() && !self.is_assignable(subject.ty, Ty::String)
-                {
+                if !subject.ty.is_error() && !self.is_assignable(subject.ty, Ty::String) {
                     self.error(
                         subject.span,
                         format!(
@@ -407,9 +517,13 @@ impl Checker<'_> {
                     );
                 }
                 let matcher = self.regex_matchers.len() as u32;
-                self.regex_matchers.push(hir::CompiledRegex { pattern, flags });
+                self.regex_matchers
+                    .push(hir::CompiledRegex { pattern, flags });
                 return Some(hir::Expr {
-                    kind: hir::ExprKind::RegexMatch { matcher, args: vec![subject] },
+                    kind: hir::ExprKind::RegexMatch {
+                        matcher,
+                        args: vec![subject],
+                    },
                     ty: Ty::Boolean,
                     span,
                 });

@@ -15,13 +15,15 @@ impl Checker<'_> {
     /// positions of one lowering.
     fn clone_callee_kind(proto: &hir::ExprKind) -> hir::ExprKind {
         match proto {
-            hir::ExprKind::CaptureLoad { environment_slot, ty, mode } => {
-                hir::ExprKind::CaptureLoad {
-                    environment_slot: *environment_slot,
-                    ty: *ty,
-                    mode: *mode,
-                }
-            }
+            hir::ExprKind::CaptureLoad {
+                environment_slot,
+                ty,
+                mode,
+            } => hir::ExprKind::CaptureLoad {
+                environment_slot: *environment_slot,
+                ty: *ty,
+                mode: *mode,
+            },
             hir::ExprKind::Local(slot) => hir::ExprKind::Local(*slot),
             hir::ExprKind::CellLoad { slot } => hir::ExprKind::CellLoad { slot: *slot },
             _ => unreachable!(),
@@ -113,7 +115,11 @@ impl Checker<'_> {
                     ty: Ty::Array,
                     span,
                 };
-                let this_arg = hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span };
+                let this_arg = hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: Ty::Any,
+                    span,
+                };
                 let Some((id, _)) = zun_natives::resolve("collections", "proxyApply") else {
                     self.error(span, "missing `proxyApply` intrinsic");
                     return Some(self.poison(span));
@@ -128,7 +134,13 @@ impl Checker<'_> {
                 });
             }
             if let Ty::Function(func) = function_ty {
-                return Some(self.call_function_value(callee_proto, function_ty, func, std::mem::take(args), span));
+                return Some(self.call_function_value(
+                    callee_proto,
+                    function_ty,
+                    func,
+                    std::mem::take(args),
+                    span,
+                ));
             }
         }
         None
@@ -151,12 +163,24 @@ impl Checker<'_> {
             Ty::Any
         } else if func == hir::DYNAMIC_PREDICATE {
             if args.len() != 1 {
-                self.error(span, format!("generic Predicate callback expects exactly one argument, found {}", args.len()));
+                self.error(
+                    span,
+                    format!(
+                        "generic Predicate callback expects exactly one argument, found {}",
+                        args.len()
+                    ),
+                );
             }
             Ty::Boolean
         } else if func == hir::DYNAMIC_REDUCER {
             if args.len() != 2 {
-                self.error(span, format!("generic Reducer callback expects exactly two arguments, found {}", args.len()));
+                self.error(
+                    span,
+                    format!(
+                        "generic Reducer callback expects exactly two arguments, found {}",
+                        args.len()
+                    ),
+                );
             }
             Ty::Any
         } else {
@@ -225,9 +249,11 @@ impl Checker<'_> {
             }
             // JS allows calling with fewer arguments: missing ones read
             // as `undefined`.
-            let sig = Signature { optional_count: param_tys.len(), ..sig };
-            if args.len() > param_tys.len()
-            {
+            let sig = Signature {
+                optional_count: param_tys.len(),
+                ..sig
+            };
+            if args.len() > param_tys.len() {
                 self.error(
                     span,
                     format!(
@@ -247,10 +273,7 @@ impl Checker<'_> {
                     {
                         self.error(
                             arg.span,
-                            format!(
-                                "argument type {:?} does not match {expected:?}",
-                                arg.ty
-                            ),
+                            format!("argument type {:?} does not match {expected:?}", arg.ty),
                         );
                     }
                 }

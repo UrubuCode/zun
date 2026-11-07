@@ -40,12 +40,20 @@ pub(super) fn missing_arg(ty: hir::Ty, span: Span) -> hir::Expr {
         hir::Expr {
             kind: hir::ExprKind::Unary {
                 op: hir::UnaryOp::Void,
-                operand: Box::new(hir::Expr { kind: hir::ExprKind::Null, ty: hir::Ty::Any, span }),
+                operand: Box::new(hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: hir::Ty::Any,
+                    span,
+                }),
             },
             ty: hir::Ty::Any,
             span,
         }
     } else {
-        hir::Expr { kind: hir::ExprKind::Null, ty, span }
+        hir::Expr {
+            kind: hir::ExprKind::Null,
+            ty,
+            span,
+        }
     }
 }

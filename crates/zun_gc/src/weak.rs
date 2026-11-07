@@ -20,7 +20,8 @@ impl Heap {
 
     /// Whether `object` is a WeakMap / WeakSet (they share the ephemeron floor).
     pub fn is_weak_collection(&self, object: Obj) -> bool {
-        self.weak_map_objects.contains_key(&(object.addr() as usize))
+        self.weak_map_objects
+            .contains_key(&(object.addr() as usize))
     }
 
     pub fn weak_map_set_object(&mut self, object: Obj, key: Obj, value: Obj) -> bool {

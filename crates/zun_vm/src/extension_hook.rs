@@ -81,7 +81,9 @@ impl<L: ExtensionLookup> ExtensionCallHook<L> {
         let ty = expected.0;
         let payload = if ty == ZunTy::Str as u32 {
             let Value::Str(text) = value else {
-                return Err(RunError::Native("external call expected a string argument".into()));
+                return Err(RunError::Native(
+                    "external call expected a string argument".into(),
+                ));
             };
             let encoded = CString::new(text.as_bytes())
                 .map_err(|_| RunError::Native("string argument contains an interior NUL".into()))?;
@@ -99,7 +101,11 @@ impl<L: ExtensionLookup> ExtensionCallHook<L> {
             let number = match value {
                 Value::Float(number, _) => *number,
                 Value::Int(number, _) => *number as f64,
-                _ => return Err(RunError::Native("external call expected a number argument".into())),
+                _ => {
+                    return Err(RunError::Native(
+                        "external call expected a number argument".into(),
+                    ))
+                }
             };
             number.to_bits()
         } else if matches!(
@@ -109,15 +115,19 @@ impl<L: ExtensionLookup> ExtensionCallHook<L> {
                 || x == ZunTy::I64 as u32
                 || x == ZunTy::U64 as u32
         ) {
-            as_i64(value)
-                .ok_or_else(|| RunError::Native("external call expected an integer argument".into()))?
-                as u64
+            as_i64(value).ok_or_else(|| {
+                RunError::Native("external call expected an integer argument".into())
+            })? as u64
         } else {
             return Err(RunError::Native(
                 "external call has an unsupported parameter type".into(),
             ));
         };
-        Ok(ZunValue { ty: expected, reserved: 0, payload })
+        Ok(ZunValue {
+            ty: expected,
+            reserved: 0,
+            payload,
+        })
     }
 
     /// Marshal a returned carrier back into a runtime value.
@@ -170,10 +180,9 @@ impl<L: ExtensionLookup> ExtensionCallHook<L> {
     }
 
     fn dispatch(&self, module: &str, name: &str, args: &[Value]) -> Result<Value, RunError> {
-        let function = self
-            .lookup
-            .lookup(module, name)
-            .ok_or_else(|| RunError::Native(format!("external function `{module}.{name}` not found")))?;
+        let function = self.lookup.lookup(module, name).ok_or_else(|| {
+            RunError::Native(format!("external function `{module}.{name}` not found"))
+        })?;
         if function.params.len() != args.len() {
             return Err(RunError::Native(format!(
                 "external function `{module}.{name}` expects {} args, got {}",
@@ -257,7 +266,11 @@ mod tests {
         7
     }
 
-    unsafe extern "C" fn last_error_message(_: *const ZunValue, _: usize, out: *mut ZunValue) -> i32 {
+    unsafe extern "C" fn last_error_message(
+        _: *const ZunValue,
+        _: usize,
+        out: *mut ZunValue,
+    ) -> i32 {
         let message = LAST.with(|slot| slot.borrow().clone());
         let ptr = SCRATCH.with(|slot| {
             *slot.borrow_mut() = message;
@@ -274,20 +287,33 @@ mod tests {
     fn registry() -> OwnedRegistry {
         let mut owned = OwnedRegistry::new();
         let mut host: ZunRegistry = owned.as_registry();
-        let register = |host: &mut ZunRegistry, key: &[u8], params: &[ZunTyRepr], ret: ZunTy, invoke| {
-            let function = ZunFunction {
-                key: key.as_ptr() as *const c_char,
-                params: params.as_ptr(),
-                param_count: params.len(),
-                ret: ZunTyRepr::from(ret),
-                invoke: Some(invoke),
+        let register =
+            |host: &mut ZunRegistry, key: &[u8], params: &[ZunTyRepr], ret: ZunTy, invoke| {
+                let function = ZunFunction {
+                    key: key.as_ptr() as *const c_char,
+                    params: params.as_ptr(),
+                    param_count: params.len(),
+                    ret: ZunTyRepr::from(ret),
+                    invoke: Some(invoke),
+                };
+                unsafe { host.register_function(b"demo\0".as_ptr() as *const c_char, &function) }
+                    .expect("register");
             };
-            unsafe { host.register_function(b"demo\0".as_ptr() as *const c_char, &function) }
-                .expect("register");
-        };
-        register(&mut host, b"echoLen\0", &[ZunTyRepr::from(ZunTy::Str)], ZunTy::I64, echo_len);
+        register(
+            &mut host,
+            b"echoLen\0",
+            &[ZunTyRepr::from(ZunTy::Str)],
+            ZunTy::I64,
+            echo_len,
+        );
         register(&mut host, b"boom\0", &[], ZunTy::Str, boom);
-        register(&mut host, b"lastErrorMessage\0", &[], ZunTy::Str, last_error_message);
+        register(
+            &mut host,
+            b"lastErrorMessage\0",
+            &[],
+            ZunTy::Str,
+            last_error_message,
+        );
         owned
     }
 
@@ -310,7 +336,9 @@ mod tests {
     #[test]
     fn a_failing_call_throws_the_extensions_node_message() {
         let hook = ExtensionCallHook::new(registry());
-        let outcome = hook.try_call_external("demo", "boom", &[]).expect("resolved");
+        let outcome = hook
+            .try_call_external("demo", "boom", &[])
+            .expect("resolved");
         match outcome {
             Err(RunError::Thrown(Value::Str(message))) => assert_eq!(&*message, "ENOENT: boom"),
             other => panic!("expected a thrown Node message, got {other:?}"),
@@ -337,8 +365,11 @@ mod tests {
 
         let hook = ExtensionCallHook::new(registry());
         let mut output = zun_interp::CaptureOutput::default();
-        let result = crate::execute_with_extensions(&bytes, &mut output, &hook)
-            .expect("run external call");
-        assert!(matches!(result, Value::Int(5, NumKind::I64)), "got {result:?}");
+        let result =
+            crate::execute_with_extensions(&bytes, &mut output, &hook).expect("run external call");
+        assert!(
+            matches!(result, Value::Int(5, NumKind::I64)),
+            "got {result:?}"
+        );
     }
 }

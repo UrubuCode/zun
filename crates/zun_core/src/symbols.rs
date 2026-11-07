@@ -5,8 +5,12 @@ use std::collections::HashMap;
 pub struct SymbolId(u64);
 
 impl SymbolId {
-    pub const fn get(self) -> u64 { self.0 }
-    pub const fn from_raw(value: u64) -> Self { SymbolId(value) }
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+    pub const fn from_raw(value: u64) -> Self {
+        SymbolId(value)
+    }
 }
 
 /// The well-known symbols, seeded at fixed ids so their identities are stable
@@ -64,7 +68,9 @@ impl WellKnownSymbol {
         WellKnownSymbol::MatchAll,
     ];
 
-    pub const fn id(self) -> SymbolId { SymbolId(self as u64) }
+    pub const fn id(self) -> SymbolId {
+        SymbolId(self as u64)
+    }
 
     /// The `.description` string of the well-known symbol (ECMAScript form,
     /// e.g. `Symbol.iterator`).
@@ -139,7 +145,9 @@ impl Default for SymbolRegistry {
 }
 
 impl SymbolRegistry {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Allocate a fresh, unique symbol. Two calls never collide, even with the
     /// same description — this backs `Symbol(desc)`.
@@ -153,7 +161,9 @@ impl SymbolRegistry {
     /// every time (`Symbol.for`).
     pub fn for_key(&mut self, key: impl Into<String>) -> SymbolId {
         let key = key.into();
-        if let Some(&id) = self.global.get(&key) { return id; }
+        if let Some(&id) = self.global.get(&key) {
+            return id;
+        }
         let id = self.create(Some(key.clone()));
         self.global.insert(key.clone(), id);
         self.global_keys.insert(id, key);
@@ -166,13 +176,21 @@ impl SymbolRegistry {
         self.global_keys.get(&id).map(String::as_str)
     }
 
-    pub fn iterator(&mut self) -> SymbolId { WellKnownSymbol::Iterator.id() }
-
-    pub fn description(&self, id: SymbolId) -> Option<&str> {
-        self.descriptions.get(id.0 as usize).and_then(Option::as_deref)
+    pub fn iterator(&mut self) -> SymbolId {
+        WellKnownSymbol::Iterator.id()
     }
 
-    pub fn len(&self) -> usize { self.descriptions.len() }
+    pub fn description(&self, id: SymbolId) -> Option<&str> {
+        self.descriptions
+            .get(id.0 as usize)
+            .and_then(Option::as_deref)
+    }
 
-    pub fn is_empty(&self) -> bool { self.descriptions.is_empty() }
+    pub fn len(&self) -> usize {
+        self.descriptions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.descriptions.is_empty()
+    }
 }

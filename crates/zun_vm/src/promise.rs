@@ -120,7 +120,12 @@ impl<T, F> core::fmt::Debug for GeneratorStateMachine<T, F> {
 impl<T: Clone, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T, F> {
     /// Create a generator at its entry state.
     pub fn new(step: F) -> Self {
-        Self { state: 0, done: false, step, current: None }
+        Self {
+            state: 0,
+            done: false,
+            step,
+            current: None,
+        }
     }
 
     /// Advance once. Completion is sticky, as required by iterator semantics.
@@ -155,10 +160,14 @@ impl<T: Clone, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T
     }
 
     /// Current generated state, useful to a runtime resume hook.
-    pub fn state(&self) -> usize { self.state }
+    pub fn state(&self) -> usize {
+        self.state
+    }
 
     /// Return the value produced by the most recent successful advancement.
-    pub fn current(&self) -> Option<&T> { self.current.as_ref() }
+    pub fn current(&self) -> Option<&T> {
+        self.current.as_ref()
+    }
 
     /// Dispose the state machine and release the current value.
     ///
@@ -848,8 +857,14 @@ mod tests {
     #[test]
     fn generator_state_machine_preserves_state_and_sticky_completion() {
         let mut machine = GeneratorStateMachine::new(|state| match *state {
-            0 => { *state = 1; GeneratorStep::Yielded(10) }
-            1 => { *state = 2; GeneratorStep::Yielded(20) }
+            0 => {
+                *state = 1;
+                GeneratorStep::Yielded(10)
+            }
+            1 => {
+                *state = 2;
+                GeneratorStep::Yielded(20)
+            }
             _ => GeneratorStep::Complete,
         });
         assert_eq!(machine.next(), GeneratorStep::Yielded(10));
@@ -877,11 +892,17 @@ mod tests {
         });
         assert_eq!(
             machine.next_result(),
-            GeneratorIteratorResult { value: Some(7), done: false }
+            GeneratorIteratorResult {
+                value: Some(7),
+                done: false
+            }
         );
         assert_eq!(
             machine.next_result(),
-            GeneratorIteratorResult { value: None, done: true }
+            GeneratorIteratorResult {
+                value: None,
+                done: true
+            }
         );
     }
 

@@ -87,7 +87,11 @@ impl Checker<'_> {
                 .ty
                 .as_ref()
                 .map(|annotation| self.resolve_annotation(annotation))
-                .or_else(|| param_hint.as_ref().and_then(|hints| hints.get(index).copied()))
+                .or_else(|| {
+                    param_hint
+                        .as_ref()
+                        .and_then(|hints| hints.get(index).copied())
+                })
                 .unwrap_or(Ty::Any);
             let slot = inner.declare(self.text(&parameter.name), ty);
             declared_params.push((self.text(&parameter.name).to_string(), slot));
@@ -98,7 +102,11 @@ impl Checker<'_> {
         let self_binding = match self_name.as_deref() {
             Some(name)
                 if function.params.iter().all(|p| self.text(&p.name) != name)
-                    && self.source.get(function.body.span.start as usize..function.body.span.end as usize).map(|body| body.contains(name)).unwrap_or(true) =>
+                    && self
+                        .source
+                        .get(function.body.span.start as usize..function.body.span.end as usize)
+                        .map(|body| body.contains(name))
+                        .unwrap_or(true) =>
             {
                 let slot = inner.declare(name, Ty::Function(hir::DYNAMIC_FUNCTION));
                 Some(hir::Stmt::Let {
@@ -114,7 +122,10 @@ impl Checker<'_> {
         };
         self.collect_mutated_names(&function.body.statements, &mut inner.mutated_names);
         for (pname, slot) in declared_params {
-            if !function.params.iter().any(|p| p.is_rest || p.default_value.is_some())
+            if !function
+                .params
+                .iter()
+                .any(|p| p.is_rest || p.default_value.is_some())
                 && inner.mutated_names.contains(&pname)
                 && inner.mutated_names.contains(&format!("{pname}"))
                 && !matches!(inner.locals[slot as usize], Ty::Function(_))
@@ -183,12 +194,29 @@ impl Checker<'_> {
         }
         self.closures.push(hir::ClosureFunction {
             name: {
-                let rest_suffix = if function.params.iter().any(|p| p.is_rest) { "@rest" } else { "" };
+                let rest_suffix = if function.params.iter().any(|p| p.is_rest) {
+                    "@rest"
+                } else {
+                    ""
+                };
                 // The same source closure can be checked more than once (e.g. each
                 // arm of a runtime-key dispatch chain re-checks its arguments);
                 // keep every checked copy uniquely named.
-                let copies = self.closures.iter().filter(|c| c.name.starts_with(&format!("<closure@{}", span.start)) && c.name[("<closure@".len())..].trim_start_matches(|ch: char| ch.is_ascii_digit()).starts_with(|ch: char| ch == '@' || ch == '>' || ch == '#')).count();
-                let unique = if copies == 0 { String::new() } else { format!("#{copies}") };
+                let copies = self
+                    .closures
+                    .iter()
+                    .filter(|c| {
+                        c.name.starts_with(&format!("<closure@{}", span.start))
+                            && c.name[("<closure@".len())..]
+                                .trim_start_matches(|ch: char| ch.is_ascii_digit())
+                                .starts_with(|ch: char| ch == '@' || ch == '>' || ch == '#')
+                    })
+                    .count();
+                let unique = if copies == 0 {
+                    String::new()
+                } else {
+                    format!("#{copies}")
+                };
                 if takes_this {
                     format!("<closure@{}{unique}@this{rest_suffix}>", span.start)
                 } else {
@@ -292,7 +320,8 @@ impl Checker<'_> {
                     ty: cx.locals[outer_slot as usize],
                     mode: if cx.mutated.contains(&outer_slot)
                         || (cx.mutated_names.contains(&name)
-                            && (cx.boxed.contains(&outer_slot) || (outer_slot as usize) >= cx.param_slot_count))
+                            && (cx.boxed.contains(&outer_slot)
+                                || (outer_slot as usize) >= cx.param_slot_count))
                         || uses.mutated.contains(&outer_slot)
                     {
                         hir::CaptureMode::ByCell
@@ -331,9 +360,7 @@ impl Checker<'_> {
         match statement {
             ast::Stmt::Let { init, .. }
             | ast::Stmt::Destructure { init, .. }
-            | ast::Stmt::Expr(init) => {
-                self.collect_capture_expr(cx, parameters, init, uses)
-            }
+            | ast::Stmt::Expr(init) => self.collect_capture_expr(cx, parameters, init, uses),
             ast::Stmt::If {
                 cond,
                 then_block,
@@ -398,7 +425,11 @@ impl Checker<'_> {
                     self.collect_capture_stmt(cx, parameters, statement, uses);
                 }
             }
-            ast::Stmt::Switch { discriminant, cases, .. } => {
+            ast::Stmt::Switch {
+                discriminant,
+                cases,
+                ..
+            } => {
                 self.collect_capture_expr(cx, parameters, discriminant, uses);
                 for case in cases {
                     if let Some(test) = &case.test {
@@ -508,7 +539,8 @@ impl Checker<'_> {
                     self.collect_capture_expr(cx, parameters, arg, uses);
                 }
             }
-            ast::Expr::ComputedCall { callee, args, .. } | ast::Expr::NewDynamic { callee, args, .. } => {
+            ast::Expr::ComputedCall { callee, args, .. }
+            | ast::Expr::NewDynamic { callee, args, .. } => {
                 self.collect_capture_expr(cx, parameters, callee, uses);
                 for arg in args {
                     self.collect_capture_expr(cx, parameters, arg, uses);
@@ -521,7 +553,9 @@ impl Checker<'_> {
                 }
             }
             ast::Expr::StaticMethodCall { args, .. } => {
-                for arg in args { self.collect_capture_expr(cx, parameters, arg, uses); }
+                for arg in args {
+                    self.collect_capture_expr(cx, parameters, arg, uses);
+                }
             }
             ast::Expr::StaticField { .. } => {}
             ast::Expr::OptionalMethodCall { object, args, .. } => {
@@ -642,8 +676,6 @@ impl Checker<'_> {
             | ast::Expr::Null { .. } => {}
         }
     }
-
-
 }
 
 /// The type of the first `return <value>` anywhere in a closure body
@@ -652,15 +684,21 @@ fn first_return_ty(statements: &[hir::Stmt]) -> Option<Ty> {
     statements.iter().find_map(|statement| match statement {
         hir::Stmt::Return(Some(value)) => Some(value.ty),
         hir::Stmt::Group(body) => first_return_ty(body),
-        hir::Stmt::If { then_body, else_body, .. } => {
-            first_return_ty(then_body).or_else(|| first_return_ty(else_body))
-        }
+        hir::Stmt::If {
+            then_body,
+            else_body,
+            ..
+        } => first_return_ty(then_body).or_else(|| first_return_ty(else_body)),
         hir::Stmt::While { body, .. }
         | hir::Stmt::DoWhile { body, .. }
         | hir::Stmt::For { body, .. }
         | hir::Stmt::ForOf { body, .. } => first_return_ty(body),
         hir::Stmt::Labeled { body, .. } => first_return_ty(std::slice::from_ref(&**body)),
-        hir::Stmt::Try { body, catches, finally_body } => first_return_ty(body)
+        hir::Stmt::Try {
+            body,
+            catches,
+            finally_body,
+        } => first_return_ty(body)
             .or_else(|| catches.iter().find_map(|c| first_return_ty(&c.body)))
             .or_else(|| finally_body.as_ref().and_then(|b| first_return_ty(b))),
         _ => None,

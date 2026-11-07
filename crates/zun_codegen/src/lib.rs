@@ -11,15 +11,15 @@
 //! first. The equivalence tests run numeric programs through both and require
 //! identical results — the contract the plan sets for Tier 0 vs Tier 1.
 
-mod eligible;
 mod any_abi;
+mod eligible;
 mod fn_abi;
 mod shim;
-mod translate;
 mod thunks;
+mod translate;
 
-pub use eligible::{eligible_methods, eligible_methods_bridged, eligible_methods_with_literals};
 pub use any_abi::JitAnyAbi;
+pub use eligible::{eligible_methods, eligible_methods_bridged, eligible_methods_with_literals};
 pub use zun_il::{JitKind, NumKind};
 
 // Runtime thunks live in `thunks/`; re-export every public symbol at the
@@ -240,129 +240,336 @@ impl Jit {
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
         builder.symbol("zun_jit_string_length", zun_jit_string_length as *const u8);
-        builder.symbol("zun_jit_string_literal", zun_jit_string_literal as *const u8);
-        builder.symbol("zun_jit_string_contains", zun_jit_string_contains as *const u8);
-        builder.symbol("zun_jit_string_char_code_at", zun_jit_string_char_code_at as *const u8);
-        builder.symbol("zun_jit_string_starts_with", zun_jit_string_starts_with as *const u8);
-        builder.symbol("zun_jit_string_ends_with", zun_jit_string_ends_with as *const u8);
-        builder.symbol("zun_jit_string_index_of", zun_jit_string_index_of as *const u8);
-        builder.symbol("zun_jit_string_last_index_of", zun_jit_string_last_index_of as *const u8);
+        builder.symbol(
+            "zun_jit_string_literal",
+            zun_jit_string_literal as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_contains",
+            zun_jit_string_contains as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_char_code_at",
+            zun_jit_string_char_code_at as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_starts_with",
+            zun_jit_string_starts_with as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_ends_with",
+            zun_jit_string_ends_with as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_index_of",
+            zun_jit_string_index_of as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_last_index_of",
+            zun_jit_string_last_index_of as *const u8,
+        );
         builder.symbol("zun_jit_string_count", zun_jit_string_count as *const u8);
-        builder.symbol("zun_jit_string_compare", zun_jit_string_compare as *const u8);
+        builder.symbol(
+            "zun_jit_string_compare",
+            zun_jit_string_compare as *const u8,
+        );
         builder.symbol("zun_jit_string_concat", zun_jit_string_concat as *const u8);
-        builder.symbol("zun_jit_string_substring", zun_jit_string_substring as *const u8);
+        builder.symbol(
+            "zun_jit_string_substring",
+            zun_jit_string_substring as *const u8,
+        );
         builder.symbol("zun_jit_string_trim", zun_jit_string_trim as *const u8);
-        builder.symbol("zun_jit_string_trim_start", zun_jit_string_trim_start as *const u8);
-        builder.symbol("zun_jit_string_trim_end", zun_jit_string_trim_end as *const u8);
-        builder.symbol("zun_jit_string_to_lower_case", zun_jit_string_to_lower_case as *const u8);
-        builder.symbol("zun_jit_string_to_upper_case", zun_jit_string_to_upper_case as *const u8);
+        builder.symbol(
+            "zun_jit_string_trim_start",
+            zun_jit_string_trim_start as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_trim_end",
+            zun_jit_string_trim_end as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_to_lower_case",
+            zun_jit_string_to_lower_case as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_to_upper_case",
+            zun_jit_string_to_upper_case as *const u8,
+        );
         builder.symbol("zun_jit_string_repeat", zun_jit_string_repeat as *const u8);
-        builder.symbol("zun_jit_string_reverse", zun_jit_string_reverse as *const u8);
-        builder.symbol("zun_jit_string_pad_start", zun_jit_string_pad_start as *const u8);
-        builder.symbol("zun_jit_string_pad_end", zun_jit_string_pad_end as *const u8);
-        builder.symbol("zun_jit_string_replace", zun_jit_string_replace as *const u8);
+        builder.symbol(
+            "zun_jit_string_reverse",
+            zun_jit_string_reverse as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_pad_start",
+            zun_jit_string_pad_start as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_pad_end",
+            zun_jit_string_pad_end as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_replace",
+            zun_jit_string_replace as *const u8,
+        );
         builder.symbol("zun_jit_string_to_int", zun_jit_string_to_int as *const u8);
-        builder.symbol("zun_jit_string_to_float", zun_jit_string_to_float as *const u8);
-        builder.symbol("zun_jit_string_to_boolean", zun_jit_string_to_boolean as *const u8);
-    builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
-    builder.symbol("zun_jit_data_view_length", zun_jit_data_view_length as *const u8);
-    builder.symbol("zun_jit_typed_array_length", zun_jit_typed_array_length as *const u8);
-    builder.symbol("zun_jit_data_view_byte_length", zun_jit_data_view_byte_length as *const u8);
-    builder.symbol("zun_jit_typed_array_byte_length", zun_jit_typed_array_byte_length as *const u8);
-    builder.symbol("zun_jit_buffer_get_u8", zun_jit_buffer_get_u8 as *const u8);
-    builder.symbol("zun_jit_buffer_read_u32", zun_jit_buffer_read_u32 as *const u8);
-    builder.symbol("zun_jit_buffer_read_f64", zun_jit_buffer_read_f64 as *const u8);
-    builder.symbol("zun_jit_buffer_set_u8", zun_jit_buffer_set_u8 as *const u8);
-    builder.symbol("zun_jit_buffer_write_u32", zun_jit_buffer_write_u32 as *const u8);
-    builder.symbol("zun_jit_buffer_write_f64", zun_jit_buffer_write_f64 as *const u8);
-    builder.symbol("zun_jit_data_view_get_u32", zun_jit_data_view_get_u32 as *const u8);
-    builder.symbol("zun_jit_data_view_get_u16", zun_jit_data_view_get_u16 as *const u8);
-    builder.symbol("zun_jit_data_view_get_f64", zun_jit_data_view_get_f64 as *const u8);
-    builder.symbol("zun_jit_data_view_set_u32", zun_jit_data_view_set_u32 as *const u8);
-    builder.symbol("zun_jit_data_view_set_u16", zun_jit_data_view_set_u16 as *const u8);
-    builder.symbol("zun_jit_data_view_set_f64", zun_jit_data_view_set_f64 as *const u8);
-    builder.symbol("zun_jit_data_view_get_i8", zun_jit_data_view_get_i8 as *const u8);
-    builder.symbol("zun_jit_data_view_get_u8", zun_jit_data_view_get_u8 as *const u8);
-    builder.symbol("zun_jit_data_view_get_i16", zun_jit_data_view_get_i16 as *const u8);
-    builder.symbol("zun_jit_data_view_get_i32", zun_jit_data_view_get_i32 as *const u8);
-    builder.symbol("zun_jit_data_view_get_f32", zun_jit_data_view_get_f32 as *const u8);
-    builder.symbol("zun_jit_data_view_set_i8", zun_jit_data_view_set_i8 as *const u8);
-    builder.symbol("zun_jit_data_view_set_u8", zun_jit_data_view_set_u8 as *const u8);
-    builder.symbol("zun_jit_data_view_set_i16", zun_jit_data_view_set_i16 as *const u8);
-    builder.symbol("zun_jit_data_view_set_i32", zun_jit_data_view_set_i32 as *const u8);
-    builder.symbol("zun_jit_data_view_set_f32", zun_jit_data_view_set_f32 as *const u8);
-    builder.symbol("zun_jit_u8_array_get", zun_jit_u8_array_get as *const u8);
-    builder.symbol("zun_jit_u8_array_set", zun_jit_u8_array_set as *const u8);
-    builder.symbol("zun_jit_u16_array_get", zun_jit_u16_array_get as *const u8);
-    builder.symbol("zun_jit_u16_array_set", zun_jit_u16_array_set as *const u8);
-    builder.symbol("zun_jit_u32_array_get", zun_jit_u32_array_get as *const u8);
-    builder.symbol("zun_jit_u32_array_set", zun_jit_u32_array_set as *const u8);
-    builder.symbol("zun_jit_f64_array_get", zun_jit_f64_array_get as *const u8);
-    builder.symbol("zun_jit_f64_array_set", zun_jit_f64_array_set as *const u8);
-    builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
-    builder.symbol("zun_jit_map_new", zun_jit_map_new as *const u8);
+        builder.symbol(
+            "zun_jit_string_to_float",
+            zun_jit_string_to_float as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_to_boolean",
+            zun_jit_string_to_boolean as *const u8,
+        );
+        builder.symbol("zun_jit_buffer_length", zun_jit_buffer_length as *const u8);
+        builder.symbol(
+            "zun_jit_data_view_length",
+            zun_jit_data_view_length as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_typed_array_length",
+            zun_jit_typed_array_length as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_byte_length",
+            zun_jit_data_view_byte_length as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_typed_array_byte_length",
+            zun_jit_typed_array_byte_length as *const u8,
+        );
+        builder.symbol("zun_jit_buffer_get_u8", zun_jit_buffer_get_u8 as *const u8);
+        builder.symbol(
+            "zun_jit_buffer_read_u32",
+            zun_jit_buffer_read_u32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_buffer_read_f64",
+            zun_jit_buffer_read_f64 as *const u8,
+        );
+        builder.symbol("zun_jit_buffer_set_u8", zun_jit_buffer_set_u8 as *const u8);
+        builder.symbol(
+            "zun_jit_buffer_write_u32",
+            zun_jit_buffer_write_u32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_buffer_write_f64",
+            zun_jit_buffer_write_f64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_get_u32",
+            zun_jit_data_view_get_u32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_get_u16",
+            zun_jit_data_view_get_u16 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_get_f64",
+            zun_jit_data_view_get_f64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_set_u32",
+            zun_jit_data_view_set_u32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_set_u16",
+            zun_jit_data_view_set_u16 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_set_f64",
+            zun_jit_data_view_set_f64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_get_i8",
+            zun_jit_data_view_get_i8 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_get_u8",
+            zun_jit_data_view_get_u8 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_get_i16",
+            zun_jit_data_view_get_i16 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_get_i32",
+            zun_jit_data_view_get_i32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_get_f32",
+            zun_jit_data_view_get_f32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_set_i8",
+            zun_jit_data_view_set_i8 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_set_u8",
+            zun_jit_data_view_set_u8 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_set_i16",
+            zun_jit_data_view_set_i16 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_set_i32",
+            zun_jit_data_view_set_i32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_data_view_set_f32",
+            zun_jit_data_view_set_f32 as *const u8,
+        );
+        builder.symbol("zun_jit_u8_array_get", zun_jit_u8_array_get as *const u8);
+        builder.symbol("zun_jit_u8_array_set", zun_jit_u8_array_set as *const u8);
+        builder.symbol("zun_jit_u16_array_get", zun_jit_u16_array_get as *const u8);
+        builder.symbol("zun_jit_u16_array_set", zun_jit_u16_array_set as *const u8);
+        builder.symbol("zun_jit_u32_array_get", zun_jit_u32_array_get as *const u8);
+        builder.symbol("zun_jit_u32_array_set", zun_jit_u32_array_set as *const u8);
+        builder.symbol("zun_jit_f64_array_get", zun_jit_f64_array_get as *const u8);
+        builder.symbol("zun_jit_f64_array_set", zun_jit_f64_array_set as *const u8);
+        builder.symbol("zun_jit_map_size", zun_jit_map_size as *const u8);
+        builder.symbol("zun_jit_map_new", zun_jit_map_new as *const u8);
         builder.symbol("zun_jit_map_clear", zun_jit_map_clear as *const u8);
         builder.symbol("zun_jit_map_values", zun_jit_map_values as *const u8);
         builder.symbol("zun_jit_map_keys", zun_jit_map_keys as *const u8);
         builder.symbol("zun_jit_map_entries", zun_jit_map_entries as *const u8);
         builder.symbol("zun_jit_set_values", zun_jit_set_values as *const u8);
         builder.symbol("zun_jit_set_entries", zun_jit_set_entries as *const u8);
-    builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
-    builder.symbol("zun_jit_set_new", zun_jit_set_new as *const u8);
+        builder.symbol("zun_jit_set_size", zun_jit_set_size as *const u8);
+        builder.symbol("zun_jit_set_new", zun_jit_set_new as *const u8);
         builder.symbol("zun_jit_set_clear", zun_jit_set_clear as *const u8);
-    builder.symbol("zun_jit_map_has_f64", zun_jit_map_has_f64 as *const u8);
-    builder.symbol("zun_jit_set_has_f64", zun_jit_set_has_f64 as *const u8);
-    builder.symbol("zun_jit_set_add_f64", zun_jit_set_add_f64 as *const u8);
-    builder.symbol("zun_jit_map_delete_f64", zun_jit_map_delete_f64 as *const u8);
-    builder.symbol("zun_jit_set_delete_f64", zun_jit_set_delete_f64 as *const u8);
-    builder.symbol("zun_jit_map_set_f64", zun_jit_map_set_f64 as *const u8);
-    builder.symbol("zun_jit_map_get_f64_or", zun_jit_map_get_f64_or as *const u8);
-    builder.symbol("zun_jit_map_get_any", zun_jit_map_get_any as *const u8);
-    builder.symbol("zun_jit_map_has_i64", zun_jit_map_has_i64 as *const u8);
+        builder.symbol("zun_jit_map_has_f64", zun_jit_map_has_f64 as *const u8);
+        builder.symbol("zun_jit_set_has_f64", zun_jit_set_has_f64 as *const u8);
+        builder.symbol("zun_jit_set_add_f64", zun_jit_set_add_f64 as *const u8);
+        builder.symbol(
+            "zun_jit_map_delete_f64",
+            zun_jit_map_delete_f64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_set_delete_f64",
+            zun_jit_set_delete_f64 as *const u8,
+        );
+        builder.symbol("zun_jit_map_set_f64", zun_jit_map_set_f64 as *const u8);
+        builder.symbol(
+            "zun_jit_map_get_f64_or",
+            zun_jit_map_get_f64_or as *const u8,
+        );
+        builder.symbol("zun_jit_map_get_any", zun_jit_map_get_any as *const u8);
+        builder.symbol("zun_jit_map_has_i64", zun_jit_map_has_i64 as *const u8);
         builder.symbol("zun_jit_map_has_i32", zun_jit_map_has_i32 as *const u8);
-    builder.symbol("zun_jit_set_has_i64", zun_jit_set_has_i64 as *const u8);
+        builder.symbol("zun_jit_set_has_i64", zun_jit_set_has_i64 as *const u8);
         builder.symbol("zun_jit_set_has_i32", zun_jit_set_has_i32 as *const u8);
-    builder.symbol("zun_jit_set_add_i64", zun_jit_set_add_i64 as *const u8);
+        builder.symbol("zun_jit_set_add_i64", zun_jit_set_add_i64 as *const u8);
         builder.symbol("zun_jit_set_add_i32", zun_jit_set_add_i32 as *const u8);
-        builder.symbol("zun_jit_map_delete_i32", zun_jit_map_delete_i32 as *const u8);
-        builder.symbol("zun_jit_set_delete_i32", zun_jit_set_delete_i32 as *const u8);
-    builder.symbol("zun_jit_map_delete_i64", zun_jit_map_delete_i64 as *const u8);
-    builder.symbol("zun_jit_set_delete_i64", zun_jit_set_delete_i64 as *const u8);
-    builder.symbol("zun_jit_map_set_i64", zun_jit_map_set_i64 as *const u8);
-    builder.symbol("zun_jit_map_get_i64_or", zun_jit_map_get_i64_or as *const u8);
-        builder.symbol("zun_jit_map_get_i32_or", zun_jit_map_get_i32_or as *const u8);
+        builder.symbol(
+            "zun_jit_map_delete_i32",
+            zun_jit_map_delete_i32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_set_delete_i32",
+            zun_jit_set_delete_i32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_map_delete_i64",
+            zun_jit_map_delete_i64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_set_delete_i64",
+            zun_jit_set_delete_i64 as *const u8,
+        );
+        builder.symbol("zun_jit_map_set_i64", zun_jit_map_set_i64 as *const u8);
+        builder.symbol(
+            "zun_jit_map_get_i64_or",
+            zun_jit_map_get_i64_or as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_map_get_i32_or",
+            zun_jit_map_get_i32_or as *const u8,
+        );
         builder.symbol("zun_jit_map_set_i32", zun_jit_map_set_i32 as *const u8);
-    builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
-    builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
-    builder.symbol("zun_jit_array_load_f64", zun_jit_array_load_f64 as *const u8);
-    builder.symbol("zun_jit_array_load_u64", zun_jit_array_load_u64 as *const u8);
-        builder.symbol("zun_jit_array_load_i32", zun_jit_array_load_i32 as *const u8);
-    builder.symbol("zun_jit_array_load_bool", zun_jit_array_load_bool as *const u8);
-    builder.symbol("zun_jit_array_load_object", zun_jit_array_load_object as *const u8);
-    builder.symbol("zun_jit_array_store_f64", zun_jit_array_store_f64 as *const u8);
-    builder.symbol("zun_jit_array_store_u64", zun_jit_array_store_u64 as *const u8);
-        builder.symbol("zun_jit_array_store_i32", zun_jit_array_store_i32 as *const u8);
-    builder.symbol("zun_jit_array_store_bool", zun_jit_array_store_bool as *const u8);
-    builder.symbol("zun_jit_array_store_object", zun_jit_array_store_object as *const u8);
+        builder.symbol("zun_jit_array_new", zun_jit_array_new as *const u8);
+        builder.symbol("zun_jit_osr_poll", zun_jit_osr_poll as *const u8);
+        builder.symbol(
+            "zun_jit_array_load_f64",
+            zun_jit_array_load_f64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_load_u64",
+            zun_jit_array_load_u64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_load_i32",
+            zun_jit_array_load_i32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_load_bool",
+            zun_jit_array_load_bool as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_load_object",
+            zun_jit_array_load_object as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_store_f64",
+            zun_jit_array_store_f64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_store_u64",
+            zun_jit_array_store_u64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_store_i32",
+            zun_jit_array_store_i32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_store_bool",
+            zun_jit_array_store_bool as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_store_object",
+            zun_jit_array_store_object as *const u8,
+        );
         builder.symbol("zun_jit_store_ref", zun_jit_store_ref as *const u8);
-    builder.symbol("zun_jit_array_pop_f64", zun_jit_array_pop_f64 as *const u8);
-    builder.symbol("zun_jit_array_push_f64", zun_jit_array_push_f64 as *const u8);
-    builder.symbol("zun_jit_array_pop_u64", zun_jit_array_pop_u64 as *const u8);
+        builder.symbol("zun_jit_array_pop_f64", zun_jit_array_pop_f64 as *const u8);
+        builder.symbol(
+            "zun_jit_array_push_f64",
+            zun_jit_array_push_f64 as *const u8,
+        );
+        builder.symbol("zun_jit_array_pop_u64", zun_jit_array_pop_u64 as *const u8);
         builder.symbol("zun_jit_array_pop_i32", zun_jit_array_pop_i32 as *const u8);
-    builder.symbol("zun_jit_array_push_u64", zun_jit_array_push_u64 as *const u8);
-        builder.symbol("zun_jit_array_push_i32", zun_jit_array_push_i32 as *const u8);
-    builder.symbol("zun_jit_array_pop_bool", zun_jit_array_pop_bool as *const u8);
-    builder.symbol("zun_jit_array_push_bool", zun_jit_array_push_bool as *const u8);
-    builder.symbol("zun_jit_array_pop_object", zun_jit_array_pop_object as *const u8);
-    builder.symbol("zun_jit_array_push_object", zun_jit_array_push_object as *const u8);
+        builder.symbol(
+            "zun_jit_array_push_u64",
+            zun_jit_array_push_u64 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_push_i32",
+            zun_jit_array_push_i32 as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_pop_bool",
+            zun_jit_array_pop_bool as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_push_bool",
+            zun_jit_array_push_bool as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_pop_object",
+            zun_jit_array_pop_object as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_array_push_object",
+            zun_jit_array_push_object as *const u8,
+        );
         builder.symbol(
             "zun_jit_array_load_any",
             zun_jit_array_load_any as *const u8,
         );
-    builder.symbol(
-        "zun_jit_array_store_any",
-        zun_jit_array_store_any as *const u8,
-    );
+        builder.symbol(
+            "zun_jit_array_store_any",
+            zun_jit_array_store_any as *const u8,
+        );
         builder.symbol("zun_jit_date_year", zun_jit_date_year as *const u8);
         builder.symbol("zun_jit_date_is_valid", zun_jit_date_is_valid as *const u8);
         builder.symbol("zun_jit_date_month", zun_jit_date_month as *const u8);
@@ -664,10 +871,7 @@ impl Jit {
                         code_offset,
                         span,
                         pc: 0,
-                        reference_slots: stack_map
-                            .entries()
-                            .map(|(_, offset)| offset)
-                            .collect(),
+                        reference_slots: stack_map.entries().map(|(_, offset)| offset).collect(),
                     })
                     .collect()
             })
@@ -792,7 +996,11 @@ impl Jit {
         if signature.returns == Some(JitKind::Other) {
             return Err(JitError::Ineligible(method_rid));
         }
-        if signature.param_kinds.iter().any(|&kind| kind == JitKind::Other) {
+        if signature
+            .param_kinds
+            .iter()
+            .any(|&kind| kind == JitKind::Other)
+        {
             return Err(JitError::Ineligible(method_rid));
         }
         let param_kinds = signature.param_kinds;
@@ -814,9 +1022,7 @@ impl Jit {
         // hook also registers its Value-level roots; this scope protects direct
         // callers of the public packed entry point as well.
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
-        let _stack_maps = unsafe {
-            zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry)
-        };
+        let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let id = *self
             .shim_ids
             .get(&method_rid)
@@ -847,7 +1053,10 @@ impl Jit {
             .map(|&kind| any_abi::abi_word_count(kind))
             .sum();
         if expected_words != args.len() {
-            return Err(JitError::Arity { expected: expected_words, found: args.len() });
+            return Err(JitError::Arity {
+                expected: expected_words,
+                found: args.len(),
+            });
         }
         let mut native_roots = Vec::new();
         let mut cursor = 0;
@@ -855,7 +1064,9 @@ impl Jit {
             if kind == JitKind::Object {
                 native_roots.push(unsafe { zun_gc::Obj::from_addr(args[cursor] as *mut u64) });
             } else if kind == JitKind::Other {
-                if let Some(value) = zun_core::Any::from_raw_parts(args[cursor] as u8, args[cursor + 1]) {
+                if let Some(value) =
+                    zun_core::Any::from_raw_parts(args[cursor] as u8, args[cursor + 1])
+                {
                     if let Some(object) = value.as_object() {
                         native_roots.push(unsafe { zun_gc::Obj::from_addr(object as *mut u64) });
                     }
@@ -865,7 +1076,10 @@ impl Jit {
         }
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
-        let id = *self.shim_ids.get(&method_rid).ok_or(JitError::Ineligible(method_rid))?;
+        let id = *self
+            .shim_ids
+            .get(&method_rid)
+            .ok_or(JitError::Ineligible(method_rid))?;
         let ptr = self.module.get_finalized_function(id);
         let f: extern "C" fn(*const u64) -> u64 = unsafe { std::mem::transmute(ptr) };
         Ok(f(args.as_ptr()))
@@ -877,11 +1091,7 @@ impl Jit {
     /// scalar return contract is exactly one `u64`. `Any` methods remain
     /// outside the eligibility set until their parameters and internal calls
     /// are lowered to the same carrier ABI.
-    pub fn call_packed_any(
-        &self,
-        method_rid: u32,
-        args: &[u64],
-    ) -> Result<JitAnyAbi, JitError> {
+    pub fn call_packed_any(&self, method_rid: u32, args: &[u64]) -> Result<JitAnyAbi, JitError> {
         let signature = self
             .sigs
             .get(&method_rid)
@@ -925,7 +1135,8 @@ impl Jit {
             .get(&method_rid)
             .ok_or(JitError::Ineligible(method_rid))?;
         let ptr = self.module.get_finalized_function(id);
-        let f: extern "C" fn(*const u64, *mut JitAnyAbi) -> i32 = unsafe { std::mem::transmute(ptr) };
+        let f: extern "C" fn(*const u64, *mut JitAnyAbi) -> i32 =
+            unsafe { std::mem::transmute(ptr) };
         let mut result = JitAnyAbi { tag: 0, payload: 0 };
         if f(args.as_ptr(), &mut result) == 0 {
             return Err(JitError::InvalidAnyTag(result.tag));
@@ -982,9 +1193,8 @@ impl Jit {
         pc: usize,
         sp: *mut u8,
     ) -> Result<u64, JitError> {
-        let _frame = unsafe {
-            zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp)
-        };
+        let _frame =
+            unsafe { zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp) };
         let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
         self.call_packed(method_rid, args)
     }
@@ -1004,9 +1214,8 @@ impl Jit {
         pc: usize,
         sp: *mut u8,
     ) -> Result<u64, JitError> {
-        let _frame = unsafe {
-            zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp)
-        };
+        let _frame =
+            unsafe { zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp) };
         self.call_packed(method_rid, args)
     }
 
@@ -1035,9 +1244,7 @@ impl Jit {
         // Publish the finalized stack-map registry for the complete native
         // entry call. This keeps direct JIT entry points on the same precise
         // GC boundary as packed calls when a runtime safepoint is reached.
-        let _stack_maps = unsafe {
-            zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry)
-        };
+        let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
 
         // Transmute the entry point to a nullary fn of its concrete return type,
         // then box the native result into a kind-tagged RetVal.
@@ -1101,9 +1308,8 @@ impl Jit {
         pc: usize,
         sp: *mut u8,
     ) -> Result<RetVal, JitError> {
-        let _frame = unsafe {
-            zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp)
-        };
+        let _frame =
+            unsafe { zun_gc::ActiveNativeFrameScope::enter(self.stack_map_registry(), pc, sp) };
         let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
         self.call_entry(method_rid)
     }
@@ -1244,7 +1450,9 @@ pub fn compile_metadata_object_for_target(
     target: target_lexicon::Triple,
 ) -> Result<Vec<u8>, JitError> {
     use object::write::{Object, Symbol, SymbolSection};
-    use object::{Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
+    use object::{
+        Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
+    };
 
     let format = match target.binary_format {
         target_lexicon::BinaryFormat::Coff => BinaryFormat::Coff,
@@ -1288,7 +1496,12 @@ pub fn compile_metadata_object_for_target(
         section: SymbolSection::Section(section),
         flags: SymbolFlags::None,
     });
-    object.add_symbol_data(length_symbol, section, &(module_bytes.len() as u64).to_le_bytes(), 8);
+    object.add_symbol_data(
+        length_symbol,
+        section,
+        &(module_bytes.len() as u64).to_le_bytes(),
+        8,
+    );
     object.write().map_err(|e| JitError::Module(e.to_string()))
 }
 
@@ -1347,12 +1560,12 @@ fn body_signature<M: ClifModule>(
 
 #[cfg(test)]
 mod tests {
-    use object::{Object as _, ObjectSection as _, ObjectSymbol as _};
     use super::{
-        zun_jit_array_load_any, zun_jit_array_load_object, zun_jit_array_store_any,
-        zun_jit_array_store_object, zun_jit_map_size, zun_jit_set_size, zun_jit_store_ref,
-        compile_metadata_object, JitAnyAbi,
+        compile_metadata_object, zun_jit_array_load_any, zun_jit_array_load_object,
+        zun_jit_array_store_any, zun_jit_array_store_object, zun_jit_map_size, zun_jit_set_size,
+        zun_jit_store_ref, JitAnyAbi,
     };
+    use object::{Object as _, ObjectSection as _, ObjectSymbol as _};
 
     #[test]
     fn metadata_object_exports_the_embedded_module_symbol() {
@@ -1366,12 +1579,10 @@ mod tests {
         assert!(file
             .symbols()
             .any(|symbol| symbol.name().ok() == Some("zun_embedded_module_len")));
-        assert!(file
-            .sections()
-            .any(|section| section
-                .data()
-                .ok()
-                .is_some_and(|data| data.starts_with(payload))));
+        assert!(file.sections().any(|section| section
+            .data()
+            .ok()
+            .is_some_and(|data| data.starts_with(payload))));
     }
 
     #[test]
@@ -1381,13 +1592,23 @@ mod tests {
         heap.array_set(array, 0, zun_core::Any::object(0x1234));
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap) };
         let mut carrier = JitAnyAbi { tag: 5, payload: 0 };
-        let loaded = unsafe {
-            zun_jit_array_load_any(array.addr() as i64, 0, &mut carrier)
-        };
+        let loaded = unsafe { zun_jit_array_load_any(array.addr() as i64, 0, &mut carrier) };
         assert_eq!(loaded, 1);
-        assert_eq!(carrier, JitAnyAbi { tag: 3, payload: 0x1234 });
-        assert_eq!(unsafe { zun_jit_array_load_any(array.addr() as i64, -1, &mut carrier) }, 0);
-        assert_eq!(unsafe { zun_jit_array_load_any(array.addr() as i64, 0, std::ptr::null_mut()) }, 0);
+        assert_eq!(
+            carrier,
+            JitAnyAbi {
+                tag: 3,
+                payload: 0x1234
+            }
+        );
+        assert_eq!(
+            unsafe { zun_jit_array_load_any(array.addr() as i64, -1, &mut carrier) },
+            0
+        );
+        assert_eq!(
+            unsafe { zun_jit_array_load_any(array.addr() as i64, 0, std::ptr::null_mut()) },
+            0
+        );
     }
 
     #[test]
@@ -1432,8 +1653,14 @@ mod tests {
         let child = heap.alloc(1, 0);
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
 
-        assert_eq!(zun_jit_array_store_object(array.addr() as i64, 0, child.addr() as i64), 1);
-        assert_eq!(zun_jit_array_load_object(array.addr() as i64, 0), child.addr() as i64);
+        assert_eq!(
+            zun_jit_array_store_object(array.addr() as i64, 0, child.addr() as i64),
+            1
+        );
+        assert_eq!(
+            zun_jit_array_load_object(array.addr() as i64, 0),
+            child.addr() as i64
+        );
     }
 
     #[test]
@@ -1458,7 +1685,10 @@ mod tests {
         let child = heap.alloc(2, 0);
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
 
-        assert_eq!(zun_jit_store_ref(owner.addr() as i64, 0, child.addr() as i64), 1);
+        assert_eq!(
+            zun_jit_store_ref(owner.addr() as i64, 0, child.addr() as i64),
+            1
+        );
         assert_eq!(unsafe { heap.collect_young(&[owner], &|_| vec![0]) }, 0);
         assert_eq!(owner.field(0), child.addr() as u64);
     }

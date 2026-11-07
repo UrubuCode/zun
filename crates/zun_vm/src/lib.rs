@@ -5,16 +5,16 @@
 //! interpreter only; the Cranelift JIT (Tier 1) and GC plug in here later
 //! behind the same entry points, without changing this surface.
 
-mod ffi;
+#[cfg(feature = "eval")]
+mod eval_host;
 mod extension;
 mod extension_hook;
+mod ffi;
 mod jit_bridge;
 mod jit_hook;
 mod native_hook;
 mod promise;
 mod verify_module;
-#[cfg(feature = "eval")]
-mod eval_host;
 
 /// The machine-level async substrate (promises, continuations, scheduling
 /// order). Relocated to the leaf crate [`zun_sched`] so the interpreter can
@@ -67,9 +67,7 @@ pub unsafe extern "C" fn zun_rt_run_embedded_u64(ptr: *const u8, len: u64) -> u6
     };
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
     match execute_aot(bytes) {
-        Ok(Value::Int(value, kind))
-            if kind.int_parts().is_some_and(|(_, signed)| !signed) =>
-        {
+        Ok(Value::Int(value, kind)) if kind.int_parts().is_some_and(|(_, signed)| !signed) => {
             value as u64
         }
         _ => u64::MAX,
@@ -79,11 +77,7 @@ pub unsafe extern "C" fn zun_rt_run_embedded_u64(ptr: *const u8, len: u64) -> u6
 /// Execute an embedded module and write a floating-point result for an AOT
 /// launcher. The return value is zero on success and negative on failure.
 #[no_mangle]
-pub unsafe extern "C" fn zun_rt_run_embedded_f64(
-    ptr: *const u8,
-    len: u64,
-    out: *mut f64,
-) -> i32 {
+pub unsafe extern "C" fn zun_rt_run_embedded_f64(ptr: *const u8, len: u64, out: *mut f64) -> i32 {
     if ptr.is_null() || out.is_null() {
         return -1;
     }
@@ -121,22 +115,23 @@ pub unsafe extern "C" fn zun_rt_run_embedded_print(ptr: *const u8, len: u64) -> 
     }
 }
 
-pub use ffi::{
-    library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringArgument, FfiStringLength,
-    FfiStringReturn, NativeLibrary,
-    NativeLibraryResolver,
-};
+#[cfg(feature = "eval")]
+pub use eval_host::CompilerEvalHost;
 pub use extension::{host_triple, ExtensionResolver, LoadedExtension};
 pub use extension_hook::{ExtensionCallHook, ExtensionLookup};
+pub use ffi::{
+    library_name_variants, FfiError, FfiScalar, FfiSignature, FfiStringArgument, FfiStringLength,
+    FfiStringReturn, NativeLibrary, NativeLibraryResolver,
+};
 pub use jit_hook::{JitHook, OsrRequest, OsrSnapshot};
 pub use native_hook::NativeCallHook;
 pub use promise::{
-    AsyncStateMachine, GeneratorIteratorResult, GeneratorStateMachine, GeneratorStep, MicrotaskQueue, Poll, Promise,
-    PromiseAwaiter, PromiseState, Scheduler,
+    AsyncStateMachine, GeneratorIteratorResult, GeneratorStateMachine, GeneratorStep,
+    MicrotaskQueue, Poll, Promise, PromiseAwaiter, PromiseState, Scheduler,
 };
-pub use verify_module::{verify_loaded_module, verify_method_range, verify_module, ModuleVerifyError};
-#[cfg(feature = "eval")]
-pub use eval_host::CompilerEvalHost;
+pub use verify_module::{
+    verify_loaded_module, verify_method_range, verify_module, ModuleVerifyError,
+};
 pub use zun_interp::{EvalError, EvalHost};
 
 /// Errors from loading or running a module.
@@ -219,8 +214,9 @@ pub fn execute_with_eval_host(
             zun_interp::run_with_eval_host(&module, output, Some(&hook), eval_host)
                 .map_err(VmError::Run)
         }
-        Err(_) => zun_interp::run_with_eval_host(&module, output, None, eval_host)
-            .map_err(VmError::Run),
+        Err(_) => {
+            zun_interp::run_with_eval_host(&module, output, None, eval_host).map_err(VmError::Run)
+        }
     }
 }
 
@@ -233,8 +229,13 @@ pub fn execute_with_native(
     native: &NativeCallHook,
 ) -> Result<Value, VmError> {
     let module = load(bytes)?;
-    let jit = zun_codegen::Jit::new(&module).ok().map(|jit| JitHook::new(jit, &module));
-    let hook = CombinedCallHook { jit, external: native };
+    let jit = zun_codegen::Jit::new(&module)
+        .ok()
+        .map(|jit| JitHook::new(jit, &module));
+    let hook = CombinedCallHook {
+        jit,
+        external: native,
+    };
     run_with(&module, output, Some(&hook)).map_err(VmError::Run)
 }
 
@@ -248,8 +249,13 @@ pub fn execute_with_extensions<L: ExtensionLookup>(
     extensions: &ExtensionCallHook<L>,
 ) -> Result<Value, VmError> {
     let module = load(bytes)?;
-    let jit = zun_codegen::Jit::new(&module).ok().map(|jit| JitHook::new(jit, &module));
-    let hook = CombinedCallHook { jit, external: extensions };
+    let jit = zun_codegen::Jit::new(&module)
+        .ok()
+        .map(|jit| JitHook::new(jit, &module));
+    let hook = CombinedCallHook {
+        jit,
+        external: extensions,
+    };
     run_with(&module, output, Some(&hook)).map_err(VmError::Run)
 }
 
@@ -289,7 +295,8 @@ impl<E: CallHook + ?Sized> CallHook for CombinedCallHook<'_, E> {
         signature: &[u8],
         args: &[Value],
     ) -> Option<Result<Value, RunError>> {
-        self.external.try_call_external_typed(module, name, signature, args)
+        self.external
+            .try_call_external_typed(module, name, signature, args)
     }
 
     fn append_roots(&self, roots: &mut Vec<zun_gc::Obj>) {
@@ -444,13 +451,17 @@ mod tests {
 
     #[test]
     fn embedded_runtime_hook_accepts_non_scalar_results_for_aot_fallback() {
-        let module = zun_compiler::compile("function main(): string { return \"managed\"; }").unwrap();
+        let module =
+            zun_compiler::compile("function main(): string { return \"managed\"; }").unwrap();
         let bytes = module.write();
         assert_eq!(
             unsafe { zun_rt_run_embedded_print(bytes.as_ptr(), bytes.len() as u64) },
             0
         );
-        assert_eq!(unsafe { zun_rt_run_embedded_print(std::ptr::null(), 0) }, -1);
+        assert_eq!(
+            unsafe { zun_rt_run_embedded_print(std::ptr::null(), 0) },
+            -1
+        );
     }
 
     #[test]
@@ -475,12 +486,16 @@ mod tests {
         let mut output = zun_interp::CaptureOutput::default();
         let error = execute_manifest_with_prelude(&loader, &manifest, 2, &mut output)
             .expect_err("stale prelude must fail before execution");
-        assert!(matches!(error, VmError::Load(zun_loader::LoadError::InvalidManifest(detail)) if detail.contains("fingerprint")));
+        assert!(
+            matches!(error, VmError::Load(zun_loader::LoadError::InvalidManifest(detail)) if detail.contains("fingerprint"))
+        );
     }
 
     #[test]
     fn native_execution_keeps_the_jit_hook_when_no_native_call_is_used() {
-        let bytes = zun_compiler::compile("function main(): int { return 31; }").unwrap().write();
+        let bytes = zun_compiler::compile("function main(): int { return 31; }")
+            .unwrap()
+            .write();
         let native = NativeCallHook::new();
         let mut output = zun_interp::CaptureOutput::default();
         assert!(matches!(
@@ -512,7 +527,8 @@ mod tests {
         assert!(jit.is_compiled(map_size_rid));
         assert!(jit.is_compiled(set_size_rid));
         let mut interpreter_output = zun_interp::CaptureOutput::default();
-        let interpreter = zun_interp::run(&module, &mut interpreter_output).expect("interpreter run");
+        let interpreter =
+            zun_interp::run(&module, &mut interpreter_output).expect("interpreter run");
         let mut jit_output = zun_interp::CaptureOutput::default();
         let jit = execute_with(&bytes, &mut jit_output).expect("JIT run");
         assert!(matches!(interpreter, Value::Int(2, zun_il::NumKind::U64)));
@@ -526,8 +542,8 @@ mod tests {
         let module = load(&bytes).expect("load allocation module");
 
         let mut interpreter_output = zun_interp::CaptureOutput::default();
-        let interpreted = zun_interp::run(&module, &mut interpreter_output)
-            .expect("interpreter allocation loop");
+        let interpreted =
+            zun_interp::run(&module, &mut interpreter_output).expect("interpreter allocation loop");
         let mut jit_output = zun_interp::CaptureOutput::default();
         let jitted = execute_with(&bytes, &mut jit_output).expect("JIT allocation loop");
 
@@ -542,8 +558,8 @@ mod tests {
         let module = load(&bytes).expect("load live-root module");
 
         let mut interpreter_output = zun_interp::CaptureOutput::default();
-        let interpreted = zun_interp::run(&module, &mut interpreter_output)
-            .expect("interpreter live-root loop");
+        let interpreted =
+            zun_interp::run(&module, &mut interpreter_output).expect("interpreter live-root loop");
         let mut jit_output = zun_interp::CaptureOutput::default();
         let jitted = execute_with(&bytes, &mut jit_output).expect("JIT live-root loop");
 
@@ -574,8 +590,8 @@ mod tests {
         let module = load(&bytes).expect("load managed-return module");
 
         let mut interpreter_output = zun_interp::CaptureOutput::default();
-        let interpreted = zun_interp::run(&module, &mut interpreter_output)
-            .expect("interpreter managed return");
+        let interpreted =
+            zun_interp::run(&module, &mut interpreter_output).expect("interpreter managed return");
         let mut jit_output = zun_interp::CaptureOutput::default();
         let jitted = execute_with(&bytes, &mut jit_output).expect("JIT managed return");
 
@@ -614,9 +630,14 @@ mod tests {
         .expect("compile native member reference")
         .write();
         let mut native = NativeCallHook::new();
-        native.register("kernel32", "GetCurrentProcessId", FfiSignature::new([], FfiScalar::I64));
+        native.register(
+            "kernel32",
+            "GetCurrentProcessId",
+            FfiSignature::new([], FfiScalar::I64),
+        );
         let mut output = zun_interp::CaptureOutput::default();
-        let result = execute_with_native(&bytes, &mut output, &native).expect("run native member reference");
+        let result =
+            execute_with_native(&bytes, &mut output, &native).expect("run native member reference");
         assert!(matches!(result, Value::Int(pid, zun_il::NumKind::I64) if pid > 0));
     }
 
@@ -635,10 +656,14 @@ mod tests {
         .expect("compile source extern function")
         .write();
         let mut native = NativeCallHook::new();
-        native.register("kernel32", "GetCurrentProcessId", FfiSignature::new([], FfiScalar::I64));
+        native.register(
+            "kernel32",
+            "GetCurrentProcessId",
+            FfiSignature::new([], FfiScalar::I64),
+        );
         let mut output = zun_interp::CaptureOutput::default();
-        let result = execute_with_native(&bytes, &mut output, &native)
-            .expect("run source extern function");
+        let result =
+            execute_with_native(&bytes, &mut output, &native).expect("run source extern function");
         assert!(matches!(result, Value::Int(pid, zun_il::NumKind::I64) if pid > 0));
     }
 
@@ -657,9 +682,14 @@ mod tests {
         .expect("compile f64 native member reference")
         .write();
         let mut native = NativeCallHook::new();
-        native.register("msvcrt", "sqrt", FfiSignature::new([FfiScalar::F64], FfiScalar::F64));
+        native.register(
+            "msvcrt",
+            "sqrt",
+            FfiSignature::new([FfiScalar::F64], FfiScalar::F64),
+        );
         let mut output = zun_interp::CaptureOutput::default();
-        let result = execute_with_native(&bytes, &mut output, &native).expect("run f64 native member reference");
+        let result = execute_with_native(&bytes, &mut output, &native)
+            .expect("run f64 native member reference");
         assert!(matches!(result, Value::Float(value, _) if (value - 3.0).abs() < f64::EPSILON));
     }
 
@@ -678,9 +708,14 @@ mod tests {
         .expect("compile bool native member reference")
         .write();
         let mut native = NativeCallHook::new();
-        native.register("kernel32", "IsDebuggerPresent", FfiSignature::new([], FfiScalar::Bool));
+        native.register(
+            "kernel32",
+            "IsDebuggerPresent",
+            FfiSignature::new([], FfiScalar::Bool),
+        );
         let mut output = zun_interp::CaptureOutput::default();
-        let result = execute_with_native(&bytes, &mut output, &native).expect("run bool native member reference");
+        let result = execute_with_native(&bytes, &mut output, &native)
+            .expect("run bool native member reference");
         assert!(matches!(result, Value::Bool(_)));
     }
 

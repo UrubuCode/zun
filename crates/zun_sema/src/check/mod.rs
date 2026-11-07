@@ -11,38 +11,38 @@ use std::collections::{HashMap, HashSet};
 use zun_common::{Diagnostic, Span};
 use zun_syntax::ast;
 
-#[path = "../closures.rs"]
-mod closures;
-#[path = "../class_layout.rs"]
-mod class_layout;
-#[path = "../field_init_hoist.rs"]
-mod field_init_hoist;
-#[path = "../classes.rs"]
-mod classes;
-#[path = "../conditions.rs"]
-mod conditions;
 #[path = "../blocks.rs"]
 mod blocks;
+#[path = "../boxed_locals.rs"]
+mod boxed_locals;
+#[path = "../capture_analysis.rs"]
+mod capture_analysis;
+#[path = "../class_layout.rs"]
+mod class_layout;
+#[path = "../classes.rs"]
+mod classes;
+#[path = "../closures.rs"]
+mod closures;
+#[path = "../conditions.rs"]
+mod conditions;
 #[path = "../default_args.rs"]
 mod default_args;
 #[path = "../diagnostics.rs"]
 mod diagnostics;
+#[path = "../field_init_hoist.rs"]
+mod field_init_hoist;
+#[path = "../function_context.rs"]
+mod function_context;
+#[path = "../function_reflect.rs"]
+mod function_reflect;
 #[path = "../module_resolution.rs"]
 mod module_resolution;
 #[path = "../native_types.rs"]
 mod native_types;
 #[path = "../numeric_literals.rs"]
 mod numeric_literals;
-#[path = "../function_context.rs"]
-mod function_context;
-#[path = "../boxed_locals.rs"]
-mod boxed_locals;
-#[path = "../capture_analysis.rs"]
-mod capture_analysis;
 #[path = "../poison.rs"]
 mod poison;
-#[path = "../function_reflect.rs"]
-mod function_reflect;
 #[path = "../type_expect.rs"]
 mod type_expect;
 
@@ -118,7 +118,14 @@ pub fn check_with_externals_core_gated(
     external_functions: &[ExternalFunction],
     allow_core: bool,
 ) -> hir::Program {
-    check_impl(source, program, diagnostics, external_functions, true, allow_core)
+    check_impl(
+        source,
+        program,
+        diagnostics,
+        external_functions,
+        true,
+        allow_core,
+    )
 }
 
 fn check_impl(
@@ -207,7 +214,9 @@ fn check_impl(
     // is checked so a forward reference resolves through `globalGet`.
     for statement in &program.top_level {
         if let ast::Stmt::Let { name, .. } = statement {
-            checker.module_globals.insert(checker.text(name).to_string());
+            checker
+                .module_globals
+                .insert(checker.text(name).to_string());
         }
     }
     {
@@ -226,15 +235,22 @@ fn check_impl(
         let mut top_assigned: HashSet<String> = HashSet::new();
         checker.collect_mutated_names(&program.top_level, &mut top_assigned);
         for statement in &program.top_level {
-            if let ast::Stmt::Let { name, init: ast::Expr::Function(_), .. } = statement {
+            if let ast::Stmt::Let {
+                name,
+                init: ast::Expr::Function(_),
+                ..
+            } = statement
+            {
                 let text = checker.text(name).to_string();
                 if top_assigned.contains(&text) {
                     assigned.insert(text);
                 }
             }
         }
-        checker.fn_mutated_globals =
-            assigned.into_iter().filter(|name| checker.module_globals.contains(name)).collect();
+        checker.fn_mutated_globals = assigned
+            .into_iter()
+            .filter(|name| checker.module_globals.contains(name))
+            .collect();
     }
 
     let mut functions: Vec<hir::Function> = Vec::new();
@@ -532,7 +548,6 @@ impl Checker<'_> {
     fn collect_mutated_names(&self, statements: &[ast::Stmt], names: &mut HashSet<String>) {
         capture_analysis::collect_mutated_names(self, statements, names);
     }
-
 }
 
 #[cfg(test)]
@@ -550,4 +565,3 @@ struct DecoratorTarget {
     /// A returned function is the field's initializer transform.
     transforms_field: bool,
 }
-

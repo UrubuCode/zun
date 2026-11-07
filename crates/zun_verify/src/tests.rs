@@ -230,7 +230,10 @@ fn fixture_valid_virtual_rest_array_calls() {
     let code = asm(&[
         Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
         Instruction::new(Opcode::ConstI32, Operand::Imm32(2)),
-        Instruction::new(Opcode::CallVirtRestArray, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::new(
+            Opcode::CallVirtRestArray,
+            Operand::Token(Token::new(TableKind::MethodDef, 1)),
+        ),
         Instruction::simple(Opcode::Ret),
     ]);
     check(&code, RETURNS).expect("valid virtual rest array call");
@@ -244,17 +247,26 @@ fn fixture_invalid_virtual_rest_array_fixed_call_with_negative_count() {
     )]);
     assert!(matches!(
         check(&code, VOID),
-        Err(VerifyError { kind: ErrorKind::UnknownCallArity, .. })
+        Err(VerifyError {
+            kind: ErrorKind::UnknownCallArity,
+            ..
+        })
     ));
 }
 
 #[test]
 fn fixture_valid_indirect_rest_call_with_explicit_argument_count() {
     let code = asm(&[
-        Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::new(
+            Opcode::LoadFunction,
+            Operand::Token(Token::new(TableKind::MethodDef, 1)),
+        ),
         Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
         Instruction::new(Opcode::ConstI32, Operand::Imm32(2)),
-        Instruction::new(Opcode::CallIndirectRest, Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), 2)),
+        Instruction::new(
+            Opcode::CallIndirectRest,
+            Operand::TokenImm32(Token::new(TableKind::MethodDef, 1), 2),
+        ),
         Instruction::simple(Opcode::Ret),
     ]);
     check(&code, RETURNS).expect("valid indirect rest call");
@@ -268,14 +280,20 @@ fn fixture_invalid_indirect_rest_call_with_negative_argument_count() {
     )]);
     assert!(matches!(
         check(&code, VOID),
-        Err(VerifyError { kind: ErrorKind::UnknownCallArity, .. })
+        Err(VerifyError {
+            kind: ErrorKind::UnknownCallArity,
+            ..
+        })
     ));
 }
 
 #[test]
 fn fixture_valid_indirect_n_call_with_explicit_argument_count() {
     let code = asm(&[
-        Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::new(
+            Opcode::LoadFunction,
+            Operand::Token(Token::new(TableKind::MethodDef, 1)),
+        ),
         Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
         Instruction::new(Opcode::ConstI32, Operand::Imm32(2)),
         Instruction::new(Opcode::ConstI32, Operand::Imm32(3)),
@@ -290,14 +308,20 @@ fn fixture_invalid_indirect_n_call_with_negative_argument_count() {
     let code = asm(&[Instruction::new(Opcode::CallIndirectN, Operand::Imm32(-1))]);
     assert!(matches!(
         check(&code, VOID),
-        Err(VerifyError { kind: ErrorKind::UnknownCallArity, .. })
+        Err(VerifyError {
+            kind: ErrorKind::UnknownCallArity,
+            ..
+        })
     ));
 }
 
 #[test]
 fn fixture_invalid_indirect_n_call_with_too_few_operands() {
     let code = asm(&[
-        Instruction::new(Opcode::LoadFunction, Operand::Token(Token::new(TableKind::MethodDef, 1))),
+        Instruction::new(
+            Opcode::LoadFunction,
+            Operand::Token(Token::new(TableKind::MethodDef, 1)),
+        ),
         Instruction::new(Opcode::ConstI32, Operand::Imm32(1)),
         Instruction::new(Opcode::CallIndirectN, Operand::Imm32(3)),
         Instruction::simple(Opcode::Ret),
@@ -410,7 +434,10 @@ fn fixture_valid_await_stack_effect() {
 
 #[test]
 fn fixture_invalid_await_underflow() {
-    let code = asm(&[Instruction::simple(Opcode::Await), Instruction::simple(Opcode::Ret)]);
+    let code = asm(&[
+        Instruction::simple(Opcode::Await),
+        Instruction::simple(Opcode::Ret),
+    ]);
     assert!(matches!(
         check(&code, VOID),
         Err(VerifyError {
@@ -432,10 +459,16 @@ fn fixture_valid_yield_stack_effect() {
 
 #[test]
 fn fixture_invalid_yield_underflow() {
-    let code = asm(&[Instruction::simple(Opcode::Yield), Instruction::simple(Opcode::Ret)]);
+    let code = asm(&[
+        Instruction::simple(Opcode::Yield),
+        Instruction::simple(Opcode::Ret),
+    ]);
     assert!(matches!(
         check(&code, VOID),
-        Err(VerifyError { kind: ErrorKind::StackUnderflow, .. })
+        Err(VerifyError {
+            kind: ErrorKind::StackUnderflow,
+            ..
+        })
     ));
 }
 
@@ -532,7 +565,10 @@ fn fixture_invalid_dynamic_value_load_underflow() {
     ]);
     assert!(matches!(
         check(&code, VOID),
-        Err(VerifyError { kind: ErrorKind::StackUnderflow, .. })
+        Err(VerifyError {
+            kind: ErrorKind::StackUnderflow,
+            ..
+        })
     ));
 }
 
@@ -786,10 +822,16 @@ fn fixture_invalid_unknown_call_arity() {
 #[test]
 fn fixture_valid_static_field_stack_effects() {
     let code = asm(&[
-        Instruction::new(Opcode::LoadStatic, Operand::Token(Token::new(TableKind::FieldDef, 1))),
+        Instruction::new(
+            Opcode::LoadStatic,
+            Operand::Token(Token::new(TableKind::FieldDef, 1)),
+        ),
         Instruction::simple(Opcode::Pop),
         Instruction::new(Opcode::ConstI64, Operand::Imm64(1)),
-        Instruction::new(Opcode::StoreStatic, Operand::Token(Token::new(TableKind::FieldDef, 1))),
+        Instruction::new(
+            Opcode::StoreStatic,
+            Operand::Token(Token::new(TableKind::FieldDef, 1)),
+        ),
         Instruction::simple(Opcode::Pop),
         Instruction::simple(Opcode::Ret),
     ]);
@@ -800,26 +842,38 @@ fn fixture_valid_static_field_stack_effects() {
 #[test]
 fn fixture_invalid_static_store_underflow() {
     let code = asm(&[
-        Instruction::new(Opcode::StoreStatic, Operand::Token(Token::new(TableKind::FieldDef, 1))),
+        Instruction::new(
+            Opcode::StoreStatic,
+            Operand::Token(Token::new(TableKind::FieldDef, 1)),
+        ),
         Instruction::simple(Opcode::Ret),
     ]);
     let resolve = |_: Opcode, _: &Operand| Some((0, 1));
     assert!(matches!(
         verify(&code, VOID, &resolve),
-        Err(VerifyError { kind: ErrorKind::StackUnderflow, .. })
+        Err(VerifyError {
+            kind: ErrorKind::StackUnderflow,
+            ..
+        })
     ));
 }
 
 #[test]
 fn fixture_invalid_static_load_return_height() {
     let code = asm(&[
-        Instruction::new(Opcode::LoadStatic, Operand::Token(Token::new(TableKind::FieldDef, 1))),
+        Instruction::new(
+            Opcode::LoadStatic,
+            Operand::Token(Token::new(TableKind::FieldDef, 1)),
+        ),
         Instruction::simple(Opcode::Ret),
     ]);
     let resolve = |_: Opcode, _: &Operand| Some((0, 1));
     assert!(matches!(
         verify(&code, VOID, &resolve),
-        Err(VerifyError { kind: ErrorKind::BadReturnHeight { .. }, .. })
+        Err(VerifyError {
+            kind: ErrorKind::BadReturnHeight { .. },
+            ..
+        })
     ));
 }
 
@@ -1037,7 +1091,10 @@ fn fixture_valid_import_dynamic_stack_effect() {
 
 #[test]
 fn fixture_invalid_import_dynamic_underflow() {
-    let code = asm(&[Instruction::simple(Opcode::ImportDynamic), Instruction::simple(Opcode::Ret)]);
+    let code = asm(&[
+        Instruction::simple(Opcode::ImportDynamic),
+        Instruction::simple(Opcode::Ret),
+    ]);
     assert!(matches!(
         check(&code, VOID),
         Err(VerifyError {

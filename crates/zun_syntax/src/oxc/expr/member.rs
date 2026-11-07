@@ -66,7 +66,10 @@ pub(super) fn decompose_member(
     let object_expr = convert_expression(source, object_ast)?;
     let object = if bind_object {
         binds.push(object_expr);
-        Expr::ChainRoot { depth: count - 1, span: object_span }
+        Expr::ChainRoot {
+            depth: count - 1,
+            span: object_span,
+        }
     } else {
         object_expr
     };
@@ -76,7 +79,10 @@ pub(super) fn decompose_member(
             let key_expr = convert_expression(source, key)?;
             Some(if bind_key {
                 binds.push(key_expr);
-                Expr::ChainRoot { depth: 0, span: key_span }
+                Expr::ChainRoot {
+                    depth: 0,
+                    span: key_span,
+                }
             } else {
                 key_expr
             })
@@ -85,10 +91,16 @@ pub(super) fn decompose_member(
     };
     Ok(match member {
         MemberRef::Static(m) => {
-            let field = Name { span: span(m.property.span) };
+            let field = Name {
+                span: span(m.property.span),
+            };
             (
                 binds,
-                Expr::Field { object: Box::new(object.clone()), field, span: span(m.span) },
+                Expr::Field {
+                    object: Box::new(object.clone()),
+                    field,
+                    span: span(m.span),
+                },
                 MemberStore::Field { object, field },
             )
         }
@@ -105,7 +117,9 @@ pub(super) fn decompose_member(
             )
         }
         MemberRef::Private(m) => {
-            let field = Name { span: span(m.field.span) };
+            let field = Name {
+                span: span(m.field.span),
+            };
             let private = Expr::PrivateField {
                 object: Box::new(object),
                 field,
@@ -114,7 +128,10 @@ pub(super) fn decompose_member(
             (
                 binds,
                 private.clone(),
-                MemberStore::Field { object: private, field },
+                MemberStore::Field {
+                    object: private,
+                    field,
+                },
             )
         }
     })
@@ -124,12 +141,19 @@ pub(super) fn decompose_member(
 pub(super) fn wrap_binds(binds: Vec<Expr>, body: Expr, span: Span) -> Expr {
     let mut result = body;
     for value in binds.into_iter().rev() {
-        result = Expr::TempBind { value: Box::new(value), body: Box::new(result), span };
+        result = Expr::TempBind {
+            value: Box::new(value),
+            body: Box::new(result),
+            span,
+        };
     }
     result
 }
 
-pub(super) fn convert_computed_member(source: &str, member: &oxc_ast::ast::ComputedMemberExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_computed_member(
+    source: &str,
+    member: &oxc_ast::ast::ComputedMemberExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let object = Box::new(convert_expression(source, &member.object)?);
     // `obj['name']` with a plain identifier-shaped literal is `obj.name`.
@@ -138,11 +162,21 @@ pub(super) fn convert_computed_member(source: &str, member: &oxc_ast::ast::Compu
             && (text.span.end - text.span.start) as usize
                 == text.value.as_str().map_or(0, str::len) + 2
         {
-            let field = Name { span: Span::new(text.span.start + 1, text.span.end - 1) };
+            let field = Name {
+                span: Span::new(text.span.start + 1, text.span.end - 1),
+            };
             return Ok(if member.optional {
-                Expr::OptionalField { object, field, span: span(member.span) }
+                Expr::OptionalField {
+                    object,
+                    field,
+                    span: span(member.span),
+                }
             } else {
-                Expr::Field { object, field, span: span(member.span) }
+                Expr::Field {
+                    object,
+                    field,
+                    span: span(member.span),
+                }
             });
         }
     }
@@ -161,29 +195,48 @@ pub(super) fn convert_computed_member(source: &str, member: &oxc_ast::ast::Compu
     })
 }
 
-pub(super) fn convert_private_in(source: &str, private_in: &oxc_ast::ast::PrivateInExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_private_in(
+    source: &str,
+    private_in: &oxc_ast::ast::PrivateInExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     // `#x in obj` is a brand check: resolve `#x` to the innermost
     // lexical class declaring it, then test `obj instanceof Class`
     // (instance members) or `obj === Class` (static members).
     let name = private_in.left.name.to_string();
     let found = PRIVATE_SCOPES.with(|scopes| {
-        scopes.borrow().iter().rev().find_map(|(class_span, names)| {
-            names.iter().find(|(n, _)| *n == name).map(|(_, is_static)| (*class_span, *is_static))
-        })
+        scopes
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(class_span, names)| {
+                names
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, is_static)| (*class_span, *is_static))
+            })
     });
     let Some((class_span, is_static)) = found else {
-        return Err(format!("OXC adapter: unknown private name `#{name}` in brand check"));
+        return Err(format!(
+            "OXC adapter: unknown private name `#{name}` in brand check"
+        ));
     };
     Ok(Expr::Binary {
-        op: if is_static { BinaryOp::Eq } else { BinaryOp::Instanceof },
+        op: if is_static {
+            BinaryOp::Eq
+        } else {
+            BinaryOp::Instanceof
+        },
         lhs: Box::new(convert_expression(source, &private_in.right)?),
         rhs: Box::new(Expr::Ident(Name { span: class_span })),
         span: span(private_in.span),
     })
 }
 
-pub(super) fn convert_static_member(source: &str, member: &oxc_ast::ast::StaticMemberExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_static_member(
+    source: &str,
+    member: &oxc_ast::ast::StaticMemberExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let object = Box::new(convert_expression(source, &member.object)?);
     let field = Name {
@@ -204,7 +257,10 @@ pub(super) fn convert_static_member(source: &str, member: &oxc_ast::ast::StaticM
     }
 }
 
-pub(super) fn convert_private_field(source: &str, member: &oxc_ast::ast::PrivateFieldExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_private_field(
+    source: &str,
+    member: &oxc_ast::ast::PrivateFieldExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     if member.optional {
         return Err("OXC adapter does not support optional private members yet".into());

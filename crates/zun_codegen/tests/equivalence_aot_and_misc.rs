@@ -15,11 +15,8 @@ fn aot_object_contains_the_eligible_entry_point() {
 #[test]
 fn aot_object_can_select_the_host_target_explicitly() {
     let module = compile("function main(): int { return 7; }");
-    let object = zun_codegen::compile_object_for_target(
-        &module,
-        target_lexicon::Triple::host(),
-    )
-    .expect("emit host-targeted object");
+    let object = zun_codegen::compile_object_for_target(&module, target_lexicon::Triple::host())
+        .expect("emit host-targeted object");
     assert!(!object.is_empty());
 }
 
@@ -60,7 +57,9 @@ fn aot_rejects_an_ineligible_entry_before_linking() {
 fn aot_object_contains_a_relocatable_string_literal() {
     let module = compile("function main(): string { return \"managed\"; }");
     let object = zun_codegen::compile_object(&module).expect("emit string object");
-    assert!(object.windows(b"managed".len()).any(|bytes| bytes == b"managed"));
+    assert!(object
+        .windows(b"managed".len())
+        .any(|bytes| bytes == b"managed"));
 }
 
 #[test]
@@ -96,7 +95,10 @@ fn object_array_store_is_jit_eligible_and_preserves_pointer_abi() {
         .map(|index| index as u32 + 1)
         .expect("write method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles object array store");
-    assert!(jit.is_compiled(write_rid), "object array writer should be eligible");
+    assert!(
+        jit.is_compiled(write_rid),
+        "object array writer should be eligible"
+    );
 
     let mut heap = zun_gc::Heap::new();
     let array = heap.alloc_array(1);
@@ -129,7 +131,10 @@ fn boolean_object_field_is_jit_equivalent() {
         .map(|index| index as u32 + 1)
         .expect("read method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles boolean field reader");
-    assert!(jit.is_compiled(read_rid), "boolean field reader should be eligible");
+    assert!(
+        jit.is_compiled(read_rid),
+        "boolean field reader should be eligible"
+    );
 
     let mut heap = zun_gc::Heap::new();
     let flag = heap.alloc(1, 1);
@@ -155,7 +160,10 @@ fn interned_string_field_read_is_jit_equivalent() {
         .map(|index| index as u32 + 1)
         .expect("read method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
-    assert!(jit.is_compiled(read_rid), "interned string field read should be eligible");
+    assert!(
+        jit.is_compiled(read_rid),
+        "interned string field read should be eligible"
+    );
     let mut heap = zun_gc::Heap::new();
     let named = heap.alloc(1, 1);
     let handle = heap.intern_string(std::rc::Rc::from("hello"));
@@ -218,8 +226,14 @@ fn interned_string_field_constructor_is_jit_equivalent() {
         .map(|index| index as u32 + 1)
         .expect("read method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
-    assert!(jit.is_compiled(make_rid), "string-field constructor should be eligible");
-    assert!(jit.is_compiled(read_rid), "string-field read should be eligible");
+    assert!(
+        jit.is_compiled(make_rid),
+        "string-field constructor should be eligible"
+    );
+    assert!(
+        jit.is_compiled(read_rid),
+        "string-field read should be eligible"
+    );
     let mut heap = zun_gc::Heap::new();
     let object = jit
         .call_packed_with_heap(make_rid, &[], &mut heap)
@@ -248,7 +262,10 @@ fn interned_string_field_store_is_jit_equivalent() {
         .map(|index| index as u32 + 1)
         .expect("set method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
-    assert!(jit.is_compiled(set_rid), "interned string field store should be eligible");
+    assert!(
+        jit.is_compiled(set_rid),
+        "interned string field store should be eligible"
+    );
     let mut heap = zun_gc::Heap::new();
     let named = heap.alloc(1, 1);
     let handle = heap.intern_string(std::rc::Rc::from("updated"));
@@ -294,9 +311,8 @@ fn template_literals_match_interpreter_and_jit_fallback() {
     // A string-only template literal lowers to `ConstStr`/`Concat`, which the
     // typed JIT now compiles (the ConstStr gate admits literal-fed `Concat`). The
     // JIT result must match the interpreter's.
-    let module = compile(
-        "function main(): string { let name: string = \"Zun\"; return `hello ${name}!`; }",
-    );
+    let module =
+        compile("function main(): string { let name: string = \"Zun\"; return `hello ${name}!`; }");
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
     assert!(jit.is_compiled(entry));
@@ -310,9 +326,8 @@ fn template_literals_match_interpreter_and_jit_fallback() {
 
 #[test]
 fn template_literals_convert_numbers_through_the_native_floor() {
-    let module = compile(
-        "function main(): string { let value: number = 12.5; return `value=${value}`; }",
-    );
+    let module =
+        compile("function main(): string { let value: number = 12.5; return `value=${value}`; }");
     let entry = module.entry_point.unwrap().rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
     assert!(!jit.is_compiled(entry));
@@ -353,9 +368,7 @@ fn bigint_operations_preserve_the_tier0_fallback_boundary() {
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
-
 // ---- Regex literals (`/pattern/flags`) lower to `new RegExp(pattern, flags)` ----
-
 
 #[test]
 fn regex_literal_test_method() {
@@ -383,15 +396,30 @@ fn regex_literal_slash_in_class_and_escape() {
 
 #[test]
 fn regex_literal_after_assign_paren_comma_and_return() {
-    assert_regex_program("let r = /b+/; if (r.test(\"abbc\")) { return 1; } return 0;", 1);
-    assert_regex_program("let r = /z/; let s = \"zz\"; if (s.search(r) == 0) { return 1; } return 0;", 1);
+    assert_regex_program(
+        "let r = /b+/; if (r.test(\"abbc\")) { return 1; } return 0;",
+        1,
+    );
+    assert_regex_program(
+        "let r = /z/; let s = \"zz\"; if (s.search(r) == 0) { return 1; } return 0;",
+        1,
+    );
 }
 
 #[test]
 fn division_is_not_mistaken_for_regex() {
-    assert_regex_program("let a = 8; let b = 2; if (a / b == 4) { return 1; } return 0;", 1);
-    assert_regex_program("let x = 9; let y = 3; if ((x) / y == 3) { return 1; } return 0;", 1);
-    assert_regex_program("let a = 100; let b = 5; let c = 2; if (a / b / c == 10) { return 1; } return 0;", 1);
+    assert_regex_program(
+        "let a = 8; let b = 2; if (a / b == 4) { return 1; } return 0;",
+        1,
+    );
+    assert_regex_program(
+        "let x = 9; let y = 3; if ((x) / y == 3) { return 1; } return 0;",
+        1,
+    );
+    assert_regex_program(
+        "let a = 100; let b = 5; let c = 2; if (a / b / c == 10) { return 1; } return 0;",
+        1,
+    );
     assert_regex_program("if (12 / 4 == 3) { return 1; } return 0;", 1);
 }
 
@@ -422,9 +450,8 @@ fn typeof_folds_to_static_type_strings() {
 fn typeof_symbol_and_function() {
     let sym = compile("function main(): string { return typeof Symbol(); }");
     assert!(matches!(interp_entry(&sym), Value::Str(value) if value.as_ref() == "symbol"));
-    let func = compile(
-        "function helper(): void { } function main(): string { return typeof helper; }",
-    );
+    let func =
+        compile("function helper(): void { } function main(): string { return typeof helper; }");
     assert!(matches!(interp_entry(&func), Value::Str(value) if value.as_ref() == "function"));
 }
 
@@ -524,7 +551,10 @@ fn string_plus_uses_the_managed_concat_abi() {
         .expect("measure method") as u32
         + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(rid), "string `+` method should be JIT-eligible");
+    assert!(
+        jit.is_compiled(rid),
+        "string `+` method should be JIT-eligible"
+    );
 
     let mut heap = zun_gc::Heap::new();
     let left = heap.intern_string(std::rc::Rc::from("zun "));
@@ -551,7 +581,10 @@ fn static_field_round_trips_through_the_jit_store() {
         .expect("measure method") as u32
         + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(rid), "static-field method should be JIT-eligible");
+    assert!(
+        jit.is_compiled(rid),
+        "static-field method should be JIT-eligible"
+    );
 
     let mut heap = zun_gc::Heap::new();
     let result = jit
@@ -575,7 +608,10 @@ fn static_float_field_round_trips_through_the_jit_store() {
         .expect("measure method") as u32
         + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(rid), "float static method should be JIT-eligible");
+    assert!(
+        jit.is_compiled(rid),
+        "float static method should be JIT-eligible"
+    );
 
     let mut heap = zun_gc::Heap::new();
     let bits = jit
@@ -618,25 +654,47 @@ fn data_view_extended_scalar_widths_use_the_typed_view_abi() {
     );
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     for rid in [set_i8, set_i16, set_i32, set_f32, get_i32, get_f32] {
-        assert!(jit.is_compiled(rid), "extended DataView method should be JIT-eligible");
+        assert!(
+            jit.is_compiled(rid),
+            "extended DataView method should be JIT-eligible"
+        );
     }
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(16);
     let view = heap.alloc_data_view(buffer, 0, 16).expect("data view");
 
     // -5 as an unsigned i8 byte is 251; it must round-trip as signed -5.
-    assert!(matches!(jit.call_packed_with_heap(set_i8, &[view.addr() as u64, 0, 251], &mut heap), Ok(1)));
+    assert!(matches!(
+        jit.call_packed_with_heap(set_i8, &[view.addr() as u64, 0, 251], &mut heap),
+        Ok(1)
+    ));
     assert_eq!(heap.data_view_get_i8(view, 0), Some(-5));
     // -1000 as a u16 is 64536.
-    assert!(matches!(jit.call_packed_with_heap(set_i16, &[view.addr() as u64, 2, 64536, 1], &mut heap), Ok(1)));
+    assert!(matches!(
+        jit.call_packed_with_heap(set_i16, &[view.addr() as u64, 2, 64536, 1], &mut heap),
+        Ok(1)
+    ));
     assert_eq!(heap.data_view_get_i16(view, 2, true), Some(-1000));
-    assert!(matches!(jit.call_packed_with_heap(set_i32, &[view.addr() as u64, 4, 0x1234_5678, 1], &mut heap), Ok(1)));
+    assert!(matches!(
+        jit.call_packed_with_heap(set_i32, &[view.addr() as u64, 4, 0x1234_5678, 1], &mut heap),
+        Ok(1)
+    ));
     assert_eq!(heap.data_view_get_i32(view, 4, true), Some(0x1234_5678));
-    assert!(matches!(jit.call_packed_with_heap(set_f32, &[view.addr() as u64, 8, 2.5f32.to_bits() as u64, 1], &mut heap), Ok(1)));
+    assert!(matches!(
+        jit.call_packed_with_heap(
+            set_f32,
+            &[view.addr() as u64, 8, 2.5f32.to_bits() as u64, 1],
+            &mut heap
+        ),
+        Ok(1)
+    ));
     assert_eq!(heap.data_view_get_f32(view, 8, true), Some(2.5));
 
     // Reads back through the JIT.
-    assert!(matches!(jit.call_packed_with_heap(get_i32, &[view.addr() as u64, 4, 1], &mut heap), Ok(0x1234_5678)));
+    assert!(matches!(
+        jit.call_packed_with_heap(get_i32, &[view.addr() as u64, 4, 1], &mut heap),
+        Ok(0x1234_5678)
+    ));
     assert!(matches!(
         jit.call_packed_with_heap(get_f32, &[view.addr() as u64, 8, 1], &mut heap),
         Ok(value) if f32::from_bits(value as u32) == 2.5
@@ -659,7 +717,10 @@ fn string_literal_plus_variable_is_jit_eligible() {
         .expect("greet method") as u32
         + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(rid), "literal + variable concat should be JIT-eligible");
+    assert!(
+        jit.is_compiled(rid),
+        "literal + variable concat should be JIT-eligible"
+    );
 
     let mut heap = zun_gc::Heap::new();
     let name = heap.intern_string(std::rc::Rc::from("world"));

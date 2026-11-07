@@ -901,10 +901,18 @@ pub enum Expr {
     ChainRoot { depth: u32, span: Span },
     /// Evaluates `value` once into a temporary, then evaluates `body` with
     /// [`Expr::ChainRoot`] (depth 0 = innermost binding) referring to it.
-    TempBind { value: Box<Expr>, body: Box<Expr>, span: Span },
+    TempBind {
+        value: Box<Expr>,
+        body: Box<Expr>,
+        span: Span,
+    },
     /// `object?.<rest of chain>`: evaluates `object`; if nullish the whole
     /// chain is `undefined`, else `body` runs with [`Expr::ChainRoot`] bound to it.
-    OptionalChain { object: Box<Expr>, body: Box<Expr>, span: Span },
+    OptionalChain {
+        object: Box<Expr>,
+        body: Box<Expr>,
+        span: Span,
+    },
     /// `object?.method(args)` — a null-safe managed method call.
     OptionalMethodCall {
         object: Box<Expr>,
@@ -1056,7 +1064,8 @@ pub const SYNTHETIC_NAME_BASE: u32 = 0xF000_0000;
 pub const NAMED_SYNTHETIC_BASE: u32 = SYNTHETIC_NAME_BASE + 0x0A00_0000;
 
 fn synthetic_registry() -> &'static std::sync::Mutex<Vec<String>> {
-    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
+    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> =
+        std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
@@ -1070,7 +1079,9 @@ pub fn synthetic_ident(text: &str) -> Name {
             registry.len() - 1
         }
     } as u32;
-    Name { span: Span::new(NAMED_SYNTHETIC_BASE + index, NAMED_SYNTHETIC_BASE + index) }
+    Name {
+        span: Span::new(NAMED_SYNTHETIC_BASE + index, NAMED_SYNTHETIC_BASE + index),
+    }
 }
 
 /// The text of a named synthetic identifier made by [`synthetic_ident`].
@@ -1079,5 +1090,7 @@ pub fn synthetic_ident_text(name: Name) -> Option<String> {
         return None;
     }
     let registry = synthetic_registry().lock().expect("synthetic registry");
-    registry.get((name.span.start - NAMED_SYNTHETIC_BASE) as usize).cloned()
+    registry
+        .get((name.span.start - NAMED_SYNTHETIC_BASE) as usize)
+        .cloned()
 }

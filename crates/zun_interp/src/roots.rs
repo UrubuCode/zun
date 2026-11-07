@@ -63,15 +63,12 @@ pub(super) fn collect_and_compact_current(
     let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
     let mut rewritten = 0;
     zun_gc::with_current_heap_mut(|heap| unsafe {
-        let result = heap.collect_and_compact_with_relocation(
-            &mut roots,
-            &ref_fn,
-            &mut |relocation| {
+        let result =
+            heap.collect_and_compact_with_relocation(&mut roots, &ref_fn, &mut |relocation| {
                 rewritten += Value::rewrite_managed_references(stack, relocation);
                 rewritten += Value::rewrite_managed_references(locals, relocation);
                 rewrite_external(relocation);
-            },
-        );
+            });
         result.reclaimed_objects + rewritten
     })
 }
@@ -103,11 +100,7 @@ fn collect_with_policy(
 }
 
 /// Add object references found in a frame's stack and locals to `roots`.
-pub(crate) fn collect_frame_roots(
-    stack: &[Value],
-    locals: &[Value],
-    roots: &mut Vec<zun_gc::Obj>,
-) {
+pub(crate) fn collect_frame_roots(stack: &[Value], locals: &[Value], roots: &mut Vec<zun_gc::Obj>) {
     for value in stack.iter().chain(locals.iter()) {
         match value {
             Value::Object(object) => roots.push(*object),

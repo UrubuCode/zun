@@ -21,7 +21,10 @@ impl Checker<'_> {
                     let Some(builtin) = self.resolve_collection(span, "objectAssign") else {
                         continue;
                     };
-                    entries.push(hir::ObjectEntry::Install { builtin, args: vec![source] });
+                    entries.push(hir::ObjectEntry::Install {
+                        builtin,
+                        args: vec![source],
+                    });
                 }
                 ast::ObjectMember::Property(property) => {
                     self.lower_object_property(cx, property, span, &mut entries);
@@ -65,7 +68,8 @@ impl Checker<'_> {
                 if named_key.is_some() {
                     if let ast::Expr::Function(function) = &property.value {
                         if !function.is_arrow {
-                            let body = &self.source[function.span.start as usize..function.span.end as usize];
+                            let body = &self.source
+                                [function.span.start as usize..function.span.end as usize];
                             self.closure_takes_this = body.contains("this");
                         }
                     }
@@ -100,7 +104,10 @@ impl Checker<'_> {
                         None
                     };
                     if let Some((builtin, key)) = slot_builtin {
-                        entries.push(hir::ObjectEntry::Install { builtin, args: vec![key, checked] });
+                        entries.push(hir::ObjectEntry::Install {
+                            builtin,
+                            args: vec![key, checked],
+                        });
                         return;
                     }
                     self.error(span, "a computed method key must be a string or a Symbol");
@@ -126,7 +133,8 @@ impl Checker<'_> {
                     }),
                     _ => false,
                 };
-                let computed_string = matches!(&key, hir::ObjectKey::Computed(k) if k.ty == Ty::String);
+                let computed_string =
+                    matches!(&key, hir::ObjectKey::Computed(k) if k.ty == Ty::String);
                 if let (true, Some(define_id)) = (replaces_accessor || computed_string, define) {
                     let key_expr = match key {
                         hir::ObjectKey::Named(name) => Self::string_literal(name, span),
@@ -140,15 +148,33 @@ impl Checker<'_> {
                                         key: hir::ObjectKey::Named("value".to_string()),
                                         value,
                                     },
-                                    decorator_context_entry("writable", hir::ExprKind::Boolean(true), Ty::Boolean, span),
-                                    decorator_context_entry("enumerable", hir::ExprKind::Boolean(true), Ty::Boolean, span),
-                                    decorator_context_entry("configurable", hir::ExprKind::Boolean(true), Ty::Boolean, span),
+                                    decorator_context_entry(
+                                        "writable",
+                                        hir::ExprKind::Boolean(true),
+                                        Ty::Boolean,
+                                        span,
+                                    ),
+                                    decorator_context_entry(
+                                        "enumerable",
+                                        hir::ExprKind::Boolean(true),
+                                        Ty::Boolean,
+                                        span,
+                                    ),
+                                    decorator_context_entry(
+                                        "configurable",
+                                        hir::ExprKind::Boolean(true),
+                                        Ty::Boolean,
+                                        span,
+                                    ),
                                 ],
                             },
                             ty: Ty::DynamicObject,
                             span,
                         };
-                        entries.push(hir::ObjectEntry::Install { builtin: define_id, args: vec![key_expr, descriptor] });
+                        entries.push(hir::ObjectEntry::Install {
+                            builtin: define_id,
+                            args: vec![key_expr, descriptor],
+                        });
                         return;
                     }
                 }
@@ -158,7 +184,8 @@ impl Checker<'_> {
                 // A method that mentions `this` receives the object as a hidden
                 // first parameter (see `closure_takes_this`).
                 if let ast::Expr::Function(function) = &property.value {
-                    let body = &self.source[function.span.start as usize..function.span.end as usize];
+                    let body =
+                        &self.source[function.span.start as usize..function.span.end as usize];
                     self.closure_takes_this = body.contains("this");
                 }
                 let func = self.check_expr(cx, &property.value);
@@ -189,10 +216,7 @@ impl Checker<'_> {
                                 });
                             }
                         } else {
-                            self.error(
-                                span,
-                                "a computed method key must be a string or a Symbol",
-                            );
+                            self.error(span, "a computed method key must be a string or a Symbol");
                         }
                     }
                     _ => {
@@ -215,12 +239,17 @@ impl Checker<'_> {
                     return;
                 };
                 if let ast::Expr::Function(function) = &property.value {
-                    let body = &self.source[function.span.start as usize..function.span.end as usize];
+                    let body =
+                        &self.source[function.span.start as usize..function.span.end as usize];
                     self.closure_takes_this = body.contains("this");
                 }
                 let func = self.check_expr(cx, &property.value);
                 self.closure_takes_this = false;
-                let accessor_slot = if property.kind == ast::PropertyKind::Get { "get" } else { "set" };
+                let accessor_slot = if property.kind == ast::PropertyKind::Get {
+                    "get"
+                } else {
+                    "set"
+                };
                 // Build the accessor descriptor `{ get|set: fn }` as a dynamic
                 // object (the function lives in its string function slot), then
                 // install it with objectDefineProperty — the same model
@@ -342,12 +371,12 @@ impl Checker<'_> {
     pub(in crate::check) fn tag_is_string_raw(&self, tag: &ast::Expr) -> bool {
         let (object, field) = match tag {
             ast::Expr::Field { object, field, .. } => {
-                let ast::Expr::Ident(name) = object.as_ref() else { return false };
+                let ast::Expr::Ident(name) = object.as_ref() else {
+                    return false;
+                };
                 (self.text(name), self.text(field))
             }
-            ast::Expr::StaticField { class, field, .. } => {
-                (self.text(class), self.text(field))
-            }
+            ast::Expr::StaticField { class, field, .. } => (self.text(class), self.text(field)),
             _ => return false,
         };
         object == "String" && field == "raw" && !self.by_name.contains_key("String")
@@ -385,7 +414,10 @@ impl Checker<'_> {
             let next = if value.ty == Ty::F64 {
                 match zun_natives::resolve("number", "toString") {
                     Some((id, _)) => hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![value],
+                        },
                         ty: Ty::String,
                         span,
                     },

@@ -81,12 +81,21 @@ impl<'a> Checker<'a> {
             let fields = self
                 .full_fields(index as u32)
                 .into_iter()
-                .map(|(name, ty, is_static, is_private)| hir::ClassField { name, ty, is_static, is_private })
+                .map(|(name, ty, is_static, is_private)| hir::ClassField {
+                    name,
+                    ty,
+                    is_static,
+                    is_private,
+                })
                 .collect();
             out.push(hir::Class {
                 name: self.text(&c.name).to_string(),
                 base: self.classes[index].base,
-                decorators: c.decorators.iter().map(|d| self.lower_decorator(d)).collect(),
+                decorators: c
+                    .decorators
+                    .iter()
+                    .map(|d| self.lower_decorator(d))
+                    .collect(),
                 fields,
                 methods: Vec::new(), // filled after signatures assign indices
             });

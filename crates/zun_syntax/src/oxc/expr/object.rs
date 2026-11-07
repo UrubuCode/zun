@@ -1,6 +1,9 @@
 use super::*;
 
-pub(super) fn convert_object_literal(source: &str, object: &oxc_ast::ast::ObjectExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_object_literal(
+    source: &str,
+    object: &oxc_ast::ast::ObjectExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut properties = Vec::with_capacity(object.properties.len());
     for property in &object.properties {
@@ -32,11 +35,9 @@ pub(super) fn convert_object_literal(source: &str, object: &oxc_ast::ast::Object
             crate::ast::PropertyKey::Computed(Box::new(convert_expression(source, key_expression)?))
         } else {
             match &property.key {
-                PropertyKey::StaticIdentifier(identifier) => {
-                    crate::ast::PropertyKey::Ident(Name {
-                        span: span(identifier.span),
-                    })
-                }
+                PropertyKey::StaticIdentifier(identifier) => crate::ast::PropertyKey::Ident(Name {
+                    span: span(identifier.span),
+                }),
                 PropertyKey::StringLiteral(string) => {
                     let value = js_str_to_string(string.value);
                     crate::ast::PropertyKey::String {
@@ -69,11 +70,13 @@ pub(super) fn convert_object_literal(source: &str, object: &oxc_ast::ast::Object
                 convert_oxc_function(source, function)?
             }
         };
-        properties.push(crate::ast::ObjectMember::Property(crate::ast::ObjectProperty {
-            key,
-            value,
-            kind: member_kind,
-        }));
+        properties.push(crate::ast::ObjectMember::Property(
+            crate::ast::ObjectProperty {
+                key,
+                value,
+                kind: member_kind,
+            },
+        ));
     }
     Ok(Expr::ObjectLiteral {
         properties,
@@ -81,7 +84,10 @@ pub(super) fn convert_object_literal(source: &str, object: &oxc_ast::ast::Object
     })
 }
 
-pub(super) fn convert_array_literal(source: &str, array: &oxc_ast::ast::ArrayExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_array_literal(
+    source: &str,
+    array: &oxc_ast::ast::ArrayExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut elements = Vec::with_capacity(array.elements.len());
     for element in &array.elements {
@@ -90,19 +96,18 @@ pub(super) fn convert_array_literal(source: &str, array: &oxc_ast::ast::ArrayExp
                 elements.push(crate::ast::ArrayElement::Hole);
             }
             ArrayExpressionElement::SpreadElement(spread) => {
-                elements.push(crate::ast::ArrayElement::Spread(
-                    convert_expression(source, &spread.argument)?,
-                ));
+                elements.push(crate::ast::ArrayElement::Spread(convert_expression(
+                    source,
+                    &spread.argument,
+                )?));
             }
             other => {
                 let Some(expression) = other.as_expression() else {
-                    return Err(
-                        "OXC adapter expected an array element expression".into()
-                    );
+                    return Err("OXC adapter expected an array element expression".into());
                 };
-                elements.push(crate::ast::ArrayElement::Expr(
-                    convert_expression(source, expression)?,
-                ));
+                elements.push(crate::ast::ArrayElement::Expr(convert_expression(
+                    source, expression,
+                )?));
             }
         }
     }

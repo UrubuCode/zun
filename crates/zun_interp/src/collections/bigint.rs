@@ -33,11 +33,17 @@ impl<'a> Interp<'a> {
                 "TypeError: BigInts have no unsigned right shift, use >> instead".into(),
             )),
             "bigIntPow" | "bigIntAnd" | "bigIntOr" | "bigIntXor" | "bigIntShl" | "bigIntShr" => {
-                let left = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let right = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let left =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let right =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let (left, right) = zun_gc::with_current_heap(|heap| {
-                    Some((heap.bigint_value(left)?.clone(), heap.bigint_value(right)?.clone()))
-                }).ok_or(RunError::BadToken)?;
+                    Some((
+                        heap.bigint_value(left)?.clone(),
+                        heap.bigint_value(right)?.clone(),
+                    ))
+                })
+                .ok_or(RunError::BadToken)?;
                 let value = match name {
                     "bigIntPow" => left
                         .pow(&right)
@@ -46,9 +52,9 @@ impl<'a> Interp<'a> {
                     "bigIntOr" => left.bitor(&right),
                     "bigIntXor" => left.bitxor(&right),
                     "bigIntShl" | "bigIntShr" => {
-                        let amount = right
-                            .to_u64()
-                            .ok_or_else(|| RunError::Native("BigInt shift amount too large".into()))?;
+                        let amount = right.to_u64().ok_or_else(|| {
+                            RunError::Native("BigInt shift amount too large".into())
+                        })?;
                         // A negative shift count flips the direction (spec).
                         let shift_left = (name == "bigIntShl") != right.is_negative();
                         if shift_left {
@@ -63,10 +69,12 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(object))
             }
             "bigIntNot" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
                     .ok_or(RunError::BadToken)?;
-                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value.bitnot()));
+                let object =
+                    zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value.bitnot()));
                 Ok(Value::Object(object))
             }
             "bigIntAsIntN" | "bigIntAsUintN" => {
@@ -76,9 +84,12 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 if bits < 0 {
-                    return Err(RunError::Native("BigInt bit width must be non-negative".into()));
+                    return Err(RunError::Native(
+                        "BigInt bit width must be non-negative".into(),
+                    ));
                 }
-                let object = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
                     .ok_or(RunError::BadToken)?;
                 let result = if name == "bigIntAsIntN" {
@@ -89,13 +100,20 @@ impl<'a> Interp<'a> {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(result));
                 Ok(Value::Object(object))
             }
-            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntDiv" | "bigIntRem" | "bigIntCompare"
-            | "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt" | "bigIntGe" => {
-                let left = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let right = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            "bigIntAdd" | "bigIntSub" | "bigIntMul" | "bigIntDiv" | "bigIntRem"
+            | "bigIntCompare" | "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt"
+            | "bigIntGe" => {
+                let left =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let right =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let (left, right) = zun_gc::with_current_heap(|heap| {
-                    Some((heap.bigint_value(left)?.clone(), heap.bigint_value(right)?.clone()))
-                }).ok_or(RunError::BadToken)?;
+                    Some((
+                        heap.bigint_value(left)?.clone(),
+                        heap.bigint_value(right)?.clone(),
+                    ))
+                })
+                .ok_or(RunError::BadToken)?;
                 if name == "bigIntCompare" {
                     let result = match left.cmp(&right) {
                         std::cmp::Ordering::Less => -1,
@@ -103,7 +121,10 @@ impl<'a> Interp<'a> {
                         std::cmp::Ordering::Greater => 1,
                     };
                     Ok(Value::Int(result, zun_il::NumKind::I32))
-                } else if matches!(name, "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt" | "bigIntGe") {
+                } else if matches!(
+                    name,
+                    "bigIntEq" | "bigIntNe" | "bigIntLt" | "bigIntLe" | "bigIntGt" | "bigIntGe"
+                ) {
                     let ordering = left.cmp(&right);
                     let result = match name {
                         "bigIntEq" => ordering == std::cmp::Ordering::Equal,
@@ -123,7 +144,11 @@ impl<'a> Interp<'a> {
                             let Some((quotient, remainder)) = left.div_rem(&right) else {
                                 return Err(RunError::Native("BigInt division by zero".into()));
                             };
-                            if name == "bigIntDiv" { quotient } else { remainder }
+                            if name == "bigIntDiv" {
+                                quotient
+                            } else {
+                                remainder
+                            }
                         }
                         _ => unreachable!(),
                     };
@@ -132,14 +157,16 @@ impl<'a> Interp<'a> {
                 }
             }
             "bigIntNeg" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
                     .ok_or(RunError::BadToken)?;
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value.neg()));
                 Ok(Value::Object(object))
             }
             "bigIntToString" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
                     .ok_or(RunError::BadToken)?;
                 Ok(Value::Str(value.to_string().into()))

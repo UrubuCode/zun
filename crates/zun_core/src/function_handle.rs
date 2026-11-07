@@ -14,7 +14,14 @@ const BOUND_TAG: u32 = 1;
 
 impl FunctionHandle {
     pub const fn new(method_rid: u32, environment: Option<usize>) -> Self {
-        Self { method_rid, reserved: 0, environment: match environment { Some(address) => address, None => 0 } }
+        Self {
+            method_rid,
+            reserved: 0,
+            environment: match environment {
+                Some(address) => address,
+                None => 0,
+            },
+        }
     }
 
     /// A bound function value (`Function.prototype.bind`). `record` is the
@@ -22,12 +29,22 @@ impl FunctionHandle {
     /// prepended arguments; it is traced through the handle's `environment`
     /// slot exactly like a closure environment.
     pub const fn new_bound(record: usize) -> Self {
-        Self { method_rid: 0, reserved: BOUND_TAG, environment: record }
+        Self {
+            method_rid: 0,
+            reserved: BOUND_TAG,
+            environment: record,
+        }
     }
 
-    pub const fn method_rid(self) -> u32 { self.method_rid }
+    pub const fn method_rid(self) -> u32 {
+        self.method_rid
+    }
     pub const fn environment(self) -> Option<usize> {
-        if self.environment == 0 { None } else { Some(self.environment) }
+        if self.environment == 0 {
+            None
+        } else {
+            Some(self.environment)
+        }
     }
 
     /// Whether this handle is a `bind`-produced bound function whose
@@ -43,7 +60,10 @@ impl FunctionHandle {
         Self {
             method_rid: self.method_rid,
             reserved: self.reserved,
-            environment: match address { Some(address) => address, None => 0 },
+            environment: match address {
+                Some(address) => address,
+                None => 0,
+            },
         }
     }
 
@@ -78,7 +98,11 @@ const GENERATOR_METHOD_BASE: u32 = 16;
 impl FunctionHandle {
     /// A generator method value; `kind` is 0 = next, 1 = return, 2 = throw.
     pub const fn new_generator_method(kind: u32, generator: usize) -> Self {
-        Self { method_rid: 0, reserved: GENERATOR_METHOD_BASE + kind, environment: generator }
+        Self {
+            method_rid: 0,
+            reserved: GENERATOR_METHOD_BASE + kind,
+            environment: generator,
+        }
     }
 
     /// The generator method selector (0 next, 1 return, 2 throw) when this
@@ -94,7 +118,11 @@ impl FunctionHandle {
     /// A built-in method value with no code of its own (`RegExp.prototype[Symbol.replace]`
     /// and friends); `kind` is the built-in's selector.
     pub const fn new_builtin_method(kind: u32) -> Self {
-        Self { method_rid: 0, reserved: BUILTIN_METHOD_BASE + kind, environment: 0 }
+        Self {
+            method_rid: 0,
+            reserved: BUILTIN_METHOD_BASE + kind,
+            environment: 0,
+        }
     }
 
     /// The built-in selector when this handle is a built-in method value.
@@ -128,7 +156,10 @@ mod tests {
         assert!(handle.is_bound());
         assert_eq!(handle.environment(), Some(0x2000));
         let moved = handle.relocate_environment(Some(0x3000));
-        assert!(moved.is_bound(), "relocation must keep the bound discriminant");
+        assert!(
+            moved.is_bound(),
+            "relocation must keep the bound discriminant"
+        );
         assert_eq!(moved.environment(), Some(0x3000));
     }
 
@@ -138,14 +169,20 @@ mod tests {
         let (identity, environment) = handle.to_carrier_words();
         assert_eq!(identity, 7, "no bound tag, so identity is just the rid");
         assert_eq!(environment, 0x4000);
-        assert_eq!(FunctionHandle::from_carrier_words(identity, environment), handle);
+        assert_eq!(
+            FunctionHandle::from_carrier_words(identity, environment),
+            handle
+        );
     }
 
     #[test]
     fn carrier_words_round_trip_a_no_environment_handle() {
         let handle = FunctionHandle::new(42, None);
         let (identity, environment) = handle.to_carrier_words();
-        assert_eq!(environment, 0, "a no-closure function has a zero environment word");
+        assert_eq!(
+            environment, 0,
+            "a no-closure function has a zero environment word"
+        );
         let back = FunctionHandle::from_carrier_words(identity, environment);
         assert_eq!(back, handle);
         assert_eq!(back.environment(), None);
@@ -157,7 +194,10 @@ mod tests {
         let (identity, environment) = handle.to_carrier_words();
         let back = FunctionHandle::from_carrier_words(identity, environment);
         assert_eq!(back, handle);
-        assert!(back.is_bound(), "the bound discriminant survives the carrier round-trip");
+        assert!(
+            back.is_bound(),
+            "the bound discriminant survives the carrier round-trip"
+        );
         assert_eq!(back.environment(), Some(0x5000));
     }
 }

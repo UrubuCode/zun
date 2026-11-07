@@ -436,7 +436,13 @@ fn primitive_string_padding_uses_the_managed_string_abi() {
     let module = compile(
         "import { padStart, padEnd } from \"zun:core\"; class String { extern padStart(target: u64, fill: string): string; extern padEnd(target: u64, fill: string): string; } function left(value: string, fill: string): string { return value.padStart(5, fill); } function right(value: string, fill: string): string { return value.padEnd(5, fill); } function main(): int { return 0; }",
     );
-    let left_rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "left").expect("left method") as u32 + 1;
+    let left_rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "left")
+        .expect("left method") as u32
+        + 1;
     let right_rid = left_rid + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     assert!(jit.is_compiled(left_rid));
@@ -446,8 +452,12 @@ fn primitive_string_padding_uses_the_managed_string_abi() {
     let value = heap.intern_string(std::rc::Rc::from("zun"));
     let zero = heap.intern_string(std::rc::Rc::from("0"));
     let bang = heap.intern_string(std::rc::Rc::from("!"));
-    let left = jit.call_packed_with_heap(left_rid, &[value as u64, zero as u64], &mut heap).expect("pad start call");
-    let right = jit.call_packed_with_heap(right_rid, &[value as u64, bang as u64], &mut heap).expect("pad end call");
+    let left = jit
+        .call_packed_with_heap(left_rid, &[value as u64, zero as u64], &mut heap)
+        .expect("pad start call");
+    let right = jit
+        .call_packed_with_heap(right_rid, &[value as u64, bang as u64], &mut heap)
+        .expect("pad end call");
     assert_eq!(heap.string(left as u32).as_ref(), "00zun");
     assert_eq!(heap.string(right as u32).as_ref(), "zun!!");
 }
@@ -457,7 +467,13 @@ fn primitive_string_replace_uses_the_managed_string_abi() {
     let module = compile(
         "import { replace } from \"zun:core\"; class String { extern replace(needle: string, replacement: string): string; } function measure(value: string, needle: string, replacement: string): string { return value.replace(needle, replacement); } function main(): int { return 0; }",
     );
-    let rid = module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == "measure").expect("measure method") as u32 + 1;
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "measure")
+        .expect("measure method") as u32
+        + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     assert!(jit.is_compiled(rid));
 
@@ -465,7 +481,13 @@ fn primitive_string_replace_uses_the_managed_string_abi() {
     let value = heap.intern_string(std::rc::Rc::from("zun vm"));
     let needle = heap.intern_string(std::rc::Rc::from("vm"));
     let replacement = heap.intern_string(std::rc::Rc::from("runtime"));
-    let handle = jit.call_packed_with_heap(rid, &[value as u64, needle as u64, replacement as u64], &mut heap).expect("replace call");
+    let handle = jit
+        .call_packed_with_heap(
+            rid,
+            &[value as u64, needle as u64, replacement as u64],
+            &mut heap,
+        )
+        .expect("replace call");
     assert_eq!(heap.string(handle as u32).as_ref(), "zun runtime");
 }
 
@@ -474,7 +496,15 @@ fn primitive_string_builtin_conversions_use_the_managed_string_abi() {
     let module = compile(
         "import { toInt, toFloat, toBoolean } from \"zun:core\"; function asInt(value: string): int { return toInt(value); } function asFloat(value: string): number { return toFloat(value); } function asBool(value: string): boolean { return toBoolean(value); } function main(): int { return 0; }",
     );
-    let rid = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("method") as u32 + 1;
+    let rid = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("method") as u32
+            + 1
+    };
     let int_rid = rid("asInt");
     let float_rid = rid("asFloat");
     let bool_rid = rid("asBool");
@@ -487,9 +517,23 @@ fn primitive_string_builtin_conversions_use_the_managed_string_abi() {
     let int_value = heap.intern_string(std::rc::Rc::from(" -42 "));
     let float_value = heap.intern_string(std::rc::Rc::from(" 3.5 "));
     let bool_value = heap.intern_string(std::rc::Rc::from(" true "));
-    assert_eq!(jit.call_packed_with_heap(int_rid, &[int_value as u64], &mut heap).unwrap() as i32, -42);
-    assert_eq!(f64::from_bits(jit.call_packed_with_heap(float_rid, &[float_value as u64], &mut heap).unwrap()), 3.5);
-    assert_eq!(jit.call_packed_with_heap(bool_rid, &[bool_value as u64], &mut heap).unwrap(), 1);
+    assert_eq!(
+        jit.call_packed_with_heap(int_rid, &[int_value as u64], &mut heap)
+            .unwrap() as i32,
+        -42
+    );
+    assert_eq!(
+        f64::from_bits(
+            jit.call_packed_with_heap(float_rid, &[float_value as u64], &mut heap)
+                .unwrap()
+        ),
+        3.5
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(bool_rid, &[bool_value as u64], &mut heap)
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -497,7 +541,15 @@ fn primitive_string_method_conversions_bind_to_builtins() {
     let module = compile(
         "import { toInt, toFloat, toBoolean } from \"zun:core\"; class String { extern toInt(): int; extern toFloat(): number; extern toBoolean(): boolean; } function asInt(value: string): int { return value.toInt(); } function asFloat(value: string): number { return value.toFloat(); } function asBool(value: string): boolean { return value.toBoolean(); } function main(): int { return 0; }",
     );
-    let rid = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("method") as u32 + 1;
+    let rid = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("method") as u32
+            + 1
+    };
     let int_rid = rid("asInt");
     let float_rid = rid("asFloat");
     let bool_rid = rid("asBool");
@@ -510,8 +562,21 @@ fn primitive_string_method_conversions_bind_to_builtins() {
     let int_value = heap.intern_string(std::rc::Rc::from(" -42 "));
     let float_value = heap.intern_string(std::rc::Rc::from(" 3.5 "));
     let bool_value = heap.intern_string(std::rc::Rc::from(" true "));
-    assert_eq!(jit.call_packed_with_heap(int_rid, &[int_value as u64], &mut heap).unwrap() as i32, -42);
-    assert_eq!(f64::from_bits(jit.call_packed_with_heap(float_rid, &[float_value as u64], &mut heap).unwrap()), 3.5);
-    assert_eq!(jit.call_packed_with_heap(bool_rid, &[bool_value as u64], &mut heap).unwrap(), 1);
+    assert_eq!(
+        jit.call_packed_with_heap(int_rid, &[int_value as u64], &mut heap)
+            .unwrap() as i32,
+        -42
+    );
+    assert_eq!(
+        f64::from_bits(
+            jit.call_packed_with_heap(float_rid, &[float_value as u64], &mut heap)
+                .unwrap()
+        ),
+        3.5
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(bool_rid, &[bool_value as u64], &mut heap)
+            .unwrap(),
+        1
+    );
 }
-

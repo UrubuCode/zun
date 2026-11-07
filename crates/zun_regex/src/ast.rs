@@ -50,9 +50,14 @@ pub(crate) fn is_word_char(c: char) -> bool {
 pub(crate) fn is_space(c: char) -> bool {
     matches!(
         c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}'
-            | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}'
-            | '\u{3000}' | '\u{feff}'
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
     )
 }
 
@@ -108,10 +113,9 @@ impl CharClass {
                 (Some(l), None) => l,
                 _ => c,
             };
-            hit = self
-                .items
-                .iter()
-                .any(|i| (up != c && i.matches_exact(up)) || (lower != c && i.matches_exact(lower)));
+            hit = self.items.iter().any(|i| {
+                (up != c && i.matches_exact(up)) || (lower != c && i.matches_exact(lower))
+            });
         }
         hit != self.negated
     }
@@ -181,7 +185,9 @@ impl RegexNode {
                 v.iter().fold(None, |acc, n| merge(acc, n.group_range()))
             }
             RegexNode::Repeat { node, .. } | RegexNode::Look { node, .. } => node.group_range(),
-            RegexNode::Group { index, node, .. } => merge(Some((*index, *index)), node.group_range()),
+            RegexNode::Group { index, node, .. } => {
+                merge(Some((*index, *index)), node.group_range())
+            }
             _ => None,
         }
     }

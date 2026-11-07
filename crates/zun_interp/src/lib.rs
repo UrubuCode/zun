@@ -8,32 +8,32 @@
 
 mod builtins;
 mod call_rest;
-mod dyn_member;
-mod rare_ops;
 mod collections;
-mod native_error;
-mod string_dyn;
 mod decorators;
+mod dyn_member;
 mod errors;
 mod eval;
 mod gc_policy;
 mod hooks;
 mod integrity;
 mod json;
-mod property_ops;
+mod metadata;
 mod namespace;
 mod native;
+mod native_error;
 mod node_buffer;
-mod metadata;
-mod output;
 mod operands;
+mod output;
+mod property_ops;
+mod rare_ops;
 mod roots;
 mod runner;
 mod serde;
 mod stack;
 mod state;
-mod unwind;
+mod string_dyn;
 mod typed_arrays;
+mod unwind;
 pub mod value;
 
 /// Throw a native failure message (`"TypeError: ..."`) from inside the opcode
@@ -90,18 +90,17 @@ use operands::{
     branch_target, operand_f64, operand_i32, operand_i64, operand_local, operand_strref,
     operand_token, operand_token_imm32,
 };
-use stack::{
-    bin_float, bin_int, bin_int_minmax, bin_int_pow, bin_int_shift, bin_int_signed_aware, cmp,
-    compare, convert, js_max, js_min, js_round, js_sign, pop, pop_n, un_float, un_int_bits,
-    underflow, ShiftOp,
-    Ordering,
-};
-use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
 use runner::run_method_with;
 pub use runner::{
     GeneratorIteratorResult, GeneratorResult, GeneratorSession, OwnedGeneratorSession,
     ResumableSession, ResumeResult,
 };
+use stack::{
+    bin_float, bin_int, bin_int_minmax, bin_int_pow, bin_int_shift, bin_int_signed_aware, cmp,
+    compare, convert, js_max, js_min, js_round, js_sign, pop, pop_n, un_float, un_int_bits,
+    underflow, Ordering, ShiftOp,
+};
+use state::{ExecutionFrame, ExecutionOutcome, Interp, RootLink};
 
 /// Read the result of a settled managed Promise for the synchronous await
 /// fast path. Pending promises deliberately return `None` and must be routed
@@ -112,7 +111,9 @@ pub use runner::{
 fn number_index_key(key: &Value) -> String {
     match key {
         Value::Int(n, _) => n.to_string(),
-        Value::Float(n, _) if n.is_finite() && n.fract() == 0.0 && n.abs() < 9007199254740992.0 => (*n as i64).to_string(),
+        Value::Float(n, _) if n.is_finite() && n.fract() == 0.0 && n.abs() < 9007199254740992.0 => {
+            (*n as i64).to_string()
+        }
         Value::Float(n, _) => Value::Float(*n, zun_il::NumKind::F64).display(),
         other => other.as_number().to_string(),
     }
@@ -149,14 +150,14 @@ use zun_il::{decode_one, Opcode, Operand};
 use zun_metadata::TableKind;
 use zun_module::{read_body, Module};
 
+pub use errors::RunError;
+pub use eval::{EvalError, EvalHost, CODEGEN_DISALLOWED};
+pub use hooks::CallHook;
+pub use namespace::{call_namespace_member, materialize_namespace, zun_dynamic_import};
+pub use output::{CaptureOutput, StdoutOutput};
 /// Sink for program output: the native modules' [`Sink`](zun_natives::Sink),
 /// re-exported so callers keep using `Output`.
 pub use zun_natives::Sink as Output;
-pub use output::{CaptureOutput, StdoutOutput};
-pub use hooks::CallHook;
-pub use errors::RunError;
-pub use eval::{EvalError, EvalHost, CODEGEN_DISALLOWED};
-pub use namespace::{call_namespace_member, materialize_namespace, zun_dynamic_import};
 
 /// A hook the interpreter consults before interpreting a call, so a faster
 /// backend (the JIT) can execute an eligible method instead. Returning `None`
@@ -187,7 +188,15 @@ pub fn run_with_eval_host(
     eval_host: Option<&dyn EvalHost>,
 ) -> Result<Value, RunError> {
     let entry = module.entry_point.ok_or(RunError::NoEntryPoint)?;
-    run_method_with(module, entry.rid(), Vec::new(), output, hook, None, eval_host)
+    run_method_with(
+        module,
+        entry.rid(),
+        Vec::new(),
+        output,
+        hook,
+        None,
+        eval_host,
+    )
 }
 
 /// Execute a specific method body with positional arguments.
@@ -263,7 +272,15 @@ pub fn run_method_loaded(
     args: Vec<Value>,
     output: &mut dyn Output,
 ) -> Result<Value, RunError> {
-    run_method_with(scope.module(), method_rid, args, output, None, Some(loader), None)
+    run_method_with(
+        scope.module(),
+        method_rid,
+        args,
+        output,
+        None,
+        Some(loader),
+        None,
+    )
 }
 
 /// Run a loaded method on the **current** heap (no fresh heap, no module
@@ -308,7 +325,11 @@ impl Interp<'_> {
             return known;
         }
         let found = (|| {
-            let method = self.module.tables.method_defs.get((method_rid as usize).checked_sub(1)?)?;
+            let method = self
+                .module
+                .tables
+                .method_defs
+                .get((method_rid as usize).checked_sub(1)?)?;
             let body = read_body(&self.module.code, method.body_offset).ok()?;
             let mut offset = 0;
             while offset < body.code.len() {
@@ -353,10 +374,13 @@ impl Interp<'_> {
             return Err(RunError::BadToken);
         }
         let boxed = zun_gc::with_current_heap_mut(|heap| {
-            args.iter().map(|value| crate::collections::gen_box(value, heap)).collect::<Option<Vec<_>>>()
+            args.iter()
+                .map(|value| crate::collections::gen_box(value, heap))
+                .collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
-        let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_generator(0, method_rid, boxed));
+        let object =
+            zun_gc::with_current_heap_mut(|heap| heap.alloc_generator(0, method_rid, boxed));
         self.finish_generator_creation(method_rid, object)
     }
 
@@ -373,7 +397,8 @@ impl Interp<'_> {
         args: Vec<Value>,
         parent: Option<&RootLink>,
     ) -> Result<Value, RunError> {
-        self.call_stack.push(crate::state::CallFrame { method_rid, pc: 0 });
+        self.call_stack
+            .push(crate::state::CallFrame { method_rid, pc: 0 });
         let result = self.call_inner(method_rid, args, parent);
         self.call_stack.pop();
         result
@@ -422,8 +447,11 @@ impl Interp<'_> {
             let declared = body.param_count as usize;
             if self.module.strings.get(method.name).ends_with("@rest>") && declared > 0 {
                 let fixed = declared - 1;
-                let rest_values: Vec<Value> =
-                    if args.len() > fixed { args.split_off(fixed) } else { Vec::new() };
+                let rest_values: Vec<Value> = if args.len() > fixed {
+                    args.split_off(fixed)
+                } else {
+                    Vec::new()
+                };
                 args.resize(fixed, Value::Void);
                 let rest_array = zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
                     let array = heap.alloc_array(rest_values.len());
@@ -455,16 +483,29 @@ impl Interp<'_> {
                     if let Some(inner) = unboxed {
                         use zun_il::{JitKind, NumKind};
                         let coerced = match (JitKind::from_byte(kind), inner) {
-                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Float(f, _)) => Some(Value::Float(f, n)),
-                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Int(i, _)) => Some(Value::Float(i as f64, n)),
-                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Bool(b)) => Some(Value::Float(if b { 1.0 } else { 0.0 }, n)),
-                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Void) => Some(Value::Float(f64::NAN, n)),
-                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Null) => Some(Value::Float(0.0, n)),
+                            (
+                                JitKind::Num(n @ (NumKind::F32 | NumKind::F64)),
+                                Value::Float(f, _),
+                            ) => Some(Value::Float(f, n)),
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Int(i, _)) => {
+                                Some(Value::Float(i as f64, n))
+                            }
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Bool(b)) => {
+                                Some(Value::Float(if b { 1.0 } else { 0.0 }, n))
+                            }
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Void) => {
+                                Some(Value::Float(f64::NAN, n))
+                            }
+                            (JitKind::Num(n @ (NumKind::F32 | NumKind::F64)), Value::Null) => {
+                                Some(Value::Float(0.0, n))
+                            }
                             (JitKind::Num(n), Value::Int(i, _)) => Some(Value::Int(i, n)),
                             (JitKind::Num(n), Value::Float(f, _)) => Some(Value::Int(f as i64, n)),
                             (JitKind::Bool, Value::Bool(b)) => Some(Value::Bool(b)),
                             (JitKind::String, Value::Str(s)) => Some(Value::Str(s)),
-                            (JitKind::Object | JitKind::Array, Value::Object(o)) => Some(Value::Object(o)),
+                            (JitKind::Object | JitKind::Array, Value::Object(o)) => {
+                                Some(Value::Object(o))
+                            }
                             _ => None,
                         };
                         if let Some(v) = coerced {
@@ -499,7 +540,9 @@ impl Interp<'_> {
         }
 
         if resumed {
-            if let Some(thrown) = unwind::GENERATOR_THROW_PENDING.with(|slot| slot.borrow_mut().take()) {
+            if let Some(thrown) =
+                unwind::GENERATOR_THROW_PENDING.with(|slot| slot.borrow_mut().take())
+            {
                 let throw_pc = (*pc).saturating_sub(1);
                 if !self.route_exception(&body, stack, pc, throw_pc, &thrown) {
                     return Err(RunError::Thrown(thrown));
@@ -697,7 +740,8 @@ impl Interp<'_> {
                     }
                     // Reading past the end answers `undefined`, as in JS.
                     let past_end = zun_gc::with_current_heap(|heap| {
-                        heap.array_len(array).is_some_and(|len| (index as usize) >= len)
+                        heap.array_len(array)
+                            .is_some_and(|len| (index as usize) >= len)
                     });
                     if past_end {
                         stack.push(Value::Void);
@@ -717,7 +761,9 @@ impl Interp<'_> {
                     if index < 0 {
                         return Err(RunError::Malformed("negative array index".into()));
                     }
-                    if let Err(RunError::Native(message)) = self.guard_array(array, integrity::ArrayOp::Write) {
+                    if let Err(RunError::Native(message)) =
+                        self.guard_array(array, integrity::ArrayOp::Write)
+                    {
                         throw_native!(self, body, stack, pc, next - size, message);
                     }
                     // A function element rides the array as a function-box record
@@ -762,7 +808,9 @@ impl Interp<'_> {
                         continue;
                     }
                     if zun_gc::with_current_heap(|heap| heap.array_len(array)) != Some(0) {
-                        if let Err(RunError::Native(message)) = self.guard_array(array, integrity::ArrayOp::Remove) {
+                        if let Err(RunError::Native(message)) =
+                            self.guard_array(array, integrity::ArrayOp::Remove)
+                        {
                             throw_native!(self, body, stack, pc, next - size, message);
                         }
                     }
@@ -776,7 +824,9 @@ impl Interp<'_> {
                 Opcode::ArrayPush => {
                     let value = pop(&mut stack)?;
                     let array = pop(&mut stack)?.as_object();
-                    if let Err(RunError::Native(message)) = self.guard_array(array, integrity::ArrayOp::Add) {
+                    if let Err(RunError::Native(message)) =
+                        self.guard_array(array, integrity::ArrayOp::Add)
+                    {
                         throw_native!(self, body, stack, pc, next - size, message);
                     }
                     let any = zun_gc::with_current_heap_mut(|heap| match &value {
@@ -836,9 +886,7 @@ impl Interp<'_> {
                         value.trailing_zeros() as u64
                     }
                 })?,
-                Opcode::PopcntI32 => {
-                    un_int_bits(&mut stack, |value, _| value.count_ones() as u64)?
-                }
+                Opcode::PopcntI32 => un_int_bits(&mut stack, |value, _| value.count_ones() as u64)?,
                 // Integer arithmetic is width-generic here: the result kind
                 // comes from the operands (which sema guarantees match) and the
                 // value wraps to that width. A future typed-stack JIT will
@@ -887,12 +935,16 @@ impl Interp<'_> {
                     let a = pop(&mut stack)?;
                     // A string carried through `any` is unboxed before joining.
                     let unbox = |value: Value| match value {
-                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
-                            .unwrap_or(Value::Any(any)),
+                        Value::Any(any) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                                .unwrap_or(Value::Any(any))
+                        }
                         other => other,
                     };
                     let (a, b) = (unbox(a), unbox(b));
-                    stack.push(Value::Str(zun_core::wtf16::concat(a.as_str(), b.as_str()).into()));
+                    stack.push(Value::Str(
+                        zun_core::wtf16::concat(a.as_str(), b.as_str()).into(),
+                    ));
                 }
                 Opcode::CmpEq => cmp(&mut stack, true)?,
                 Opcode::CmpNe => cmp(&mut stack, false)?,
@@ -902,7 +954,13 @@ impl Interp<'_> {
                     match self.coerce_relational_operands(&mut stack) {
                         Ok(()) => {}
                         Err(RunError::Thrown(exception)) => {
-                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -932,7 +990,9 @@ impl Interp<'_> {
                 }
                 Opcode::BranchTrue => {
                     let condition = pop(&mut stack)?;
-                    if zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&condition, heap)) {
+                    if zun_gc::with_current_heap(|heap| {
+                        crate::collections::is_truthy(&condition, heap)
+                    }) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
@@ -945,7 +1005,9 @@ impl Interp<'_> {
                 }
                 Opcode::BranchFalse => {
                     let condition = pop(&mut stack)?;
-                    if !zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&condition, heap)) {
+                    if !zun_gc::with_current_heap(|heap| {
+                        crate::collections::is_truthy(&condition, heap)
+                    }) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
@@ -959,18 +1021,14 @@ impl Interp<'_> {
                 Opcode::Ret => {
                     return Ok(stack.pop().unwrap_or(Value::Void));
                 }
-                Opcode::Throw => {
-                    match self.op_throw(stack, pc, &body, size)? {
-                        ArmFlow::Next => {}
-                        ArmFlow::Continue => continue,
-                    }
-                }
-                Opcode::Rethrow => {
-                    match self.op_rethrow(stack, pc, &body, next, size)? {
-                        ArmFlow::Next => {}
-                        ArmFlow::Continue => continue,
-                    }
-                }
+                Opcode::Throw => match self.op_throw(stack, pc, &body, size)? {
+                    ArmFlow::Next => {}
+                    ArmFlow::Continue => continue,
+                },
+                Opcode::Rethrow => match self.op_rethrow(stack, pc, &body, next, size)? {
+                    ArmFlow::Next => {}
+                    ArmFlow::Continue => continue,
+                },
                 Opcode::Call => {
                     let token = operand_token(&instr.operand);
                     if token.table() == Some(TableKind::MemberRef) {
@@ -1094,19 +1152,25 @@ impl Interp<'_> {
                     stack.push(result);
                 }
                 Opcode::CallRest => {
-                    match self.op_call_rest(stack, pc, locals, &body, instr, next, size, method_rid, parent)? {
+                    match self.op_call_rest(
+                        stack, pc, locals, &body, instr, next, size, method_rid, parent,
+                    )? {
                         ArmFlow::Next => {}
                         ArmFlow::Continue => continue,
                     }
                 }
                 Opcode::CallRestArray => {
-                    match self.op_call_rest_array(stack, pc, locals, &body, instr, next, size, method_rid, parent)? {
+                    match self.op_call_rest_array(
+                        stack, pc, locals, &body, instr, next, size, method_rid, parent,
+                    )? {
                         ArmFlow::Next => {}
                         ArmFlow::Continue => continue,
                     }
                 }
                 Opcode::CallRestArrayFixed => {
-                    match self.op_call_rest_array_fixed(stack, pc, locals, &body, instr, next, size, method_rid, parent)? {
+                    match self.op_call_rest_array_fixed(
+                        stack, pc, locals, &body, instr, next, size, method_rid, parent,
+                    )? {
                         ArmFlow::Next => {}
                         ArmFlow::Continue => continue,
                     }
@@ -1155,8 +1219,10 @@ impl Interp<'_> {
                     let function = pop(&mut stack)?;
                     // A function value carried through `any` is unboxed first.
                     let function = match function {
-                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
-                            .unwrap_or(Value::Any(any)),
+                        Value::Any(any) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                                .unwrap_or(Value::Any(any))
+                        }
                         other => other,
                     };
                     // A function stored in an array/`any` slot rides a `__boxedFn` record.
@@ -1171,7 +1237,9 @@ impl Interp<'_> {
                             Value::Bool(_) => "boolean",
                             Value::Int(..) | Value::Float(..) => "number",
                             Value::Str(_) => "string",
-                            Value::Any(any) if any.tag() == zun_core::AnyTag::ClassDescriptor => "class",
+                            Value::Any(any) if any.tag() == zun_core::AnyTag::ClassDescriptor => {
+                                "class"
+                            }
                             _ => "value",
                         };
                         if what == "value" {
@@ -1185,7 +1253,13 @@ impl Interp<'_> {
                         match self.new_error_object("TypeError", &message) {
                             Some(error) => {
                                 let exception = Value::Object(error);
-                                if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                                if self.route_exception(
+                                    &body,
+                                    &mut stack,
+                                    &mut pc,
+                                    next - size,
+                                    &exception,
+                                ) {
                                     continue;
                                 }
                                 return Err(RunError::Thrown(exception));
@@ -1215,7 +1289,8 @@ impl Interp<'_> {
                             locals: std::ptr::from_mut(locals.as_mut_slice()),
                             parent,
                         };
-                        let result = match self.dispatch_outcome(target_rid, call_args, Some(&link)) {
+                        let result = match self.dispatch_outcome(target_rid, call_args, Some(&link))
+                        {
                             ExecutionOutcome::Complete(value) => value,
                             ExecutionOutcome::Thrown(exception) => {
                                 if self.route_exception(
@@ -1281,32 +1356,35 @@ impl Interp<'_> {
                         locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
-                    let result = match self.dispatch_outcome(handle.method_rid(), call_args, Some(&link)) {
-                        ExecutionOutcome::Complete(value) => value,
-                        ExecutionOutcome::Thrown(exception) => {
-                            if self.route_exception(
-                                &body,
-                                &mut stack,
-                                &mut pc,
-                                next - size,
-                                &exception,
-                            ) {
-                                continue;
+                    let result =
+                        match self.dispatch_outcome(handle.method_rid(), call_args, Some(&link)) {
+                            ExecutionOutcome::Complete(value) => value,
+                            ExecutionOutcome::Thrown(exception) => {
+                                if self.route_exception(
+                                    &body,
+                                    &mut stack,
+                                    &mut pc,
+                                    next - size,
+                                    &exception,
+                                ) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
                             }
-                            return Err(RunError::Thrown(exception));
-                        }
-                        ExecutionOutcome::Fault(error) => return Err(error),
-                        ExecutionOutcome::Suspended(frame) => {
-                            return Err(self.propagate_suspended(
-                                frame,
-                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
-                            ));
-                        }
-                    };
+                            ExecutionOutcome::Fault(error) => return Err(error),
+                            ExecutionOutcome::Suspended(frame) => {
+                                return Err(self.propagate_suspended(
+                                    frame,
+                                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                                ));
+                            }
+                        };
                     stack.push(result);
                 }
                 Opcode::CallIndirectRest => {
-                    match self.op_call_indirect_rest(stack, pc, locals, &body, instr, next, size, method_rid, parent)? {
+                    match self.op_call_indirect_rest(
+                        stack, pc, locals, &body, instr, next, size, method_rid, parent,
+                    )? {
                         ArmFlow::Next => {}
                         ArmFlow::Continue => continue,
                     }
@@ -1323,14 +1401,26 @@ impl Interp<'_> {
                             let Some(exception) = exception else {
                                 return Err(RunError::Native(message));
                             };
-                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
                         }
                         Err(RunError::Thrown(exception)) => {
                             // A user callback invoked by the native threw.
-                            if self.route_exception(&body, &mut stack, &mut pc, next - size, &exception) {
+                            if self.route_exception(
+                                &body,
+                                &mut stack,
+                                &mut pc,
+                                next - size,
+                                &exception,
+                            ) {
                                 continue;
                             }
                             return Err(RunError::Thrown(exception));
@@ -1372,7 +1462,11 @@ impl Interp<'_> {
                     // A dynamic object never carries a class's fixed fields
                     // (a private-brand mismatch): TypeError, not a bad read.
                     let loaded = zun_gc::with_current_heap(|h| {
-                        if h.is_dynamic_object(obj) { None } else { Some(value::load_field(kind, obj, slot, h)) }
+                        if h.is_dynamic_object(obj) {
+                            None
+                        } else {
+                            Some(value::load_field(kind, obj, slot, h))
+                        }
                     });
                     let Some(v) = loaded else {
                         throw_native!(self, body, stack, pc, next - size, "TypeError: Cannot read private member from an object whose class did not declare it".to_string());
@@ -1454,7 +1548,9 @@ impl Interp<'_> {
                     stack.push(result);
                 }
                 Opcode::CallVirtRest => {
-                    match self.op_call_virt_rest(stack, pc, locals, &body, instr, next, size, method_rid, parent)? {
+                    match self.op_call_virt_rest(
+                        stack, pc, locals, &body, instr, next, size, method_rid, parent,
+                    )? {
                         ArmFlow::Next => {}
                         ArmFlow::Continue => continue,
                     }
@@ -1566,20 +1662,14 @@ impl Interp<'_> {
                 Opcode::Yield => {
                     let value = pop(&mut stack)?;
                     self.yielded = Some(value);
-                    self.suspended = Some(ExecutionFrame::snapshot(
-                        method_rid,
-                        *pc,
-                        &stack,
-                        &locals,
-                    ));
+                    self.suspended =
+                        Some(ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals));
                     return Err(RunError::Suspended);
                 }
-                Opcode::ImportDynamic => {
-                    match self.op_import_dynamic(stack)? {
-                        ArmFlow::Next => {}
-                        ArmFlow::Continue => continue,
-                    }
-                }
+                Opcode::ImportDynamic => match self.op_import_dynamic(stack)? {
+                    ArmFlow::Next => {}
+                    ArmFlow::Continue => continue,
+                },
                 // Remaining opcodes are not produced by the front-end yet.
                 Opcode::ConstNull => {
                     stack.push(Value::Null);
@@ -1594,7 +1684,13 @@ impl Interp<'_> {
     /// Run a mark-sweep collection with precise roots: the object references in
     /// the current frame's stack and locals, plus every ancestor frame in the
     /// `parent` chain. Reference fields are traced via the module's type layout.
-    fn collect(&mut self, stack: &mut [Value], locals: &mut [Value], parent: Option<&RootLink>, full: bool) -> usize {
+    fn collect(
+        &mut self,
+        stack: &mut [Value],
+        locals: &mut [Value],
+        parent: Option<&RootLink>,
+        full: bool,
+    ) -> usize {
         let mut extra_roots = Vec::new();
         // Class-static fields now live on the heap's statics object (a persistent
         // GC root), so the heap marks and rewrites them; no interpreter-side root
@@ -1674,12 +1770,10 @@ impl Interp<'_> {
         }
         self.gc_interval = next_gc_interval(self.gc_interval, reclaimed, young_before);
     }
-
 }
 
 #[cfg(test)]
 mod method_tests;
-
 
 /// Resolve the expando property bag of a function object, creating it on
 /// first use. Bags are dynamic objects rooted in the statics object under a

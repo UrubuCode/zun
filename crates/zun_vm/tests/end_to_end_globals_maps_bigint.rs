@@ -32,7 +32,10 @@ fn global_set_readonly_registers_and_rejects_reassignment() {
             dynamic_set(globalThis, "Foo", box_any(9));
         }"#,
     );
-    assert!(error.contains("Cannot assign to read only property 'Foo'"), "{error}");
+    assert!(
+        error.contains("Cannot assign to read only property 'Foo'"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -48,7 +51,10 @@ fn global_set_readonly_rejects_computed_store() {
             reflect_set(globalThis, key, box_any(9));
         }"#,
     );
-    assert!(error.contains("Cannot assign to read only property 'Foo'"), "{error}");
+    assert!(
+        error.contains("Cannot assign to read only property 'Foo'"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -92,7 +98,10 @@ fn dotted_dynamic_store_rejects_readonly_binding() {
             globalThis.Foo = 9;
         }"#,
     );
-    assert!(error.contains("Cannot assign to read only property 'Foo'"), "{error}");
+    assert!(
+        error.contains("Cannot assign to read only property 'Foo'"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -134,7 +143,10 @@ fn realm_map_descriptor_registers_as_readonly_and_reads_back() {
             dynamic_set(globalThis, "Map", box_any(9));
         }"#,
     );
-    assert!(error.contains("Cannot assign to read only property 'Map'"), "{error}");
+    assert!(
+        error.contains("Cannot assign to read only property 'Map'"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -484,7 +496,10 @@ fn bigint_division_by_zero_is_a_runtime_error() {
             return 0;
         }"#,
     );
-    assert!(error.contains("division by zero"), "unexpected error: {error}");
+    assert!(
+        error.contains("division by zero"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -514,4 +529,3 @@ fn bigint_operator_and_method_forms_agree() {
     );
     assert_eq!(out, ["1", "2", "3"]);
 }
-

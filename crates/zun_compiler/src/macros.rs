@@ -201,7 +201,9 @@ fn decorator_name<'a>(source: &'a str, decorator: &ast::Decorator) -> Option<&'a
 
 fn source_text(source: &str, span: Span) -> &str {
     // Compiler-synthesized names carry out-of-range spans.
-    source.get(span.start as usize..span.end as usize).unwrap_or("")
+    source
+        .get(span.start as usize..span.end as usize)
+        .unwrap_or("")
 }
 
 /// Interns generated identifiers into a source suffix and lowers emit-model
@@ -237,9 +239,10 @@ impl Emitter {
 
     fn lower_method(&mut self, method: GeneratedMethod) -> ast::Function {
         let name = self.name(&method.name);
-        let return_type = method
-            .return_type
-            .map(|ty| ast::TypeAnnotation { name: self.name(&ty), is_array: false });
+        let return_type = method.return_type.map(|ty| ast::TypeAnnotation {
+            name: self.name(&ty),
+            is_array: false,
+        });
         let statements = method
             .body
             .into_iter()

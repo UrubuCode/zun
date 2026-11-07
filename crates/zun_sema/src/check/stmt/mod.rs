@@ -5,7 +5,11 @@ mod declarations;
 mod loops;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
+    pub(in crate::check) fn check_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
         match stmt {
             ast::Stmt::Destructure { .. } => self.check_destructure_stmt(cx, stmt),
             ast::Stmt::Let { .. } => self.check_let_stmt(cx, stmt),
@@ -17,9 +21,11 @@ impl Checker<'_> {
             ast::Stmt::ForOf { .. } => self.check_for_of_stmt(cx, stmt),
             ast::Stmt::ForIn { .. } => self.check_for_in_stmt(cx, stmt),
             ast::Stmt::Labeled { .. } => self.check_labeled_stmt(cx, stmt),
-            ast::Stmt::Switch { discriminant, cases, span } => {
-                self.check_switch(cx, discriminant, cases, *span)
-            }
+            ast::Stmt::Switch {
+                discriminant,
+                cases,
+                span,
+            } => self.check_switch(cx, discriminant, cases, *span),
             ast::Stmt::Break { .. } => self.check_break_stmt(cx, stmt),
             ast::Stmt::Continue { .. } => self.check_continue_stmt(cx, stmt),
             ast::Stmt::Return { .. } => self.check_return_stmt(cx, stmt),
@@ -62,7 +68,10 @@ impl Checker<'_> {
             return hir::Stmt::Expr(self.poison(span));
         };
         let iterator = hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id: new_id, args: vec![iterable_expr] },
+            kind: hir::ExprKind::CallBuiltin {
+                id: new_id,
+                args: vec![iterable_expr],
+            },
             ty: Ty::Any,
             span,
         };
@@ -70,7 +79,11 @@ impl Checker<'_> {
         let done = hir::Expr {
             kind: hir::ExprKind::CallBuiltin {
                 id: done_id,
-                args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }],
+                args: vec![hir::Expr {
+                    kind: hir::ExprKind::Local(iterator_slot),
+                    ty: Ty::Any,
+                    span,
+                }],
             },
             ty: Ty::Boolean,
             span,
@@ -78,7 +91,11 @@ impl Checker<'_> {
         let next = hir::Expr {
             kind: hir::ExprKind::CallBuiltin {
                 id: next_id,
-                args: vec![hir::Expr { kind: hir::ExprKind::Local(iterator_slot), ty: Ty::Any, span }],
+                args: vec![hir::Expr {
+                    kind: hir::ExprKind::Local(iterator_slot),
+                    ty: Ty::Any,
+                    span,
+                }],
             },
             ty: Ty::Any,
             span,
@@ -86,7 +103,10 @@ impl Checker<'_> {
         cx.scopes.push(Scope::new());
         let (binding, prelude) = match pattern {
             ast::Pattern::Ident { name, ty } => {
-                let declared = ty.as_ref().map(|t| self.resolve_annotation(t)).unwrap_or(Ty::Any);
+                let declared = ty
+                    .as_ref()
+                    .map(|t| self.resolve_annotation(t))
+                    .unwrap_or(Ty::Any);
                 let name_text = self.text(name).to_string();
                 let slot = cx.declare(&name_text, declared);
                 // A loop variable that a closure captures and that is assigned
@@ -102,7 +122,11 @@ impl Checker<'_> {
             _ => {
                 let element = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
                 let mut prelude = Vec::new();
-                let element_expr = hir::Expr { kind: hir::ExprKind::Local(element), ty: Ty::Any, span };
+                let element_expr = hir::Expr {
+                    kind: hir::ExprKind::Local(element),
+                    ty: Ty::Any,
+                    span,
+                };
                 self.bind_pattern(cx, pattern, element_expr, &mut prelude);
                 (element, prelude)
             }
@@ -116,7 +140,14 @@ impl Checker<'_> {
             body = combined;
         }
         cx.scopes.pop();
-        hir::Stmt::ForOf { iterator, iterator_slot, done, next, binding, body }
+        hir::Stmt::ForOf {
+            iterator,
+            iterator_slot,
+            done,
+            next,
+            binding,
+            body,
+        }
     }
 
     /// Lower a `switch` with fall-through: the discriminant is evaluated once
@@ -135,7 +166,11 @@ impl Checker<'_> {
         cx.scopes.push(Scope::new());
         let disc_slot = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
         let idx_slot = cx.declare(&self.fresh_temp_name(cx), Ty::F64);
-        let num = |value: f64| hir::Expr { kind: hir::ExprKind::Number(value), ty: Ty::F64, span };
+        let num = |value: f64| hir::Expr {
+            kind: hir::ExprKind::Number(value),
+            ty: Ty::F64,
+            span,
+        };
         let none_index = cases.len() as f64;
         let default_index = cases
             .iter()
@@ -153,7 +188,11 @@ impl Checker<'_> {
             let cond = hir::Expr {
                 kind: hir::ExprKind::Binary {
                     op: ast::BinaryOp::Eq,
-                    lhs: Box::new(hir::Expr { kind: hir::ExprKind::Local(disc_slot), ty: Ty::Any, span }),
+                    lhs: Box::new(hir::Expr {
+                        kind: hir::ExprKind::Local(disc_slot),
+                        ty: Ty::Any,
+                        span,
+                    }),
                     rhs: Box::new(test),
                 },
                 ty: Ty::Boolean,
@@ -170,8 +209,14 @@ impl Checker<'_> {
             };
         }
         let mut out = vec![
-            hir::Stmt::Let { slot: disc_slot, init: disc },
-            hir::Stmt::Let { slot: idx_slot, init: index_expr },
+            hir::Stmt::Let {
+                slot: disc_slot,
+                init: disc,
+            },
+            hir::Stmt::Let {
+                slot: idx_slot,
+                init: index_expr,
+            },
         ];
         cx.switch_depth += 1;
         for (position, case) in cases.iter().enumerate() {
@@ -180,18 +225,30 @@ impl Checker<'_> {
             }
             // All case bodies share the switch's one lexical scope, so a `let`
             // declared in one case is visible to the cases after it.
-            let body: Vec<hir::Stmt> =
-                case.body.statements.iter().map(|statement| self.check_stmt(cx, statement)).collect();
+            let body: Vec<hir::Stmt> = case
+                .body
+                .statements
+                .iter()
+                .map(|statement| self.check_stmt(cx, statement))
+                .collect();
             let cond = hir::Expr {
                 kind: hir::ExprKind::Binary {
                     op: ast::BinaryOp::Le,
-                    lhs: Box::new(hir::Expr { kind: hir::ExprKind::Local(idx_slot), ty: Ty::F64, span }),
+                    lhs: Box::new(hir::Expr {
+                        kind: hir::ExprKind::Local(idx_slot),
+                        ty: Ty::F64,
+                        span,
+                    }),
                     rhs: Box::new(num(position as f64)),
                 },
                 ty: Ty::Boolean,
                 span,
             };
-            out.push(hir::Stmt::If { cond, then_body: body, else_body: Vec::new() });
+            out.push(hir::Stmt::If {
+                cond,
+                then_body: body,
+                else_body: Vec::new(),
+            });
         }
         cx.switch_depth -= 1;
         cx.scopes.pop();

@@ -52,9 +52,9 @@ impl Checker<'_> {
         // the call site, so a same-named subclass `#m` never overrides them.
         let mut private_direct = false;
         let lexical = match cx.this_class {
-            Some(tc) if mname.starts_with('#') && self.is_subclass(class, tc) => {
-                self.method_of(tc, &mname).inspect(|_| private_direct = true)
-            }
+            Some(tc) if mname.starts_with('#') && self.is_subclass(class, tc) => self
+                .method_of(tc, &mname)
+                .inspect(|_| private_direct = true),
             _ => None,
         };
         let Some(func) = lexical.or_else(|| self.method_of(class, &mname)) else {
@@ -111,7 +111,10 @@ impl Checker<'_> {
                     {
                         self.error(
                             argument.span,
-                            format!("argument type {:?} does not match {expected:?}", argument.ty),
+                            format!(
+                                "argument type {:?} does not match {expected:?}",
+                                argument.ty
+                            ),
                         );
                     }
                 }
@@ -148,7 +151,9 @@ impl Checker<'_> {
         // param_tys[0] is `this`; the remaining are the declared params.
         let mut call_args = vec![receiver];
         let listener_hint = if mname == "addEventListener" {
-            self.classes_by_name.get("Event").map(|&event| Ty::Instance(event))
+            self.classes_by_name
+                .get("Event")
+                .map(|&event| Ty::Instance(event))
         } else {
             None
         };
@@ -176,7 +181,10 @@ impl Checker<'_> {
         if rest_index.is_some() && call_args.len() < rest_index.unwrap() {
             self.error(
                 span,
-                format!("`{mname}` expects at least {} argument(s)", rest_index.unwrap() - 1),
+                format!(
+                    "`{mname}` expects at least {} argument(s)",
+                    rest_index.unwrap() - 1
+                ),
             );
         } else if rest_index.is_none()
             && (call_args.len() < param_tys.len().saturating_sub(optional_count)
@@ -224,11 +232,20 @@ impl Checker<'_> {
         }
         hir::Expr {
             kind: if rest_index.is_some() {
-                hir::ExprKind::MethodCallRest { func, args: call_args }
+                hir::ExprKind::MethodCallRest {
+                    func,
+                    args: call_args,
+                }
             } else if private_direct {
-                hir::ExprKind::StaticCall { func, args: call_args }
+                hir::ExprKind::StaticCall {
+                    func,
+                    args: call_args,
+                }
             } else {
-                hir::ExprKind::MethodCall { func, args: call_args }
+                hir::ExprKind::MethodCall {
+                    func,
+                    args: call_args,
+                }
             },
             ty: return_ty,
             span,

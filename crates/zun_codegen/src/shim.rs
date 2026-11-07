@@ -94,9 +94,15 @@ pub fn define_any_return_shim(
     let conv = module.isa().default_call_conv();
     let ptr_ty = module.isa().pointer_type();
     let mut shim_sig = cranelift_codegen::ir::Signature::new(conv);
-    shim_sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
-    shim_sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
-    shim_sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I32));
+    shim_sig
+        .params
+        .push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
+    shim_sig
+        .params
+        .push(cranelift_codegen::ir::AbiParam::new(ptr_ty));
+    shim_sig
+        .returns
+        .push(cranelift_codegen::ir::AbiParam::new(types::I32));
     let shim_id = module
         .declare_function(name, Linkage::Local, &shim_sig)
         .map_err(|e| e.to_string())?;
@@ -113,9 +119,13 @@ pub fn define_any_return_shim(
         let mut args = Vec::with_capacity(param_kinds.len());
         let mut offset = 0;
         for &kind in param_kinds {
-            let raw = b.ins().load(types::I64, MemFlags::trusted(), args_ptr, offset);
+            let raw = b
+                .ins()
+                .load(types::I64, MemFlags::trusted(), args_ptr, offset);
             if kind == JitKind::Other {
-                let payload = b.ins().load(types::I64, MemFlags::trusted(), args_ptr, offset + 8);
+                let payload = b
+                    .ins()
+                    .load(types::I64, MemFlags::trusted(), args_ptr, offset + 8);
                 args.push(raw);
                 args.push(payload);
                 offset += (crate::any_abi::abi_word_count(kind) * 8) as i32;
@@ -130,8 +140,18 @@ pub fn define_any_return_shim(
         if results.len() != 2 {
             return Err("Any return function must produce tag and payload".into());
         }
-        b.ins().store(MemFlags::trusted(), results[0], out_ptr, crate::any_abi::TAG_OFFSET);
-        b.ins().store(MemFlags::trusted(), results[1], out_ptr, crate::any_abi::PAYLOAD_OFFSET);
+        b.ins().store(
+            MemFlags::trusted(),
+            results[0],
+            out_ptr,
+            crate::any_abi::TAG_OFFSET,
+        );
+        b.ins().store(
+            MemFlags::trusted(),
+            results[1],
+            out_ptr,
+            crate::any_abi::PAYLOAD_OFFSET,
+        );
         let ok = b.ins().iconst(types::I32, 1);
         b.ins().return_(&[ok]);
         b.finalize();

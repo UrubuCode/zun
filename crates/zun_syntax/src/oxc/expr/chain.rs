@@ -55,7 +55,9 @@ pub(super) fn chain_static(
     let object = chain_guard(object, member.optional, guards);
     Ok(Expr::Field {
         object: Box::new(object),
-        field: Name { span: Span::new(member.property.span.start, member.property.span.end) },
+        field: Name {
+            span: Span::new(member.property.span.start, member.property.span.end),
+        },
         span: Span::new(member.span.start, member.span.end),
     })
 }
@@ -88,7 +90,9 @@ pub(super) fn chain_call(
         Expression::StaticMemberExpression(member) => {
             let object = chain_link(source, &member.object, guards)?;
             let object = chain_guard(object, member.optional, guards);
-            let method = Name { span: Span::new(member.property.span.start, member.property.span.end) };
+            let method = Name {
+                span: Span::new(member.property.span.start, member.property.span.end),
+            };
             if call.optional {
                 Ok(Expr::OptionalCall {
                     callee: Box::new(Expr::Field {
@@ -100,7 +104,12 @@ pub(super) fn chain_call(
                     span,
                 })
             } else {
-                Ok(Expr::MethodCall { receiver: Box::new(object), method, args, span })
+                Ok(Expr::MethodCall {
+                    receiver: Box::new(object),
+                    method,
+                    args,
+                    span,
+                })
             }
         }
         Expression::ComputedMemberExpression(member) => {
@@ -112,17 +121,33 @@ pub(super) fn chain_call(
                 span: Span::new(member.span.start, member.span.end),
             };
             if call.optional {
-                Ok(Expr::OptionalCall { callee: Box::new(callee), args, span })
+                Ok(Expr::OptionalCall {
+                    callee: Box::new(callee),
+                    args,
+                    span,
+                })
             } else {
-                Ok(Expr::ComputedCall { callee: Box::new(callee), args, span })
+                Ok(Expr::ComputedCall {
+                    callee: Box::new(callee),
+                    args,
+                    span,
+                })
             }
         }
         other => {
             let callee = chain_link(source, other, guards)?;
             if call.optional {
-                Ok(Expr::OptionalCall { callee: Box::new(callee), args, span })
+                Ok(Expr::OptionalCall {
+                    callee: Box::new(callee),
+                    args,
+                    span,
+                })
             } else {
-                Ok(Expr::ComputedCall { callee: Box::new(callee), args, span })
+                Ok(Expr::ComputedCall {
+                    callee: Box::new(callee),
+                    args,
+                    span,
+                })
             }
         }
     }
@@ -153,13 +178,26 @@ pub(super) fn convert_chain(
         match body {
             Expr::Field { object, field, .. } if is_root(&object) => {
                 let guard = guards.pop().unwrap();
-                return Ok(Expr::OptionalField { object: Box::new(guard), field, span: chain_span });
+                return Ok(Expr::OptionalField {
+                    object: Box::new(guard),
+                    field,
+                    span: chain_span,
+                });
             }
             Expr::Index { object, index, .. } if is_root(&object) => {
                 let guard = guards.pop().unwrap();
-                return Ok(Expr::OptionalIndex { object: Box::new(guard), index, span: chain_span });
+                return Ok(Expr::OptionalIndex {
+                    object: Box::new(guard),
+                    index,
+                    span: chain_span,
+                });
             }
-            Expr::MethodCall { receiver, method, args, .. } if is_root(&receiver) => {
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } if is_root(&receiver) => {
                 let guard = guards.pop().unwrap();
                 return Ok(Expr::OptionalMethodCall {
                     object: Box::new(guard),

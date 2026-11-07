@@ -43,7 +43,10 @@ impl<'a> Interp<'a> {
     pub(crate) fn timer_clear(&mut self, handle: u32) {
         let task = TaskId(handle);
         self.async_state.scheduler.cancel_task(task);
-        self.async_state.timers.entries.retain(|timer| timer.task != task);
+        self.async_state
+            .timers
+            .entries
+            .retain(|timer| timer.task != task);
     }
 
     /// `queueMicrotask(cb)`: enqueue a callback directly on the reaction
@@ -65,7 +68,9 @@ impl<'a> Interp<'a> {
         self.attach_reaction(
             roots[0],
             roots[1],
-            ReactionKind::Microtask { callback: Value::Function(callback) },
+            ReactionKind::Microtask {
+                callback: Value::Function(callback),
+            },
         );
         Ok(())
     }
@@ -140,13 +145,18 @@ impl<'a> Interp<'a> {
 
     /// Read the settlement of a managed Promise. Errors if the object is not a
     /// Promise cell.
-    pub(crate) fn promise_settlement_of(&self, promise: zun_gc::Obj) -> Result<PromiseSettlement, RunError> {
+    pub(crate) fn promise_settlement_of(
+        &self,
+        promise: zun_gc::Obj,
+    ) -> Result<PromiseSettlement, RunError> {
         zun_gc::with_current_heap(|heap| match heap.promise_state(promise) {
             Some(zun_core::ManagedPromiseState::Resolved) => Ok(PromiseSettlement::Resolved(
-                heap.promise_result(promise).unwrap_or_else(zun_core::Any::null),
+                heap.promise_result(promise)
+                    .unwrap_or_else(zun_core::Any::null),
             )),
             Some(zun_core::ManagedPromiseState::Rejected) => Ok(PromiseSettlement::Rejected(
-                heap.promise_error(promise).unwrap_or_else(|| "Promise rejected".into()),
+                heap.promise_error(promise)
+                    .unwrap_or_else(|| "Promise rejected".into()),
                 heap.promise_reason(promise),
             )),
             Some(zun_core::ManagedPromiseState::Pending) => Ok(PromiseSettlement::Pending),
@@ -158,7 +168,11 @@ impl<'a> Interp<'a> {
     /// in the heap cell, and the scheduler is told so every reaction and parked
     /// `await` frame bridged to this promise wakes. Returns whether this call
     /// was the settling one (a second settlement is a no-op).
-    pub(crate) fn settle_promise_resolve(&mut self, promise: zun_gc::Obj, value: zun_core::Any) -> bool {
+    pub(crate) fn settle_promise_resolve(
+        &mut self,
+        promise: zun_gc::Obj,
+        value: zun_core::Any,
+    ) -> bool {
         let settled = zun_gc::with_current_heap_mut(|heap| heap.promise_resolve(promise, value))
             .unwrap_or(false);
         if settled {
@@ -192,9 +206,10 @@ impl<'a> Interp<'a> {
         message: String,
     ) -> bool {
         self.bridge_pid(promise);
-        let settled =
-            zun_gc::with_current_heap_mut(|heap| heap.promise_reject_value(promise, reason, message))
-                .unwrap_or(false);
+        let settled = zun_gc::with_current_heap_mut(|heap| {
+            heap.promise_reject_value(promise, reason, message)
+        })
+        .unwrap_or(false);
         if settled {
             self.wake_scheduler(promise, Settlement::Rejected);
         }
@@ -227,7 +242,9 @@ impl<'a> Interp<'a> {
         // BigInt operands (heap objects) compare by mathematical value.
         let big_text = |value: &Value| -> Option<String> {
             match value {
-                Value::Object(obj) => zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).map(|v| v.to_string())),
+                Value::Object(obj) => {
+                    zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).map(|v| v.to_string()))
+                }
                 _ => None,
             }
         };
@@ -255,7 +272,11 @@ impl<'a> Interp<'a> {
         match (big_text(&left), big_text(&right)) {
             (Some(a), Some(b)) => return Ok(a == b),
             (Some(a), None) | (None, Some(a)) => {
-                let other = if big_text(&left).is_some() { &right } else { &left };
+                let other = if big_text(&left).is_some() {
+                    &right
+                } else {
+                    &left
+                };
                 match other {
                     Value::Str(text) => return Ok(normalize_digits(text).is_some_and(|n| n == a)),
                     Value::Int(..) | Value::Float(..) => {
@@ -268,7 +289,11 @@ impl<'a> Interp<'a> {
                     Value::Bool(flag) => return Ok(a == if *flag { "1" } else { "0" }),
                     Value::Object(obj) => {
                         let primitive = self.to_primitive_default(*obj)?;
-                        let (l, r) = if big_text(&left).is_some() { (left.clone(), primitive) } else { (primitive, right.clone()) };
+                        let (l, r) = if big_text(&left).is_some() {
+                            (left.clone(), primitive)
+                        } else {
+                            (primitive, right.clone())
+                        };
                         return self.loose_equals(l, r);
                     }
                     _ => {}
@@ -336,7 +361,11 @@ impl<'a> Interp<'a> {
     /// `Array.prototype.join` over an array object: object elements run their
     /// own ToString (`toString` / `Symbol.toPrimitive`), nested arrays join with
     /// commas, and `null`/`undefined`/holes render empty. `None` for a non-array.
-    pub(crate) fn array_join_dyn(&mut self, obj: zun_gc::Obj, separator: &str) -> Result<Option<String>, RunError> {
+    pub(crate) fn array_join_dyn(
+        &mut self,
+        obj: zun_gc::Obj,
+        separator: &str,
+    ) -> Result<Option<String>, RunError> {
         if zun_gc::with_current_heap(|heap| heap.array_len(obj)).is_none() {
             return Ok(None);
         }
@@ -359,20 +388,26 @@ impl<'a> Interp<'a> {
                     if zun_gc::with_current_heap(|heap| heap.array_len(inner).is_some()) {
                         self.array_join_dyn(inner, ",")?.unwrap_or_default()
                     } else {
-                        match self.call_managed_collection("stringCoerce", &[Value::Object(inner)])? {
+                        match self
+                            .call_managed_collection("stringCoerce", &[Value::Object(inner)])?
+                        {
                             Value::Str(text) => text.to_string(),
                             other => other.display(),
                         }
                     }
                 }
-                _ => zun_gc::with_current_heap(|heap| stringify_any(element, heap)).unwrap_or_default(),
+                _ => zun_gc::with_current_heap(|heap| stringify_any(element, heap))
+                    .unwrap_or_default(),
             };
             parts.push(text);
         }
         Ok(Some(parts.join(separator)))
     }
 
-    pub(crate) fn coerce_relational_operands(&mut self, stack: &mut Vec<Value>) -> Result<(), RunError> {
+    pub(crate) fn coerce_relational_operands(
+        &mut self,
+        stack: &mut Vec<Value>,
+    ) -> Result<(), RunError> {
         let len = stack.len();
         if len < 2 {
             return Ok(());
@@ -380,20 +415,24 @@ impl<'a> Interp<'a> {
         let unbox = |v: &Value| -> Value {
             match v {
                 Value::Any(any) if any.as_symbol().is_none() => {
-                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)).unwrap_or_else(|| v.clone())
+                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or_else(|| v.clone())
                 }
                 other => other.clone(),
             }
         };
         let (a, b) = (unbox(&stack[len - 2]), unbox(&stack[len - 1]));
         let is_plain_object = |v: &Value| match v {
-            Value::Object(obj) => zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_none()),
+            Value::Object(obj) => {
+                zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_none())
+            }
             _ => false,
         };
         let bigint_as_f64 = |v: &Value| -> Option<f64> {
             match v {
                 Value::Object(obj) => zun_gc::with_current_heap(|heap| {
-                    heap.bigint_value(*obj).map(|big| big.to_string().parse::<f64>().unwrap_or(f64::NAN))
+                    heap.bigint_value(*obj)
+                        .map(|big| big.to_string().parse::<f64>().unwrap_or(f64::NAN))
                 }),
                 _ => None,
             }
@@ -497,12 +536,18 @@ impl<'a> Interp<'a> {
         // A BigInt is a primitive: its string form is its decimal digits (the
         // number hint parses them back). Checked first so the heap object's
         // reserved type id never reaches the class-method tables.
-        if let Some(text) = zun_gc::with_current_heap(|heap| heap.bigint_value(obj).map(|v| v.to_string())) {
+        if let Some(text) =
+            zun_gc::with_current_heap(|heap| heap.bigint_value(obj).map(|v| v.to_string()))
+        {
             return Ok(Some(Value::Str(text.into())));
         }
         let tp = zun_core::WellKnownSymbol::ToPrimitive.id();
         let handle = zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(obj, tp))
-            .or_else(|| self.class_symbol_methods.get(&(obj.type_rid(), tp.get())).copied());
+            .or_else(|| {
+                self.class_symbol_methods
+                    .get(&(obj.type_rid(), tp.get()))
+                    .copied()
+            });
         if let Some(handle) = handle {
             let hint_value = zun_gc::with_current_heap_mut(|heap| {
                 Value::Any(zun_core::Any::string(heap.intern_string(hint.into())))
@@ -511,7 +556,9 @@ impl<'a> Interp<'a> {
             let result = self.invoke_function_value(handle, call_args)?;
             let result = unbox_arg(&result)?;
             if matches!(result, Value::Object(_) | Value::Function(_)) {
-                return Err(RunError::Native("TypeError: Cannot convert object to primitive value".into()));
+                return Err(RunError::Native(
+                    "TypeError: Cannot convert object to primitive value".into(),
+                ));
             }
             return Ok(Some(result));
         }
@@ -550,9 +597,10 @@ impl<'a> Interp<'a> {
             }
         }
         if rejected {
-            return Err(RunError::Native("TypeError: Cannot convert object to primitive value".into()));
+            return Err(RunError::Native(
+                "TypeError: Cannot convert object to primitive value".into(),
+            ));
         }
         Ok(None)
     }
-
 }

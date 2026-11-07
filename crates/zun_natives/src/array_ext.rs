@@ -18,60 +18,170 @@ pub const MODULE: crate::Module = crate::Module {
     functions: &[
         // `at(index)` with ECMAScript relative indexing: a negative index counts
         // from the end, and an out-of-range index yields `undefined`.
-        NativeFn { name: "arrayAt", params: &[Array, F64], ret: Opaque, imp: unavailable },
+        NativeFn {
+            name: "arrayAt",
+            params: &[Array, F64],
+            ret: Opaque,
+            imp: unavailable,
+        },
         // `findLast(cb)` / `findLastIndex(cb)` — reverse iteration, callback
         // `(value, index, array)`.
-        NativeFn { name: "arrayFindLast", params: &[Array, Function], ret: Opaque, imp: unavailable },
-        NativeFn { name: "arrayFindLastIndex", params: &[Array, Function], ret: I32, imp: unavailable },
+        NativeFn {
+            name: "arrayFindLast",
+            params: &[Array, Function],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayFindLastIndex",
+            params: &[Array, Function],
+            ret: I32,
+            imp: unavailable,
+        },
         // `flat(depth=1)` — recursively flattens nested arrays up to `depth`
         // levels; non-array elements pass through unchanged.
-        NativeFn { name: "arrayFlat", params: &[Array, F64], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayFlat",
+            params: &[Array, F64],
+            ret: Array,
+            imp: unavailable,
+        },
         // `flatMap(cb)` — `map(cb)` then a single flatten level.
-        NativeFn { name: "arrayFlatMap", params: &[Array, Function], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayFlatMap",
+            params: &[Array, Function],
+            ret: Array,
+            imp: unavailable,
+        },
         // Iterator helpers. For this floor each returns a fresh managed Array
         // (which composes with `for...of` and indexing); `entries` yields
         // `[index, value]` pairs.
-        NativeFn { name: "arrayKeys", params: &[Array], ret: Array, imp: unavailable },
-        NativeFn { name: "arrayValues", params: &[Array], ret: Array, imp: unavailable },
-        NativeFn { name: "arrayEntries", params: &[Array], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayKeys",
+            params: &[Array],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayValues",
+            params: &[Array],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayEntries",
+            params: &[Array],
+            ret: Array,
+            imp: unavailable,
+        },
         // `splice(start, deleteCount, ...items)` — deletes and inserts the items
         // (gathered into a managed Array by the lowering) at `start`, returning
         // the removed elements.
-        NativeFn { name: "arrayFill", params: &[Array, Opaque, Opaque, Opaque], ret: Array, imp: unavailable },
-        NativeFn { name: "arrayCopyWithin", params: &[Array, Opaque, Opaque, Opaque], ret: Array, imp: unavailable },
-        NativeFn { name: "arraySpliceArgs", params: &[Array, Array], ret: Array, imp: unavailable },
-        NativeFn { name: "arraySpliceInsert", params: &[Array, U64, U64, Array], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayFill",
+            params: &[Array, Opaque, Opaque, Opaque],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayCopyWithin",
+            params: &[Array, Opaque, Opaque, Opaque],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arraySpliceArgs",
+            params: &[Array, Array],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arraySpliceInsert",
+            params: &[Array, U64, U64, Array],
+            ret: Array,
+            imp: unavailable,
+        },
         // No-initial-value `reduce`/`reduceRight`: seed from the first/last
         // element and throw a TypeError on an empty array (spec).
-        NativeFn { name: "arrayReduceNoInit", params: &[Array, Function], ret: Opaque, imp: unavailable },
-        NativeFn { name: "arrayReduceRightNoInit", params: &[Array, Function], ret: Opaque, imp: unavailable },
+        NativeFn {
+            name: "arrayReduceNoInit",
+            params: &[Array, Function],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayReduceRightNoInit",
+            params: &[Array, Function],
+            ret: Opaque,
+            imp: unavailable,
+        },
         // `Array.isArray(x)`.
-        NativeFn { name: "arrayIsArray", params: &[Opaque], ret: Bool, imp: unavailable },
+        NativeFn {
+            name: "arrayIsArray",
+            params: &[Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
         // `Array.from(arrayLike_or_iterable, mapFn?)`. v1 accepts a managed Array
         // or a string; other iterables are deferred. The mapped form invokes the
         // callback with `(value, index)`.
-        NativeFn { name: "arrayFrom", params: &[Opaque], ret: Array, imp: unavailable },
-        NativeFn { name: "arrayDestructure", params: &[Opaque, U32], ret: Array, imp: unavailable },
-        NativeFn { name: "arrayFromMapped", params: &[Opaque, Function], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayFrom",
+            params: &[Opaque],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayDestructure",
+            params: &[Opaque, U32],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayFromMapped",
+            params: &[Opaque, Function],
+            ret: Array,
+            imp: unavailable,
+        },
         // `arraySpreadAppend(target, source)` appends every element of the
         // iterable `source` (a managed Array or a string, matching `arrayFrom`'s
         // supported sources) to `target`, returning `target`. Backs array-literal
         // spread (`[a, ...xs]`). Appended last so existing dispatch ids stay
         // stable.
-        NativeFn { name: "arraySpreadAppend", params: &[Array, Opaque], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arraySpreadAppend",
+            params: &[Array, Opaque],
+            ret: Array,
+            imp: unavailable,
+        },
         // `arraySlice(source, start)` returns a fresh managed Array holding the
         // elements of `source` from index `start` to the end. Backs the
         // `...rest` element of array destructuring. Appended last so existing
         // dispatch ids stay stable.
-        NativeFn { name: "arraySlice", params: &[Array, U64], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arraySlice",
+            params: &[Array, U64],
+            ret: Array,
+            imp: unavailable,
+        },
         // `coalesceUndefined(value, fallback)` returns `fallback` when `value`
         // reads as `undefined`, else `value`. Backs destructuring defaults
         // (`[a = 1]`, `{ x = 1 }`); both operands are evaluated (eager default).
-        NativeFn { name: "coalesceUndefined", params: &[Opaque, Opaque], ret: Opaque, imp: unavailable },
+        NativeFn {
+            name: "coalesceUndefined",
+            params: &[Opaque, Opaque],
+            ret: Opaque,
+            imp: unavailable,
+        },
         // `objectRest(source, excludedKeys)` returns a fresh dynamic object
         // holding every own-enumerable string key of `source` except those
         // named in the `excludedKeys` Array. Backs object-pattern `...rest`.
-        NativeFn { name: "objectRest", params: &[Opaque, Array], ret: DynamicObject, imp: unavailable },
+        NativeFn {
+            name: "objectRest",
+            params: &[Opaque, Array],
+            ret: DynamicObject,
+            imp: unavailable,
+        },
         // ES2023 change-array-by-copy methods (NUCLEUS #7 remaining). Each
         // returns a FRESH managed Array and leaves the receiver untouched.
         // Appended last so existing dispatch ids stay stable.
@@ -79,48 +189,173 @@ pub const MODULE: crate::Module = crate::Module {
         // `toSorted(cmp?)` — a sorted copy (default string order, or the
         // comparator); `toReversed()` — a reversed copy. The comparator
         // re-enters the interpreter like `sort`.
-        NativeFn { name: "arrayToSorted", params: &[Array], ret: Array, imp: unavailable },
-        NativeFn { name: "arrayToSortedBy", params: &[Array, Function], ret: Array, imp: unavailable },
-        NativeFn { name: "arrayToReversed", params: &[Array], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayToSorted",
+            params: &[Array],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayToSortedBy",
+            params: &[Array, Function],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayToReversed",
+            params: &[Array],
+            ret: Array,
+            imp: unavailable,
+        },
         // `with(index, value)` — a copy with `index` replaced; a negative
         // index counts from the end, and an out-of-range index throws a
         // RangeError-equivalent.
-        NativeFn { name: "arrayWith", params: &[Array, I64, Opaque], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayWith",
+            params: &[Array, I64, Opaque],
+            ret: Array,
+            imp: unavailable,
+        },
         // `toSpliced(start, deleteCount, ...items)` — a copy with the splice
         // applied; the variadic inserts are gathered into a managed Array.
-        NativeFn { name: "arrayToSpliced", params: &[Array, U64, U64, Array], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayToSpliced",
+            params: &[Array, U64, U64, Array],
+            ret: Array,
+            imp: unavailable,
+        },
         // `group(cb)` / `groupToMap(cb)` (array grouping proposal). `group`
         // returns a dynamic object keyed by `String(cb(v, i, arr))`;
         // `groupToMap` returns a Map keyed by the callback result. Values are
         // arrays of the grouped elements.
-        NativeFn { name: "arrayGroup", params: &[Array, Function], ret: DynamicObject, imp: unavailable },
-        NativeFn { name: "arrayGroupToMap", params: &[Array, Function], ret: Map, imp: unavailable },
+        NativeFn {
+            name: "arrayGroup",
+            params: &[Array, Function],
+            ret: DynamicObject,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayGroupToMap",
+            params: &[Array, Function],
+            ret: Map,
+            imp: unavailable,
+        },
         // `concat(...items)` - the receiver followed by each gathered item;
         // arrays (and objects whose `[Symbol.isConcatSpreadable]` is `true`)
         // are spread, anything else is appended as one element.
-        NativeFn { name: "arrayConcat", params: &[Array, Array], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayConcat",
+            params: &[Array, Array],
+            ret: Array,
+            imp: unavailable,
+        },
         // `slice(start?, end?)` with ECMAScript relative-index clamping, and the
         // strict-equality search family. Indices are `number`s (NaN means 0).
-        NativeFn { name: "methodCallSpread", params: &[Opaque, Opaque, Array], ret: Opaque, imp: unavailable },
-        NativeFn { name: "arraySliceArgs", params: &[Array, Array], ret: Array, imp: unavailable },
-        NativeFn { name: "arraySliceRange", params: &[Array, F64, F64], ret: Array, imp: unavailable },
-        NativeFn { name: "arrayIndexOf", params: &[Array, Opaque, F64], ret: F64, imp: unavailable },
-        NativeFn { name: "arrayLastIndexOf", params: &[Array, Opaque, F64], ret: F64, imp: unavailable },
-        NativeFn { name: "arrayIncludes", params: &[Array, Opaque, F64], ret: Bool, imp: unavailable },
+        NativeFn {
+            name: "methodCallSpread",
+            params: &[Opaque, Opaque, Array],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arraySliceArgs",
+            params: &[Array, Array],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arraySliceRange",
+            params: &[Array, F64, F64],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayIndexOf",
+            params: &[Array, Opaque, F64],
+            ret: F64,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayLastIndexOf",
+            params: &[Array, Opaque, F64],
+            ret: F64,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayIncludes",
+            params: &[Array, Opaque, F64],
+            ret: Bool,
+            imp: unavailable,
+        },
         // In-place `reverse()`, returning the receiver.
-        NativeFn { name: "arrayReverse", params: &[Array], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "arrayReverse",
+            params: &[Array],
+            ret: Array,
+            imp: unavailable,
+        },
         // `anyIsUndefined(value)` — whether the value reads as `undefined`.
         // Backs the lazy destructuring-default test (the default expression is
         // evaluated only when this is true).
-        NativeFn { name: "anyIsUndefined", params: &[Opaque], ret: Bool, imp: unavailable },
-        NativeFn { name: "destructOpen", params: &[Opaque], ret: Opaque, imp: unavailable },
-        NativeFn { name: "destructStep", params: &[Opaque, F64], ret: Opaque, imp: unavailable },
-        NativeFn { name: "destructRest", params: &[Opaque, U64], ret: Array, imp: unavailable },
-        NativeFn { name: "destructFinish", params: &[Opaque, Bool], ret: Bool, imp: unavailable },
-        NativeFn { name: "arrayLikePush", params: &[Opaque, Array], ret: Opaque, imp: unavailable },
-        NativeFn { name: "arrayLikeFill", params: &[Opaque, Array], ret: Opaque, imp: unavailable },
-        NativeFn { name: "arrayLikeReverse", params: &[Opaque, Array], ret: Opaque, imp: unavailable },
-        NativeFn { name: "arrayLikePop", params: &[Opaque], ret: Opaque, imp: unavailable },
-        NativeFn { name: "arrayFromArrayLike", params: &[Opaque], ret: Array, imp: unavailable },
+        NativeFn {
+            name: "anyIsUndefined",
+            params: &[Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "destructOpen",
+            params: &[Opaque],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "destructStep",
+            params: &[Opaque, F64],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "destructRest",
+            params: &[Opaque, U64],
+            ret: Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "destructFinish",
+            params: &[Opaque, Bool],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayLikePush",
+            params: &[Opaque, Array],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayLikeFill",
+            params: &[Opaque, Array],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayLikeReverse",
+            params: &[Opaque, Array],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayLikePop",
+            params: &[Opaque],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "arrayFromArrayLike",
+            params: &[Opaque],
+            ret: Array,
+            imp: unavailable,
+        },
     ],
 };

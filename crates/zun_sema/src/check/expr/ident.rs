@@ -1,9 +1,15 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_new_target(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_new_target(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Ident(_) = expr else { unreachable!() };
+        let ast::Expr::Ident(_) = expr else {
+            unreachable!()
+        };
         // Inside a constructor `new.target` is the class that was
         // instantiated: the runtime class of `this` (the most-derived
         // class when reached through a `super(...)` chain). Everywhere
@@ -16,17 +22,25 @@ impl Checker<'_> {
                     span,
                 };
                 let boxed = hir::Expr {
-                    kind: hir::ExprKind::BoxAny { value: Box::new(this_expr) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(this_expr),
+                    },
                     ty: Ty::Any,
                     span,
                 };
                 let record = hir::Expr {
-                    kind: hir::ExprKind::DynamicGet { object: Box::new(boxed), name: "constructor".to_string() },
+                    kind: hir::ExprKind::DynamicGet {
+                        object: Box::new(boxed),
+                        name: "constructor".to_string(),
+                    },
                     ty: Ty::Any,
                     span,
                 };
                 return hir::Expr {
-                    kind: hir::ExprKind::DynamicGet { object: Box::new(record), name: "__classDesc".to_string() },
+                    kind: hir::ExprKind::DynamicGet {
+                        object: Box::new(record),
+                        name: "__classDesc".to_string(),
+                    },
                     ty: Ty::Any,
                     span,
                 };
@@ -40,9 +54,15 @@ impl Checker<'_> {
         self.check_expr(cx, &void_zero)
     }
 
-    pub(in crate::check) fn check_ident(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_ident(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Ident(name) = expr else { unreachable!() };
+        let ast::Expr::Ident(name) = expr else {
+            unreachable!()
+        };
         let text = self.text(name).to_string();
         if cx.tdz_names.contains(&text) {
             // Reading a parameter before its initialisation is a ReferenceError.
@@ -73,7 +93,11 @@ impl Checker<'_> {
             },
             None => {
                 if text == "globalThis" || text == "global" {
-                    return hir::Expr { kind: hir::ExprKind::RealmGlobal, ty: Ty::DynamicObject, span };
+                    return hir::Expr {
+                        kind: hir::ExprKind::RealmGlobal,
+                        ty: Ty::DynamicObject,
+                        span,
+                    };
                 }
                 // `this` outside a method (module scope, plain function):
                 // strict-mode `undefined`.

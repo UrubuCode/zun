@@ -212,9 +212,8 @@ impl<'a> JitHook<'a> {
         // ordinary OSR frame map. The .NET tiering contract therefore keeps
         // patchpoints out of protected and handler intervals.
         if body.handlers.iter().any(|handler| {
-            let in_try = |pc: usize| {
-                (handler.try_start as usize..handler.try_end as usize).contains(&pc)
-            };
+            let in_try =
+                |pc: usize| (handler.try_start as usize..handler.try_end as usize).contains(&pc);
             let in_handler = |pc: usize| {
                 (handler.handler_start as usize..handler.handler_end as usize).contains(&pc)
             };
@@ -255,12 +254,7 @@ impl<'a> JitHook<'a> {
         if method_rid == 0 {
             return false;
         }
-        let Some(method) = self
-            .module
-            .tables
-            .method_defs
-            .get(method_rid as usize - 1)
-        else {
+        let Some(method) = self.module.tables.method_defs.get(method_rid as usize - 1) else {
             return false;
         };
         let Ok(body) = zun_module::read_body(&self.module.code, method.body_offset) else {
@@ -318,9 +312,7 @@ impl CallHook for JitHook<'_> {
                     Value::Object(object) => roots.push(*object),
                     Value::Function(handle) => {
                         if let Some(address) = handle.environment() {
-                            roots.push(unsafe {
-                                zun_gc::Obj::from_addr(address as *mut u64)
-                            });
+                            roots.push(unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
                         }
                     }
                     _ => {}
@@ -375,8 +367,13 @@ impl CallHook for JitHook<'_> {
             .zip(kinds)
             .map(|(v, &k)| pack_value(v, k, unsafe { &mut *heap }))
             .collect();
-        let result = unsafe { jit.call_packed_with_heap(method_rid, &packed, &mut *heap).ok()? };
-        Some(unpack_value(result, jit.return_kind(method_rid), unsafe { &*heap }))
+        let result = unsafe {
+            jit.call_packed_with_heap(method_rid, &packed, &mut *heap)
+                .ok()?
+        };
+        Some(unpack_value(result, jit.return_kind(method_rid), unsafe {
+            &*heap
+        }))
     }
 
     fn on_backedge(&self, method_rid: u32, target_pc: usize) {
@@ -410,7 +407,10 @@ impl CallHook for JitHook<'_> {
                 .iter()
                 .any(|request| request.method_rid == method_rid && request.target_pc == target_pc)
             {
-                requests.push(OsrRequest { method_rid, target_pc });
+                requests.push(OsrRequest {
+                    method_rid,
+                    target_pc,
+                });
             }
         }
     }

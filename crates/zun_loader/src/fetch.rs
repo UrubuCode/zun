@@ -105,10 +105,7 @@ impl HttpFetcher {
     }
 
     /// Fetch the registry index and enforce the release-pinned trust anchor.
-    pub fn fetch_verified_index(
-        &self,
-        trusted_key: &[u8; 32],
-    ) -> Result<ModuleIndex, LoadError> {
+    pub fn fetch_verified_index(&self, trusted_key: &[u8; 32]) -> Result<ModuleIndex, LoadError> {
         let signed = self.fetch_signed_index()?;
         signed.verify_against(trusted_key)?;
         Ok(signed.index)

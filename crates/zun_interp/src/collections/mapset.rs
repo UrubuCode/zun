@@ -33,7 +33,9 @@ impl<'a> Interp<'a> {
                         .as_object()
                         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
                         .ok_or_else(|| {
-                            RunError::Native("TypeError: Iterator value is not an entry object".into())
+                            RunError::Native(
+                                "TypeError: Iterator value is not an entry object".into(),
+                            )
                         })?;
                     let key = zun_gc::with_current_heap(|heap| heap.array_get(pair, 0))
                         .ok_or(RunError::BadToken)?;
@@ -71,73 +73,196 @@ impl<'a> Interp<'a> {
                 Ok(recv)
             }
             "mapSetI32" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, zun_core::Any::int(key), zun_core::Any::int(value))).is_none()))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.map_insert(object, zun_core::Any::int(key), zun_core::Any::int(value))
+                    })
+                    .is_none(),
+                ))
             }
             "mapSetI64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, zun_core::Any::int(key), zun_core::Any::int(value))).is_none()))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.map_insert(object, zun_core::Any::int(key), zun_core::Any::int(value))
+                    })
+                    .is_none(),
+                ))
             }
             "mapSetF64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let value = match args.get(2).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_insert(object, zun_core::Any::float(key), zun_core::Any::float(value))).is_none()))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.map_insert(
+                            object,
+                            zun_core::Any::float(key),
+                            zun_core::Any::float(value),
+                        )
+                    })
+                    .is_none(),
+                ))
             }
             "mapHasI32" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key)))
+                        .ok_or(RunError::BadToken)?,
+                ))
             }
             "mapHasI64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::int(key)))
+                        .ok_or(RunError::BadToken)?,
+                ))
             }
             "mapHasF64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.map_has(object, zun_core::Any::float(key))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| {
+                        heap.map_has(object, zun_core::Any::float(key))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "mapGetI32Or" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let fallback = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let value = zun_gc::with_current_heap(|heap| heap.map_get(object, zun_core::Any::int(key)).and_then(|value| value.as_int())).unwrap_or(fallback);
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let fallback = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = zun_gc::with_current_heap(|heap| {
+                    heap.map_get(object, zun_core::Any::int(key))
+                        .and_then(|value| value.as_int())
+                })
+                .unwrap_or(fallback);
                 Ok(Value::Int(value, zun_il::NumKind::I32))
             }
             "mapGetI64Or" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let fallback = match args.get(2).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let value = zun_gc::with_current_heap(|heap| heap.map_get(object, zun_core::Any::int(key)).and_then(|value| value.as_int())).unwrap_or(fallback);
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let fallback = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = zun_gc::with_current_heap(|heap| {
+                    heap.map_get(object, zun_core::Any::int(key))
+                        .and_then(|value| value.as_int())
+                })
+                .unwrap_or(fallback);
                 Ok(Value::Int(value, zun_il::NumKind::I64))
             }
             "mapGetF64Or" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let fallback = match args.get(2).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                let value = zun_gc::with_current_heap(|heap| heap.map_get(object, zun_core::Any::float(key)).and_then(|value| value.as_float())).unwrap_or(fallback);
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let fallback = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                let value = zun_gc::with_current_heap(|heap| {
+                    heap.map_get(object, zun_core::Any::float(key))
+                        .and_then(|value| value.as_float())
+                })
+                .unwrap_or(fallback);
                 Ok(Value::Float(value, zun_il::NumKind::F64))
             }
             "mapDeleteI32" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_remove(object, zun_core::Any::int(key))).is_some()))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.map_remove(object, zun_core::Any::int(key))
+                    })
+                    .is_some(),
+                ))
             }
             "mapDeleteI64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_remove(object, zun_core::Any::int(key))).is_some()))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.map_remove(object, zun_core::Any::int(key))
+                    })
+                    .is_some(),
+                ))
             }
             "mapDeleteF64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let key = match args.get(1).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.map_remove(object, zun_core::Any::float(key))).is_some()))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let key = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.map_remove(object, zun_core::Any::float(key))
+                    })
+                    .is_some(),
+                ))
             }
             "mapGet" => {
                 let object =
@@ -202,8 +327,9 @@ impl<'a> Interp<'a> {
                         heap.array_set(array, index, value);
                     });
                 }
-                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
-                    .ok_or(RunError::BadToken)?;
+                let iterator =
+                    zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
+                        .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "mapKeys" | "mapEntries" => {
@@ -227,8 +353,9 @@ impl<'a> Interp<'a> {
                         let _ = heap.array_set(array, index, item);
                     });
                 }
-                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
-                    .ok_or(RunError::BadToken)?;
+                let iterator =
+                    zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
+                        .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "mapForEach" => {
@@ -298,41 +425,42 @@ impl<'a> Interp<'a> {
                 // Snapshot the source elements into a rooted array, then drain
                 // it into the target set (the mapForEach materialization idiom:
                 // a GC during `set_add` relocates the rooted array transparently).
-                let values: Vec<zun_core::Any> =
-                    if let Some(values) = zun_gc::with_current_heap(|heap| heap.set_values(source)) {
-                        values
-                    } else if let Some(entries) =
-                        zun_gc::with_current_heap(|heap| heap.map_entries(source))
-                    {
-                        // A Set built from a Map iterates `[key, value]` pairs.
-                        zun_gc::with_current_heap_mut(|heap| {
-                            entries
-                                .into_iter()
-                                .map(|(key, value)| {
-                                    let pair = heap.alloc_array(2);
-                                    let _ = heap.array_set(pair, 0, key);
-                                    let _ = heap.array_set(pair, 1, value);
-                                    zun_core::Any::object(pair.addr() as usize)
-                                })
-                                .collect()
-                        })
-                    } else if let Some(length) =
-                        zun_gc::with_current_heap(|heap| heap.array_len(source))
-                    {
-                        (0..length)
-                            .map(|index| {
-                                zun_gc::with_current_heap(|heap| heap.array_get(source, index))
-                                    .ok_or(RunError::BadToken)
+                let values: Vec<zun_core::Any> = if let Some(values) =
+                    zun_gc::with_current_heap(|heap| heap.set_values(source))
+                {
+                    values
+                } else if let Some(entries) =
+                    zun_gc::with_current_heap(|heap| heap.map_entries(source))
+                {
+                    // A Set built from a Map iterates `[key, value]` pairs.
+                    zun_gc::with_current_heap_mut(|heap| {
+                        entries
+                            .into_iter()
+                            .map(|(key, value)| {
+                                let pair = heap.alloc_array(2);
+                                let _ = heap.array_set(pair, 0, key);
+                                let _ = heap.array_set(pair, 1, value);
+                                zun_core::Any::object(pair.addr() as usize)
                             })
-                            .collect::<Result<_, _>>()?
-                    } else {
-                        // An arbitrary user `[Symbol.iterator]` iterable: drive
-                        // the iteration protocol, adding each produced value.
-                        let target = self.drive_iterable(source, target, |heap, set, value| {
-                            heap.set_add(set, value);
-                        })?;
-                        return Ok(Value::Any(zun_core::Any::object(target.addr() as usize)));
-                    };
+                            .collect()
+                    })
+                } else if let Some(length) =
+                    zun_gc::with_current_heap(|heap| heap.array_len(source))
+                {
+                    (0..length)
+                        .map(|index| {
+                            zun_gc::with_current_heap(|heap| heap.array_get(source, index))
+                                .ok_or(RunError::BadToken)
+                        })
+                        .collect::<Result<_, _>>()?
+                } else {
+                    // An arbitrary user `[Symbol.iterator]` iterable: drive
+                    // the iteration protocol, adding each produced value.
+                    let target = self.drive_iterable(source, target, |heap, set, value| {
+                        heap.set_add(set, value);
+                    })?;
+                    return Ok(Value::Any(zun_core::Any::object(target.addr() as usize)));
+                };
                 let length = values.len();
                 let staged = zun_gc::with_current_heap_mut(|heap| {
                     let staged = heap.alloc_array(length);
@@ -388,8 +516,9 @@ impl<'a> Interp<'a> {
                     for index in 0..length {
                         let key = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
                             .ok_or(RunError::BadToken)?;
-                        let value = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], index))
-                            .ok_or(RunError::BadToken)?;
+                        let value =
+                            zun_gc::with_current_heap(|heap| heap.array_get(roots[1], index))
+                                .ok_or(RunError::BadToken)?;
                         zun_gc::with_current_heap_mut(|heap| heap.map_insert(roots[2], key, value));
                     }
                     return Ok(Value::Any(zun_core::Any::object(roots[2].addr() as usize)));
@@ -397,33 +526,34 @@ impl<'a> Interp<'a> {
                 // A Set source (or an array): each element must be a `[key,
                 // value]` pair array. Snapshot the elements into a rooted array
                 // and read each pair out of it.
-                let elements: Vec<zun_core::Any> =
-                    if let Some(values) = zun_gc::with_current_heap(|heap| heap.set_values(source)) {
-                        values
-                    } else if let Some(length) =
-                        zun_gc::with_current_heap(|heap| heap.array_len(source))
-                    {
-                        (0..length)
-                            .map(|index| {
-                                zun_gc::with_current_heap(|heap| heap.array_get(source, index))
-                                    .ok_or(RunError::BadToken)
-                            })
-                            .collect::<Result<_, _>>()?
-                    } else {
-                        // An arbitrary user `[Symbol.iterator]` iterable yielding
-                        // `[key, value]` pair arrays: drive the protocol.
-                        let target = self.drive_iterable(source, target, |heap, map, value| {
-                            if let Some(pair) = value
-                                .as_object()
-                                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-                            {
-                                let key = heap.array_get(pair, 0).unwrap_or_else(zun_core::Any::void);
-                                let val = heap.array_get(pair, 1).unwrap_or_else(zun_core::Any::void);
-                                heap.map_insert(map, key, val);
-                            }
-                        })?;
-                        return Ok(Value::Any(zun_core::Any::object(target.addr() as usize)));
-                    };
+                let elements: Vec<zun_core::Any> = if let Some(values) =
+                    zun_gc::with_current_heap(|heap| heap.set_values(source))
+                {
+                    values
+                } else if let Some(length) =
+                    zun_gc::with_current_heap(|heap| heap.array_len(source))
+                {
+                    (0..length)
+                        .map(|index| {
+                            zun_gc::with_current_heap(|heap| heap.array_get(source, index))
+                                .ok_or(RunError::BadToken)
+                        })
+                        .collect::<Result<_, _>>()?
+                } else {
+                    // An arbitrary user `[Symbol.iterator]` iterable yielding
+                    // `[key, value]` pair arrays: drive the protocol.
+                    let target = self.drive_iterable(source, target, |heap, map, value| {
+                        if let Some(pair) = value
+                            .as_object()
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                        {
+                            let key = heap.array_get(pair, 0).unwrap_or_else(zun_core::Any::void);
+                            let val = heap.array_get(pair, 1).unwrap_or_else(zun_core::Any::void);
+                            heap.map_insert(map, key, val);
+                        }
+                    })?;
+                    return Ok(Value::Any(zun_core::Any::object(target.addr() as usize)));
+                };
                 let length = elements.len();
                 let staged = zun_gc::with_current_heap_mut(|heap| {
                     let staged = heap.alloc_array(length);
@@ -441,7 +571,9 @@ impl<'a> Interp<'a> {
                         .as_object()
                         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
                         .ok_or_else(|| {
-                            RunError::Native("TypeError: Iterator value is not an entry object".into())
+                            RunError::Native(
+                                "TypeError: Iterator value is not an entry object".into(),
+                            )
                         })?;
                     let key = zun_gc::with_current_heap(|heap| heap.array_get(pair, 0))
                         .ok_or(RunError::BadToken)?;
@@ -462,49 +594,130 @@ impl<'a> Interp<'a> {
                 ))
             }
             "setAddI32" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_add(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.set_add(object, zun_core::Any::int(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setAddI64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_add(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.set_add(object, zun_core::Any::int(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setAddF64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_add(object, zun_core::Any::float(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.set_add(object, zun_core::Any::float(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setHasI32" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.set_has(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| {
+                        heap.set_has(object, zun_core::Any::int(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setHasI64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.set_has(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| {
+                        heap.set_has(object, zun_core::Any::int(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setHasF64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| heap.set_has(object, zun_core::Any::float(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap(|heap| {
+                        heap.set_has(object, zun_core::Any::float(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setDeleteI32" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_remove(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.set_remove(object, zun_core::Any::int(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setDeleteI64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Int(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_remove(object, zun_core::Any::int(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.set_remove(object, zun_core::Any::int(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setDeleteF64" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = match args.get(1).ok_or(RunError::BadToken)? { Value::Float(value, _) => *value, _ => return Err(RunError::BadToken) };
-                Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| heap.set_remove(object, zun_core::Any::float(value))).ok_or(RunError::BadToken)?))
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Float(value, _) => *value,
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(Value::Bool(
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.set_remove(object, zun_core::Any::float(value))
+                    })
+                    .ok_or(RunError::BadToken)?,
+                ))
             }
             "setHas" => {
                 let object =
@@ -546,8 +759,9 @@ impl<'a> Interp<'a> {
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // A live cursor: deletions and additions during iteration are seen.
-                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_set_iterator(object))
-                    .ok_or(RunError::BadToken)?;
+                let iterator =
+                    zun_gc::with_current_heap_mut(|heap| heap.alloc_set_iterator(object))
+                        .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "setEntries" => {
@@ -571,8 +785,9 @@ impl<'a> Interp<'a> {
                         );
                     });
                 }
-                let iterator = zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
-                    .ok_or(RunError::BadToken)?;
+                let iterator =
+                    zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
+                        .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "setForEach" => {

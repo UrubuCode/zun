@@ -29,13 +29,20 @@ impl Checker<'_> {
             && !self.classes_by_name.contains_key(name)
             && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
         {
-            let inner = ast::Expr::New { class: *class, args: args[..1].to_vec(), span };
+            let inner = ast::Expr::New {
+                class: *class,
+                args: args[..1].to_vec(),
+                span,
+            };
             let mut result = self.check_expr(cx, &inner);
             for extra in &args[1..] {
                 let effect = self.check_expr(cx, extra);
                 let ty = result.ty;
                 result = hir::Expr {
-                    kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(effect),
+                        value: Box::new(result),
+                    },
                     ty,
                     span,
                 };
@@ -51,15 +58,13 @@ impl Checker<'_> {
         // into one dotted class name, so split on the last `.` and check
         // the base is a dynamic local (a known class/realm global takes
         // precedence and is handled below).
-        if !self.classes_by_name.contains_key(name)
-            && !self.realm_globals.contains_key(name)
-        {
+        if !self.classes_by_name.contains_key(name) && !self.realm_globals.contains_key(name) {
             if let Some(dot) = name.rfind('.') {
                 let base = &name[..dot];
                 let member = name[dot + 1..].to_string();
-                let base_is_dynamic = cx
-                    .lookup(base)
-                    .is_some_and(|slot| matches!(cx.locals[slot as usize], Ty::Any | Ty::DynamicObject));
+                let base_is_dynamic = cx.lookup(base).is_some_and(|slot| {
+                    matches!(cx.locals[slot as usize], Ty::Any | Ty::DynamicObject)
+                });
                 if base_is_dynamic {
                     let base_name = ast::Name {
                         span: Span::new(class.span.start, class.span.start + base.len() as u32),
@@ -98,7 +103,9 @@ impl Checker<'_> {
         // wrapped class's default construction).
         if !self.classes_by_name.contains_key(name)
             && !self.realm_globals.contains_key(name)
-            && cx.lookup(name).is_some_and(|slot| cx.locals[slot as usize] == Ty::Proxy)
+            && cx
+                .lookup(name)
+                .is_some_and(|slot| cx.locals[slot as usize] == Ty::Proxy)
         {
             let callee = self.check_expr(cx, &ast::Expr::Ident(*class));
             let elements: Vec<Option<hir::Expr>> =
@@ -113,7 +120,10 @@ impl Checker<'_> {
                 return Some(self.poison(span));
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![callee, args_array] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![callee, args_array],
+                },
                 ty: Ty::Any,
                 span,
             });
@@ -186,11 +196,14 @@ impl Checker<'_> {
             .into_iter()
             .map(|(_, ty, _, _)| ty)
             .collect();
-        let mut args: Vec<hir::Expr> =
-            args.iter().map(|a| self.check_expr(cx, a)).collect();
+        let mut args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
         let initializers = self.full_initializers(class_idx);
         if args.len() < field_tys.len() {
-            for initializer in initializers.iter().skip(args.len()).take(field_tys.len() - args.len()) {
+            for initializer in initializers
+                .iter()
+                .skip(args.len())
+                .take(field_tys.len() - args.len())
+            {
                 let Some(initializer) = initializer else {
                     break;
                 };
@@ -247,7 +260,10 @@ impl Checker<'_> {
     ) -> hir::Expr {
         // An undeclared constructor name is a run-time ReferenceError
         // (it may sit in dead code), like an undeclared identifier read.
-        if cx.lookup(name).is_none() && !self.by_name.contains_key(name) && !self.module_globals.contains(name) {
+        if cx.lookup(name).is_none()
+            && !self.by_name.contains_key(name)
+            && !self.module_globals.contains(name)
+        {
             if let Some((id, _)) = zun_natives::resolve("collections", "globalRead") {
                 return hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
@@ -263,7 +279,9 @@ impl Checker<'_> {
         // construct through the class descriptor at run time.
         if cx.lookup(name).is_some() || self.module_globals.contains(name) {
             let callee = self.check_expr(cx, &ast::Expr::Ident(*class));
-            if !callee.ty.is_error() && matches!(callee.ty, Ty::Any | Ty::Function(_) | Ty::DynamicObject) {
+            if !callee.ty.is_error()
+                && matches!(callee.ty, Ty::Any | Ty::Function(_) | Ty::DynamicObject)
+            {
                 if let Some((id, _)) = zun_natives::resolve("collections", "reflectConstruct") {
                     let elements: Vec<Option<hir::Expr>> =
                         args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
@@ -273,7 +291,10 @@ impl Checker<'_> {
                         span,
                     };
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(callee), args_array] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![Self::box_to_any(callee), args_array],
+                        },
                         ty: Ty::Any,
                         span,
                     };

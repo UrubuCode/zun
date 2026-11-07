@@ -42,13 +42,19 @@ impl JitFunctionAbi {
 
     /// Reconstruct a carrier from its two machine words.
     pub const fn from_raw_words(identity: u64, environment: u64) -> Self {
-        Self { identity, environment }
+        Self {
+            identity,
+            environment,
+        }
     }
 
     /// Encode a runtime function handle for a native call boundary.
     pub const fn from_handle(handle: FunctionHandle) -> Self {
         let (identity, environment) = handle.to_carrier_words();
-        Self { identity, environment }
+        Self {
+            identity,
+            environment,
+        }
     }
 
     /// Decode a carrier back into a runtime function handle.
@@ -114,7 +120,10 @@ mod tests {
         assert_eq!(carrier.environment, 0);
         let mut roots = Vec::new();
         carrier.append_managed_root(&mut roots);
-        assert!(roots.is_empty(), "a no-closure function value roots nothing");
+        assert!(
+            roots.is_empty(),
+            "a no-closure function value roots nothing"
+        );
     }
 
     #[test]

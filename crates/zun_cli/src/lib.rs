@@ -66,7 +66,9 @@ pub fn provision_blob(home: &Path, blob: &[u8]) -> Result<Provision, String> {
     }
     let data = zstd::stream::decode_all(blob).map_err(|e| format!("corrupt runtime blob: {e}"))?;
     let want = sha(&data);
-    let target = home.join("modules").join(format!("zun-runtime.{}", runtime_ext()));
+    let target = home
+        .join("modules")
+        .join(format!("zun-runtime.{}", runtime_ext()));
     if let Ok(existing) = std::fs::read(&target) {
         if sha(&existing) == want {
             return Ok(Provision::UpToDate(target));
@@ -102,12 +104,20 @@ pub fn install() -> Result<(), String> {
 
 /// Installed binary file name for this platform.
 pub fn bin_name() -> &'static str {
-    if cfg!(windows) { "zun.exe" } else { "zun" }
+    if cfg!(windows) {
+        "zun.exe"
+    } else {
+        "zun"
+    }
 }
 
 /// Renamed-aside previous binary name for this platform.
 pub fn outdated_name() -> &'static str {
-    if cfg!(windows) { "zun-outdated.exe" } else { "zun-outdated" }
+    if cfg!(windows) {
+        "zun-outdated.exe"
+    } else {
+        "zun-outdated"
+    }
 }
 
 /// Sentinel file name marking that `outdated_name()` should be removed on next start.
@@ -164,6 +174,9 @@ pub fn upgrade_with(home: &Path, from: &Path, blob: &[u8]) -> Result<Provision, 
 pub fn upgrade(from: &Path) -> Result<(), String> {
     let home = zun_home()?;
     let r = upgrade_with(&home, from, EMBEDDED_RUNTIME)?;
-    println!("zun: upgraded {} ({r:?})", home.join("bin").join(bin_name()).display());
+    println!(
+        "zun: upgraded {} ({r:?})",
+        home.join("bin").join(bin_name()).display()
+    );
     Ok(())
 }

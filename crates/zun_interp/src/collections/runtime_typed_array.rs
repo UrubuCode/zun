@@ -64,7 +64,8 @@ impl<'a> Interp<'a> {
         };
         match name {
             "typedArraySetFrom" => Some((|| {
-                let view = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let view =
+                    obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let src = obj(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let offset = match args.get(2).ok_or(RunError::BadToken)? {
                     Value::Int(value, _) => *value as usize,
@@ -74,12 +75,14 @@ impl<'a> Interp<'a> {
                 let length = crate::typed_arrays::element_len(view).ok_or(RunError::BadToken)?;
                 // Out of range reports `false` rather than throwing a
                 // RangeError (the whole set surface here yields a bool).
-                if offset.checked_add(elements.len()).is_none_or(|end| end > length) {
+                if offset
+                    .checked_add(elements.len())
+                    .is_none_or(|end| end > length)
+                {
                     return Ok(Value::Bool(false));
                 }
                 for (index, value) in elements.iter().enumerate() {
-                    if crate::typed_arrays::write_element(view, offset + index, value)
-                        != Some(true)
+                    if crate::typed_arrays::write_element(view, offset + index, value) != Some(true)
                     {
                         return Ok(Value::Bool(false));
                     }
@@ -87,7 +90,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(true))
             })()),
             "typedArraySlice" => Some((|| {
-                let view = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let view =
+                    obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let (start, end) = (int_arg(args.get(1))?, int_arg(args.get(2))?);
                 let element = crate::typed_arrays::element_of(view).ok_or(RunError::BadToken)?;
                 let length = crate::typed_arrays::element_len(view).ok_or(RunError::BadToken)?;
@@ -97,7 +101,9 @@ impl<'a> Interp<'a> {
                 // view is never read across the allocation that could move it.
                 let mut values = Vec::with_capacity(finish - begin);
                 for index in begin..finish {
-                    values.push(crate::typed_arrays::read_element(view, index).ok_or(RunError::BadToken)?);
+                    values.push(
+                        crate::typed_arrays::read_element(view, index).ok_or(RunError::BadToken)?,
+                    );
                 }
                 let result = crate::typed_arrays::alloc_of(element, values.len())
                     .ok_or(RunError::BadToken)?;
@@ -107,7 +113,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(result))
             })()),
             "typedArrayCopyWithin" => Some((|| {
-                let view = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let view =
+                    obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let target = int_arg(args.get(1))?;
                 let start = int_arg(args.get(2))?;
                 let end = int_arg(args.get(3))?;
@@ -121,7 +128,10 @@ impl<'a> Interp<'a> {
                 // overlap, so a straight element-by-element copy would clobber.
                 let mut values = Vec::with_capacity(count);
                 for index in 0..count {
-                    values.push(crate::typed_arrays::read_element(view, from + index).ok_or(RunError::BadToken)?);
+                    values.push(
+                        crate::typed_arrays::read_element(view, from + index)
+                            .ok_or(RunError::BadToken)?,
+                    );
                 }
                 for (index, value) in values.iter().enumerate() {
                     crate::typed_arrays::write_element(view, dest + index, value);
@@ -129,12 +139,15 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(view))
             })()),
             "typedArrayIndexOf" | "typedArrayIncludes" => Some((|| {
-                let view = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let view =
+                    obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // The search value arrives boxed to `Any`; unbox it to the
                 // concrete numeric value the elements compare against.
                 let needle = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                        .ok_or(RunError::BadToken)?,
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .ok_or(RunError::BadToken)?
+                    }
                     other => other.clone(),
                 };
                 let from = int_arg(args.get(2))?;
@@ -142,7 +155,8 @@ impl<'a> Interp<'a> {
                 let start = relative(from, length);
                 let includes = name == "typedArrayIncludes";
                 for index in start..length {
-                    let element = crate::typed_arrays::read_element(view, index).ok_or(RunError::BadToken)?;
+                    let element =
+                        crate::typed_arrays::read_element(view, index).ok_or(RunError::BadToken)?;
                     if numeric_same(&element, &needle, includes) {
                         return Ok(if includes {
                             Value::Bool(true)
@@ -158,7 +172,8 @@ impl<'a> Interp<'a> {
                 })
             })()),
             "typedArrayJoin" => Some((|| {
-                let view = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let view =
+                    obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let separator = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(text) => text.to_string(),
                     _ => return Err(RunError::BadToken),
@@ -166,19 +181,25 @@ impl<'a> Interp<'a> {
                 let length = crate::typed_arrays::element_len(view).ok_or(RunError::BadToken)?;
                 let mut parts = Vec::with_capacity(length);
                 for index in 0..length {
-                    let element = crate::typed_arrays::read_element(view, index).ok_or(RunError::BadToken)?;
+                    let element =
+                        crate::typed_arrays::read_element(view, index).ok_or(RunError::BadToken)?;
                     let text = zun_gc::with_current_heap_mut(|heap| {
-                        element.box_any(heap).and_then(|any| stringify_any(any, heap))
+                        element
+                            .box_any(heap)
+                            .and_then(|any| stringify_any(any, heap))
                     })
                     .unwrap_or_default();
                     parts.push(text);
                 }
                 Ok(Value::Str(parts.join(&separator).into()))
             })()),
-            "typedArrayForEach" | "typedArrayMap" | "typedArrayFilter" | "typedArrayFind"
-            | "typedArrayFindIndex" | "typedArraySome" | "typedArrayEvery" => {
-                Some(self.typed_array_iterating(name, args))
-            }
+            "typedArrayForEach"
+            | "typedArrayMap"
+            | "typedArrayFilter"
+            | "typedArrayFind"
+            | "typedArrayFindIndex"
+            | "typedArraySome"
+            | "typedArrayEvery" => Some(self.typed_array_iterating(name, args)),
             "typedArrayReduce" => Some(self.typed_array_reduce(args, true, true)),
             "typedArrayReduceNoInit" => Some(self.typed_array_reduce(args, true, false)),
             "typedArrayReduceRight" => Some(self.typed_array_reduce(args, false, true)),
@@ -196,7 +217,8 @@ impl<'a> Interp<'a> {
             })()),
             "typedArrayFromMapped" => Some(self.typed_array_from_mapped(args)),
             "typedArrayTrackingNew" => Some((|| {
-                let buffer = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let buffer =
+                    obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let offset = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Int(value, _) => *value as usize,
                     _ => return Err(RunError::BadToken),
@@ -216,7 +238,11 @@ impl<'a> Interp<'a> {
     /// ones: `forEach`/`map`/`filter`/`find`/`findIndex`/`some`/`every`. The
     /// element kind is the view's; `map`/`filter` build a new view of that
     /// kind.
-    pub(crate) fn typed_array_iterating(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+    pub(crate) fn typed_array_iterating(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
         let view = match args.first() {
             Some(Value::Object(object)) => *object,
             Some(Value::Any(any)) => any
@@ -243,7 +269,8 @@ impl<'a> Interp<'a> {
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         let mut kept: Vec<Value> = Vec::new();
         for index in 0..length {
-            let value = crate::typed_arrays::read_element(roots[0], index).ok_or(RunError::BadToken)?;
+            let value =
+                crate::typed_arrays::read_element(roots[0], index).ok_or(RunError::BadToken)?;
             let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .ok_or(RunError::BadToken)?;
             let callback_args = vec![
@@ -289,8 +316,8 @@ impl<'a> Interp<'a> {
             "typedArrayForEach" => Ok(Value::Void),
             "typedArrayMap" => Ok(Value::Object(roots[1])),
             "typedArrayFilter" => {
-                let result = crate::typed_arrays::alloc_of(element, kept.len())
-                    .ok_or(RunError::BadToken)?;
+                let result =
+                    crate::typed_arrays::alloc_of(element, kept.len()).ok_or(RunError::BadToken)?;
                 for (index, value) in kept.iter().enumerate() {
                     crate::typed_arrays::write_element(result, index, value);
                 }
@@ -339,10 +366,12 @@ impl<'a> Interp<'a> {
             (args.get(2).ok_or(RunError::BadToken)?.clone(), 0usize)
         } else {
             if length == 0 {
-                return match self.new_error_object("TypeError", "Reduce of empty array with no initial value") {
-                        Some(error) => Err(RunError::Thrown(Value::Object(error))),
-                        None => Err(RunError::BadToken),
-                    };
+                return match self
+                    .new_error_object("TypeError", "Reduce of empty array with no initial value")
+                {
+                    Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                    None => Err(RunError::BadToken),
+                };
             }
             let seed = crate::typed_arrays::read_element(view, at(0)).ok_or(RunError::BadToken)?;
             (seed, 1usize)
@@ -358,7 +387,8 @@ impl<'a> Interp<'a> {
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         for step in start_step..length {
             let index = at(step);
-            let element = crate::typed_arrays::read_element(roots[0], index).ok_or(RunError::BadToken)?;
+            let element =
+                crate::typed_arrays::read_element(roots[0], index).ok_or(RunError::BadToken)?;
             let boxed_element = zun_gc::with_current_heap_mut(|heap| element.box_any(heap))
                 .ok_or(RunError::BadToken)?;
             let acc = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
@@ -418,7 +448,8 @@ impl<'a> Interp<'a> {
             }
             out
         };
-        let result = crate::typed_arrays::alloc_of(kind, elements.len()).ok_or(RunError::BadToken)?;
+        let result =
+            crate::typed_arrays::alloc_of(kind, elements.len()).ok_or(RunError::BadToken)?;
         let roots = [result];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         for (index, value) in elements.iter().enumerate() {
@@ -450,7 +481,8 @@ impl<'a> Interp<'a> {
         };
         let record = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
         let getter = zun_gc::with_current_heap(|heap| {
-            heap.dynamic_has(record, "__elemAcc").then(|| heap.dynamic_accessor_getter(record, "v"))
+            heap.dynamic_has(record, "__elemAcc")
+                .then(|| heap.dynamic_accessor_getter(record, "v"))
         });
         match getter {
             None => Ok(Some(element)),
@@ -492,5 +524,4 @@ impl<'a> Interp<'a> {
     }
 
     // --- Timers: the macrotask source of the unified event loop (slice 4) ---
-
 }

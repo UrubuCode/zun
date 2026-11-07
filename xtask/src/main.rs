@@ -18,11 +18,16 @@ use std::process::Command;
 type R<T> = Result<T, String>;
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 fn target_dir() -> PathBuf {
-    std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root().join("target"))
+    std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root().join("target"))
 }
 
 fn ext() -> &'static str {
@@ -36,24 +41,37 @@ fn ext() -> &'static str {
 }
 
 fn runtime_artifact() -> PathBuf {
-    let name = if cfg!(windows) { "zun_runtime.dll".to_string() } else { format!("libzun_runtime.{}", ext()) };
+    let name = if cfg!(windows) {
+        "zun_runtime.dll".to_string()
+    } else {
+        format!("libzun_runtime.{}", ext())
+    };
     target_dir().join("release").join(name)
 }
 
 fn cli_artifact() -> PathBuf {
-    target_dir().join("release").join(if cfg!(windows) { "zun.exe" } else { "zun" })
+    target_dir()
+        .join("release")
+        .join(if cfg!(windows) { "zun.exe" } else { "zun" })
 }
 
 fn blob_path() -> PathBuf {
-    target_dir().join("package").join(format!("zun-runtime.{}.zst", ext()))
+    target_dir()
+        .join("package")
+        .join(format!("zun-runtime.{}.zst", ext()))
 }
 
 fn sha_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn size(p: &Path) -> R<u64> {
-    std::fs::metadata(p).map(|m| m.len()).map_err(|e| format!("{}: {e}", p.display()))
+    std::fs::metadata(p)
+        .map(|m| m.len())
+        .map_err(|e| format!("{}: {e}", p.display()))
 }
 
 fn cargo(args: &[&str], embed: Option<&Path>) -> R<()> {
@@ -63,7 +81,9 @@ fn cargo(args: &[&str], embed: Option<&Path>) -> R<()> {
         c.env("ZUN_EMBED_RUNTIME", p);
     }
     let st = c.status().map_err(|e| format!("cargo: {e}"))?;
-    st.success().then_some(()).ok_or_else(|| format!("`cargo {}` failed", args.join(" ")))
+    st.success()
+        .then_some(())
+        .ok_or_else(|| format!("`cargo {}` failed", args.join(" ")))
 }
 
 fn package() -> R<()> {
@@ -83,10 +103,18 @@ fn package() -> R<()> {
 }
 
 fn run_install(cli: &Path, home: &Path) -> R<String> {
-    let out = Command::new(cli).arg("install").env("ZUN_HOME", home).output().map_err(|e| e.to_string())?;
+    let out = Command::new(cli)
+        .arg("install")
+        .env("ZUN_HOME", home)
+        .output()
+        .map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     if !out.status.success() {
-        return Err(format!("`zun install` failed: {}{}", text, String::from_utf8_lossy(&out.stderr)));
+        return Err(format!(
+            "`zun install` failed: {}{}",
+            text,
+            String::from_utf8_lossy(&out.stderr)
+        ));
     }
     Ok(text)
 }
@@ -94,7 +122,9 @@ fn run_install(cli: &Path, home: &Path) -> R<String> {
 fn verify() -> R<()> {
     let raw = std::fs::read(runtime_artifact()).map_err(|e| e.to_string())?;
     let want = sha_hex(&raw);
-    let home = target_dir().join("package").join(format!("verify-home-{}", std::process::id()));
+    let home = target_dir()
+        .join("package")
+        .join(format!("verify-home-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     let cli = cli_artifact();
     let first = run_install(&cli, &home)?;
@@ -102,7 +132,9 @@ fn verify() -> R<()> {
     let got = std::fs::read(&got_path).map_err(|e| format!("{}: {e}", got_path.display()))?;
     let got_hex = sha_hex(&got);
     if got_hex != want {
-        return Err(format!("hash mismatch: extracted {got_hex}, runtime {want}"));
+        return Err(format!(
+            "hash mismatch: extracted {got_hex}, runtime {want}"
+        ));
     }
     if !first.contains("installed runtime") {
         return Err(format!("first install did not write: {first}"));
@@ -113,7 +145,10 @@ fn verify() -> R<()> {
     }
     println!("verify: first install   -> {}", first.trim());
     println!("verify: second install  -> {}", second.trim());
-    println!("verify: sha256 {got_hex} ({} bytes) matches runtime", got.len());
+    println!(
+        "verify: sha256 {got_hex} ({} bytes) matches runtime",
+        got.len()
+    );
     let _ = std::fs::remove_dir_all(&home);
     println!("verify: OK");
     Ok(())

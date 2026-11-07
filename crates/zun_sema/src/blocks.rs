@@ -13,7 +13,8 @@ impl<'a> Checker<'a> {
         for statement in &block.statements {
             // Static initializers of classes declared above this statement run
             // here, in declaration order, with the module bindings in scope.
-            if cx.is_module_scope && cx.scopes.len() == 2 && !self.pending_static_classes.is_empty() {
+            if cx.is_module_scope && cx.scopes.len() == 2 && !self.pending_static_classes.is_empty()
+            {
                 if let Some(start) = Self::stmt_start(statement) {
                     while let Some(&class_idx) = self.pending_static_classes.first() {
                         if self.classes[class_idx as usize].span_start >= start {

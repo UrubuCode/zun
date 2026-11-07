@@ -25,7 +25,11 @@ const REALM_SOURCE: &str = zun_prelude::REALM;
 pub(crate) enum CtorLowering {
     /// A runtime-managed value allocated by a zero-argument intrinsic
     /// (`mapNew`, `setNew`, `promiseNew`, ...) in `module`, yielding `ty`.
-    Intrinsic0 { module: &'static str, native: &'static str, ty: Ty },
+    Intrinsic0 {
+        module: &'static str,
+        native: &'static str,
+        ty: Ty,
+    },
     /// An argument-taking intrinsic (`regexpNew`, `bigIntNew`, ...) in `module`.
     /// Accepts `min_args..=max_args` arguments and yields `ty`. When
     /// `pad_empty_flags` is set and exactly one argument is supplied, an empty
@@ -64,7 +68,10 @@ pub(crate) enum CtorLowering {
     ArrayBuffer,
     /// A buffer view built from `(buffer, offset, length)` — `DataView` and the
     /// typed arrays — yielding the view `kind`.
-    BufferView { native: &'static str, kind: hir::BufferViewKind },
+    BufferView {
+        native: &'static str,
+        kind: hir::BufferViewKind,
+    },
     /// The registry owns the name's annotation type and descriptor value, but
     /// `new <Name>()` falls through to the checker's existing resolution. Used
     /// for value types (`String`/`Number`/`Boolean`) and surface-only globals
@@ -111,7 +118,11 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
     if let Some(facets) = crate::typed_arrays::constructor(name) {
         return Some(facets);
     }
-    let collection0 = |native, ty| CtorLowering::Intrinsic0 { module: "collections", native, ty };
+    let collection0 = |native, ty| CtorLowering::Intrinsic0 {
+        module: "collections",
+        native,
+        ty,
+    };
     Some(match name {
         // Managed collections with an optional iterable constructor argument.
         "Map" => (
@@ -188,7 +199,10 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "ArrayBuffer" => (Ty::Buffer, CtorLowering::ArrayBuffer),
         "DataView" => (
             Ty::BufferView(Bv::DataView),
-            CtorLowering::BufferView { native: "dataViewNew", kind: Bv::DataView },
+            CtorLowering::BufferView {
+                native: "dataViewNew",
+                kind: Bv::DataView,
+            },
         ),
         // Value types and surface-only globals: annotation + descriptor only,
         // `new` (where it exists) stays on the existing class path.
@@ -213,8 +227,8 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         // program-assigned via the prelude), so the `Ty` here is a placeholder
         // the checker never reads for a `ClassFallThrough` binding. The registry
         // owns only the realm descriptor value so `globalThis.Error` resolves.
-        "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError"
-        | "TypeError" | "URIError" => (Ty::Error, CtorLowering::ClassFallThrough),
+        "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError" | "TypeError"
+        | "URIError" => (Ty::Error, CtorLowering::ClassFallThrough),
         _ => return None,
     })
 }
@@ -227,7 +241,10 @@ fn recognize_directive(line: &str) -> Option<String> {
     let inner = line
         .strip_prefix("global.set(")?
         .strip_suffix(");")
-        .or_else(|| line.strip_prefix("global.set(").and_then(|_| line.strip_suffix(")")))?;
+        .or_else(|| {
+            line.strip_prefix("global.set(")
+                .and_then(|_| line.strip_suffix(")"))
+        })?;
     // `inner` is `"Name", Name, true`.
     let mut parts = inner.split(',').map(str::trim);
     let quoted = parts.next()?;
@@ -276,8 +293,14 @@ mod tests {
 
     #[test]
     fn rejects_mismatched_or_writable_directives() {
-        assert_eq!(recognize_directive(r#"global.set("Map", Set, true);"#), None);
-        assert_eq!(recognize_directive(r#"global.set("Map", Map, false);"#), None);
+        assert_eq!(
+            recognize_directive(r#"global.set("Map", Set, true);"#),
+            None
+        );
+        assert_eq!(
+            recognize_directive(r#"global.set("Map", Map, false);"#),
+            None
+        );
         assert_eq!(recognize_directive("// a comment"), None);
     }
 
@@ -294,7 +317,9 @@ mod tests {
     #[test]
     fn registry_covers_the_declared_base_types() {
         let names: Vec<String> = registry().into_iter().map(|(n, _)| n).collect();
-        for expected in ["Set", "WeakMap", "Promise", "RegExp", "Array", "String", "Number"] {
+        for expected in [
+            "Set", "WeakMap", "Promise", "RegExp", "Array", "String", "Number",
+        ] {
             assert!(names.iter().any(|n| n == expected), "missing {expected}");
         }
     }

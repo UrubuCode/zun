@@ -12,7 +12,10 @@ fn f64_array_allocation_and_access_are_jit_equivalent() {
     .expect("compile generic Array access");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles f64 Array access");
-    assert!(jit.is_compiled(entry), "typed f64 Array access should be eligible");
+    assert!(
+        jit.is_compiled(entry),
+        "typed f64 Array access should be eligible"
+    );
     assert!(matches!(
         interp_entry(&module),
         Value::Float(42.0, zun_il::NumKind::F64)
@@ -344,7 +347,10 @@ fn scalar_u64_array_allocation_and_access_are_jit_eligible() {
     assert!(jit.is_compiled(entry));
     assert!(matches!(interp_entry(&module), Value::Int(42, _)));
     let mut heap = zun_gc::Heap::new();
-    assert_eq!(jit.call_packed_with_heap(entry, &[], &mut heap).unwrap(), 42);
+    assert_eq!(
+        jit.call_packed_with_heap(entry, &[], &mut heap).unwrap(),
+        42
+    );
 }
 
 #[test]
@@ -528,8 +534,14 @@ fn object_alloc_and_field_access_in_jit() {
         .position(|method| module.strings.get(method.name) == "make")
         .map(|index| index as u32 + 1)
         .expect("make method");
-    assert!(jit.is_compiled(dist2_rid), "object method should be eligible");
-    assert!(jit.is_compiled(make_rid), "object-returning method should be eligible");
+    assert!(
+        jit.is_compiled(dist2_rid),
+        "object method should be eligible"
+    );
+    assert!(
+        jit.is_compiled(make_rid),
+        "object-returning method should be eligible"
+    );
     let hold_rid = module
         .tables
         .method_defs
@@ -537,7 +549,9 @@ fn object_alloc_and_field_access_in_jit() {
         .position(|method| module.strings.get(method.name) == "hold")
         .map(|index| index as u32 + 1)
         .expect("hold method");
-    let hold_maps = jit.stack_maps(hold_rid).expect("nested object method stack maps");
+    let hold_maps = jit
+        .stack_maps(hold_rid)
+        .expect("nested object method stack maps");
     assert!(
         hold_maps.iter().any(|map| !map.reference_slots.is_empty()),
         "object constructor arguments must be represented across allocation"
@@ -552,7 +566,9 @@ fn object_alloc_and_field_access_in_jit() {
         .find(|map| map.pc != 0)
         .expect("finalized stack-map PC");
     assert_eq!(
-        jit.stack_map_registry().lookup(map.pc).map(|entry| entry.pc),
+        jit.stack_map_registry()
+            .lookup(map.pc)
+            .map(|entry| entry.pc),
         Some(map.pc)
     );
 
@@ -588,4 +604,3 @@ fn object_alloc_and_field_access_in_jit() {
     };
     assert!(matches, "JIT {jit_result:?} vs interp {interp_result:?}");
 }
-

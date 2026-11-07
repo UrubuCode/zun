@@ -208,11 +208,43 @@ impl TokenKind {
         use TokenKind::*;
         matches!(
             self,
-            KwFunction | KwAsync | KwAwait | KwYield | KwLet | KwIf | KwElse | KwSwitch
-                | KwCase | KwDefault | KwWhile | KwDo | KwFor | KwOf | KwBreak | KwContinue
-                | KwReturn | KwThrow | KwTry | KwCatch | KwFinally | KwTrue | KwFalse | KwNull
-                | KwClass | KwNew | KwExtends | KwAs | KwImport | KwFrom | KwExtern | KwStatic
-                | KwTypeof | KwDelete | KwIn | KwInstanceof | KwVoid
+            KwFunction
+                | KwAsync
+                | KwAwait
+                | KwYield
+                | KwLet
+                | KwIf
+                | KwElse
+                | KwSwitch
+                | KwCase
+                | KwDefault
+                | KwWhile
+                | KwDo
+                | KwFor
+                | KwOf
+                | KwBreak
+                | KwContinue
+                | KwReturn
+                | KwThrow
+                | KwTry
+                | KwCatch
+                | KwFinally
+                | KwTrue
+                | KwFalse
+                | KwNull
+                | KwClass
+                | KwNew
+                | KwExtends
+                | KwAs
+                | KwImport
+                | KwFrom
+                | KwExtern
+                | KwStatic
+                | KwTypeof
+                | KwDelete
+                | KwIn
+                | KwInstanceof
+                | KwVoid
         )
     }
 }
@@ -726,10 +758,16 @@ mod tests {
         use TokenKind::*;
         assert_eq!(kinds("/ab/g"), vec![Regex, Eof]);
         assert_eq!(kinds("x = /a/"), vec![Ident, Eq, Regex, Eof]);
-        assert_eq!(kinds("f(/a/, /b/i)"), vec![Ident, LParen, Regex, Comma, Regex, RParen, Eof]);
+        assert_eq!(
+            kinds("f(/a/, /b/i)"),
+            vec![Ident, LParen, Regex, Comma, Regex, RParen, Eof]
+        );
         assert_eq!(kinds("return /a/"), vec![KwReturn, Regex, Eof]);
         assert_eq!(kinds("typeof /a/"), vec![KwTypeof, Regex, Eof]);
-        assert_eq!(kinds("a ? /x/ : /y/"), vec![Ident, Question, Regex, Colon, Regex, Eof]);
+        assert_eq!(
+            kinds("a ? /x/ : /y/"),
+            vec![Ident, Question, Regex, Colon, Regex, Eof]
+        );
     }
 
     #[test]
@@ -738,7 +776,15 @@ mod tests {
         assert_eq!(
             kinds("typeof x in obj instanceof C delete y"),
             vec![
-                KwTypeof, Ident, KwIn, Ident, KwInstanceof, Ident, KwDelete, Ident, Eof
+                KwTypeof,
+                Ident,
+                KwIn,
+                Ident,
+                KwInstanceof,
+                Ident,
+                KwDelete,
+                Ident,
+                Eof
             ]
         );
     }
@@ -747,9 +793,18 @@ mod tests {
     fn slash_after_value_ending_tokens_is_division() {
         use TokenKind::*;
         assert_eq!(kinds("a / b"), vec![Ident, Slash, Ident, Eof]);
-        assert_eq!(kinds("(x) / y"), vec![LParen, Ident, RParen, Slash, Ident, Eof]);
-        assert_eq!(kinds("arr[0] / 2"), vec![Ident, LBracket, Number, RBracket, Slash, Number, Eof]);
-        assert_eq!(kinds("4 / 2 / 1"), vec![Number, Slash, Number, Slash, Number, Eof]);
+        assert_eq!(
+            kinds("(x) / y"),
+            vec![LParen, Ident, RParen, Slash, Ident, Eof]
+        );
+        assert_eq!(
+            kinds("arr[0] / 2"),
+            vec![Ident, LBracket, Number, RBracket, Slash, Number, Eof]
+        );
+        assert_eq!(
+            kinds("4 / 2 / 1"),
+            vec![Number, Slash, Number, Slash, Number, Eof]
+        );
         assert_eq!(kinds("this / 2"), vec![Ident, Slash, Number, Eof]);
     }
 

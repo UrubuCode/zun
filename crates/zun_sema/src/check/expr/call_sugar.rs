@@ -26,40 +26,56 @@ impl Checker<'_> {
         // The Error family is callable without `new` (`TypeError("x")`).
         if matches!(
             name,
-            "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError"
-                | "TypeError" | "URIError" | "AggregateError"
+            "Error"
+                | "EvalError"
+                | "RangeError"
+                | "ReferenceError"
+                | "SyntaxError"
+                | "TypeError"
+                | "URIError"
+                | "AggregateError"
         ) && self.classes_by_name.contains_key(name)
             && !self.by_name.contains_key(name)
             && cx.lookup(name).is_none()
         {
             return Some(self.check_expr(
                 cx,
-                &ast::Expr::New { class: *callee, args: args.to_vec(), span },
+                &ast::Expr::New {
+                    class: *callee,
+                    args: args.to_vec(),
+                    span,
+                },
             ));
         }
         // `Array(n)` behaves exactly like `new Array(n)`.
-        if name == "Array"
-            && !self.by_name.contains_key(name)
-            && cx.lookup(name).is_none()
-        {
+        if name == "Array" && !self.by_name.contains_key(name) && cx.lookup(name).is_none() {
             return Some(self.check_expr(
                 cx,
-                &ast::Expr::New { class: *callee, args: args.to_vec(), span },
+                &ast::Expr::New {
+                    class: *callee,
+                    args: args.to_vec(),
+                    span,
+                },
             ));
         }
         // Internal: the value of the `generator.return(v)` request being
         // unwound (used by the `yield*` desugaring to forward it).
         if name == "__generatorReturnValue" && args.is_empty() {
             if let Some((id, _)) = zun_natives::resolve("collections", "generatorReturnValue") {
-                return Some(hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() }, ty: Ty::Any, span });
+                return Some(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: Vec::new(),
+                    },
+                    ty: Ty::Any,
+                    span,
+                });
             }
         }
         // Global `parseInt`/`parseFloat` are the same as their `Number.*`
         // statics; route to that implementation when no user binding
         // shadows the name.
-        if matches!(name, "parseInt" | "parseFloat")
-            && !self.by_name.contains_key(name)
-        {
+        if matches!(name, "parseInt" | "parseFloat") && !self.by_name.contains_key(name) {
             return Some(self.check_number_static(cx, name, callee.span, args, span));
         }
         // `Object(x)`: primitives become their wrapper objects, anything
@@ -79,7 +95,10 @@ impl Checker<'_> {
                 wrapper_name.and_then(|name| self.classes_by_name.get(name).copied())
             {
                 return Some(hir::Expr {
-                    kind: hir::ExprKind::New { class: wrapper, args: vec![arg] },
+                    kind: hir::ExprKind::New {
+                        class: wrapper,
+                        args: vec![arg],
+                    },
                     ty: Ty::Instance(wrapper),
                     span,
                 });
@@ -93,7 +112,10 @@ impl Checker<'_> {
             && cx.lookup(name).is_none()
         {
             if args.len() != 1 {
-                self.error(span, format!("`{name}` expects 1 argument, found {}", args.len()));
+                self.error(
+                    span,
+                    format!("`{name}` expects 1 argument, found {}", args.len()),
+                );
                 return Some(self.poison(span));
             }
             let Some((id, _)) = zun_natives::resolve("number", name) else {
@@ -104,7 +126,10 @@ impl Checker<'_> {
             coerce_numeric_literal(&mut arg, Ty::F64);
             let arg = self.to_number_for_arg(arg);
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: Ty::Boolean,
                 span,
             });
@@ -119,9 +144,16 @@ impl Checker<'_> {
                 return Some(self.poison(span));
             };
             let arg = self.check_expr(cx, &args[0]);
-            let arg = if arg.ty == Ty::String { arg } else { self.to_string_for_parse(arg) };
+            let arg = if arg.ty == Ty::String {
+                arg
+            } else {
+                self.to_string_for_parse(arg)
+            };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -169,7 +201,10 @@ impl Checker<'_> {
                         {
                             self.error(
                                 argument.span,
-                                format!("argument type {:?} does not match {expected:?}", argument.ty),
+                                format!(
+                                    "argument type {:?} does not match {expected:?}",
+                                    argument.ty
+                                ),
                             );
                         }
                     }
@@ -194,13 +229,14 @@ impl Checker<'_> {
             }
         }
         if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
-            && (self.by_name.contains_key(name) || cx.lookup(name).is_some() || cx.captures.contains_key(name))
+            && (self.by_name.contains_key(name)
+                || cx.lookup(name).is_some()
+                || cx.captures.contains_key(name))
         {
             // A named function whose only parameter is the rest array
             // takes the flattened argument array directly.
             if let Some(&func) = self.by_name.get(name) {
-                if cx.lookup(name).is_none()
-                    && self.signatures[func as usize].rest_param == Some(0)
+                if cx.lookup(name).is_none() && self.signatures[func as usize].rest_param == Some(0)
                 {
                     let elements = args
                         .iter()
@@ -215,7 +251,10 @@ impl Checker<'_> {
                     let array = self.check_expr(cx, &literal);
                     let return_ty = self.signatures[func as usize].return_ty;
                     return Some(hir::Expr {
-                        kind: hir::ExprKind::CallRestArray { func, args: Box::new(array) },
+                        kind: hir::ExprKind::CallRestArray {
+                            func,
+                            args: Box::new(array),
+                        },
                         ty: return_ty,
                         span,
                     });
@@ -228,7 +267,9 @@ impl Checker<'_> {
             if let Some(&func) = self.by_name.get(name) {
                 let rest_index = self.signatures[func as usize].rest_param;
                 if let (true, Some(rest_index)) = (cx.lookup(name).is_none(), rest_index) {
-                    if rest_index > 0 && self.signatures[func as usize].params.len() == rest_index + 1 {
+                    if rest_index > 0
+                        && self.signatures[func as usize].params.len() == rest_index + 1
+                    {
                         let elements = args
                             .iter()
                             .map(|arg| match arg {
@@ -254,7 +295,10 @@ impl Checker<'_> {
                             return Some(hir::Expr {
                                 kind: hir::ExprKind::Sequence {
                                     effect: Box::new(hir::Expr {
-                                        kind: hir::ExprKind::Assign { slot: temp, value: Box::new(flat) },
+                                        kind: hir::ExprKind::Assign {
+                                            slot: temp,
+                                            value: Box::new(flat),
+                                        },
                                         ty: Ty::Array,
                                         span,
                                     }),

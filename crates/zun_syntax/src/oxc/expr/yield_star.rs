@@ -15,7 +15,10 @@ struct YieldStar {
 
 impl YieldStar {
     fn string(&self, text: &str) -> Expr {
-        Expr::String { value: text.to_owned(), span: self.sp }
+        Expr::String {
+            value: text.to_owned(),
+            span: self.sp,
+        }
     }
 
     fn index(&self, name: Name, key: &str) -> Expr {
@@ -27,7 +30,11 @@ impl YieldStar {
     }
 
     fn step(&self, args: Vec<Expr>) -> Expr {
-        Expr::ComputedCall { callee: Box::new(self.index(self.it, "next")), args, span: self.sp }
+        Expr::ComputedCall {
+            callee: Box::new(self.index(self.it, "next")),
+            args,
+            span: self.sp,
+        }
     }
 
     /// `typeof it.key !== "undefined"`: a delegate method that is present.
@@ -63,8 +70,18 @@ impl YieldStar {
             span: sp,
         };
         vec![
-            Stmt::Let { name: it, ty: None, init: get_iterator, span: sp },
-            Stmt::Let { name: result, ty: None, init: step(Vec::new()), span: sp },
+            Stmt::Let {
+                name: it,
+                ty: None,
+                init: get_iterator,
+                span: sp,
+            },
+            Stmt::Let {
+                name: result,
+                ty: None,
+                init: step(Vec::new()),
+                span: sp,
+            },
             Stmt::While {
                 cond: Expr::Unary {
                     op: crate::ast::UnaryOp::Not,
@@ -83,20 +100,58 @@ impl YieldStar {
     /// One round of the loop: forward the sent value (or thrown exception, or
     /// return request) to the delegate and take its next result.
     fn loop_statements(&self) -> Vec<Stmt> {
-        let YieldStar { sp, ok, threw, sent, .. } = *self;
+        let YieldStar {
+            sp,
+            ok,
+            threw,
+            sent,
+            ..
+        } = *self;
         vec![
             // The sent value, a thrown exception, or a return request on the
             // outer generator is forwarded to the delegate.
-            Stmt::Let { name: ok, ty: None, init: Expr::Bool { value: false, span: sp }, span: sp },
-            Stmt::Let { name: threw, ty: None, init: Expr::Bool { value: false, span: sp }, span: sp },
-            Stmt::Let { name: sent, ty: None, init: Expr::Bool { value: false, span: sp }, span: sp },
+            Stmt::Let {
+                name: ok,
+                ty: None,
+                init: Expr::Bool {
+                    value: false,
+                    span: sp,
+                },
+                span: sp,
+            },
+            Stmt::Let {
+                name: threw,
+                ty: None,
+                init: Expr::Bool {
+                    value: false,
+                    span: sp,
+                },
+                span: sp,
+            },
+            Stmt::Let {
+                name: sent,
+                ty: None,
+                init: Expr::Bool {
+                    value: false,
+                    span: sp,
+                },
+                span: sp,
+            },
             self.forward_try(),
             self.advance(),
         ]
     }
 
     fn forward_try(&self) -> Stmt {
-        let YieldStar { sp, result, ok, threw, sent, caught, .. } = *self;
+        let YieldStar {
+            sp,
+            result,
+            ok,
+            threw,
+            sent,
+            caught,
+            ..
+        } = *self;
         let index = |name: Name, key: &str| self.index(name, key);
         let defined = |key: &str| self.defined(key);
         Stmt::Try {
@@ -112,7 +167,10 @@ impl YieldStar {
                     }),
                     Stmt::Expr(Expr::Assign {
                         target: ok,
-                        value: Box::new(Expr::Bool { value: true, span: sp }),
+                        value: Box::new(Expr::Bool {
+                            value: true,
+                            span: sp,
+                        }),
                         span: sp,
                     }),
                 ],
@@ -121,14 +179,19 @@ impl YieldStar {
             catches: vec![crate::ast::CatchClause {
                 binding: caught,
                 ty: crate::ast::TypeAnnotation {
-                    name: Name { span: Span::new(0, 0) },
+                    name: Name {
+                        span: Span::new(0, 0),
+                    },
                     is_array: false,
                 },
                 body: Block {
                     statements: vec![
                         Stmt::Expr(Expr::Assign {
                             target: threw,
-                            value: Box::new(Expr::Bool { value: true, span: sp }),
+                            value: Box::new(Expr::Bool {
+                                value: true,
+                                span: sp,
+                            }),
                             span: sp,
                         }),
                         Stmt::Expr(Expr::Assign {
@@ -158,7 +221,7 @@ impl YieldStar {
                                 statements: vec![Stmt::If {
                                     cond: defined("return"),
                                     then_block: Block {
-                                    statements: self.return_forwarding(),
+                                        statements: self.return_forwarding(),
                                         span: sp,
                                     },
                                     else_block: None,
@@ -183,7 +246,9 @@ impl YieldStar {
     /// Forward the return request, validate the answer, and finish when the
     /// delegate did.
     fn return_forwarding(&self) -> Vec<Stmt> {
-        let YieldStar { sp, it, ret_answer, .. } = *self;
+        let YieldStar {
+            sp, it, ret_answer, ..
+        } = *self;
         let index = |name: Name, key: &str| self.index(name, key);
         let string = |text: &str| self.string(text);
         vec![
@@ -242,7 +307,14 @@ impl YieldStar {
     }
 
     fn advance(&self) -> Stmt {
-        let YieldStar { sp, it, result, ok, sent, .. } = *self;
+        let YieldStar {
+            sp,
+            it,
+            result,
+            ok,
+            sent,
+            ..
+        } = *self;
         let index = |name: Name, key: &str| self.index(name, key);
         let defined = |key: &str| self.defined(key);
         let step = |args: Vec<Expr>| self.step(args);
@@ -258,42 +330,43 @@ impl YieldStar {
             },
             else_block: Some(Block {
                 statements: vec![
-                // A delegate without `throw` is closed via `return`
-                // (when present) before the call below raises a TypeError.
-                Stmt::If {
-                    cond: Expr::Unary {
-                        op: crate::ast::UnaryOp::Not,
-                        operand: Box::new(defined("throw")),
-                        span: sp,
-                    },
-                    then_block: Block {
-                        statements: vec![Stmt::If {
-                            cond: defined("return"),
-                            then_block: Block {
-                                statements: vec![Stmt::Expr(Expr::ComputedCall {
-                                    callee: Box::new(index(it, "return")),
-                                    args: Vec::new(),
-                                    span: sp,
-                                })],
-                                span: sp,
-                            },
-                            else_block: None,
+                    // A delegate without `throw` is closed via `return`
+                    // (when present) before the call below raises a TypeError.
+                    Stmt::If {
+                        cond: Expr::Unary {
+                            op: crate::ast::UnaryOp::Not,
+                            operand: Box::new(defined("throw")),
                             span: sp,
-                        }],
+                        },
+                        then_block: Block {
+                            statements: vec![Stmt::If {
+                                cond: defined("return"),
+                                then_block: Block {
+                                    statements: vec![Stmt::Expr(Expr::ComputedCall {
+                                        callee: Box::new(index(it, "return")),
+                                        args: Vec::new(),
+                                        span: sp,
+                                    })],
+                                    span: sp,
+                                },
+                                else_block: None,
+                                span: sp,
+                            }],
+                            span: sp,
+                        },
+                        else_block: None,
                         span: sp,
                     },
-                    else_block: None,
-                    span: sp,
-                },
-                Stmt::Expr(Expr::Assign {
-                    target: result,
-                    value: Box::new(Expr::ComputedCall {
-                        callee: Box::new(index(it, "throw")),
-                        args: vec![Expr::Ident(sent)],
+                    Stmt::Expr(Expr::Assign {
+                        target: result,
+                        value: Box::new(Expr::ComputedCall {
+                            callee: Box::new(index(it, "throw")),
+                            args: vec![Expr::Ident(sent)],
+                            span: sp,
+                        }),
                         span: sp,
                     }),
-                    span: sp,
-                })],
+                ],
                 span: sp,
             }),
             span: sp,
@@ -326,13 +399,25 @@ pub(super) fn convert_yield_star(
     let sent = crate::ast::synthetic_ident(&format!("__ys_s{n}"));
     let caught = crate::ast::synthetic_ident(&format!("__ys_c{n}"));
     let ret_answer = crate::ast::synthetic_ident(&format!("__ys_rr{n}"));
-    let state = YieldStar { sp, it, result, ok, threw, sent, caught, ret_answer };
+    let state = YieldStar {
+        sp,
+        it,
+        result,
+        ok,
+        threw,
+        sent,
+        caught,
+        ret_answer,
+    };
     let prelude = state.prelude(operand);
     PENDING_PRELUDE.with(|pending| pending.borrow_mut().extend(prelude));
     Ok(state.index(result, "value"))
 }
 
-pub(super) fn convert_yield(source: &str, yield_expression: &oxc_ast::ast::YieldExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_yield(
+    source: &str,
+    yield_expression: &oxc_ast::ast::YieldExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     if yield_expression.delegate {
         return Err("OXC adapter does not support delegated yield yet".into());

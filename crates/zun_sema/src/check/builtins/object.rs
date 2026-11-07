@@ -29,15 +29,20 @@ impl Checker<'_> {
         };
         let fmt_class = *self.classes_by_name.get("ConsoleFormat2")?;
         let func = self.method_of(fmt_class, target)?;
-        let elements: Vec<Option<hir::Expr>> =
-            args.iter().map(|arg| Some(self.check_expr(cx, arg))).collect();
+        let elements: Vec<Option<hir::Expr>> = args
+            .iter()
+            .map(|arg| Some(self.check_expr(cx, arg)))
+            .collect();
         let array = hir::Expr {
             kind: hir::ExprKind::ArrayLiteral { elements },
             ty: Ty::Array,
             span,
         };
         Some(hir::Expr {
-            kind: hir::ExprKind::StaticCall { func, args: vec![array] },
+            kind: hir::ExprKind::StaticCall {
+                func,
+                args: vec![array],
+            },
             ty: Ty::Void,
             span,
         })
@@ -51,15 +56,17 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
-        let intrinsic = |name: &str| {
-            zun_natives::resolve("collections", name).map(|(id, _)| id)
-        };
+        let intrinsic = |name: &str| zun_natives::resolve("collections", name).map(|(id, _)| id);
         let builtin = |checker: &mut Self, name: &str, checked: Vec<hir::Expr>, ty: Ty| {
             let Some(id) = intrinsic(name) else {
                 checker.error(span, format!("missing Object intrinsic `{name}`"));
                 return checker.poison(span);
             };
-            hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: checked }, ty, span }
+            hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: checked },
+                ty,
+                span,
+            }
         };
         // `Object.getOwnPropertyDescriptor(Map, "groupBy")`: a well-known
         // built-in static method is a writable, non-enumerable, configurable
@@ -76,7 +83,12 @@ impl Checker<'_> {
                     && builtin_function_length(&[global_name.as_str(), key.as_str()]).is_some()
                 {
                     let flag = |name: &str, value: bool| {
-                        decorator_context_entry(name, hir::ExprKind::Boolean(value), Ty::Boolean, span)
+                        decorator_context_entry(
+                            name,
+                            hir::ExprKind::Boolean(value),
+                            Ty::Boolean,
+                            span,
+                        )
                     };
                     return hir::Expr {
                         kind: hir::ExprKind::DynamicObjectLiteral {
@@ -95,12 +107,27 @@ impl Checker<'_> {
         // Expected argument count per static (`assign` is variadic: 1+).
         let fixed = match method {
             "create" if args.len() == 2 => Some(2usize),
-            "keys" | "values" | "entries" | "freeze" | "isFrozen" | "create"
-            | "getPrototypeOf" | "fromEntries" | "getOwnPropertyDescriptors"
-            | "getOwnPropertyNames" | "getOwnPropertySymbols" | "seal" | "isSealed"
-            | "preventExtensions" | "isExtensible" => Some(1usize),
-            "setPrototypeOf" | "is" | "getOwnPropertyDescriptor"
-            | "defineProperties" | "hasOwn" | "groupBy" => Some(2usize),
+            "keys"
+            | "values"
+            | "entries"
+            | "freeze"
+            | "isFrozen"
+            | "create"
+            | "getPrototypeOf"
+            | "fromEntries"
+            | "getOwnPropertyDescriptors"
+            | "getOwnPropertyNames"
+            | "getOwnPropertySymbols"
+            | "seal"
+            | "isSealed"
+            | "preventExtensions"
+            | "isExtensible" => Some(1usize),
+            "setPrototypeOf"
+            | "is"
+            | "getOwnPropertyDescriptor"
+            | "defineProperties"
+            | "hasOwn"
+            | "groupBy" => Some(2usize),
             "defineProperty" => Some(3usize),
             "assign" => None,
             _ => {
@@ -111,13 +138,18 @@ impl Checker<'_> {
                 return self.poison(span);
             }
         };
-        let mut checked: Vec<hir::Expr> =
-            args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+        let mut checked: Vec<hir::Expr> = args
+            .iter()
+            .map(|argument| self.check_expr(cx, argument))
+            .collect();
         if let Some(expected) = fixed {
             if checked.len() != expected {
                 self.error(
                     span,
-                    format!("`Object.{method}` expects {expected} argument(s), found {}", checked.len()),
+                    format!(
+                        "`Object.{method}` expects {expected} argument(s), found {}",
+                        checked.len()
+                    ),
                 );
                 return self.poison(span);
             }
@@ -136,7 +168,11 @@ impl Checker<'_> {
             }
             "freeze" => {
                 // Freezing a RegExp keeps its static type (the same object comes back).
-                let ty = if checked[0].ty == Ty::RegExp { Ty::RegExp } else { Ty::Any };
+                let ty = if checked[0].ty == Ty::RegExp {
+                    Ty::RegExp
+                } else {
+                    Ty::Any
+                };
                 builtin(self, "objectFreeze", checked, ty)
             }
             "hasOwn" => builtin(self, "objectHasOwn", checked, Ty::Boolean),
@@ -145,19 +181,34 @@ impl Checker<'_> {
                 // `Object.create(proto, props)`: create, then define the descriptors.
                 let props = checked.pop().unwrap();
                 let (slot, _) = self.synthetic_local(cx, Ty::DynamicObject);
-                let local = |span| hir::Expr { kind: hir::ExprKind::Local(slot), ty: Ty::DynamicObject, span };
-                let created = builtin(self, "objectCreate", checked, Ty::DynamicObject);
-                let assign = hir::Expr {
-                    kind: hir::ExprKind::Assign { slot, value: Box::new(created) },
+                let local = |span| hir::Expr {
+                    kind: hir::ExprKind::Local(slot),
                     ty: Ty::DynamicObject,
                     span,
                 };
-                let define = builtin(self, "objectDefineProperties", vec![local(span), props], Ty::Any);
+                let created = builtin(self, "objectCreate", checked, Ty::DynamicObject);
+                let assign = hir::Expr {
+                    kind: hir::ExprKind::Assign {
+                        slot,
+                        value: Box::new(created),
+                    },
+                    ty: Ty::DynamicObject,
+                    span,
+                };
+                let define = builtin(
+                    self,
+                    "objectDefineProperties",
+                    vec![local(span), props],
+                    Ty::Any,
+                );
                 hir::Expr {
                     kind: hir::ExprKind::Sequence {
                         effect: Box::new(assign),
                         value: Box::new(hir::Expr {
-                            kind: hir::ExprKind::Sequence { effect: Box::new(define), value: Box::new(local(span)) },
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(define),
+                                value: Box::new(local(span)),
+                            },
                             ty: Ty::DynamicObject,
                             span,
                         }),
@@ -177,9 +228,12 @@ impl Checker<'_> {
             "getOwnPropertyDescriptor" => {
                 builtin(self, "objectGetOwnPropertyDescriptor", checked, Ty::Any)
             }
-            "getOwnPropertyDescriptors" => {
-                builtin(self, "objectGetOwnPropertyDescriptors", checked, Ty::DynamicObject)
-            }
+            "getOwnPropertyDescriptors" => builtin(
+                self,
+                "objectGetOwnPropertyDescriptors",
+                checked,
+                Ty::DynamicObject,
+            ),
             "getOwnPropertyNames" => builtin(self, "objectGetOwnPropertyNames", checked, Ty::Array),
             "getOwnPropertySymbols" => {
                 builtin(self, "objectGetOwnPropertySymbols", checked, Ty::Array)
@@ -197,7 +251,10 @@ impl Checker<'_> {
                 let mut acc = checked.pop().unwrap();
                 for source in sources.drain(..) {
                     acc = hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, source] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![acc, source],
+                        },
                         ty: Ty::DynamicObject,
                         span,
                     };
@@ -223,7 +280,10 @@ impl Checker<'_> {
         for arg in args {
             let checked = self.check_expr(cx, arg);
             if !checked.ty.is_error() && checked.ty != Ty::String {
-                self.error(checked.span, "the `Function` constructor expects string arguments");
+                self.error(
+                    checked.span,
+                    "the `Function` constructor expects string arguments",
+                );
                 return self.poison(span);
             }
             elements.push(Some(checked));
@@ -247,7 +307,10 @@ impl Checker<'_> {
             span,
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![array] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![array],
+            },
             ty: Ty::Function(hir::DYNAMIC_FUNCTION),
             span,
         }
@@ -255,7 +318,12 @@ impl Checker<'_> {
 
     /// Build a `proxyGet(proxy, key)` native call routing a property read
     /// through the handler's `get` trap (absent trap → target default).
-    pub(in crate::check) fn proxy_get(&mut self, object: hir::Expr, key: hir::Expr, span: Span) -> hir::Expr {
+    pub(in crate::check) fn proxy_get(
+        &mut self,
+        object: hir::Expr,
+        key: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
         if !key.ty.is_error() && key.ty != Ty::String {
             self.error(key.span, "a proxy property key must be a string");
         }
@@ -264,7 +332,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![object, key],
+            },
             ty: Ty::Any,
             span,
         }
@@ -288,7 +359,9 @@ impl Checker<'_> {
         } else {
             hir::Expr {
                 span: value.span,
-                kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                kind: hir::ExprKind::BoxAny {
+                    value: Box::new(value),
+                },
                 ty: Ty::Any,
             }
         };
@@ -297,7 +370,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key, boxed] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![object, key, boxed],
+            },
             ty: Ty::Boolean,
             span,
         }
@@ -328,12 +404,17 @@ impl Checker<'_> {
         // trap) with a spread arguments array. Handled before the object-target
         // path because the target is a function or proxy, not a plain object.
         if method == "apply" {
-            let mut checked: Vec<hir::Expr> =
-                args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+            let mut checked: Vec<hir::Expr> = args
+                .iter()
+                .map(|argument| self.check_expr(cx, argument))
+                .collect();
             if checked.len() != 3 {
                 self.error(
                     span,
-                    format!("`Reflect.apply` expects 3 argument(s), found {}", checked.len()),
+                    format!(
+                        "`Reflect.apply` expects 3 argument(s), found {}",
+                        checked.len()
+                    ),
                 );
                 return self.poison(span);
             }
@@ -346,18 +427,24 @@ impl Checker<'_> {
                 self.error(array.span, "`Reflect.apply` expects an Array of arguments");
                 return self.poison(span);
             }
-            if !matches!(target.ty, Ty::Function(_) | Ty::Proxy | Ty::Any)
-                && !target.ty.is_error()
+            if !matches!(target.ty, Ty::Function(_) | Ty::Proxy | Ty::Any) && !target.ty.is_error()
             {
                 self.error(target.span, "`Reflect.apply` target must be callable");
             }
-            let native_name = if target.ty == Ty::Proxy { "proxyApply" } else { "functionApply" };
+            let native_name = if target.ty == Ty::Proxy {
+                "proxyApply"
+            } else {
+                "functionApply"
+            };
             let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                 self.error(span, format!("missing Reflect intrinsic `{native_name}`"));
                 return self.poison(span);
             };
             return hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![target, this_arg, array] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![target, this_arg, array],
+                },
                 ty: Ty::Any,
                 span,
             };
@@ -368,12 +455,17 @@ impl Checker<'_> {
         // (classes are frozen typed layouts). `newTarget` is approximated by the
         // target; the array supplies the positional field values.
         if method == "construct" {
-            let mut checked: Vec<hir::Expr> =
-                args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+            let mut checked: Vec<hir::Expr> = args
+                .iter()
+                .map(|argument| self.check_expr(cx, argument))
+                .collect();
             if checked.len() < 2 || checked.len() > 3 {
                 self.error(
                     span,
-                    format!("`Reflect.construct` expects 2 or 3 argument(s), found {}", checked.len()),
+                    format!(
+                        "`Reflect.construct` expects 2 or 3 argument(s), found {}",
+                        checked.len()
+                    ),
                 );
                 return self.poison(span);
             }
@@ -382,7 +474,10 @@ impl Checker<'_> {
             let array = self.array_like_to_array(array);
             let target = checked.pop().unwrap();
             if array.ty != Ty::Array && !array.ty.is_error() {
-                self.error(array.span, "`Reflect.construct` expects an Array of arguments");
+                self.error(
+                    array.span,
+                    "`Reflect.construct` expects an Array of arguments",
+                );
                 return self.poison(span);
             }
             let native_name = match target.ty {
@@ -399,14 +494,18 @@ impl Checker<'_> {
                 return self.poison(span);
             };
             return hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![target, array] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![target, array],
+                },
                 ty: Ty::Any,
                 span,
             };
         }
         let expected = match method {
-            "get" | "has" | "deleteProperty" | "getOwnPropertyDescriptor"
-            | "setPrototypeOf" => 2usize,
+            "get" | "has" | "deleteProperty" | "getOwnPropertyDescriptor" | "setPrototypeOf" => {
+                2usize
+            }
             "set" | "defineProperty" => 3,
             "ownKeys" | "getPrototypeOf" | "isExtensible" | "preventExtensions" => 1,
             other => {
@@ -417,10 +516,13 @@ impl Checker<'_> {
                 return self.poison(span);
             }
         };
-        let mut checked: Vec<hir::Expr> =
-            args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+        let mut checked: Vec<hir::Expr> = args
+            .iter()
+            .map(|argument| self.check_expr(cx, argument))
+            .collect();
         if method == "deleteProperty" && checked.len() == 2 {
-            if let (Ty::Function(func), ast::Expr::String { value, .. }) = (checked[0].ty, &args[1]) {
+            if let (Ty::Function(func), ast::Expr::String { value, .. }) = (checked[0].ty, &args[1])
+            {
                 if func < hir::DYNAMIC_FUNCTION && (value == "name" || value == "length") {
                     self.deleted_fn_meta.insert((func, value.clone()));
                 }
@@ -434,14 +536,20 @@ impl Checker<'_> {
         if checked.len() != expected {
             self.error(
                 span,
-                format!("`Reflect.{method}` expects {expected} argument(s), found {}", checked.len()),
+                format!(
+                    "`Reflect.{method}` expects {expected} argument(s), found {}",
+                    checked.len()
+                ),
             );
             return self.poison(span);
         }
         // The target must be a dynamic receiver (plain object or `any`); a Proxy
         // target is itself a dynamic receiver at runtime.
         // A managed collection target is handed to the natives as a dynamic receiver.
-        if matches!(checked[0].ty, Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_) | Ty::RegExp | Ty::Function(_)) {
+        if matches!(
+            checked[0].ty,
+            Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_) | Ty::RegExp | Ty::Function(_)
+        ) {
             let target = checked.remove(0);
             checked.insert(0, Self::box_to_any(target));
         }
@@ -455,7 +563,11 @@ impl Checker<'_> {
                 checker.error(span, format!("missing Reflect intrinsic `{name}`"));
                 return checker.poison(span);
             };
-            hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: checked }, ty, span }
+            hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: checked },
+                ty,
+                span,
+            }
         };
         match method {
             "get" => {
@@ -495,7 +607,7 @@ impl Checker<'_> {
                 }
             }
             "has" => builtin(self, "reflectHas", checked, Ty::Boolean),
-            "deleteProperty" => builtin(self, "reflectDelete", checked, Ty::Boolean),            // `ownKeys` reports all own string keys (not just enumerable ones),
+            "deleteProperty" => builtin(self, "reflectDelete", checked, Ty::Boolean), // `ownKeys` reports all own string keys (not just enumerable ones),
             // and consults a proxy's `ownKeys` trap via the proxy-aware native.
             "ownKeys" => builtin(self, "reflectOwnKeys", checked, Ty::Array),
             "getOwnPropertyDescriptor" => {

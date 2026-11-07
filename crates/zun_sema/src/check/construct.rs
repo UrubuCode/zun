@@ -3,21 +3,33 @@ use crate::check::*;
 impl Checker<'_> {
     /// Classes with runtime-decorated instance members run the
     /// instance-initializer / field-transform hooks on the new object.
-    pub(in crate::check) fn wrap_hooked_new(&mut self, class_idx: u32, new: hir::Expr, span: Span) -> hir::Expr {
+    pub(in crate::check) fn wrap_hooked_new(
+        &mut self,
+        class_idx: u32,
+        new: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
         if self.hooked_classes.contains(&class_idx) {
             if let Some((init_id, _)) = zun_natives::resolve("collections", "classInstanceInit") {
                 let boxed = hir::Expr {
-                    kind: hir::ExprKind::BoxAny { value: Box::new(new) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(new),
+                    },
                     ty: Ty::Any,
                     span,
                 };
                 let hooked = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id: init_id, args: vec![boxed] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: init_id,
+                        args: vec![boxed],
+                    },
                     ty: Ty::Any,
                     span,
                 };
                 return hir::Expr {
-                    kind: hir::ExprKind::Convert { value: Box::new(hooked) },
+                    kind: hir::ExprKind::Convert {
+                        value: Box::new(hooked),
+                    },
                     ty: Ty::Instance(class_idx),
                     span,
                 };
@@ -53,7 +65,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         let Some(base) = self.classes[this_class as usize].base else {
-            self.error(span, "`super` used in a class that has no base class (no `extends`)");
+            self.error(
+                span,
+                "`super` used in a class that has no base class (no `extends`)",
+            );
             return self.poison(span);
         };
         if method.is_none() && !cx.is_constructor {
@@ -76,27 +91,45 @@ impl Checker<'_> {
         let Some(func) = self.method_of(base, &mname) else {
             if method.is_none() {
                 if !args.is_empty() {
-                    self.error(span, "base class has no constructor; `super(...)` takes no arguments");
+                    self.error(
+                        span,
+                        "base class has no constructor; `super(...)` takes no arguments",
+                    );
                     return self.poison(span);
                 }
-                return hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Void, span };
+                return hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: Ty::Void,
+                    span,
+                };
             }
             self.error(mspan, format!("no method `{mname}` on the base class"));
             return self.poison(span);
         };
         if self.signatures[func as usize].is_static {
-            self.error(mspan, format!("static method `{mname}` must be called through its class"));
+            self.error(
+                mspan,
+                format!("static method `{mname}` must be called through its class"),
+            );
             return self.poison(span);
         }
         if self.signatures[func as usize].rest_param.is_some()
             || args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
         {
-            self.error(span, "`super` calls do not support rest/spread parameters yet");
+            self.error(
+                span,
+                "`super` calls do not support rest/spread parameters yet",
+            );
             return self.poison(span);
         }
         let (param_tys, return_ty, optional_count, signature_name) = {
             let sig = &self.signatures[func as usize];
-            (sig.params.clone(), sig.return_ty, sig.optional_count, sig.name.clone())
+            (
+                sig.params.clone(),
+                sig.return_ty,
+                sig.optional_count,
+                sig.name.clone(),
+            )
         };
         let mut call_args = vec![this_expr];
         for a in args {
@@ -135,7 +168,14 @@ impl Checker<'_> {
                 );
             }
         }
-        hir::Expr { kind: hir::ExprKind::StaticCall { func, args: call_args }, ty: return_ty, span }
+        hir::Expr {
+            kind: hir::ExprKind::StaticCall {
+                func,
+                args: call_args,
+            },
+            ty: return_ty,
+            span,
+        }
     }
 
     /// `super.m(args)` inside a static method of `class`: a direct call of the
@@ -150,28 +190,49 @@ impl Checker<'_> {
         span: Span,
     ) -> hir::Expr {
         let Some(base) = self.classes[class as usize].base else {
-            self.error(span, "`super` used in a class that has no base class (no `extends`)");
+            self.error(
+                span,
+                "`super` used in a class that has no base class (no `extends`)",
+            );
             return self.poison(span);
         };
         let mname = self.text(method).to_string();
         let Some(func) = self.method_of(base, &mname) else {
-            self.error(method.span, format!("no static method `{mname}` on the base class"));
+            self.error(
+                method.span,
+                format!("no static method `{mname}` on the base class"),
+            );
             return self.poison(span);
         };
         if !self.signatures[func as usize].is_static {
-            self.error(method.span, format!("`{mname}` is not a static method of the base class"));
+            self.error(
+                method.span,
+                format!("`{mname}` is not a static method of the base class"),
+            );
             return self.poison(span);
         }
         let hidden_class = self.static_this.contains_key(&func);
         let (param_tys, return_ty, optional_count, signature_name) = {
             let sig = &self.signatures[func as usize];
-            (sig.params[hidden_class as usize..].to_vec(), sig.return_ty, sig.optional_count, sig.name.clone())
+            (
+                sig.params[hidden_class as usize..].to_vec(),
+                sig.return_ty,
+                sig.optional_count,
+                sig.name.clone(),
+            )
         };
         let mut call_args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
         if call_args.len() > param_tys.len()
             || call_args.len() < param_tys.len().saturating_sub(optional_count)
         {
-            self.error(span, format!("`{mname}` expects {} argument(s), found {}", param_tys.len(), call_args.len()));
+            self.error(
+                span,
+                format!(
+                    "`{mname}` expects {} argument(s), found {}",
+                    param_tys.len(),
+                    call_args.len()
+                ),
+            );
             return self.poison(span);
         }
         let sig = Signature {
@@ -194,10 +255,21 @@ impl Checker<'_> {
             };
             call_args.insert(
                 0,
-                hir::Expr { ty: cx.locals[this_slot as usize], kind: hir::ExprKind::Local(this_slot), span },
+                hir::Expr {
+                    ty: cx.locals[this_slot as usize],
+                    kind: hir::ExprKind::Local(this_slot),
+                    span,
+                },
             );
         }
-        hir::Expr { kind: hir::ExprKind::StaticCall { func, args: call_args }, ty: return_ty, span }
+        hir::Expr {
+            kind: hir::ExprKind::StaticCall {
+                func,
+                args: call_args,
+            },
+            ty: return_ty,
+            span,
+        }
     }
 
     /// Lower `new C(args)` for a class that declares `constructor(...)`.
@@ -221,28 +293,47 @@ impl Checker<'_> {
             let field_ty = *field_ty;
             // A typed field declared without an initializer (`id: number;`) carries the
             // implicit `void 0`; it takes the type's zero value instead.
-            let initializer = initializers.get(slot).and_then(|init| init.as_ref()).filter(|init| {
-                field_ty == Ty::Any
-                    || !matches!(init.as_ref(), ast::Expr::Unary { op: ast::UnaryOp::Void, .. })
-            });
+            let initializer = initializers
+                .get(slot)
+                .and_then(|init| init.as_ref())
+                .filter(|init| {
+                    field_ty == Ty::Any
+                        || !matches!(
+                            init.as_ref(),
+                            ast::Expr::Unary {
+                                op: ast::UnaryOp::Void,
+                                ..
+                            }
+                        )
+                });
             let mut value = match initializer {
                 Some(init) => {
                     let init = init.clone();
                     self.check_expr(cx, &init)
                 }
                 None => match field_ty {
-                    Ty::Int(_) | Ty::Float(_) => {
-                        hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::F64, span }
-                    }
-                    Ty::Boolean => hir::Expr { kind: hir::ExprKind::Boolean(false), ty: Ty::Boolean, span },
-                    Ty::String => {
-                        hir::Expr { kind: hir::ExprKind::String(String::new()), ty: Ty::String, span }
-                    }
+                    Ty::Int(_) | Ty::Float(_) => hir::Expr {
+                        kind: hir::ExprKind::Number(0.0),
+                        ty: Ty::F64,
+                        span,
+                    },
+                    Ty::Boolean => hir::Expr {
+                        kind: hir::ExprKind::Boolean(false),
+                        ty: Ty::Boolean,
+                        span,
+                    },
+                    Ty::String => hir::Expr {
+                        kind: hir::ExprKind::String(String::new()),
+                        ty: Ty::String,
+                        span,
+                    },
                     // `undefined`: a missing key on an empty dynamic object.
                     Ty::Any => hir::Expr {
                         kind: hir::ExprKind::DynamicGet {
                             object: Box::new(hir::Expr {
-                                kind: hir::ExprKind::DynamicObjectLiteral { entries: Vec::new() },
+                                kind: hir::ExprKind::DynamicObjectLiteral {
+                                    entries: Vec::new(),
+                                },
                                 ty: Ty::DynamicObject,
                                 span,
                             }),
@@ -251,7 +342,11 @@ impl Checker<'_> {
                         ty: Ty::Any,
                         span,
                     },
-                    other => hir::Expr { kind: hir::ExprKind::Null, ty: other, span },
+                    other => hir::Expr {
+                        kind: hir::ExprKind::Null,
+                        ty: other,
+                        span,
+                    },
                 },
             };
             coerce_numeric_literal(&mut value, field_ty);
@@ -260,16 +355,26 @@ impl Checker<'_> {
 
         let (param_tys, optional_count, rest_param, sig_name) = {
             let sig = &self.signatures[ctor as usize];
-            (sig.params.clone(), sig.optional_count, sig.rest_param, sig.name.clone())
+            (
+                sig.params.clone(),
+                sig.optional_count,
+                sig.rest_param,
+                sig.name.clone(),
+            )
         };
         if let Some(rest_slot) = rest_param {
             // The arguments from the rest position on are gathered (spreads
             // flattened) into one array passed as the last constructor argument.
             let fixed = rest_slot - 1;
             if args.len() < fixed.saturating_sub(optional_count)
-                || args[..args.len().min(fixed)].iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                || args[..args.len().min(fixed)]
+                    .iter()
+                    .any(|a| matches!(a, ast::Expr::Spread { .. }))
             {
-                self.error(span, format!("`{name}` constructor expects at least {fixed} fixed argument(s)"));
+                self.error(
+                    span,
+                    format!("`{name}` constructor expects at least {fixed} fixed argument(s)"),
+                );
                 return self.poison(span);
             }
             let mut call_args: Vec<hir::Expr> = Vec::new();
@@ -293,12 +398,23 @@ impl Checker<'_> {
             call_args.push(rest_array);
             for (arg, &expected) in call_args.iter_mut().zip(&param_tys[1..]).take(fixed) {
                 coerce_numeric_literal(arg, expected);
-                if !expected.is_error() && !arg.ty.is_error() && !self.is_assignable(arg.ty, expected) {
-                    self.error(arg.span, format!("argument type {:?} does not match {expected:?}", arg.ty));
+                if !expected.is_error()
+                    && !arg.ty.is_error()
+                    && !self.is_assignable(arg.ty, expected)
+                {
+                    self.error(
+                        arg.span,
+                        format!("argument type {:?} does not match {expected:?}", arg.ty),
+                    );
                 }
             }
             return hir::Expr {
-                kind: hir::ExprKind::NewWithConstructor { class: class_idx, defaults, func: ctor, args: call_args },
+                kind: hir::ExprKind::NewWithConstructor {
+                    class: class_idx,
+                    defaults,
+                    func: ctor,
+                    args: call_args,
+                },
                 ty: Ty::Instance(class_idx),
                 span,
             };
@@ -307,19 +423,20 @@ impl Checker<'_> {
         let max = param_tys.len() - 1;
         // Extra arguments beyond the declared parameters are evaluated for
         // their effects and then ignored, as in JS.
-        let (args, extra_args) = if args.len() > max
-            && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
-        {
-            args.split_at(max)
-        } else {
-            (args, &args[0..0])
-        };
+        let (args, extra_args) =
+            if args.len() > max && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
+                args.split_at(max)
+            } else {
+                (args, &args[0..0])
+            };
         let min = max.saturating_sub(optional_count);
         // A missing `any` parameter reads as `undefined` (JS passes fewer arguments freely).
         let padded: Vec<ast::Expr>;
         let args = if args.len() < min
             && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
-            && param_tys[1 + args.len()..=min].iter().all(|ty| *ty == Ty::Any)
+            && param_tys[1 + args.len()..=min]
+                .iter()
+                .all(|ty| *ty == Ty::Any)
         {
             let mut extended = args.to_vec();
             while extended.len() < min {
@@ -365,7 +482,12 @@ impl Checker<'_> {
             }
         }
         let mut result = hir::Expr {
-            kind: hir::ExprKind::NewWithConstructor { class: class_idx, defaults, func: ctor, args: call_args },
+            kind: hir::ExprKind::NewWithConstructor {
+                class: class_idx,
+                defaults,
+                func: ctor,
+                args: call_args,
+            },
             ty: Ty::Instance(class_idx),
             span,
         };
@@ -373,7 +495,10 @@ impl Checker<'_> {
             let effect = self.check_expr(cx, extra);
             let ty = result.ty;
             result = hir::Expr {
-                kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                kind: hir::ExprKind::Sequence {
+                    effect: Box::new(effect),
+                    value: Box::new(result),
+                },
                 ty,
                 span,
             };
@@ -406,7 +531,11 @@ impl Checker<'_> {
         // `message`: arg0, defaulting to the empty string (JS `new Error()`).
         let mut message = match args.first() {
             Some(arg) => self.check_expr(cx, arg),
-            None => hir::Expr { kind: hir::ExprKind::String(String::new()), ty: Ty::String, span },
+            None => hir::Expr {
+                kind: hir::ExprKind::String(String::new()),
+                ty: Ty::String,
+                span,
+            },
         };
         coerce_numeric_literal(&mut message, Ty::String);
         if !message.ty.is_error() && !self.is_assignable(message.ty, Ty::String) {
@@ -417,17 +546,25 @@ impl Checker<'_> {
         let options = match args.get(1) {
             Some(arg) => self.check_expr(cx, arg),
             None => hir::Expr {
-                kind: hir::ExprKind::DynamicObjectLiteral { entries: Vec::new() },
+                kind: hir::ExprKind::DynamicObjectLiteral {
+                    entries: Vec::new(),
+                },
                 ty: Ty::DynamicObject,
                 span,
             },
         };
         if !matches!(options.ty, Ty::DynamicObject | Ty::Any) && !options.ty.is_error() {
-            self.error(options.span, format!("`{name}` options argument must be an object"));
+            self.error(
+                options.span,
+                format!("`{name}` options argument must be an object"),
+            );
         }
         // `cause` = `options.cause` (a missing key reads back as `undefined`).
         let cause = hir::Expr {
-            kind: hir::ExprKind::DynamicGet { object: Box::new(options), name: "cause".to_string() },
+            kind: hir::ExprKind::DynamicGet {
+                object: Box::new(options),
+                name: "cause".to_string(),
+            },
             ty: Ty::Any,
             span,
         };
@@ -455,7 +592,10 @@ impl Checker<'_> {
             new_args.push(arg);
         }
         hir::Expr {
-            kind: hir::ExprKind::New { class: class_idx, args: new_args },
+            kind: hir::ExprKind::New {
+                class: class_idx,
+                args: new_args,
+            },
             ty: Ty::Instance(class_idx),
             span,
         }
@@ -471,7 +611,10 @@ impl Checker<'_> {
         span: Span,
     ) -> hir::Expr {
         if args.is_empty() || args.len() > 2 {
-            self.error(span, "`ArrayBuffer` expects a length and an optional options object");
+            self.error(
+                span,
+                "`ArrayBuffer` expects a length and an optional options object",
+            );
             return self.poison(span);
         }
         let mut length = self.check_expr(cx, &args[0]);
@@ -517,7 +660,10 @@ impl Checker<'_> {
                     }
                 }
                 other => {
-                    self.error(other.span(), "`ArrayBuffer` second argument must be an options object");
+                    self.error(
+                        other.span(),
+                        "`ArrayBuffer` second argument must be an options object",
+                    );
                     return self.poison(span);
                 }
             }
@@ -533,7 +679,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: call_args,
+            },
             ty: Ty::Buffer,
             span,
         }

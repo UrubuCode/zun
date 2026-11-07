@@ -321,7 +321,10 @@ mod tests {
         let promise = table.create();
         assert!(table.settle(promise, Settlement::Fulfilled).accepted);
         assert!(!table.settle(promise, Settlement::Rejected).accepted);
-        assert_eq!(table.state(promise), PromiseState::Settled(Settlement::Fulfilled));
+        assert_eq!(
+            table.state(promise),
+            PromiseState::Settled(Settlement::Fulfilled)
+        );
     }
 
     #[test]
@@ -348,7 +351,11 @@ mod tests {
         table.settle(ok, Settlement::Fulfilled);
 
         let unnoticed = table.take_unnoticed_rejections();
-        assert_eq!(unnoticed, vec![detached], "only the detached rejection stays unhandled");
+        assert_eq!(
+            unnoticed,
+            vec![detached],
+            "only the detached rejection stays unhandled"
+        );
         assert!(!table.has_unnoticed_rejections(), "take drains the set");
     }
 

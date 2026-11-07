@@ -15,7 +15,10 @@ thread_local! {
 /// arguments, a bare `@foo` carries `None`. Unsupported callee/argument forms
 /// surface as an explicit error (no silent drop) because `convert_expression`
 /// and `convert_argument` reject what they cannot represent.
-pub(super) fn convert_decorator(source: &str, decorator: &OxcDecorator<'_>) -> Result<crate::ast::Decorator, String> {
+pub(super) fn convert_decorator(
+    source: &str,
+    decorator: &OxcDecorator<'_>,
+) -> Result<crate::ast::Decorator, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let (callee, args) = match &decorator.expression {
         Expression::CallExpression(call) => {
@@ -34,7 +37,10 @@ pub(super) fn convert_decorator(source: &str, decorator: &OxcDecorator<'_>) -> R
     })
 }
 
-pub(super) fn convert_class_declaration(source: &str, class_declaration: &oxc_ast::ast::Class<'_>) -> Result<crate::ast::Class, Vec<String>> {
+pub(super) fn convert_class_declaration(
+    source: &str,
+    class_declaration: &oxc_ast::ast::Class<'_>,
+) -> Result<crate::ast::Class, Vec<String>> {
     let mut names: Vec<(String, bool)> = Vec::new();
     for element in &class_declaration.body.body {
         match element {
@@ -55,14 +61,20 @@ pub(super) fn convert_class_declaration(source: &str, class_declaration: &oxc_as
         .id
         .as_ref()
         .map(|id| Span::new(id.span.start, id.span.end))
-        .unwrap_or(Span::new(class_declaration.span.start, class_declaration.span.end));
+        .unwrap_or(Span::new(
+            class_declaration.span.start,
+            class_declaration.span.end,
+        ));
     PRIVATE_SCOPES.with(|scopes| scopes.borrow_mut().push((id_span, names)));
     let result = convert_class_declaration_inner(source, class_declaration);
     PRIVATE_SCOPES.with(|scopes| scopes.borrow_mut().pop());
     result
 }
 
-pub(super) fn convert_class_declaration_inner(source: &str, class_declaration: &oxc_ast::ast::Class<'_>) -> Result<crate::ast::Class, Vec<String>> {
+pub(super) fn convert_class_declaration_inner(
+    source: &str,
+    class_declaration: &oxc_ast::ast::Class<'_>,
+) -> Result<crate::ast::Class, Vec<String>> {
     // Anonymous class expressions get their name patched by the caller.
     let id_span = class_declaration
         .id
@@ -92,14 +104,24 @@ pub(super) fn convert_class_declaration_inner(source: &str, class_declaration: &
     let mut symbol_methods = Vec::new();
     for element in &class_declaration.body.body {
         match element {
-            ClassElement::PropertyDefinition(property) if property.computed && property.key.as_expression().is_some() && class_declaration.id.is_some() => {
+            ClassElement::PropertyDefinition(property)
+                if property.computed
+                    && property.key.as_expression().is_some()
+                    && class_declaration.id.is_some() =>
+            {
                 convert_computed_field(source, class_declaration, property, &mut fields)?;
             }
             ClassElement::PropertyDefinition(property) => {
                 convert_field(source, property, &mut fields)?;
             }
             ClassElement::MethodDefinition(method) => {
-                convert_method(source, class_declaration, method, &mut methods, &mut symbol_methods)?;
+                convert_method(
+                    source,
+                    class_declaration,
+                    method,
+                    &mut methods,
+                    &mut symbol_methods,
+                )?;
             }
             ClassElement::StaticBlock(block) => {
                 convert_static_block(source, block, &mut fields)?;
@@ -152,13 +174,19 @@ fn convert_computed_field(
         n
     });
     let member_span = Span::new(property.span.start, property.span.end);
-    let key_expression = property.key.as_expression().ok_or_else(|| vec!["OXC adapter requires an expression computed field key".to_owned()])?;
+    let key_expression = property
+        .key
+        .as_expression()
+        .ok_or_else(|| vec!["OXC adapter requires an expression computed field key".to_owned()])?;
     let key = convert_expression(source, key_expression).map_err(|error| vec![error])?;
     let value = match property.value.as_ref() {
         Some(expression) => convert_expression(source, expression).map_err(|error| vec![error])?,
         None => Expr::Unary {
             op: crate::ast::UnaryOp::Void,
-            operand: Box::new(Expr::Number { value: 0.0, span: member_span }),
+            operand: Box::new(Expr::Number {
+                value: 0.0,
+                span: member_span,
+            }),
             span: member_span,
         },
     };
@@ -169,7 +197,15 @@ fn convert_computed_field(
             kind: crate::ast::PropertyKind::Init,
         })
     };
-    let flag = |name: &str| slot(name, Expr::Bool { value: true, span: member_span });
+    let flag = |name: &str| {
+        slot(
+            name,
+            Expr::Bool {
+                value: true,
+                span: member_span,
+            },
+        )
+    };
     let define = |target: Expr, key: Expr, value: Expr| Expr::MethodCall {
         receiver: Box::new(Expr::Ident(crate::ast::synthetic_ident("Object"))),
         method: crate::ast::synthetic_ident("defineProperty"),
@@ -177,26 +213,47 @@ fn convert_computed_field(
             target,
             key,
             Expr::ObjectLiteral {
-                properties: vec![slot("value", value), flag("writable"), flag("enumerable"), flag("configurable")],
+                properties: vec![
+                    slot("value", value),
+                    flag("writable"),
+                    flag("enumerable"),
+                    flag("configurable"),
+                ],
                 span: member_span,
             },
         ],
         span: member_span,
     };
-    let class_id = class_declaration.id.as_ref().ok_or_else(|| vec!["OXC adapter requires a named class".to_owned()])?;
+    let class_id = class_declaration
+        .id
+        .as_ref()
+        .ok_or_else(|| vec!["OXC adapter requires a named class".to_owned()])?;
     if property.r#static {
-        let class_ref = Expr::Ident(Name { span: Span::new(class_id.span.start, class_id.span.end) });
-        CLASS_TRAILING.with(|cells| cells.borrow_mut().push(Stmt::Expr(define(class_ref, key, value))));
+        let class_ref = Expr::Ident(Name {
+            span: Span::new(class_id.span.start, class_id.span.end),
+        });
+        CLASS_TRAILING.with(|cells| {
+            cells
+                .borrow_mut()
+                .push(Stmt::Expr(define(class_ref, key, value)))
+        });
     } else {
         let key_temp = crate::ast::synthetic_ident(&format!("__ck{n}"));
         CLASS_TRAILING.with(|cells| {
-            cells.borrow_mut().push(Stmt::Let { name: key_temp, ty: None, init: key, span: member_span })
+            cells.borrow_mut().push(Stmt::Let {
+                name: key_temp,
+                ty: None,
+                init: key,
+                span: member_span,
+            })
         });
         fields.push(crate::ast::ClassField {
             name: crate::ast::synthetic_ident(&format!("__cf{n}")),
             decorators: Vec::new(),
             ty: crate::ast::TypeAnnotation {
-                name: Name { span: Span::new(property.span.start, property.span.start) },
+                name: Name {
+                    span: Span::new(property.span.start, property.span.start),
+                },
                 is_array: false,
             },
             is_static: false,
@@ -226,22 +283,21 @@ fn convert_field(
         }
         _ => {
             return Err(vec![
-                "OXC adapter supports identifier class fields only".into(),
+                "OXC adapter supports identifier class fields only".into()
             ])
         }
     };
     // A field without an explicit (or nameable) type erases
     // to `any`, encoded as a zero-width type span that sema
     // resolves to `Ty::Any` (JS/TS erasure semantics).
-    let type_annotation =
-        convert_type_annotation(source, property.type_annotation.as_deref())
-            .map_err(|error| vec![error])?
-            .unwrap_or(crate::ast::TypeAnnotation {
-                name: Name {
-                    span: Span::new(field_span.start, field_span.start),
-                },
-                is_array: false,
-            });
+    let type_annotation = convert_type_annotation(source, property.type_annotation.as_deref())
+        .map_err(|error| vec![error])?
+        .unwrap_or(crate::ast::TypeAnnotation {
+            name: Name {
+                span: Span::new(field_span.start, field_span.start),
+            },
+            is_array: false,
+        });
     fields.push(crate::ast::ClassField {
         name: Name { span: field_span },
         decorators: property
@@ -256,20 +312,19 @@ fn convert_field(
         // A field without an initializer defaults to
         // `undefined` (`void 0`), so the implicit
         // constructor always has a value for every slot.
-        initializer: Some(Box::new(
-            match property.value.as_ref() {
-                Some(expression) => convert_expression(source, expression)
-                    .map_err(|error| vec![error])?,
-                None => Expr::Unary {
-                    op: crate::ast::UnaryOp::Void,
-                    operand: Box::new(Expr::Number {
-                        value: 0.0,
-                        span: field_span,
-                    }),
+        initializer: Some(Box::new(match property.value.as_ref() {
+            Some(expression) => {
+                convert_expression(source, expression).map_err(|error| vec![error])?
+            }
+            None => Expr::Unary {
+                op: crate::ast::UnaryOp::Void,
+                operand: Box::new(Expr::Number {
+                    value: 0.0,
                     span: field_span,
-                },
+                }),
+                span: field_span,
             },
-        )),
+        })),
     });
     Ok(())
 }
@@ -283,13 +338,15 @@ fn convert_static_block(
     fields: &mut Vec<crate::ast::ClassField>,
 ) -> Result<(), Vec<String>> {
     let block_span = Span::new(block.span.start, block.span.end);
-    let statements = convert_function_statements(source, &block.body, &[])
-        .map_err(|error| vec![error])?;
+    let statements =
+        convert_function_statements(source, &block.body, &[]).map_err(|error| vec![error])?;
     let arrow = Expr::Function(FunctionExpr {
         params: Vec::new(),
-        return_type: convert_type_annotation(source, None)
-            .map_err(|error| vec![error])?,
-        body: Block { statements, span: block_span },
+        return_type: convert_type_annotation(source, None).map_err(|error| vec![error])?,
+        body: Block {
+            statements,
+            span: block_span,
+        },
         is_arrow: true,
         is_async: false,
         is_generator: false,
@@ -299,7 +356,9 @@ fn convert_static_block(
         name: Name { span: block_span },
         decorators: Vec::new(),
         ty: crate::ast::TypeAnnotation {
-            name: Name { span: Span::new(block_span.start, block_span.start) },
+            name: Name {
+                span: Span::new(block_span.start, block_span.start),
+            },
             is_array: false,
         },
         is_static: true,
@@ -322,7 +381,9 @@ fn infer_constructor_fields(
     methods: &[Function],
 ) {
     for element in &class_declaration.body.body {
-        let ClassElement::MethodDefinition(method) = element else { continue };
+        let ClassElement::MethodDefinition(method) = element else {
+            continue;
+        };
         if method.kind != oxc_ast::ast::MethodDefinitionKind::Constructor {
             continue;
         }
@@ -388,14 +449,19 @@ fn infer_constructor_fields(
                 name: Name { span: field_span },
                 decorators: Vec::new(),
                 ty: crate::ast::TypeAnnotation {
-                    name: Name { span: Span::new(field_span.start, field_span.start) },
+                    name: Name {
+                        span: Span::new(field_span.start, field_span.start),
+                    },
                     is_array: false,
                 },
                 is_static: false,
                 is_private: false,
                 initializer: Some(Box::new(Expr::Unary {
                     op: crate::ast::UnaryOp::Void,
-                    operand: Box::new(Expr::Number { value: 0.0, span: field_span }),
+                    operand: Box::new(Expr::Number {
+                        value: 0.0,
+                        span: field_span,
+                    }),
                     span: field_span,
                 })),
             });
@@ -426,7 +492,14 @@ fn convert_method(
     if install_runtime_computed_method(source, class_declaration, method, &computed_key)? {
         return Ok(());
     }
-    register_method(source, method, computed_key, function, methods, symbol_methods);
+    register_method(
+        source,
+        method,
+        computed_key,
+        function,
+        methods,
+        symbol_methods,
+    );
     Ok(())
 }
 
@@ -455,8 +528,7 @@ fn method_name_and_key(
         let key_expression = method.key.as_expression().ok_or_else(|| {
             vec!["OXC adapter requires an expression computed method key".to_owned()]
         })?;
-        let key = convert_expression(source, key_expression)
-            .map_err(|error| vec![error])?;
+        let key = convert_expression(source, key_expression).map_err(|error| vec![error])?;
         (key.span(), Some(key))
     } else if let PropertyKey::StaticIdentifier(identifier) = &method.key {
         (Span::new(identifier.span.start, identifier.span.end), None)
@@ -482,8 +554,7 @@ fn push_extern_method(
     let mut params = Vec::new();
     for parameter in &method.value.params.items {
         params.push(
-            convert_formal_param(source, parameter, &mut prologue)
-                .map_err(|error| vec![error])?,
+            convert_formal_param(source, parameter, &mut prologue).map_err(|error| vec![error])?,
         );
     }
     methods.push(Function {
@@ -491,18 +562,18 @@ fn push_extern_method(
         type_params: Vec::new(),
         decorators: Vec::new(),
         params,
-        return_type: convert_type_annotation(
-            source,
-            method.value.return_type.as_deref(),
-        )
-        .map_err(|error| vec![error])?,
+        return_type: convert_type_annotation(source, method.value.return_type.as_deref())
+            .map_err(|error| vec![error])?,
         is_extern: true,
         is_static: method.r#static,
         accessor: None,
         external_module: module,
         is_async: false,
         is_generator: false,
-        body: Block { statements: Vec::new(), span: Span::new(method.span.start, method.span.end) },
+        body: Block {
+            statements: Vec::new(),
+            span: Span::new(method.span.start, method.span.end),
+        },
         span: Span::new(method.span.start, method.span.end),
     });
     Ok(())
@@ -531,21 +602,17 @@ fn build_method_function(
             .map_err(|error| vec![error])?,
     );
     if let Some(rest) = method.value.params.rest.as_ref() {
-        let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument
-        else {
+        let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
             return Err(vec![
-                "OXC adapter supports identifier rest parameters only".into(),
+                "OXC adapter supports identifier rest parameters only".into()
             ]);
         };
         params.push(crate::ast::Param {
             name: Name {
                 span: Span::new(identifier.span.start, identifier.span.end),
             },
-            ty: convert_type_annotation(
-                source,
-                rest.type_annotation.as_deref(),
-            )
-            .map_err(|error| vec![error])?,
+            ty: convert_type_annotation(source, rest.type_annotation.as_deref())
+                .map_err(|error| vec![error])?,
             default_value: None,
             is_rest: true,
         });
@@ -570,11 +637,8 @@ fn build_method_function(
         type_params: Vec::new(),
         decorators,
         params,
-        return_type: convert_type_annotation(
-            source,
-            method.value.return_type.as_deref(),
-        )
-        .map_err(|error| vec![error])?,
+        return_type: convert_type_annotation(source, method.value.return_type.as_deref())
+            .map_err(|error| vec![error])?,
         is_extern: false,
         // A computed-key member is modeled as a static
         // method (no implicit `this`).
@@ -609,8 +673,11 @@ fn install_runtime_computed_method(
         let well_known = matches!(key, Expr::Field { object, .. }
             if matches!(object.as_ref(), Expr::Ident(n) if source.get(n.span.start as usize..n.span.end as usize) == Some("Symbol")));
         if !well_known {
-            let function_value = convert_oxc_function(source, &method.value).map_err(|error| vec![error])?;
-            let class_ref = Expr::Ident(Name { span: Span::new(class_id.span.start, class_id.span.end) });
+            let function_value =
+                convert_oxc_function(source, &method.value).map_err(|error| vec![error])?;
+            let class_ref = Expr::Ident(Name {
+                span: Span::new(class_id.span.start, class_id.span.end),
+            });
             let target = if method.r#static {
                 class_ref
             } else {
@@ -623,7 +690,10 @@ fn install_runtime_computed_method(
             let flag = |name: &str, value: bool| {
                 crate::ast::ObjectMember::Property(crate::ast::ObjectProperty {
                     key: crate::ast::PropertyKey::Ident(crate::ast::synthetic_ident(name)),
-                    value: Expr::Bool { value, span: Span::new(method.span.start, method.span.end) },
+                    value: Expr::Bool {
+                        value,
+                        span: Span::new(method.span.start, method.span.end),
+                    },
                     kind: crate::ast::PropertyKind::Init,
                 })
             };
@@ -635,9 +705,17 @@ fn install_runtime_computed_method(
                 })
             };
             let members = match method.kind {
-                MethodDefinitionKind::Get => vec![slot("get", function_value), flag("configurable", true)],
-                MethodDefinitionKind::Set => vec![slot("set", function_value), flag("configurable", true)],
-                _ => vec![slot("value", function_value), flag("writable", true), flag("configurable", true)],
+                MethodDefinitionKind::Get => {
+                    vec![slot("get", function_value), flag("configurable", true)]
+                }
+                MethodDefinitionKind::Set => {
+                    vec![slot("set", function_value), flag("configurable", true)]
+                }
+                _ => vec![
+                    slot("value", function_value),
+                    flag("writable", true),
+                    flag("configurable", true),
+                ],
             };
             let member_span = Span::new(method.span.start, method.span.end);
             CLASS_TRAILING.with(|cells| {
@@ -680,8 +758,7 @@ fn register_method(
             // name, accessor kind, staticness) replaces the
             // earlier one, as in JS.
             let text = |f: &Function| {
-                source[f.name.span.start as usize..f.name.span.end as usize]
-                    .to_owned()
+                source[f.name.span.start as usize..f.name.span.end as usize].to_owned()
             };
             let key = (text(&function), function.accessor, function.is_static);
             if let Some(existing) = methods

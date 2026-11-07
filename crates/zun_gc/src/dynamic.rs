@@ -2,7 +2,9 @@ use super::{Heap, Obj};
 
 impl Heap {
     pub fn dynamic_get(&self, object: Obj, name: &str) -> Option<zun_core::Any> {
-        self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get(name))
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get(name))
     }
 
     pub fn dynamic_has(&self, object: Obj, name: &str) -> bool {
@@ -11,12 +13,26 @@ impl Heap {
             .is_some_and(|properties| properties.get(name).is_some())
     }
 
-    pub fn dynamic_get_symbol(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::Any> {
-        self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol(symbol))
+    pub fn dynamic_get_symbol(
+        &self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_core::Any> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get_symbol(symbol))
     }
 
-    pub fn dynamic_set(&mut self, object: Obj, name: impl Into<String>, value: zun_core::Any) -> Option<zun_core::Any> {
-        let result = self.dynamic_objects.get_mut(&(object.addr() as usize))?.set(name, value);
+    pub fn dynamic_set(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        value: zun_core::Any,
+    ) -> Option<zun_core::Any> {
+        let result = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .set(name, value);
         if let Some(child) = value.as_object() {
             self.write_barrier(object, child as u64);
         }
@@ -26,11 +42,20 @@ impl Heap {
     /// User-level property assignment: `obj.__proto__ = v` / `{ __proto__: v }`
     /// sets `[[Prototype]]` (object or null; other values are ignored) instead
     /// of creating an own property. Everything else is `dynamic_set`.
-    pub fn dynamic_assign(&mut self, object: Obj, name: String, value: zun_core::Any) -> Option<zun_core::Any> {
+    pub fn dynamic_assign(
+        &mut self,
+        object: Obj,
+        name: String,
+        value: zun_core::Any,
+    ) -> Option<zun_core::Any> {
         if name == "__proto__" {
             match value.tag() {
-                zun_core::AnyTag::Object => { self.dynamic_set_prototype(object, Some(value)); }
-                zun_core::AnyTag::Null => { self.dynamic_set_prototype(object, Some(zun_core::Any::null())); }
+                zun_core::AnyTag::Object => {
+                    self.dynamic_set_prototype(object, Some(value));
+                }
+                zun_core::AnyTag::Null => {
+                    self.dynamic_set_prototype(object, Some(zun_core::Any::null()));
+                }
                 _ => {}
             }
             return None;
@@ -42,7 +67,13 @@ impl Heap {
     /// attribute, bypassing the per-entry writable guard (the definition path,
     /// backing `global.set` and a future `Object.defineProperty`). Returns
     /// `false` if `object` is not a dynamic object or is frozen.
-    pub fn dynamic_define(&mut self, object: Obj, name: impl Into<String>, value: zun_core::Any, writable: bool) -> bool {
+    pub fn dynamic_define(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        value: zun_core::Any,
+        writable: bool,
+    ) -> bool {
         let ok = self
             .dynamic_objects
             .get_mut(&(object.addr() as usize))
@@ -79,7 +110,9 @@ impl Heap {
         let ok = self
             .dynamic_objects
             .get_mut(&(object.addr() as usize))
-            .is_some_and(|properties| properties.define_data(name, value, writable, enumerable, configurable));
+            .is_some_and(|properties| {
+                properties.define_data(name, value, writable, enumerable, configurable)
+            });
         if ok {
             if let Some(child) = value.as_object() {
                 self.write_barrier(object, child as u64);
@@ -125,7 +158,11 @@ impl Heap {
             .get_mut(&(object.addr() as usize))
             .is_some_and(|p| p.force_define_accessor(name, get, set, enumerable, configurable));
         if ok {
-            for environment in [get, set].into_iter().flatten().filter_map(|f| f.environment()) {
+            for environment in [get, set]
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f.environment())
+            {
                 self.write_barrier(object, environment as u64);
             }
         }
@@ -145,9 +182,15 @@ impl Heap {
         let ok = self
             .dynamic_objects
             .get_mut(&(object.addr() as usize))
-            .is_some_and(|properties| properties.define_accessor(name, get, set, enumerable, configurable));
+            .is_some_and(|properties| {
+                properties.define_accessor(name, get, set, enumerable, configurable)
+            });
         if ok {
-            for environment in [get, set].into_iter().flatten().filter_map(|f| f.environment()) {
+            for environment in [get, set]
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f.environment())
+            {
                 self.write_barrier(object, environment as u64);
             }
         }
@@ -156,7 +199,11 @@ impl Heap {
 
     /// The own property descriptor for `name`, or `None` if there is no own
     /// property (or `object` is not dynamic).
-    pub fn dynamic_descriptor(&self, object: Obj, name: &str) -> Option<zun_core::PropertyDescriptor> {
+    pub fn dynamic_descriptor(
+        &self,
+        object: Obj,
+        name: &str,
+    ) -> Option<zun_core::PropertyDescriptor> {
         self.dynamic_objects
             .get(&(object.addr() as usize))
             .and_then(|properties| properties.descriptor(name))
@@ -174,13 +221,21 @@ impl Heap {
             .is_some_and(|properties| properties.is_accessor(name))
     }
 
-    pub fn dynamic_accessor_getter(&self, object: Obj, name: &str) -> Option<zun_core::FunctionHandle> {
+    pub fn dynamic_accessor_getter(
+        &self,
+        object: Obj,
+        name: &str,
+    ) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects
             .get(&(object.addr() as usize))
             .and_then(|properties| properties.accessor_getter(name))
     }
 
-    pub fn dynamic_accessor_setter(&self, object: Obj, name: &str) -> Option<zun_core::FunctionHandle> {
+    pub fn dynamic_accessor_setter(
+        &self,
+        object: Obj,
+        name: &str,
+    ) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects
             .get(&(object.addr() as usize))
             .and_then(|properties| properties.accessor_setter(name))
@@ -189,7 +244,10 @@ impl Heap {
     /// `Object.seal`: non-extensible, every own key non-configurable.
     pub fn dynamic_seal(&mut self, object: Obj) -> bool {
         match self.dynamic_objects.get_mut(&(object.addr() as usize)) {
-            Some(properties) => { properties.seal(); true }
+            Some(properties) => {
+                properties.seal();
+                true
+            }
             None => false,
         }
     }
@@ -203,7 +261,10 @@ impl Heap {
     /// `Object.preventExtensions`.
     pub fn dynamic_prevent_extensions(&mut self, object: Obj) -> bool {
         match self.dynamic_objects.get_mut(&(object.addr() as usize)) {
-            Some(properties) => { properties.prevent_extensions(); true }
+            Some(properties) => {
+                properties.prevent_extensions();
+                true
+            }
             None => false,
         }
     }
@@ -214,8 +275,16 @@ impl Heap {
             .is_some_and(|properties| properties.is_extensible())
     }
 
-    pub fn dynamic_set_symbol(&mut self, object: Obj, symbol: zun_core::SymbolId, value: zun_core::Any) -> Option<zun_core::Any> {
-        let result = self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol(symbol, value);
+    pub fn dynamic_set_symbol(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        value: zun_core::Any,
+    ) -> Option<zun_core::Any> {
+        let result = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .set_symbol(symbol, value);
         if let Some(child) = value.as_object() {
             self.write_barrier(object, child as u64);
         }
@@ -231,10 +300,21 @@ impl Heap {
             .unwrap_or_default()
     }
 
-    pub fn dynamic_symbol_getter(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::FunctionHandle> {
-        self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol_getter(symbol))
+    pub fn dynamic_symbol_getter(
+        &self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get_symbol_getter(symbol))
     }
-    pub fn dynamic_set_symbol_getter(&mut self, object: Obj, symbol: zun_core::SymbolId, function: zun_core::FunctionHandle) {
+    pub fn dynamic_set_symbol_getter(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        function: zun_core::FunctionHandle,
+    ) {
         self.ensure_dynamic_entry(object);
         if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
             properties.set_symbol_getter(symbol, function);
@@ -244,31 +324,66 @@ impl Heap {
         }
     }
 
-    pub fn dynamic_get_symbol_function(&self, object: Obj, symbol: zun_core::SymbolId) -> Option<zun_core::FunctionHandle> {
-        self.dynamic_objects.get(&(object.addr() as usize)).and_then(|properties| properties.get_symbol_function(symbol))
-    }
-    /// Own function-slot entries (string-keyed methods, then symbol-keyed ones).
-    pub fn dynamic_function_entries(&self, object: Obj) -> (Vec<(String, zun_core::FunctionHandle)>, Vec<(zun_core::SymbolId, zun_core::FunctionHandle)>) {
+    pub fn dynamic_get_symbol_function(
+        &self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects
             .get(&(object.addr() as usize))
-            .map(|properties| (properties.function_entries(), properties.symbol_function_entries()))
+            .and_then(|properties| properties.get_symbol_function(symbol))
+    }
+    /// Own function-slot entries (string-keyed methods, then symbol-keyed ones).
+    pub fn dynamic_function_entries(
+        &self,
+        object: Obj,
+    ) -> (
+        Vec<(String, zun_core::FunctionHandle)>,
+        Vec<(zun_core::SymbolId, zun_core::FunctionHandle)>,
+    ) {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .map(|properties| {
+                (
+                    properties.function_entries(),
+                    properties.symbol_function_entries(),
+                )
+            })
             .unwrap_or_default()
     }
-    pub fn dynamic_get_function(&self, object: Obj, name: &str) -> Option<zun_core::FunctionHandle> {
+    pub fn dynamic_get_function(
+        &self,
+        object: Obj,
+        name: &str,
+    ) -> Option<zun_core::FunctionHandle> {
         self.dynamic_objects
             .get(&(object.addr() as usize))
             .and_then(|properties| properties.get_function(name))
     }
 
-    pub fn dynamic_set_symbol_function(&mut self, object: Obj, symbol: zun_core::SymbolId, function: zun_core::FunctionHandle) -> Option<zun_core::FunctionHandle> {
-        let result = self.dynamic_objects.get_mut(&(object.addr() as usize))?.set_symbol_function(symbol, function);
+    pub fn dynamic_set_symbol_function(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        function: zun_core::FunctionHandle,
+    ) -> Option<zun_core::FunctionHandle> {
+        let result = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .set_symbol_function(symbol, function);
         if let Some(environment) = function.environment() {
             self.write_barrier(object, environment as u64);
         }
         result
     }
-    pub fn dynamic_set_function(&mut self, object: Obj, name: impl Into<String>, function: zun_core::FunctionHandle) -> Option<zun_core::FunctionHandle> {
-        let result = self.dynamic_objects
+    pub fn dynamic_set_function(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        function: zun_core::FunctionHandle,
+    ) -> Option<zun_core::FunctionHandle> {
+        let result = self
+            .dynamic_objects
             .get_mut(&(object.addr() as usize))
             .and_then(|properties| properties.set_function(name, function));
         if let Some(environment) = function.environment() {
@@ -277,51 +392,83 @@ impl Heap {
         result
     }
 
-    pub fn dynamic_get_module_function(&self, object: Obj, name: &str) -> Option<zun_core::ModuleBoundFunction> {
+    pub fn dynamic_get_module_function(
+        &self,
+        object: Obj,
+        name: &str,
+    ) -> Option<zun_core::ModuleBoundFunction> {
         self.dynamic_objects
             .get(&(object.addr() as usize))
             .and_then(|properties| properties.get_module_function(name).cloned())
     }
 
-    pub fn dynamic_set_module_function(&mut self, object: Obj, name: impl Into<String>, function: zun_core::ModuleBoundFunction) -> Option<zun_core::ModuleBoundFunction> {
+    pub fn dynamic_set_module_function(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        function: zun_core::ModuleBoundFunction,
+    ) -> Option<zun_core::ModuleBoundFunction> {
         self.dynamic_objects
             .get_mut(&(object.addr() as usize))
             .and_then(|properties| properties.set_module_function(name, function))
     }
 
-    pub fn dynamic_get_module_class(&self, object: Obj, name: &str) -> Option<zun_core::ModuleBoundClass> {
+    pub fn dynamic_get_module_class(
+        &self,
+        object: Obj,
+        name: &str,
+    ) -> Option<zun_core::ModuleBoundClass> {
         self.dynamic_objects
             .get(&(object.addr() as usize))
             .and_then(|properties| properties.get_module_class(name).cloned())
     }
 
-    pub fn dynamic_set_module_class(&mut self, object: Obj, name: impl Into<String>, class: zun_core::ModuleBoundClass) -> Option<zun_core::ModuleBoundClass> {
+    pub fn dynamic_set_module_class(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        class: zun_core::ModuleBoundClass,
+    ) -> Option<zun_core::ModuleBoundClass> {
         self.dynamic_objects
             .get_mut(&(object.addr() as usize))
             .and_then(|properties| properties.set_module_class(name, class))
     }
 
     pub fn dynamic_remove(&mut self, object: Obj, name: &str) -> Option<zun_core::Any> {
-        self.dynamic_objects.get_mut(&(object.addr() as usize))?.remove(name)
+        self.dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .remove(name)
     }
 
     /// Give a non-dynamic object (an array) an expando-property table so
     /// named properties (`arr.toJSON = fn`) can be stored on it.
     pub fn ensure_dynamic_entry(&mut self, object: Obj) {
-        self.dynamic_objects.entry(object.addr() as usize).or_default();
+        self.dynamic_objects
+            .entry(object.addr() as usize)
+            .or_default();
     }
 
     /// Whether a plain `obj.name = v` would be accepted (see `DynamicObject::can_set`).
     /// Non-dynamic objects report `true`.
     pub fn dynamic_can_set(&self, object: Obj, name: &str) -> bool {
-        self.dynamic_objects.get(&(object.addr() as usize)).is_none_or(|p| p.can_set(name))
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_none_or(|p| p.can_set(name))
     }
 
     pub fn dynamic_can_delete(&self, object: Obj, name: &str) -> bool {
-        self.dynamic_objects.get(&(object.addr() as usize)).is_none_or(|p| p.can_delete(name))
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_none_or(|p| p.can_delete(name))
     }
 
-    pub fn dynamic_define_symbol(&mut self, object: Obj, symbol: zun_core::SymbolId, value: zun_core::Any, enumerable: bool) -> bool {
+    pub fn dynamic_define_symbol(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        value: zun_core::Any,
+        enumerable: bool,
+    ) -> bool {
         let ok = self
             .dynamic_objects
             .get_mut(&(object.addr() as usize))
@@ -335,7 +482,9 @@ impl Heap {
     }
 
     pub fn dynamic_is_symbol_enumerable(&self, object: Obj, symbol: zun_core::SymbolId) -> bool {
-        self.dynamic_objects.get(&(object.addr() as usize)).is_some_and(|p| p.is_symbol_enumerable(symbol))
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|p| p.is_symbol_enumerable(symbol))
     }
 
     /// `delete obj[symbol]`; `false` when the object refuses (frozen).
@@ -419,12 +568,17 @@ impl Heap {
     /// Give a typed class instance an expando-property table (properties added
     /// with `(obj as any).extra = v`); its declared fields stay in the fixed layout.
     pub fn ensure_instance_bag(&mut self, object: Obj) {
-        self.dynamic_objects.entry(object.addr() as usize).or_default().mark_instance_bag();
+        self.dynamic_objects
+            .entry(object.addr() as usize)
+            .or_default()
+            .mark_instance_bag();
     }
 
     /// Whether `object` is a typed class instance carrying an expando table.
     pub fn is_instance_bag(&self, object: Obj) -> bool {
-        self.dynamic_objects.get(&(object.addr() as usize)).is_some_and(|properties| properties.is_instance_bag())
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.is_instance_bag())
     }
 }
 
@@ -439,9 +593,12 @@ impl Heap {
     /// so it stays valid across moving collections and the same callable always
     /// maps to the same cell while one is alive.
     pub fn function_cell(&mut self, function: zun_core::FunctionHandle) -> Obj {
-        let existing = self.dynamic_objects.iter().find_map(|(address, properties)| {
-            (properties.get_function(FUNCTION_CELL_KEY) == Some(function)).then_some(*address)
-        });
+        let existing = self
+            .dynamic_objects
+            .iter()
+            .find_map(|(address, properties)| {
+                (properties.get_function(FUNCTION_CELL_KEY) == Some(function)).then_some(*address)
+            });
         if let Some(address) = existing {
             return unsafe { Obj::from_addr(address as *mut u64) };
         }
@@ -454,9 +611,12 @@ impl Heap {
     /// per symbol while it is alive.
     pub fn symbol_cell(&mut self, symbol: zun_core::SymbolId) -> Obj {
         let wanted = zun_core::Any::symbol(symbol);
-        let existing = self.dynamic_objects.iter().find_map(|(address, properties)| {
-            (properties.get(SYMBOL_CELL_KEY) == Some(wanted)).then_some(*address)
-        });
+        let existing = self
+            .dynamic_objects
+            .iter()
+            .find_map(|(address, properties)| {
+                (properties.get(SYMBOL_CELL_KEY) == Some(wanted)).then_some(*address)
+            });
         if let Some(address) = existing {
             return unsafe { Obj::from_addr(address as *mut u64) };
         }

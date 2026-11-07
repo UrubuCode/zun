@@ -625,4 +625,3 @@ fn array_access_methods_keep_interpreter_fallback() {
         Value::Float(9.0, zun_il::NumKind::F64)
     ));
 }
-

@@ -18,8 +18,10 @@ impl<'a> Interp<'a> {
                 }
                 // A string (typed or boxed in `any`) iterates by code point.
                 let first_concrete = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                        .unwrap_or(Value::Void),
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     other => other.clone(),
                 };
                 if let Value::Str(text) = &first_concrete {
@@ -52,11 +54,13 @@ impl<'a> Interp<'a> {
                     Value::Float(value, _) => *value as u32,
                     _ => return Err(RunError::BadToken),
                 };
-                let array = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let values = zun_gc::with_current_heap(|heap| {
                     let length = heap.array_len(array)?;
-                    (0..length).map(|index| heap.array_get(array, index)).collect::<Option<Vec<_>>>()
+                    (0..length)
+                        .map(|index| heap.array_get(array, index))
+                        .collect::<Option<Vec<_>>>()
                 })
                 .ok_or(RunError::BadToken)?;
                 let generator = zun_gc::with_current_heap_mut(|heap| {
@@ -65,8 +69,8 @@ impl<'a> Interp<'a> {
                 self.finish_generator_creation(method_rid, generator)
             }
             "generatorIteratorDone" => {
-                let generator = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let generator =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 if zun_gc::with_current_heap(|heap| heap.generator_state(generator).is_none()) {
                     return self.protocol_done(generator);
                 }
@@ -99,8 +103,8 @@ impl<'a> Interp<'a> {
                 ))
             }
             "symbolIteratorCall" => {
-                let source = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 if zun_gc::with_current_heap(|heap| heap.generator_state(source).is_some()) {
                     return Ok(Value::Object(source));
                 }
@@ -134,17 +138,20 @@ impl<'a> Interp<'a> {
                 // IteratorClose: call the iterator's `return()` (if any) when a
                 // for-of loop exits early. `throwing` marks a throw completion,
                 // whose error wins over anything `return()` raises.
-                let wrapper = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let wrapper =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let throwing = matches!(args.get(1), Some(Value::Bool(true)));
                 if zun_gc::with_current_heap(|heap| heap.generator_state(wrapper).is_some()) {
                     return self.close_generator(wrapper, throwing);
                 }
                 let it = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get(wrapper, "__zun_it").and_then(|any| any.as_object())
+                    heap.dynamic_get(wrapper, "__zun_it")
+                        .and_then(|any| any.as_object())
                 })
                 .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
-                let Some(it) = it else { return Ok(Value::Bool(true)) };
+                let Some(it) = it else {
+                    return Ok(Value::Bool(true));
+                };
                 let is_builtin = zun_gc::with_current_heap(|heap| {
                     heap.array_iterator_done(it).is_some()
                         || heap.set_iterator_done(it).is_some()
@@ -156,10 +163,13 @@ impl<'a> Interp<'a> {
                 if zun_gc::with_current_heap(|heap| heap.generator_state(it).is_some()) {
                     return self.close_generator(it, throwing);
                 }
-                let mut method = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "return"));
+                let mut method =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "return"));
                 // An accessor `return` is read exactly once per close.
                 if method.is_none()
-                    && zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(it, "return").is_some())
+                    && zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_accessor_getter(it, "return").is_some()
+                    })
                 {
                     if let Value::Function(handle) = self.dynamic_member_get(it, "return")? {
                         method = Some(handle);
@@ -176,7 +186,9 @@ impl<'a> Interp<'a> {
                         })
                     });
                     if present && !throwing {
-                        return Err(RunError::Native("TypeError: iterator.return is not a function".into()));
+                        return Err(RunError::Native(
+                            "TypeError: iterator.return is not a function".into(),
+                        ));
                     }
                     return Ok(Value::Bool(true));
                 };
@@ -199,35 +211,45 @@ impl<'a> Interp<'a> {
                 }
             }
             "generatorIteratorNext" => {
-                let generator = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let generator =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 if zun_gc::with_current_heap(|heap| heap.generator_state(generator).is_none()) {
                     return self.protocol_next(generator);
                 }
-                let mut state = zun_gc::with_current_heap_mut(|heap| {
-                    heap.generator_state_take(generator)
-                })
-                .ok_or(RunError::BadToken)?;
+                let mut state =
+                    zun_gc::with_current_heap_mut(|heap| heap.generator_state_take(generator))
+                        .ok_or(RunError::BadToken)?;
                 if state.done {
-                    zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.generator_state_set(generator, state)
+                    });
                     return Ok(Value::Void);
                 }
                 if state.has_current {
-                    let value = zun_gc::with_current_heap(|heap| {
-                        Value::unbox_any(state.current, heap)
-                    })
-                    .ok_or(RunError::BadToken)?;
+                    let value =
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(state.current, heap))
+                            .ok_or(RunError::BadToken)?;
                     state.has_current = false;
-                    zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.generator_state_set(generator, state)
+                    });
                     return Ok(value);
                 }
                 let outcome = if let Some(saved) = state.frame.take() {
                     let locals = zun_gc::with_current_heap(|heap| {
-                        saved.locals.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
+                        saved
+                            .locals
+                            .iter()
+                            .map(|value| gen_unbox(*value, heap))
+                            .collect::<Option<Vec<_>>>()
                     })
                     .ok_or(RunError::BadToken)?;
                     let stack = zun_gc::with_current_heap(|heap| {
-                        saved.eval_stack.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
+                        saved
+                            .eval_stack
+                            .iter()
+                            .map(|value| gen_unbox(*value, heap))
+                            .collect::<Option<Vec<_>>>()
                     })
                     .ok_or(RunError::BadToken)?;
                     let mut frame = ExecutionFrame::new(state.method_rid, locals);
@@ -236,7 +258,11 @@ impl<'a> Interp<'a> {
                     self.resume_suspended(frame)
                 } else {
                     let initial_args = zun_gc::with_current_heap(|heap| {
-                        state.args.iter().map(|value| gen_unbox(*value, heap)).collect::<Option<Vec<_>>>()
+                        state
+                            .args
+                            .iter()
+                            .map(|value| gen_unbox(*value, heap))
+                            .collect::<Option<Vec<_>>>()
                     })
                     .ok_or(RunError::BadToken)?;
                     self.dispatch_outcome(state.method_rid, initial_args, None)
@@ -249,11 +275,19 @@ impl<'a> Interp<'a> {
                         state.current = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                             .ok_or(RunError::BadToken)?;
                         let locals = zun_gc::with_current_heap_mut(|heap| {
-                            frame.locals.iter().map(|value| gen_box(value, heap)).collect::<Option<Vec<_>>>()
+                            frame
+                                .locals
+                                .iter()
+                                .map(|value| gen_box(value, heap))
+                                .collect::<Option<Vec<_>>>()
                         })
                         .ok_or(RunError::BadToken)?;
                         let eval_stack = zun_gc::with_current_heap_mut(|heap| {
-                            frame.stack.iter().map(|value| gen_box(value, heap)).collect::<Option<Vec<_>>>()
+                            frame
+                                .stack
+                                .iter()
+                                .map(|value| gen_box(value, heap))
+                                .collect::<Option<Vec<_>>>()
                         })
                         .ok_or(RunError::BadToken)?;
                         state.frame = Some(zun_gc::GeneratorFrame {
@@ -271,7 +305,8 @@ impl<'a> Interp<'a> {
                         value
                     }
                     ExecutionOutcome::Thrown(value)
-                        if state.has_pending_return && crate::unwind::is_generator_return(&value) =>
+                        if state.has_pending_return
+                            && crate::unwind::is_generator_return(&value) =>
                     {
                         state.done = true;
                         state.has_pending_return = false;
@@ -282,7 +317,9 @@ impl<'a> Interp<'a> {
                     ExecutionOutcome::Thrown(value) => {
                         state.done = true;
                         state.current = zun_core::Any::void();
-                        zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.generator_state_set(generator, state)
+                        });
                         return Err(RunError::Thrown(value));
                     }
                     ExecutionOutcome::Fault(error) => return Err(error),

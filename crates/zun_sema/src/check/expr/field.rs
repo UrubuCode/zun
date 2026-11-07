@@ -25,20 +25,42 @@ impl Checker<'_> {
     ) -> Option<hir::Expr> {
         // `Function.prototype.<m>` has no first-class value here: it reads
         // as `undefined`, so comparisons against it stay stable.
-        if let ast::Expr::Field { object: inner, field: proto, .. } = object {
+        if let ast::Expr::Field {
+            object: inner,
+            field: proto,
+            ..
+        } = object
+        {
             if self.text(proto) == "prototype"
                 && matches!(inner.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Function")
                 && !self.classes_by_name.contains_key("Function")
             {
-                return Some(hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Void, span });
+                return Some(hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: Ty::Void,
+                    span,
+                });
             }
         }
         // `[].indexOf.length`: a method read off an array literal.
         if fname == "length" {
-            if let ast::Expr::Field { object: inner, field: method, .. } = object {
-                if matches!(inner.as_ref(), ast::Expr::ArrayLiteral { .. }) && !self.classes_by_name.contains_key("Array") {
-                    if let Some(arity) = builtin_function_length(&["Array", "prototype", self.text(method)]) {
-                        return Some(hir::Expr { kind: hir::ExprKind::Number(arity), ty: Ty::F64, span });
+            if let ast::Expr::Field {
+                object: inner,
+                field: method,
+                ..
+            } = object
+            {
+                if matches!(inner.as_ref(), ast::Expr::ArrayLiteral { .. })
+                    && !self.classes_by_name.contains_key("Array")
+                {
+                    if let Some(arity) =
+                        builtin_function_length(&["Array", "prototype", self.text(method)])
+                    {
+                        return Some(hir::Expr {
+                            kind: hir::ExprKind::Number(arity),
+                            ty: Ty::F64,
+                            span,
+                        });
                     }
                 }
             }
@@ -50,7 +72,11 @@ impl Checker<'_> {
             let mut ok = true;
             loop {
                 match cursor {
-                    ast::Expr::Field { object: inner, field: f, .. } => {
+                    ast::Expr::Field {
+                        object: inner,
+                        field: f,
+                        ..
+                    } => {
                         parts.push(self.text(f).to_string());
                         cursor = inner.as_ref();
                     }
@@ -78,7 +104,11 @@ impl Checker<'_> {
                 {
                     if let Some(arity) = date_function_length(refs[2]) {
                         return Some(if fname == "length" {
-                            hir::Expr { kind: hir::ExprKind::Number(arity), ty: Ty::F64, span }
+                            hir::Expr {
+                                kind: hir::ExprKind::Number(arity),
+                                ty: Ty::F64,
+                                span,
+                            }
                         } else {
                             hir::Expr {
                                 kind: hir::ExprKind::String(refs[2].to_string()),
@@ -92,7 +122,11 @@ impl Checker<'_> {
                 if !shadowed && cx.lookup(refs[0]).is_none() {
                     if let Some(arity) = builtin_function_length(&refs) {
                         return Some(if fname == "length" {
-                            hir::Expr { kind: hir::ExprKind::Number(arity), ty: Ty::F64, span }
+                            hir::Expr {
+                                kind: hir::ExprKind::Number(arity),
+                                ty: Ty::F64,
+                                span,
+                            }
                         } else {
                             hir::Expr {
                                 kind: hir::ExprKind::String(refs[refs.len() - 1].to_string()),
@@ -105,7 +139,12 @@ impl Checker<'_> {
             }
         }
         // `Math.<fn>.length` / `Math.<fn>.name` fold to literals.
-        if let ast::Expr::Field { object: inner_obj, field: inner_field, .. } = object {
+        if let ast::Expr::Field {
+            object: inner_obj,
+            field: inner_field,
+            ..
+        } = object
+        {
             if let ast::Expr::Ident(m) = inner_obj.as_ref() {
                 if self.text(m) == "Math"
                     && !self.classes_by_name.contains_key("Math")
@@ -114,9 +153,17 @@ impl Checker<'_> {
                     let inner = self.text(inner_field).to_string();
                     if let Some(arity) = math_function_length(&inner) {
                         return Some(if fname == "length" {
-                            hir::Expr { kind: hir::ExprKind::Number(arity), ty: Ty::F64, span }
+                            hir::Expr {
+                                kind: hir::ExprKind::Number(arity),
+                                ty: Ty::F64,
+                                span,
+                            }
                         } else {
-                            hir::Expr { kind: hir::ExprKind::String(inner), ty: Ty::String, span }
+                            hir::Expr {
+                                kind: hir::ExprKind::String(inner),
+                                ty: Ty::String,
+                                span,
+                            }
                         });
                     }
                 }
@@ -165,7 +212,10 @@ impl Checker<'_> {
         {
             if let Some((id, _)) = zun_natives::resolve("collections", "objectPrototype") {
                 return Some(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: Vec::new(),
+                    },
                     ty: Ty::Any,
                     span,
                 });
@@ -180,7 +230,10 @@ impl Checker<'_> {
         {
             if let Some((id, _)) = zun_natives::resolve("collections", "regexpPrototype") {
                 return Some(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: Vec::new(),
+                    },
                     ty: Ty::Any,
                     span,
                 });
@@ -199,7 +252,11 @@ impl Checker<'_> {
                 _ => None,
             };
             if let Some(value) = constant {
-                return Some(hir::Expr { kind: hir::ExprKind::Number(value), ty: Ty::F64, span });
+                return Some(hir::Expr {
+                    kind: hir::ExprKind::Number(value),
+                    ty: Ty::F64,
+                    span,
+                });
             }
         }
         // `Enum.Member` folds to the member's compile-time literal.
@@ -207,7 +264,11 @@ impl Checker<'_> {
         if self.enums.contains_key(&enum_name) {
             match self.enums[&enum_name].get(fname).cloned() {
                 Some(types::EnumConst::Num(n)) => {
-                    return Some(hir::Expr { kind: hir::ExprKind::Number(n), ty: Ty::F64, span });
+                    return Some(hir::Expr {
+                        kind: hir::ExprKind::Number(n),
+                        ty: Ty::F64,
+                        span,
+                    });
                 }
                 Some(types::EnumConst::Str(s)) => {
                     return Some(hir::Expr {
@@ -221,7 +282,11 @@ impl Checker<'_> {
                         field.span,
                         format!("enum `{enum_name}` has no member `{fname}`"),
                     );
-                    return Some(hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::Error, span });
+                    return Some(hir::Expr {
+                        kind: hir::ExprKind::Number(0.0),
+                        ty: Ty::Error,
+                        span,
+                    });
                 }
             }
         }
@@ -239,7 +304,10 @@ impl Checker<'_> {
         if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
             if let Some((field_slot, ty)) = self.static_field_of(class_index, fname) {
                 return Some(hir::Expr {
-                    kind: hir::ExprKind::StaticFieldGet { class: self.static_field_owner(class_index, fname), field_slot },
+                    kind: hir::ExprKind::StaticFieldGet {
+                        class: self.static_field_owner(class_index, fname),
+                        field_slot,
+                    },
                     ty,
                     span,
                 });
@@ -255,9 +323,7 @@ impl Checker<'_> {
                     "count" => Some("v_count"),
                     "countReset" => Some("v_countReset"),
                     "assert" => Some("v_assert"),
-                    "table" | "time" | "timeEnd" | "timeLog" | "trace" => {
-                        Some("v_log")
-                    }
+                    "table" | "time" | "timeEnd" | "timeLog" | "trace" => Some("v_log"),
                     _ => None,
                 };
                 if let (Some(target), Some(&fmt_class)) =
@@ -285,7 +351,10 @@ impl Checker<'_> {
                         getter_args.push(self.realm_descriptor_expr(token, span));
                     }
                     return Some(hir::Expr {
-                        kind: hir::ExprKind::StaticCall { func, args: getter_args },
+                        kind: hir::ExprKind::StaticCall {
+                            func,
+                            args: getter_args,
+                        },
                         ty,
                         span,
                     });
@@ -346,9 +415,7 @@ impl Checker<'_> {
         // `Symbol.asyncIterator`, `Symbol.hasInstance`,
         // `Symbol.toPrimitive`, `Symbol.toStringTag`). Their identities
         // are stable per isolate.
-        if self.text(class_name) == "Symbol"
-            && !self.classes_by_name.contains_key("Symbol")
-        {
+        if self.text(class_name) == "Symbol" && !self.classes_by_name.contains_key("Symbol") {
             // Stable well-known symbol ids. Source of truth:
             // `zun_core::WellKnownSymbol` (the runtime registry seeds
             // these at the same ids). Kept inline so the compile-time
@@ -370,9 +437,7 @@ impl Checker<'_> {
                 _ => None,
             };
             if let Some(well_known_id) = well_known_id {
-                let Some((id, _)) =
-                    zun_natives::resolve("collections", "symbolWellKnown")
-                else {
+                let Some((id, _)) = zun_natives::resolve("collections", "symbolWellKnown") else {
                     self.error(span, "missing `symbolWellKnown` intrinsic");
                     return Some(self.poison(span));
                 };
@@ -408,9 +473,21 @@ impl Checker<'_> {
         if fname == "constructor"
             && matches!(
                 object.ty,
-                Ty::Instance(_) | Ty::Array | Ty::Map | Ty::Set | Ty::WeakMap | Ty::WeakSet
-                    | Ty::WeakRef | Ty::Promise | Ty::RegExp | Ty::String | Ty::Boolean
-                    | Ty::Float(_) | Ty::Int(_) | Ty::BigInt | Ty::BufferView(_)
+                Ty::Instance(_)
+                    | Ty::Array
+                    | Ty::Map
+                    | Ty::Set
+                    | Ty::WeakMap
+                    | Ty::WeakSet
+                    | Ty::WeakRef
+                    | Ty::Promise
+                    | Ty::RegExp
+                    | Ty::String
+                    | Ty::Boolean
+                    | Ty::Float(_)
+                    | Ty::Int(_)
+                    | Ty::BigInt
+                    | Ty::BufferView(_)
                     | Ty::FinalizationRegistry
             )
             && !matches!(object.ty, Ty::Instance(c) if self.method_of(c, "get_constructor").is_some()
@@ -427,14 +504,15 @@ impl Checker<'_> {
         }
         // `symbol.description` — the creation description or `undefined`.
         if object.ty == Ty::Symbol && fname == "description" {
-            let Some((id, _)) =
-                zun_natives::resolve("collections", "symbolDescription")
-            else {
+            let Some((id, _)) = zun_natives::resolve("collections", "symbolDescription") else {
                 self.error(span, "missing `symbolDescription` intrinsic");
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![object],
+                },
                 ty: Ty::Any,
                 span,
             });
@@ -458,7 +536,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![object],
+                },
                 ty: Ty::Int(IntKind::U64),
                 span,
             });
@@ -471,7 +552,10 @@ impl Checker<'_> {
                 if let Some((native, ret, _)) = crate::typed_arrays::method(kind, "length") {
                     if let Some((id, _)) = zun_natives::resolve("buffer", native) {
                         return Ok(hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![object],
+                            },
                             ty: ret,
                             span,
                         });
@@ -497,7 +581,10 @@ impl Checker<'_> {
                     return Ok(self.poison(span));
                 };
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![object],
+                    },
                     ty: Ty::Int(IntKind::U64),
                     span,
                 });
@@ -521,7 +608,9 @@ impl Checker<'_> {
             if fname == "prototype" && func < hir::DYNAMIC_FUNCTION {
                 // A function's `prototype` is an ordinary (initially empty) object.
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::DynamicObjectLiteral { entries: Vec::new() },
+                    kind: hir::ExprKind::DynamicObjectLiteral {
+                        entries: Vec::new(),
+                    },
                     ty: Ty::DynamicObject,
                     span,
                 });
@@ -530,9 +619,17 @@ impl Checker<'_> {
                 && self.deleted_fn_meta.contains(&(func, fname.to_string()))
             {
                 return Ok(if fname == "name" {
-                    hir::Expr { kind: hir::ExprKind::String(String::new()), ty: Ty::String, span }
+                    hir::Expr {
+                        kind: hir::ExprKind::String(String::new()),
+                        ty: Ty::String,
+                        span,
+                    }
                 } else {
-                    hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::F64, span }
+                    hir::Expr {
+                        kind: hir::ExprKind::Number(0.0),
+                        ty: Ty::F64,
+                        span,
+                    }
                 });
             }
             if fname == "name" {
@@ -544,7 +641,11 @@ impl Checker<'_> {
                 } else {
                     self.signatures[func as usize].name.clone()
                 };
-                return Ok(hir::Expr { kind: hir::ExprKind::String(name), ty: Ty::String, span });
+                return Ok(hir::Expr {
+                    kind: hir::ExprKind::String(name),
+                    ty: Ty::String,
+                    span,
+                });
             }
             if fname == "length" {
                 let length = if matches!(
@@ -604,16 +705,25 @@ impl Checker<'_> {
                                 span,
                             };
                         }
-                        self.error(field.span, format!("no field or getter `{fname}` on this type"));
+                        self.error(
+                            field.span,
+                            format!("no field or getter `{fname}` on this type"),
+                        );
                         return self.poison(span);
                     };
                     let sig = &self.signatures[func as usize];
                     if sig.params.len() != 1 {
-                        self.error(field.span, format!("getter `{getter}` must take no arguments"));
+                        self.error(
+                            field.span,
+                            format!("getter `{getter}` must take no arguments"),
+                        );
                         return self.poison(span);
                     }
                     hir::Expr {
-                        kind: hir::ExprKind::MethodCall { func, args: vec![object] },
+                        kind: hir::ExprKind::MethodCall {
+                            func,
+                            args: vec![object],
+                        },
                         ty: sig.return_ty,
                         span,
                     }
@@ -629,21 +739,27 @@ impl Checker<'_> {
             },
             // `proxy.key` routes through the handler's `get` trap (the
             // native falls back to the target when the trap is absent).
-            Ty::Proxy => self.proxy_get(object, hir::Expr {
-                kind: hir::ExprKind::String(fname),
-                ty: Ty::String,
+            Ty::Proxy => self.proxy_get(
+                object,
+                hir::Expr {
+                    kind: hir::ExprKind::String(fname),
+                    ty: Ty::String,
+                    span,
+                },
                 span,
-            }, span),
+            ),
             // Match-result arrays carry `index` / `input` / `groups` (and a
             // template strings array `raw`) as expando properties.
-            Ty::Array if matches!(fname.as_str(), "index" | "input" | "groups" | "raw") => hir::Expr {
-                kind: hir::ExprKind::DynamicGet {
-                    object: Box::new(object),
-                    name: fname,
-                },
-                ty: Ty::Any,
-                span,
-            },
+            Ty::Array if matches!(fname.as_str(), "index" | "input" | "groups" | "raw") => {
+                hir::Expr {
+                    kind: hir::ExprKind::DynamicGet {
+                        object: Box::new(object),
+                        name: fname,
+                    },
+                    ty: Ty::Any,
+                    span,
+                }
+            }
             // Function objects carry an expando property bag
             // (`fn['x'] = ...`), resolved at run time by the interpreter.
             Ty::Function(_) => hir::Expr {
@@ -656,13 +772,20 @@ impl Checker<'_> {
             },
             Ty::Error => self.poison(span),
             Ty::RegExp if fname == "source" || fname == "flags" => {
-                let native = if fname == "source" { "regexpSource" } else { "regexpFlags" };
+                let native = if fname == "source" {
+                    "regexpSource"
+                } else {
+                    "regexpFlags"
+                };
                 let Some((id, _)) = zun_natives::resolve("collections", native) else {
                     self.error(span, "missing RegExp intrinsic");
                     return self.poison(span);
                 };
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![object],
+                    },
                     ty: Ty::String,
                     span,
                 }
@@ -673,7 +796,10 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![object],
+                    },
                     ty: Ty::Any,
                     span,
                 }
@@ -681,17 +807,30 @@ impl Checker<'_> {
             Ty::RegExp
                 if matches!(
                     fname.as_str(),
-                    "hasIndices" | "global" | "ignoreCase" | "multiline" | "dotAll"
-                        | "unicode" | "unicodeSets" | "sticky"
+                    "hasIndices"
+                        | "global"
+                        | "ignoreCase"
+                        | "multiline"
+                        | "dotAll"
+                        | "unicode"
+                        | "unicodeSets"
+                        | "sticky"
                 ) =>
             {
                 let Some((id, _)) = zun_natives::resolve("collections", "regexpFlag") else {
                     self.error(span, "missing RegExp intrinsic");
                     return self.poison(span);
                 };
-                let name = hir::Expr { kind: hir::ExprKind::String(fname), ty: Ty::String, span };
+                let name = hir::Expr {
+                    kind: hir::ExprKind::String(fname),
+                    ty: Ty::String,
+                    span,
+                };
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object, name] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![object, name],
+                    },
                     ty: Ty::Boolean,
                     span,
                 }

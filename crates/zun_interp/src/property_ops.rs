@@ -150,7 +150,10 @@ impl Interp<'_> {
     pub(crate) fn object_prototype_singleton() -> zun_gc::Obj {
         zun_gc::with_current_heap_mut(|heap| {
             let global = heap.global_object();
-            if let Some(existing) = heap.dynamic_get(global, OBJECT_PROTOTYPE_KEY).and_then(|a| a.as_object()) {
+            if let Some(existing) = heap
+                .dynamic_get(global, OBJECT_PROTOTYPE_KEY)
+                .and_then(|a| a.as_object())
+            {
                 return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
             }
             let root = heap.alloc_dynamic();
@@ -167,7 +170,10 @@ impl Interp<'_> {
         let root = Self::object_prototype_singleton();
         zun_gc::with_current_heap_mut(|heap| {
             let global = heap.global_object();
-            if let Some(existing) = heap.dynamic_get(global, REGEXP_PROTOTYPE_KEY).and_then(|a| a.as_object()) {
+            if let Some(existing) = heap
+                .dynamic_get(global, REGEXP_PROTOTYPE_KEY)
+                .and_then(|a| a.as_object())
+            {
                 return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
             }
             let proto = heap.alloc_dynamic();
@@ -215,13 +221,29 @@ impl Interp<'_> {
                 (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
                     .then(|| def.base.rid())
             });
-        let base = base_rid.filter(|&b| b >= 1).map(|b| self.class_prototype_object(b));
+        let base = base_rid
+            .filter(|&b| b >= 1)
+            .map(|b| self.class_prototype_object(b));
         // The class's own instance accessors (`get_x` / `set_x` methods) become
         // accessor properties of the prototype object.
-        let mut accessors: Vec<(String, Option<zun_core::FunctionHandle>, Option<zun_core::FunctionHandle>)> = Vec::new();
-        if let Some(def) = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1)) {
+        let mut accessors: Vec<(
+            String,
+            Option<zun_core::FunctionHandle>,
+            Option<zun_core::FunctionHandle>,
+        )> = Vec::new();
+        if let Some(def) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+        {
             for method_rid in def.method_start..def.method_end {
-                let Some(method) = self.module.tables.method_defs.get((method_rid as usize).wrapping_sub(1)) else {
+                let Some(method) = self
+                    .module
+                    .tables
+                    .method_defs
+                    .get((method_rid as usize).wrapping_sub(1))
+                else {
                     continue;
                 };
                 if method.is_static {
@@ -256,7 +278,10 @@ impl Interp<'_> {
             let global = heap.global_object();
             heap.dynamic_define(global, key, any, false);
             if let Some(base) = base {
-                heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(base.addr() as usize)));
+                heap.dynamic_set_prototype(
+                    proto,
+                    Some(zun_core::Any::object(base.addr() as usize)),
+                );
             }
             for (name, get, set) in accessors {
                 heap.dynamic_define_accessor(proto, name, get, set, false, true);
@@ -311,19 +336,32 @@ impl Interp<'_> {
         let mut current = Some(rid);
         for _ in 0..256 {
             let r = current?;
-            let def = self.module.tables.type_defs.get((r as usize).wrapping_sub(1))?;
+            let def = self
+                .module
+                .tables
+                .type_defs
+                .get((r as usize).wrapping_sub(1))?;
             for mrid in def.method_start..def.method_end {
-                let Some(method) = self.module.tables.method_defs.get((mrid as usize).wrapping_sub(1)) else {
+                let Some(method) = self
+                    .module
+                    .tables
+                    .method_defs
+                    .get((mrid as usize).wrapping_sub(1))
+                else {
                     continue;
                 };
                 let method_name = self.module.strings.get(method.name);
-                let (plain, hidden) = match method_name.strip_suffix("@this") { Some(p) => (p, true), None => (method_name, false) };
+                let (plain, hidden) = match method_name.strip_suffix("@this") {
+                    Some(p) => (p, true),
+                    None => (method_name, false),
+                };
                 if method.is_static && plain == name {
                     return Some((mrid, hidden));
                 }
             }
-            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
-                .then(|| def.base.rid());
+            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                && !def.base.is_null())
+            .then(|| def.base.rid());
         }
         None
     }
@@ -331,15 +369,30 @@ impl Interp<'_> {
     /// `Class.name` read through a class value: a static field, a static
     /// getter or a static method found on the class or its bases, else the
     /// class's own name for `name`.
-    pub(crate) fn class_static_read(&mut self, rid: u32, name: &str) -> Result<Option<Value>, RunError> {
+    pub(crate) fn class_static_read(
+        &mut self,
+        rid: u32,
+        name: &str,
+    ) -> Result<Option<Value>, RunError> {
         let mut current = Some(rid);
         for _ in 0..256 {
             let Some(r) = current else { break };
-            let Some(def) = self.module.tables.type_defs.get((r as usize).wrapping_sub(1)).cloned() else {
+            let Some(def) = self
+                .module
+                .tables
+                .type_defs
+                .get((r as usize).wrapping_sub(1))
+                .cloned()
+            else {
                 break;
             };
             for frid in def.field_start..def.field_end {
-                let Some(field) = self.module.tables.field_defs.get((frid as usize).wrapping_sub(1)) else {
+                let Some(field) = self
+                    .module
+                    .tables
+                    .field_defs
+                    .get((frid as usize).wrapping_sub(1))
+                else {
                     continue;
                 };
                 if field.is_static && self.module.strings.get(field.name) == name {
@@ -363,7 +416,12 @@ impl Interp<'_> {
             let mut found_getter = None;
             let mut found_method = None;
             for mrid in def.method_start..def.method_end {
-                let Some(method) = self.module.tables.method_defs.get((mrid as usize).wrapping_sub(1)) else {
+                let Some(method) = self
+                    .module
+                    .tables
+                    .method_defs
+                    .get((mrid as usize).wrapping_sub(1))
+                else {
                     continue;
                 };
                 if !method.is_static {
@@ -393,13 +451,20 @@ impl Interp<'_> {
                 return self.invoke_function_value(handle, call_args).map(Some);
             }
             if let Some(mrid) = found_method {
-                return Ok(Some(Value::Function(zun_core::FunctionHandle::new(mrid, None))));
+                return Ok(Some(Value::Function(zun_core::FunctionHandle::new(
+                    mrid, None,
+                ))));
             }
-            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
-                .then(|| def.base.rid());
+            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                && !def.base.is_null())
+            .then(|| def.base.rid());
         }
         if name == "name" {
-            let def = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1));
+            let def = self
+                .module
+                .tables
+                .type_defs
+                .get((rid as usize).wrapping_sub(1));
             if let Some(def) = def {
                 return Ok(Some(Value::Str(self.module.strings.get(def.name).into())));
             }
@@ -413,15 +478,24 @@ impl Interp<'_> {
         let mut current = Some(rid);
         for _ in 0..256 {
             let r = current?;
-            let def = self.module.tables.type_defs.get((r as usize).wrapping_sub(1))?;
+            let def = self
+                .module
+                .tables
+                .type_defs
+                .get((r as usize).wrapping_sub(1))?;
             for mrid in def.method_start..def.method_end {
-                let method = self.module.tables.method_defs.get((mrid as usize).wrapping_sub(1))?;
+                let method = self
+                    .module
+                    .tables
+                    .method_defs
+                    .get((mrid as usize).wrapping_sub(1))?;
                 if !method.is_static && self.module.strings.get(method.name) == "constructor" {
                     return Some(mrid);
                 }
             }
-            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
-                .then(|| def.base.rid());
+            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                && !def.base.is_null())
+            .then(|| def.base.rid());
         }
         None
     }
@@ -432,18 +506,30 @@ impl Interp<'_> {
         let mut current = Some(rid);
         for _ in 0..256 {
             let Some(r) = current else { break };
-            let Some(def) = self.module.tables.type_defs.get((r as usize).wrapping_sub(1)).cloned() else {
+            let Some(def) = self
+                .module
+                .tables
+                .type_defs
+                .get((r as usize).wrapping_sub(1))
+                .cloned()
+            else {
                 break;
             };
             for frid in def.field_start..def.field_end {
-                let Some(field) = self.module.tables.field_defs.get((frid as usize).wrapping_sub(1)) else {
+                let Some(field) = self
+                    .module
+                    .tables
+                    .field_defs
+                    .get((frid as usize).wrapping_sub(1))
+                else {
                     continue;
                 };
                 if !(field.is_static && self.module.strings.get(field.name) == name) {
                     continue;
                 }
                 let initialized = zun_gc::with_current_heap(|heap| {
-                    heap.static_get(r, frid).is_some() || heap.static_get_function(r, frid).is_some()
+                    heap.static_get(r, frid).is_some()
+                        || heap.static_get_function(r, frid).is_some()
                 });
                 if !initialized {
                     continue;
@@ -458,8 +544,9 @@ impl Interp<'_> {
                 });
                 return true;
             }
-            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null())
-                .then(|| def.base.rid());
+            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                && !def.base.is_null())
+            .then(|| def.base.rid());
         }
         false
     }
@@ -509,8 +596,9 @@ impl Interp<'_> {
             return false;
         }
         // A typed class instance receives expando properties in its bag.
-        if zun_gc::with_current_heap(|heap| !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none())
-            && self.instance_class_prototype(obj).is_some()
+        if zun_gc::with_current_heap(|heap| {
+            !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none()
+        }) && self.instance_class_prototype(obj).is_some()
         {
             zun_gc::with_current_heap_mut(|heap| heap.ensure_instance_bag(obj));
         }
@@ -519,11 +607,18 @@ impl Interp<'_> {
                 // Symbol-keyed data properties carry only an enumerable flag.
                 let value = desc.value.unwrap_or_else(zun_core::Any::void);
                 let enumerable = desc.enumerable.unwrap_or_else(|| {
-                    zun_gc::with_current_heap(|heap| heap.dynamic_is_symbol_enumerable(obj, *symbol))
+                    zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_is_symbol_enumerable(obj, *symbol)
+                    })
                 });
                 if desc.is_accessor() {
                     return zun_gc::with_current_heap_mut(|heap| {
-                        let ok = heap.dynamic_define_symbol(obj, *symbol, zun_core::Any::void(), enumerable);
+                        let ok = heap.dynamic_define_symbol(
+                            obj,
+                            *symbol,
+                            zun_core::Any::void(),
+                            enumerable,
+                        );
                         if let Some(getter) = desc.get {
                             heap.dynamic_set_symbol_getter(obj, *symbol, getter);
                         }
@@ -552,7 +647,14 @@ impl Interp<'_> {
             let configurable = desc.configurable.unwrap_or(false);
             return zun_gc::with_current_heap_mut(|heap| {
                 if desc.is_accessor() {
-                    heap.dynamic_define_accessor(obj, name.to_owned(), desc.get, desc.set, enumerable, configurable)
+                    heap.dynamic_define_accessor(
+                        obj,
+                        name.to_owned(),
+                        desc.get,
+                        desc.set,
+                        enumerable,
+                        configurable,
+                    )
                 } else {
                     let ok = heap.dynamic_define_data(
                         obj,
@@ -570,8 +672,16 @@ impl Interp<'_> {
             });
         };
         let (cur_enumerable, cur_configurable) = match &current {
-            zun_core::PropertyDescriptor::Data { enumerable, configurable, .. } => (*enumerable, *configurable),
-            zun_core::PropertyDescriptor::Accessor { enumerable, configurable, .. } => (*enumerable, *configurable),
+            zun_core::PropertyDescriptor::Data {
+                enumerable,
+                configurable,
+                ..
+            } => (*enumerable, *configurable),
+            zun_core::PropertyDescriptor::Accessor {
+                enumerable,
+                configurable,
+                ..
+            } => (*enumerable, *configurable),
         };
         if !cur_configurable {
             if desc.configurable == Some(true) {
@@ -583,7 +693,9 @@ impl Interp<'_> {
                 }
             }
             match &current {
-                zun_core::PropertyDescriptor::Data { value, writable, .. } => {
+                zun_core::PropertyDescriptor::Data {
+                    value, writable, ..
+                } => {
                     if desc.is_accessor() {
                         return false;
                     }
@@ -593,7 +705,10 @@ impl Interp<'_> {
                         }
                         if let Some(new_value) = desc.value {
                             let same = zun_gc::with_current_heap(|heap| {
-                                match (Value::unbox_any(new_value, heap), Value::unbox_any(*value, heap)) {
+                                match (
+                                    Value::unbox_any(new_value, heap),
+                                    Value::unbox_any(*value, heap),
+                                ) {
                                     (Some(a), Some(b)) => same_value(&a, &b),
                                     _ => new_value == *value,
                                 }
@@ -620,9 +735,18 @@ impl Interp<'_> {
         let enumerable = desc.enumerable.unwrap_or(cur_enumerable);
         let configurable = desc.configurable.unwrap_or(cur_configurable);
         zun_gc::with_current_heap_mut(|heap| match current {
-            zun_core::PropertyDescriptor::Data { value, writable, .. } => {
+            zun_core::PropertyDescriptor::Data {
+                value, writable, ..
+            } => {
                 if desc.is_accessor() {
-                    heap.dynamic_force_define_accessor(obj, name.to_owned(), desc.get, desc.set, enumerable, configurable)
+                    heap.dynamic_force_define_accessor(
+                        obj,
+                        name.to_owned(),
+                        desc.get,
+                        desc.set,
+                        enumerable,
+                        configurable,
+                    )
                 } else {
                     heap.dynamic_force_define_data(
                         obj,
@@ -662,7 +786,10 @@ impl Interp<'_> {
     /// element/`length` shape (value updates) are supported.
     fn define_array_property(&self, array: zun_gc::Obj, name: &str, desc: &Desc) -> bool {
         let (len, level) = zun_gc::with_current_heap(|heap| {
-            (heap.array_len(array).unwrap_or(0), heap.array_integrity(array))
+            (
+                heap.array_len(array).unwrap_or(0),
+                heap.array_integrity(array),
+            )
         });
         if desc.is_accessor() {
             // An accessor on an existing array index is stored as a marker
@@ -690,11 +817,18 @@ impl Interp<'_> {
         }
         if name == "length" {
             if let Some(value) = desc.value {
-                let wanted = value.as_int().map(|n| n as f64).or_else(|| value.as_float());
+                let wanted = value
+                    .as_int()
+                    .map(|n| n as f64)
+                    .or_else(|| value.as_float());
                 if let Some(wanted) = wanted {
                     let wanted = wanted as usize;
                     if wanted != len {
-                        let op = if wanted < len { ArrayOp::Remove } else { ArrayOp::Write };
+                        let op = if wanted < len {
+                            ArrayOp::Remove
+                        } else {
+                            ArrayOp::Write
+                        };
                         if array_refusal(level, op).is_some() {
                             return false;
                         }
@@ -743,7 +877,8 @@ impl Interp<'_> {
         let value_arg = args.get(2).ok_or(RunError::BadToken)?;
         // Arrays: elements and `length`.
         let array_info = zun_gc::with_current_heap(|heap| {
-            heap.array_len(target).map(|len| (len, heap.array_integrity(target)))
+            heap.array_len(target)
+                .map(|len| (len, heap.array_integrity(target)))
         });
         if let Some((len, level)) = array_info {
             let PropKey::Str(name) = &key else {
@@ -759,7 +894,11 @@ impl Interp<'_> {
                 if wanted == len {
                     return Ok(Value::Bool(true));
                 }
-                let op = if wanted < len { ArrayOp::Remove } else { ArrayOp::Write };
+                let op = if wanted < len {
+                    ArrayOp::Remove
+                } else {
+                    ArrayOp::Write
+                };
                 if array_refusal(level, op).is_some() {
                     return Ok(Value::Bool(false));
                 }
@@ -769,7 +908,11 @@ impl Interp<'_> {
             let Ok(index) = name.parse::<usize>() else {
                 return Ok(Value::Bool(false));
             };
-            let op = if index < len { ArrayOp::Write } else { ArrayOp::Add };
+            let op = if index < len {
+                ArrayOp::Write
+            } else {
+                ArrayOp::Add
+            };
             if array_refusal(level, op).is_some() {
                 return Ok(Value::Bool(false));
             }
@@ -811,7 +954,10 @@ impl Interp<'_> {
                         .unwrap_or_else(zun_core::Any::null);
                     let arg = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
                         .unwrap_or(Value::Any(any));
-                    self.invoke_function_value(setter, self.with_this_arg(setter, target, vec![arg]))?;
+                    self.invoke_function_value(
+                        setter,
+                        self.with_this_arg(setter, target, vec![arg]),
+                    )?;
                     return Ok(Value::Bool(true));
                 }
                 if !zun_gc::with_current_heap(|heap| heap.dynamic_can_set(target, &name)) {
@@ -837,17 +983,26 @@ impl Interp<'_> {
     /// (`enumerable`, `configurable`, `value`, `writable`, `get`, `set`) through
     /// its getters and prototype chain, validate accessor callability and the
     /// accessor/data conflict, and return a fresh plain descriptor object.
-    pub(crate) fn normalize_descriptor(&mut self, desc: zun_gc::Obj) -> Result<zun_gc::Obj, RunError> {
+    pub(crate) fn normalize_descriptor(
+        &mut self,
+        desc: zun_gc::Obj,
+    ) -> Result<zun_gc::Obj, RunError> {
         let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
         let roots = [desc, out];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         let (mut has_accessor, mut has_data) = (false, false);
-        for field in ["enumerable", "configurable", "value", "writable", "get", "set"] {
-            let present = self
-                .call_managed_collection(
-                    "forInHas",
-                    &[Value::Object(roots[0]), Value::Str(field.into())],
-                )?;
+        for field in [
+            "enumerable",
+            "configurable",
+            "value",
+            "writable",
+            "get",
+            "set",
+        ] {
+            let present = self.call_managed_collection(
+                "forInHas",
+                &[Value::Object(roots[0]), Value::Str(field.into())],
+            )?;
             if !matches!(present, Value::Bool(true)) {
                 continue;
             }
@@ -857,7 +1012,9 @@ impl Interp<'_> {
                     if field == "writable" {
                         has_data = true;
                     }
-                    let flag = zun_gc::with_current_heap(|heap| super::collections::is_truthy(&value, heap));
+                    let flag = zun_gc::with_current_heap(|heap| {
+                        super::collections::is_truthy(&value, heap)
+                    });
                     zun_gc::with_current_heap_mut(|heap| {
                         heap.dynamic_set(roots[1], field.to_owned(), zun_core::Any::bool(flag));
                     });
@@ -965,9 +1122,12 @@ impl Interp<'_> {
         };
         let key = args.get(1).and_then(prop_key);
         if let Some(PropKey::Sym(symbol)) = key {
-            let removed = zun_gc::with_current_heap_mut(|heap| heap.dynamic_delete_symbol(target, symbol));
+            let removed =
+                zun_gc::with_current_heap_mut(|heap| heap.dynamic_delete_symbol(target, symbol));
             if !removed {
-                return Err(RunError::Native("TypeError: Cannot delete property of #<Object>".into()));
+                return Err(RunError::Native(
+                    "TypeError: Cannot delete property of #<Object>".into(),
+                ));
             }
             return Ok(Value::Bool(true));
         }
@@ -978,12 +1138,17 @@ impl Interp<'_> {
             // `delete arr[i]` leaves a hole at an in-range index.
             if let Ok(index) = name.parse::<usize>() {
                 if index < len {
-                    if self.guard_array(target, crate::integrity::ArrayOp::Remove).is_err() {
+                    if self
+                        .guard_array(target, crate::integrity::ArrayOp::Remove)
+                        .is_err()
+                    {
                         return Err(RunError::Native(
                             "TypeError: Cannot delete property of [object Array]".into(),
                         ));
                     }
-                    zun_gc::with_current_heap_mut(|heap| heap.array_set(target, index, zun_core::Any::hole()));
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_set(target, index, zun_core::Any::hole())
+                    });
                 }
             }
             return Ok(Value::Bool(true));

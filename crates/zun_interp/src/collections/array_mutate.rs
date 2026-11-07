@@ -7,7 +7,11 @@ use super::*;
 
 impl<'a> Interp<'a> {
     #[inline]
-    pub(super) fn col_array_mutate(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+    pub(super) fn col_array_mutate(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
         match name {
             "arraySliceArgs" => {
                 // `slice(...args)` with a runtime argument list.
@@ -16,14 +20,17 @@ impl<'a> Interp<'a> {
                 let mut forwarded = vec![args[0].clone()];
                 for index in 0..2 {
                     let element = zun_gc::with_current_heap(|heap| {
-                        heap.array_get(list, index).and_then(|any| Value::unbox_any(any, heap))
+                        heap.array_get(list, index)
+                            .and_then(|any| Value::unbox_any(any, heap))
                     });
                     forwarded.push(match element {
                         Some(Value::Str(text)) => Value::Float(
                             text.trim().parse::<f64>().unwrap_or(f64::NAN),
                             zun_il::NumKind::F64,
                         ),
-                        Some(Value::Bool(b)) => Value::Float(f64::from(u8::from(b)), zun_il::NumKind::F64),
+                        Some(Value::Bool(b)) => {
+                            Value::Float(f64::from(u8::from(b)), zun_il::NumKind::F64)
+                        }
                         Some(Value::Null) => Value::Float(0.0, zun_il::NumKind::F64),
                         Some(other) => other,
                         None => Value::Void,
@@ -44,10 +51,16 @@ impl<'a> Interp<'a> {
                             Some(Value::Int(n, _)) => n as f64,
                             Some(Value::Bool(b)) => f64::from(u8::from(b)),
                             Some(Value::Null) => 0.0,
-                            Some(Value::Str(text)) => text.trim().parse::<f64>().unwrap_or(f64::NAN),
+                            Some(Value::Str(text)) => {
+                                text.trim().parse::<f64>().unwrap_or(f64::NAN)
+                            }
                             _ => f64::NAN,
                         };
-                        if n.is_nan() { 0.0 } else { n.trunc() }
+                        if n.is_nan() {
+                            0.0
+                        } else {
+                            n.trunc()
+                        }
                     };
                     let length = heap.array_len(source).unwrap_or(0);
                     let count = heap.array_len(list).unwrap_or(0);
@@ -55,12 +68,19 @@ impl<'a> Interp<'a> {
                     let (start, delete_count) = if count == 0 {
                         (0usize, 0usize)
                     } else {
-                        let raw = to_integer(heap.array_get(list, 0).unwrap_or_else(zun_core::Any::void));
-                        let start = if raw < 0.0 { (len_f + raw).max(0.0) } else { raw.min(len_f) } as usize;
+                        let raw =
+                            to_integer(heap.array_get(list, 0).unwrap_or_else(zun_core::Any::void));
+                        let start = if raw < 0.0 {
+                            (len_f + raw).max(0.0)
+                        } else {
+                            raw.min(len_f)
+                        } as usize;
                         let delete_count = if count == 1 {
                             length - start
                         } else {
-                            let raw = to_integer(heap.array_get(list, 1).unwrap_or_else(zun_core::Any::void));
+                            let raw = to_integer(
+                                heap.array_get(list, 1).unwrap_or_else(zun_core::Any::void),
+                            );
                             raw.max(0.0).min((length - start) as f64) as usize
                         };
                         (start, delete_count)
@@ -129,7 +149,14 @@ impl<'a> Interp<'a> {
                     for offset in 0..(length - start) {
                         let element = heap
                             .array_get(source, start + offset)
-                            .map(|a| if a.is_hole() { zun_core::Any::void() } else { a }).unwrap_or_else(zun_core::Any::void);
+                            .map(|a| {
+                                if a.is_hole() {
+                                    zun_core::Any::void()
+                                } else {
+                                    a
+                                }
+                            })
+                            .unwrap_or_else(zun_core::Any::void);
                         heap.array_set(result, offset, element);
                     }
                     result
@@ -186,7 +213,9 @@ impl<'a> Interp<'a> {
                 zun_gc::with_current_heap_mut(|heap| {
                     let length = heap.array_len(source).unwrap_or(0);
                     for index in 0..length / 2 {
-                        let left = heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
+                        let left = heap
+                            .array_get(source, index)
+                            .unwrap_or_else(zun_core::Any::void);
                         let right = heap
                             .array_get(source, length - 1 - index)
                             .unwrap_or_else(zun_core::Any::void);
@@ -209,17 +238,27 @@ impl<'a> Interp<'a> {
                     let length = heap.array_len(source).unwrap_or(0) as f64;
                     let resolve = |from: f64| {
                         let integer = if from.is_nan() { 0.0 } else { from.trunc() };
-                        if integer < 0.0 { (length + integer).max(0.0) } else { integer }
+                        if integer < 0.0 {
+                            (length + integer).max(0.0)
+                        } else {
+                            integer
+                        }
                     };
                     let element = |index: usize| {
-                        let any = heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
+                        let any = heap
+                            .array_get(source, index)
+                            .unwrap_or_else(zun_core::Any::void);
                         Value::unbox_any(any, heap).unwrap_or(Value::Void)
                     };
                     let zero_aware = name == "arrayIncludes";
                     // `indexOf`/`lastIndexOf` skip holes; `includes` reads them as undefined.
                     let skip_holes = !zero_aware;
-                    let is_hole = |index: usize| heap.array_get(source, index).is_some_and(|any| any.is_hole());
-                    let equal = |left: &Value, right: &Value| strict_equals(left, right, zero_aware);
+                    let is_hole = |index: usize| {
+                        heap.array_get(source, index)
+                            .is_some_and(|any| any.is_hole())
+                    };
+                    let equal =
+                        |left: &Value, right: &Value| strict_equals(left, right, zero_aware);
                     if name == "arrayLastIndexOf" {
                         // `lastIndexOf` searches backwards from `from` (default
                         // length - 1); a negative `from` counts from the end.
@@ -227,7 +266,11 @@ impl<'a> Interp<'a> {
                             None => length - 1.0,
                             Some(from) => {
                                 let integer = if from.is_nan() { 0.0 } else { from.trunc() };
-                                if integer < 0.0 { length + integer } else { integer.min(length - 1.0) }
+                                if integer < 0.0 {
+                                    length + integer
+                                } else {
+                                    integer.min(length - 1.0)
+                                }
                             }
                         };
                         if start < 0.0 {
@@ -262,11 +305,13 @@ impl<'a> Interp<'a> {
                     ),
                 })
             }
-            "anyIsUndefined" => Ok(Value::Bool(match args.first().ok_or(RunError::BadToken)? {
-                Value::Void => true,
-                Value::Any(any) => any.tag() == zun_core::AnyTag::Void,
-                _ => false,
-            })),
+            "anyIsUndefined" => Ok(Value::Bool(
+                match args.first().ok_or(RunError::BadToken)? {
+                    Value::Void => true,
+                    Value::Any(any) => any.tag() == zun_core::AnyTag::Void,
+                    _ => false,
+                },
+            )),
             "coalesceUndefined" => {
                 // Destructuring default: `fallback` when `value` is undefined.
                 let value = args.first().ok_or(RunError::BadToken)?.clone();
@@ -284,8 +329,8 @@ impl<'a> Interp<'a> {
             "objectRest" => {
                 // Copy every own-enumerable string key of `source` except the
                 // names listed in `excludedKeys` into a fresh dynamic object.
-                let source = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let excluded =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let result = zun_gc::with_current_heap_mut(|heap| {
@@ -314,7 +359,9 @@ impl<'a> Interp<'a> {
                     }
                     // Own enumerable symbol-keyed properties are rest members too.
                     for symbol in heap.dynamic_symbol_keys(source) {
-                        if excluded_symbols.contains(&symbol) || !heap.dynamic_is_symbol_enumerable(source, symbol) {
+                        if excluded_symbols.contains(&symbol)
+                            || !heap.dynamic_is_symbol_enumerable(source, symbol)
+                        {
                             continue;
                         }
                         if let Some(value) = heap.dynamic_get_symbol(source, symbol) {
@@ -336,7 +383,10 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 let forward = name == "arrayReduceNoInit";
                 if length == 0 {
-                    return match self.new_error_object("TypeError", "Reduce of empty array with no initial value") {
+                    return match self.new_error_object(
+                        "TypeError",
+                        "Reduce of empty array with no initial value",
+                    ) {
                         Some(error) => Err(RunError::Thrown(Value::Object(error))),
                         None => Err(RunError::BadToken),
                     };
@@ -349,15 +399,24 @@ impl<'a> Interp<'a> {
                         .is_some_and(|any| !any.is_hole())
                 });
                 let Some(seed_step) = seed_step else {
-                    return match self.new_error_object("TypeError", "Reduce of empty array with no initial value") {
+                    return match self.new_error_object(
+                        "TypeError",
+                        "Reduce of empty array with no initial value",
+                    ) {
                         Some(error) => Err(RunError::Thrown(Value::Object(error))),
                         None => Err(RunError::BadToken),
                     };
                 };
-                let seed_index = if forward { seed_step } else { length - 1 - seed_step };
+                let seed_index = if forward {
+                    seed_step
+                } else {
+                    length - 1 - seed_step
+                };
                 let accumulator = zun_gc::with_current_heap_mut(|heap| {
                     let holder = heap.alloc_array(1);
-                    let seed = heap.array_get(source, seed_index).unwrap_or_else(zun_core::Any::void);
+                    let seed = heap
+                        .array_get(source, seed_index)
+                        .unwrap_or_else(zun_core::Any::void);
                     heap.array_set(holder, 0, seed);
                     holder
                 });
@@ -408,8 +467,9 @@ impl<'a> Interp<'a> {
                 let copy = zun_gc::with_current_heap_mut(|heap| {
                     let copy = heap.alloc_array(length);
                     for index in 0..length {
-                        let element =
-                            heap.array_get(source, index).unwrap_or_else(zun_core::Any::void);
+                        let element = heap
+                            .array_get(source, index)
+                            .unwrap_or_else(zun_core::Any::void);
                         heap.array_set(copy, index, element);
                     }
                     copy
@@ -419,8 +479,9 @@ impl<'a> Interp<'a> {
                 for i in 1..length {
                     let mut j = i;
                     while j > 0 {
-                        let left = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], j - 1))
-                            .ok_or(RunError::BadToken)?;
+                        let left =
+                            zun_gc::with_current_heap(|heap| heap.array_get(roots[0], j - 1))
+                                .ok_or(RunError::BadToken)?;
                         let right = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], j))
                             .ok_or(RunError::BadToken)?;
                         let ordered_before = match comparator {
@@ -467,7 +528,14 @@ impl<'a> Interp<'a> {
                     for index in 0..length {
                         let element = heap
                             .array_get(source, length - 1 - index)
-                            .map(|a| if a.is_hole() { zun_core::Any::void() } else { a }).unwrap_or_else(zun_core::Any::void);
+                            .map(|a| {
+                                if a.is_hole() {
+                                    zun_core::Any::void()
+                                } else {
+                                    a
+                                }
+                            })
+                            .unwrap_or_else(zun_core::Any::void);
                         heap.array_set(result, index, element);
                     }
                     result
@@ -485,14 +553,18 @@ impl<'a> Interp<'a> {
                     Value::Float(value, _) => *value as i64,
                     _ => return Err(RunError::BadToken),
                 };
-                let value = any(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value =
+                    any(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
                     .ok_or(RunError::BadToken)?;
                 let resolved = if raw < 0 { raw + length as i64 } else { raw };
                 if resolved < 0 || resolved >= length as i64 {
-                    return match self.new_error_object("RangeError", "Invalid index : out of range") {
+                    return match self.new_error_object("RangeError", "Invalid index : out of range")
+                    {
                         Some(object) => Err(RunError::Thrown(Value::Object(object))),
-                        None => Err(RunError::Native("RangeError: Invalid index : out of range".into())),
+                        None => Err(RunError::Native(
+                            "RangeError: Invalid index : out of range".into(),
+                        )),
                     };
                 }
                 let target = resolved as usize;
@@ -502,7 +574,15 @@ impl<'a> Interp<'a> {
                         let element = if index == target {
                             value
                         } else {
-                            heap.array_get(source, index).map(|a| if a.is_hole() { zun_core::Any::void() } else { a }).unwrap_or_else(zun_core::Any::void)
+                            heap.array_get(source, index)
+                                .map(|a| {
+                                    if a.is_hole() {
+                                        zun_core::Any::void()
+                                    } else {
+                                        a
+                                    }
+                                })
+                                .unwrap_or_else(zun_core::Any::void)
                         };
                         heap.array_set(result, index, element);
                     }
@@ -533,20 +613,44 @@ impl<'a> Interp<'a> {
                     let result = heap.alloc_array(length - delete_count + insert_count);
                     let mut out = 0usize;
                     for index in 0..start {
-                        let element =
-                            heap.array_get(source, index).map(|a| if a.is_hole() { zun_core::Any::void() } else { a }).unwrap_or_else(zun_core::Any::void);
+                        let element = heap
+                            .array_get(source, index)
+                            .map(|a| {
+                                if a.is_hole() {
+                                    zun_core::Any::void()
+                                } else {
+                                    a
+                                }
+                            })
+                            .unwrap_or_else(zun_core::Any::void);
                         heap.array_set(result, out, element);
                         out += 1;
                     }
                     for offset in 0..insert_count {
-                        let element =
-                            heap.array_get(items, offset).map(|a| if a.is_hole() { zun_core::Any::void() } else { a }).unwrap_or_else(zun_core::Any::void);
+                        let element = heap
+                            .array_get(items, offset)
+                            .map(|a| {
+                                if a.is_hole() {
+                                    zun_core::Any::void()
+                                } else {
+                                    a
+                                }
+                            })
+                            .unwrap_or_else(zun_core::Any::void);
                         heap.array_set(result, out, element);
                         out += 1;
                     }
                     for index in (start + delete_count)..length {
-                        let element =
-                            heap.array_get(source, index).map(|a| if a.is_hole() { zun_core::Any::void() } else { a }).unwrap_or_else(zun_core::Any::void);
+                        let element = heap
+                            .array_get(source, index)
+                            .map(|a| {
+                                if a.is_hole() {
+                                    zun_core::Any::void()
+                                } else {
+                                    a
+                                }
+                            })
+                            .unwrap_or_else(zun_core::Any::void);
                         heap.array_set(result, out, element);
                         out += 1;
                     }
@@ -569,11 +673,16 @@ impl<'a> Interp<'a> {
                     let mut flat: Vec<zun_core::Any> = Vec::new();
                     let source_len = heap.array_len(source).unwrap_or(0);
                     for index in 0..source_len {
-                        flat.push(heap.array_get(source, index).unwrap_or_else(zun_core::Any::void));
+                        flat.push(
+                            heap.array_get(source, index)
+                                .unwrap_or_else(zun_core::Any::void),
+                        );
                     }
                     let item_count = heap.array_len(items).unwrap_or(0);
                     for item_index in 0..item_count {
-                        let item = heap.array_get(items, item_index).unwrap_or_else(zun_core::Any::void);
+                        let item = heap
+                            .array_get(items, item_index)
+                            .unwrap_or_else(zun_core::Any::void);
                         let obj = item
                             .as_object()
                             .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
@@ -582,7 +691,10 @@ impl<'a> Interp<'a> {
                             continue;
                         };
                         let flag = heap
-                            .dynamic_get_symbol(obj, zun_core::WellKnownSymbol::IsConcatSpreadable.id())
+                            .dynamic_get_symbol(
+                                obj,
+                                zun_core::WellKnownSymbol::IsConcatSpreadable.id(),
+                            )
                             .and_then(|any| match Value::unbox_any(any, heap) {
                                 Some(Value::Bool(b)) => Some(b),
                                 _ => None,
@@ -593,7 +705,8 @@ impl<'a> Interp<'a> {
                             } else {
                                 for index in 0..length {
                                     flat.push(
-                                        heap.array_get(obj, index).unwrap_or_else(zun_core::Any::void),
+                                        heap.array_get(obj, index)
+                                            .unwrap_or_else(zun_core::Any::void),
                                     );
                                 }
                             }

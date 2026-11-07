@@ -61,14 +61,20 @@ impl ExtensionResolver {
     /// # Safety
     /// The path must identify trusted native code implementing the v1
     /// registration contract; it runs during registration.
-    pub unsafe fn load_path(&mut self, path: impl AsRef<Path>) -> Result<&LoadedExtension, FfiError> {
+    pub unsafe fn load_path(
+        &mut self,
+        path: impl AsRef<Path>,
+    ) -> Result<&LoadedExtension, FfiError> {
         let key = path.as_ref().to_string_lossy().into_owned();
         if !self.extensions.contains_key(&key) {
             // SAFETY: forwarded from the caller's trusted-extension contract.
             let extension = unsafe { LoadedExtension::load_path(path.as_ref()) }?;
             self.extensions.insert(key.clone(), extension);
         }
-        Ok(self.extensions.get(&key).expect("extension inserted or cached"))
+        Ok(self
+            .extensions
+            .get(&key)
+            .expect("extension inserted or cached"))
     }
 
     /// Materialize and register a `.zmlib`'s embedded native extension for
@@ -95,9 +101,8 @@ impl ExtensionResolver {
         let Some(path) = path else {
             return Ok(false);
         };
-        let path = std::path::absolute(&path).map_err(|error| {
-            FfiError::new(format!("native object path is unusable: {error}"))
-        })?;
+        let path = std::path::absolute(&path)
+            .map_err(|error| FfiError::new(format!("native object path is unusable: {error}")))?;
         let key = path.to_string_lossy().into_owned();
         if !self.extensions.contains_key(&key) {
             // SAFETY: forwarded from the caller's trusted-extension contract.

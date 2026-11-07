@@ -67,7 +67,10 @@ fn tier0(module: &Module) -> i64 {
 
 fn tier1(module: &Module) -> i64 {
     let jit = zun_codegen::Jit::compile(module).expect("jit compiles");
-    assert!(jit.is_compiled(1), "integer bitwise ops must be JIT-eligible");
+    assert!(
+        jit.is_compiled(1),
+        "integer bitwise ops must be JIT-eligible"
+    );
     match jit.call_entry(1).expect("jit call") {
         RetVal::Int(value) => value,
         other => panic!("expected an int from Tier 1, got {other:?}"),
@@ -80,7 +83,8 @@ fn both(kind: NumKind, operands: &[i64], op: Opcode) -> i64 {
     let a = tier0(&module);
     let b = tier1(&module);
     assert_eq!(
-        a, b,
+        a,
+        b,
         "{} over {operands:?} as {kind:?}: Tier 0 gave {a}, Tier 1 gave {b}",
         op.mnemonic()
     );

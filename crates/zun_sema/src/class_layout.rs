@@ -114,7 +114,11 @@ impl<'a> Checker<'a> {
         let mut current = class;
         loop {
             let info = &self.classes[current as usize];
-            if info.own_fields.iter().any(|(n, _, is_static, _)| n == name && *is_static) {
+            if info
+                .own_fields
+                .iter()
+                .any(|(n, _, is_static, _)| n == name && *is_static)
+            {
                 return current;
             }
             match info.base {

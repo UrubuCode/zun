@@ -1,5 +1,8 @@
-use super::{Ephemeron, FinalizationId, FinalizerEntry, GeneratorState, Heap, Obj, Record, WeakMapId, WeakRefId, WeakSlot, CHUNK_SLOTS};
 use super::records::Generation;
+use super::{
+    Ephemeron, FinalizationId, FinalizerEntry, GeneratorState, Heap, Obj, Record, WeakMapId,
+    WeakRefId, WeakSlot, CHUNK_SLOTS,
+};
 
 impl Heap {
     pub fn new() -> Self {
@@ -99,31 +102,45 @@ impl Heap {
 
     /// Allocate the managed identity of a generator before its first resume.
     /// The state table owns arguments and the eventual suspended frame.
-    pub fn alloc_generator(&mut self, type_rid: u32, method_rid: u32, args: Vec<zun_core::Any>) -> Obj {
+    pub fn alloc_generator(
+        &mut self,
+        type_rid: u32,
+        method_rid: u32,
+        args: Vec<zun_core::Any>,
+    ) -> Obj {
         let object = self.alloc(type_rid, 0);
-        self.generator_states.insert(object.addr() as usize, GeneratorState {
-            method_rid,
-            args,
-            frame: None,
-            done: false,
-            current: zun_core::Any::null(),
-            has_current: false,
-            pending_return: zun_core::Any::void(),
-            has_pending_return: false,
-        });
+        self.generator_states.insert(
+            object.addr() as usize,
+            GeneratorState {
+                method_rid,
+                args,
+                frame: None,
+                done: false,
+                current: zun_core::Any::null(),
+                has_current: false,
+                pending_return: zun_core::Any::void(),
+                has_pending_return: false,
+            },
+        );
         object
     }
 
     pub fn promise_state(&self, object: Obj) -> Option<zun_core::ManagedPromiseState> {
-        self.promises.get(&(object.addr() as usize)).map(|promise| promise.state())
+        self.promises
+            .get(&(object.addr() as usize))
+            .map(|promise| promise.state())
     }
 
     pub fn promise_result(&self, object: Obj) -> Option<zun_core::Any> {
-        self.promises.get(&(object.addr() as usize)).and_then(|promise| promise.result())
+        self.promises
+            .get(&(object.addr() as usize))
+            .and_then(|promise| promise.result())
     }
 
     pub fn promise_is_ready(&self, object: Obj) -> Option<bool> {
-        self.promises.get(&(object.addr() as usize)).map(|promise| promise.is_ready())
+        self.promises
+            .get(&(object.addr() as usize))
+            .map(|promise| promise.is_ready())
     }
 
     pub fn promise_error(&self, object: Obj) -> Option<String> {
@@ -133,7 +150,8 @@ impl Heap {
     }
 
     pub fn promise_resolve(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
-        let result = self.promises
+        let result = self
+            .promises
             .get_mut(&(object.addr() as usize))
             .map(|promise| promise.resolve(value));
         if let Some(child) = value.as_object() {
@@ -278,7 +296,9 @@ impl Heap {
 
     pub fn weak_ref_new(&mut self, target: Obj) -> WeakRefId {
         let id = WeakRefId(self.weak_refs.len() as u32);
-        self.weak_refs.push(WeakSlot { target: Some(target.addr() as usize) });
+        self.weak_refs.push(WeakSlot {
+            target: Some(target.addr() as usize),
+        });
         id
     }
 
@@ -335,12 +355,7 @@ impl Heap {
         token: u64,
         callback: zun_core::FunctionHandle,
     ) -> FinalizationId {
-        self.finalization_register_with_held(
-            target,
-            zun_core::Any::int(token as i64),
-            callback,
-            0,
-        )
+        self.finalization_register_with_held(target, zun_core::Any::int(token as i64), callback, 0)
     }
 
     /// Register a closure callback together with an arbitrary held value and an
@@ -381,10 +396,7 @@ impl Heap {
     }
 
     /// The cleanup callback a registry object was constructed with, if any.
-    pub fn finalization_registry_cleanup(
-        &self,
-        registry: Obj,
-    ) -> Option<zun_core::FunctionHandle> {
+    pub fn finalization_registry_cleanup(&self, registry: Obj) -> Option<zun_core::FunctionHandle> {
         self.finalization_registries
             .get(&(registry.addr() as usize))
             .copied()

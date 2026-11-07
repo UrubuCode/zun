@@ -53,9 +53,39 @@ const PATTERNS: &[(&str, &str)] = &[
 ];
 
 const INPUTS: &[&str] = &[
-    "", "a", "b", "c", "ab", "abc", "abx", "abd", "xabc", "abcx", "foo", "bar",
-    "baz", "x", "y", "z", "xy", "ac", "a.c", "aXc", "a\nc", "bc", "cc", "aabc",
-    "ba", "0x", "9x", "hello", "xhellox", "café", "é", "zzz", "qqq",
+    "",
+    "a",
+    "b",
+    "c",
+    "ab",
+    "abc",
+    "abx",
+    "abd",
+    "xabc",
+    "abcx",
+    "foo",
+    "bar",
+    "baz",
+    "x",
+    "y",
+    "z",
+    "xy",
+    "ac",
+    "a.c",
+    "aXc",
+    "a\nc",
+    "bc",
+    "cc",
+    "aabc",
+    "ba",
+    "0x",
+    "9x",
+    "hello",
+    "xhellox",
+    "café",
+    "é",
+    "zzz",
+    "qqq",
     // Long non-matching prefixes with the match (if any) at the very end, so a
     // FindFirstChar prefilter skips most of the string: these are the cases
     // where the prefilter changes work but must never change the result.
@@ -138,7 +168,10 @@ fn is_match_runs_on_tier0_and_tier1_and_matches_the_runtime_engine() {
             }
             assert_eq!(hit, want, "tier1 {pattern:?}/{flags:?} on {input:?}");
         }
-        assert!(hook.jit_is_defined(match_rid), "{pattern:?}: matchAt not JIT-compiled");
+        assert!(
+            hook.jit_is_defined(match_rid),
+            "{pattern:?}: matchAt not JIT-compiled"
+        );
     }
 }
 
@@ -160,6 +193,9 @@ fn out_of_subset_patterns_do_not_compile() {
         ("a(?=b)", ""),
         ("abc", "i"),
     ] {
-        assert!(compile_is_match(p, f, nat).is_none(), "{p:?}/{f:?} should fall back");
+        assert!(
+            compile_is_match(p, f, nat).is_none(),
+            "{p:?}/{f:?} should fall back"
+        );
     }
 }

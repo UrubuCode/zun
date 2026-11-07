@@ -14,7 +14,8 @@ const ERROR_SOURCE: &str = zun_prelude::ERRORS;
 fn run_with_errors(main: &str) -> Vec<String> {
     let src = format!("{ERROR_SOURCE}\n{main}");
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(&src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(&src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(&src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -144,7 +145,11 @@ fn subclass_stack_uses_the_subclass_header() {
         }"#,
     );
     assert_eq!(out.len(), 1);
-    assert!(out[0].starts_with("TypeError: x"), "stack was: {:?}", out[0]);
+    assert!(
+        out[0].starts_with("TypeError: x"),
+        "stack was: {:?}",
+        out[0]
+    );
     assert!(out[0].contains("    at "), "no frame line in: {:?}", out[0]);
 }
 
@@ -182,7 +187,11 @@ fn thrown_and_caught_error_keeps_its_stack() {
         }"#,
     );
     assert_eq!(out.len(), 1);
-    assert!(out[0].starts_with("RangeError: oops"), "stack was: {:?}", out[0]);
+    assert!(
+        out[0].starts_with("RangeError: oops"),
+        "stack was: {:?}",
+        out[0]
+    );
     assert!(out[0].contains("    at "), "no frame line in: {:?}", out[0]);
 }
 
@@ -204,5 +213,9 @@ fn aggregate_error_carries_its_errors_and_shape() {
     assert_eq!(out[0], "AggregateError");
     assert_eq!(out[1], "several");
     assert_eq!(out[2], "2");
-    assert!(out[3].starts_with("AggregateError: several"), "stack was: {:?}", out[3]);
+    assert!(
+        out[3].starts_with("AggregateError: several"),
+        "stack was: {:?}",
+        out[3]
+    );
 }

@@ -78,7 +78,9 @@ impl Heap {
         let freed = unsafe {
             self.collect_young_evacuating(&mut all_roots, ref_slots, &mut |relocation| {
                 for frame in frames {
-                    frame.registry.rewrite_slots_at(frame.pc, frame.sp, relocation);
+                    frame
+                        .registry
+                        .rewrite_slots_at(frame.pc, frame.sp, relocation);
                 }
                 on_relocation(relocation);
             })
@@ -301,8 +303,10 @@ impl Heap {
             }
             if let Some(fields) = self.any_fields.get(&(obj.addr() as usize)) {
                 // Frozen-layout `any` fields can hold object-tagged Any values.
-                let any_children: Vec<usize> =
-                    fields.values().filter_map(|value| value.as_object()).collect();
+                let any_children: Vec<usize> = fields
+                    .values()
+                    .filter_map(|value| value.as_object())
+                    .collect();
                 for child in any_children {
                     if let Some(&cidx) = self.by_addr.get(&child) {
                         if !self.records[cidx].marked {
@@ -402,8 +406,10 @@ impl Heap {
                     }
                 }
                 if let Some(fields) = self.any_fields.get(&(obj.addr() as usize)) {
-                    let any_children: Vec<usize> =
-                        fields.values().filter_map(|value| value.as_object()).collect();
+                    let any_children: Vec<usize> = fields
+                        .values()
+                        .filter_map(|value| value.as_object())
+                        .collect();
                     for child in any_children {
                         if let Some(&child_idx) = self.by_addr.get(&child) {
                             if !self.records[child_idx].marked {
@@ -464,7 +470,8 @@ impl Heap {
                 let keep = |address: &usize| {
                     self.by_addr.get(address).is_some_and(|idx| {
                         let record = &self.records[*idx];
-                        record.marked || (young_only && record.generation == records::Generation::Old)
+                        record.marked
+                            || (young_only && record.generation == records::Generation::Old)
                     })
                 };
                 keep(key) && keep(value)
@@ -474,7 +481,8 @@ impl Heap {
             if let Some(address) = weak.target {
                 if self.by_addr.get(&address).is_none_or(|&idx| {
                     !self.records[idx].marked
-                        && (!young_only || self.records[idx].generation == records::Generation::Young)
+                        && (!young_only
+                            || self.records[idx].generation == records::Generation::Young)
                 }) {
                     weak.target = None;
                 }
@@ -488,9 +496,7 @@ impl Heap {
                 .iter()
                 .enumerate()
                 .filter(|(_, record)| {
-                    record.alive
-                        && record.marked
-                        && record.generation == records::Generation::Young
+                    record.alive && record.marked && record.generation == records::Generation::Young
                 })
                 .map(|(idx, record)| (idx, record.addr, record.field_count))
                 .collect();
@@ -505,9 +511,8 @@ impl Heap {
                 self.by_addr.insert(new as usize, idx);
             }
 
-            let roots = unsafe {
-                std::slice::from_raw_parts_mut(roots.as_ptr() as *mut Obj, roots.len())
-            };
+            let roots =
+                unsafe { std::slice::from_raw_parts_mut(roots.as_ptr() as *mut Obj, roots.len()) };
             for root in roots {
                 let address = root.addr() as usize;
                 let mapped = relocation.relocate_address(address);
@@ -572,7 +577,8 @@ impl Heap {
             // list: reusing their addresses after the chunks are cleared would
             // turn the next allocation into a use-after-free.
             for free_indices in self.free.values_mut() {
-                free_indices.retain(|&idx| self.records[idx].generation != records::Generation::Young);
+                free_indices
+                    .retain(|&idx| self.records[idx].generation != records::Generation::Young);
             }
         }
         for entry in &mut self.finalizers {
@@ -585,8 +591,13 @@ impl Heap {
                 });
             }
         }
-        self.remembered_set.retain(|address| self.by_addr.contains_key(address));
-        if self.records.iter().all(|record| !record.alive || record.generation == records::Generation::Old) {
+        self.remembered_set
+            .retain(|address| self.by_addr.contains_key(address));
+        if self
+            .records
+            .iter()
+            .all(|record| !record.alive || record.generation == records::Generation::Old)
+        {
             self.remembered_set.clear();
         }
         if young_only {
@@ -721,9 +732,7 @@ impl Heap {
             };
             let mut all_roots = roots.to_vec();
             append_native_roots(&mut all_roots);
-            unsafe {
-                self.collect_young_with_native_frame(&all_roots, registry, pc, sp, ref_slots)
-            }
+            unsafe { self.collect_young_with_native_frame(&all_roots, registry, pc, sp, ref_slots) }
         })
     }
 
@@ -766,5 +775,4 @@ impl Heap {
             freed
         })
     }
-
 }

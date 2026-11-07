@@ -1,8 +1,10 @@
 use super::{CallHook, Output, Value};
 use std::collections::HashMap;
-use zun_module::Module;
 use zun_gc::Obj;
-use zun_sched::{Continuation, ContinuationId, PromiseId, PromiseTable, Scheduler, Settlement, TaskId};
+use zun_module::Module;
+use zun_sched::{
+    Continuation, ContinuationId, PromiseId, PromiseTable, Scheduler, Settlement, TaskId,
+};
 
 pub(super) struct Interp<'a> {
     pub(super) module: &'a Module,
@@ -217,7 +219,6 @@ pub(super) struct ParkedFrame {
     pub(super) frame: ExecutionFrame,
 }
 
-
 /// One live interpreter activation, used for runtime stack capture.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct CallFrame {
@@ -234,10 +235,7 @@ impl<'a> Interp<'a> {
     }
 
     /// Rewrite owned suspended frames after a moving collection.
-    pub(super) fn rewrite_suspended_frames(
-        &mut self,
-        relocation: &zun_gc::RelocationMap,
-    ) -> usize {
+    pub(super) fn rewrite_suspended_frames(&mut self, relocation: &zun_gc::RelocationMap) -> usize {
         let mut rewritten = 0;
         if let Some(frame) = self.suspended.as_mut() {
             rewritten += frame.rewrite_managed_references(relocation);
@@ -252,10 +250,7 @@ impl<'a> Interp<'a> {
     /// Rewrite every parked `await` frame and the promise→id bridge after a
     /// moving collection, so a frame that was parked across the collection and
     /// the identity of the promise it waits on both survive relocation.
-    pub(super) fn rewrite_parked_frames(
-        &mut self,
-        relocation: &zun_gc::RelocationMap,
-    ) -> usize {
+    pub(super) fn rewrite_parked_frames(&mut self, relocation: &zun_gc::RelocationMap) -> usize {
         self.rewrite_decorator_tables(relocation);
         self.async_state.rewrite_after_move(relocation)
     }
@@ -534,9 +529,7 @@ impl<'a> Interp<'a> {
     /// The caller must ensure no managed execution is active while this
     /// operation runs. The current interpreter is single-threaded, so this is
     /// an explicit opt-in boundary rather than an automatic GC policy.
-    pub(super) unsafe fn compact_suspended_frames(
-        &mut self,
-    ) -> Option<zun_gc::CompactionResult> {
+    pub(super) unsafe fn compact_suspended_frames(&mut self) -> Option<zun_gc::CompactionResult> {
         let mut roots = Vec::new();
         if let Some(frame) = self.suspended.as_ref() {
             frame.append_managed_roots(&mut roots);
@@ -734,7 +727,13 @@ mod tests {
         let promise = unsafe { Obj::from_addr(0x1000usize as *mut u64) };
         let mut frame = ExecutionFrame::new(7, vec![Value::Void]);
         frame.suspend(promise, 42);
-        assert_eq!(frame.state, FrameState::Suspended { promise, resume_pc: 42 });
+        assert_eq!(
+            frame.state,
+            FrameState::Suspended {
+                promise,
+                resume_pc: 42
+            }
+        );
         assert_eq!(frame.resume(), Some(promise));
         assert_eq!(frame.pc, 42);
         assert_eq!(frame.state, FrameState::Runnable);
@@ -750,7 +749,10 @@ mod tests {
     #[test]
     fn execution_outcome_adapts_existing_sync_results() {
         let outcome = ExecutionOutcome::from_result(Ok(Value::Bool(true)));
-        assert!(matches!(outcome, ExecutionOutcome::Complete(Value::Bool(true))));
+        assert!(matches!(
+            outcome,
+            ExecutionOutcome::Complete(Value::Bool(true))
+        ));
         let result = ExecutionOutcome::from_result(Err(RunError::BadToken)).into_result();
         assert!(matches!(result, Err(RunError::BadToken)));
     }
@@ -769,7 +771,9 @@ mod tests {
         assert_eq!(frame.rewrite_managed_references(&relocation), 3);
         assert!(matches!(frame.locals[0], Value::Object(object) if object == new));
         assert!(matches!(frame.stack[0], Value::Any(any) if any.as_object() == Some(0x2000)));
-        assert!(matches!(frame.parent.as_ref().unwrap().locals[0], Value::Object(object) if object == new));
+        assert!(
+            matches!(frame.parent.as_ref().unwrap().locals[0], Value::Object(object) if object == new)
+        );
     }
 
     #[test]

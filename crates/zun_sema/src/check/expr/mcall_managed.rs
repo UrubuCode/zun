@@ -25,7 +25,10 @@ impl Checker<'_> {
             if args.len() > 1 {
                 self.error(
                     span,
-                    format!("`normalize` expects 0 or 1 argument(s), found {}", args.len()),
+                    format!(
+                        "`normalize` expects 0 or 1 argument(s), found {}",
+                        args.len()
+                    ),
                 );
                 return Ok(self.poison(span));
             }
@@ -48,7 +51,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, form] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, form],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -72,36 +78,44 @@ impl Checker<'_> {
             // callback methods invoke the dynamic function value with the
             // ECMAScript `(value, index, array)` signature (extra
             // arguments dropped to the callback's declared arity).
-            (Ty::Array, "forEach") => {
-                Some(("arrayForEach", Ty::Void, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
-            }
-            (Ty::Array, "map") => {
-                Some(("arrayMap", Ty::Array, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
-            }
-            (Ty::Array, "filter") => {
-                Some(("arrayFilter", Ty::Array, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
-            }
-            (Ty::Array, "find") => {
-                Some(("arrayFind", Ty::Any, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
-            }
+            (Ty::Array, "forEach") => Some((
+                "arrayForEach",
+                Ty::Void,
+                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+            )),
+            (Ty::Array, "map") => Some((
+                "arrayMap",
+                Ty::Array,
+                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+            )),
+            (Ty::Array, "filter") => Some((
+                "arrayFilter",
+                Ty::Array,
+                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+            )),
+            (Ty::Array, "find") => Some((
+                "arrayFind",
+                Ty::Any,
+                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+            )),
             (Ty::Array, "findIndex") => Some((
                 "arrayFindIndex",
                 Ty::Int(IntKind::I32),
                 vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
             )),
-            (Ty::Array, "some") => {
-                Some(("arraySome", Ty::Boolean, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
-            }
-            (Ty::Array, "every") => {
-                Some(("arrayEvery", Ty::Boolean, vec![Ty::Function(hir::DYNAMIC_FUNCTION)]))
-            }
-            (Ty::Array, "join") => {
-                Some(("arrayJoin", Ty::String, vec![Ty::String]))
-            }
+            (Ty::Array, "some") => Some((
+                "arraySome",
+                Ty::Boolean,
+                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+            )),
+            (Ty::Array, "every") => Some((
+                "arrayEvery",
+                Ty::Boolean,
+                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+            )),
+            (Ty::Array, "join") => Some(("arrayJoin", Ty::String, vec![Ty::String])),
             (Ty::Array, "shift") => Some(("arrayShift", Ty::Any, vec![])),
-            (Ty::Array, "unshift") => {
-                Some(("arrayUnshift", Ty::Int(IntKind::U64), vec![Ty::Any]))
-            }
+            (Ty::Array, "unshift") => Some(("arrayUnshift", Ty::Int(IntKind::U64), vec![Ty::Any])),
             // `at(index)` with relative/undefined semantics (native).
             (Ty::Array, "at") => Some(("arrayAt", Ty::Any, vec![Ty::F64])),
             (Ty::Array, "findLast") => Some((
@@ -159,9 +173,7 @@ impl Checker<'_> {
                 Ty::Void,
                 vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
             )),
-            (Ty::WeakMap, "set") => {
-                Some(("weakMapSet", Ty::WeakMap, vec![Ty::Any, Ty::Any]))
-            }
+            (Ty::WeakMap, "set") => Some(("weakMapSet", Ty::WeakMap, vec![Ty::Any, Ty::Any])),
             (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
             (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
             (Ty::WeakMap, "delete") => Some(("weakMapDelete", Ty::Boolean, vec![Ty::Any])),
@@ -186,7 +198,9 @@ impl Checker<'_> {
             (Ty::BigInt, "not") => Some(("bigIntNot", Ty::BigInt, vec![])),
             (Ty::BigInt, "shl") => Some(("bigIntShl", Ty::BigInt, vec![Ty::BigInt])),
             (Ty::BigInt, "shr") => Some(("bigIntShr", Ty::BigInt, vec![Ty::BigInt])),
-            (Ty::BigInt, "compare") => Some(("bigIntCompare", Ty::Int(IntKind::I32), vec![Ty::BigInt])),
+            (Ty::BigInt, "compare") => {
+                Some(("bigIntCompare", Ty::Int(IntKind::I32), vec![Ty::BigInt]))
+            }
             (Ty::BigInt, "toString") => Some(("bigIntToString", Ty::String, vec![])),
             (Ty::Promise, "state") => Some(("promiseState", Ty::Int(IntKind::U8), vec![])),
             (Ty::Promise, "result") => Some(("promiseResult", Ty::Any, vec![])),
@@ -203,12 +217,12 @@ impl Checker<'_> {
             (Ty::String, "trim") => Some(("trim", Ty::String, vec![])),
             (Ty::String, "trimStart") => Some(("trimStart", Ty::String, vec![])),
             (Ty::String, "trimEnd") => Some(("trimEnd", Ty::String, vec![])),
-            (Ty::String, "charCodeAt") => {
-                Some(("charCodeAt", Ty::Int(IntKind::U32), vec![Ty::Int(IntKind::U64)]))
-            }
-            (Ty::String, "indexOf") => {
-                Some(("indexOf", Ty::Int(IntKind::I32), vec![Ty::String]))
-            }
+            (Ty::String, "charCodeAt") => Some((
+                "charCodeAt",
+                Ty::Int(IntKind::U32),
+                vec![Ty::Int(IntKind::U64)],
+            )),
+            (Ty::String, "indexOf") => Some(("indexOf", Ty::Int(IntKind::I32), vec![Ty::String])),
             (Ty::String, "lastIndexOf") => {
                 Some(("lastIndexOf", Ty::Int(IntKind::I32), vec![Ty::String]))
             }
@@ -217,12 +231,8 @@ impl Checker<'_> {
                 Ty::String,
                 vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64)],
             )),
-            (Ty::String, "repeat") => {
-                Some(("repeat", Ty::String, vec![Ty::Int(IntKind::U64)]))
-            }
-            (Ty::String, "startsWith") => {
-                Some(("startsWith", Ty::Boolean, vec![Ty::String]))
-            }
+            (Ty::String, "repeat") => Some(("repeat", Ty::String, vec![Ty::Int(IntKind::U64)])),
+            (Ty::String, "startsWith") => Some(("startsWith", Ty::Boolean, vec![Ty::String])),
             (Ty::String, "endsWith") => Some(("endsWith", Ty::Boolean, vec![Ty::String])),
             // ECMA-402 locale surface (NUCLEUS #1), ICU4X-backed.
             // `localeCompare` returns the ECMAScript -1/0/1; v1 uses
@@ -231,9 +241,11 @@ impl Checker<'_> {
             // Index is a `number` so a negative value (from the end) can
             // cross the boundary; out of range yields `undefined`.
             (Ty::String, "at") => Some(("at", Ty::String, vec![Ty::F64])),
-            (Ty::String, "codePointAt") => {
-                Some(("codePointAt", Ty::Int(IntKind::U32), vec![Ty::Int(IntKind::U64)]))
-            }
+            (Ty::String, "codePointAt") => Some((
+                "codePointAt",
+                Ty::Int(IntKind::U32),
+                vec![Ty::Int(IntKind::U64)],
+            )),
             (Ty::String, "replaceAll") => {
                 Some(("replaceAll", Ty::String, vec![Ty::String, Ty::String]))
             }
@@ -341,30 +353,22 @@ impl Checker<'_> {
                 Ty::Boolean,
                 vec![Ty::Int(IntKind::U64), Ty::Int(IntKind::U64), Ty::Boolean],
             )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "byteLength") => Some((
-                "dataViewByteLength",
-                Ty::Int(IntKind::U64),
-                vec![],
-            )),
+            (Ty::BufferView(hir::BufferViewKind::DataView), "byteLength") => {
+                Some(("dataViewByteLength", Ty::Int(IntKind::U64), vec![]))
+            }
             // `byteOffset`/`buffer`: the view's position in its
             // backing buffer and a reference to that `ArrayBuffer`.
-            (Ty::BufferView(hir::BufferViewKind::DataView), "byteOffset") => Some((
-                "dataViewByteOffset",
-                Ty::Int(IntKind::U64),
-                vec![],
-            )),
-            (Ty::BufferView(hir::BufferViewKind::DataView), "buffer") => Some((
-                "dataViewBuffer",
-                Ty::Buffer,
-                vec![],
-            )),
+            (Ty::BufferView(hir::BufferViewKind::DataView), "byteOffset") => {
+                Some(("dataViewByteOffset", Ty::Int(IntKind::U64), vec![]))
+            }
+            (Ty::BufferView(hir::BufferViewKind::DataView), "buffer") => {
+                Some(("dataViewBuffer", Ty::Buffer, vec![]))
+            }
             // `ArrayBuffer`, which is what `Ty::Buffer` denotes. These
             // are methods rather than the properties JS has, matching
             // `String.length()` and `Map.size()` here; the divergence
             // is recorded in NUCLEUS rather than special-cased.
-            (Ty::Buffer, "byteLength") => {
-                Some(("bufferLength", Ty::Int(IntKind::U64), vec![]))
-            }
+            (Ty::Buffer, "byteLength") => Some(("bufferLength", Ty::Int(IntKind::U64), vec![])),
             (Ty::Buffer, "slice") => Some((
                 "bufferSlice",
                 Ty::Buffer,
@@ -377,17 +381,11 @@ impl Checker<'_> {
             (Ty::Buffer, "maxByteLength") => {
                 Some(("bufferMaxByteLength", Ty::Int(IntKind::U64), vec![]))
             }
-            (Ty::Buffer, "resizable") => {
-                Some(("bufferResizable", Ty::Boolean, vec![]))
+            (Ty::Buffer, "resizable") => Some(("bufferResizable", Ty::Boolean, vec![])),
+            (Ty::Buffer, "detached") => Some(("bufferDetached", Ty::Boolean, vec![])),
+            (Ty::Buffer, "resize") => {
+                Some(("bufferResize", Ty::Boolean, vec![Ty::Int(IntKind::U64)]))
             }
-            (Ty::Buffer, "detached") => {
-                Some(("bufferDetached", Ty::Boolean, vec![]))
-            }
-            (Ty::Buffer, "resize") => Some((
-                "bufferResize",
-                Ty::Boolean,
-                vec![Ty::Int(IntKind::U64)],
-            )),
             _ => None,
         })
     }
@@ -454,7 +452,11 @@ impl Checker<'_> {
         };
         // A callback method's optional `thisArg` is bound onto the
         // callback (`cb.bind(thisArg)`) before the native runs.
-        let undefined_ast = ast::Expr::Unary { op: ast::UnaryOp::Void, operand: Box::new(ast::Expr::Number { value: 0.0, span }), span };
+        let undefined_ast = ast::Expr::Unary {
+            op: ast::UnaryOp::Void,
+            operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+            span,
+        };
         let this_arg_ast = if matches!(receiver.ty, Ty::Array | Ty::Map | Ty::Set)
             && expected.len() == 1
             && args.len() == 2
@@ -507,10 +509,13 @@ impl Checker<'_> {
             }
             let mut value = self.check_expr(cx, arg);
             self.closure_param_hint = None;
-            if expected_ty == Ty::Function(hir::DYNAMIC_FUNCTION) && matches!(value.ty, Ty::Function(_)) {
-                if let (Some(this_ast), Some((bind_id, _))) =
-                    (this_arg_ast, zun_natives::resolve("collections", "functionBind"))
-                {
+            if expected_ty == Ty::Function(hir::DYNAMIC_FUNCTION)
+                && matches!(value.ty, Ty::Function(_))
+            {
+                if let (Some(this_ast), Some((bind_id, _))) = (
+                    this_arg_ast,
+                    zun_natives::resolve("collections", "functionBind"),
+                ) {
                     let checked = self.check_expr(cx, this_ast);
                     let bound_this = self.box_function_argument(checked);
                     value = hir::Expr {

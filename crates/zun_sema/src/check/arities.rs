@@ -38,21 +38,42 @@ pub(in crate::check) fn builtin_function_length(path: &[&str]) -> Option<f64> {
         ["Promise", "withResolvers"] => 0.0,
         ["Promise", "prototype", "then"] => 2.0,
         ["Promise", "prototype", "catch" | "finally"] => 1.0,
-        ["Map" | "Set" | "WeakMap" | "WeakSet", "prototype", "get" | "has" | "delete" | "add"] => 1.0,
+        ["Map" | "Set" | "WeakMap" | "WeakSet", "prototype", "get" | "has" | "delete" | "add"] => {
+            1.0
+        }
         ["Map" | "WeakMap", "prototype", "set"] => 2.0,
         ["Map" | "Set", "prototype", "clear"] => 0.0,
         ["Map" | "Set", "prototype", "forEach"] => 1.0,
-        ["Object", "keys" | "values" | "entries" | "freeze" | "isFrozen" | "getPrototypeOf" | "fromEntries"] => 1.0,
-        ["Object", "assign" | "defineProperty" ] => if path[1] == "assign" { 2.0 } else { 3.0 },
-        ["Object", "getOwnPropertyDescriptor" | "hasOwn" | "setPrototypeOf"] => 2.0,
-        ["String", "prototype", "repeat" | "at" | "charAt" | "charCodeAt" | "codePointAt" | "normalize" | "indexOf" | "lastIndexOf" | "includes" | "startsWith" | "endsWith" | "concat" | "localeCompare"] => {
-            if path[2] == "normalize" { 0.0 } else { 1.0 }
+        ["Object", "keys" | "values" | "entries" | "freeze" | "isFrozen" | "getPrototypeOf"
+        | "fromEntries"] => 1.0,
+        ["Object", "assign" | "defineProperty"] => {
+            if path[1] == "assign" {
+                2.0
+            } else {
+                3.0
+            }
         }
-        ["String", "prototype", "padStart" | "padEnd" | "split" | "slice" | "substring" | "replace" | "replaceAll"] => 2.0,
-        ["String", "prototype", "trim" | "trimStart" | "trimEnd" | "toUpperCase" | "toLowerCase" | "toString" | "valueOf"] => 0.0,
-        ["Array", "prototype", "push" | "unshift" | "concat" | "at" | "every" | "fill" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap" | "forEach" | "includes" | "indexOf" | "join" | "lastIndexOf" | "map" | "reduce" | "reduceRight" | "some" | "sort" | "toSorted"] => 1.0,
+        ["Object", "getOwnPropertyDescriptor" | "hasOwn" | "setPrototypeOf"] => 2.0,
+        ["String", "prototype", "repeat" | "at" | "charAt" | "charCodeAt" | "codePointAt" | "normalize" | "indexOf"
+        | "lastIndexOf" | "includes" | "startsWith" | "endsWith" | "concat" | "localeCompare"] => {
+            if path[2] == "normalize" {
+                0.0
+            } else {
+                1.0
+            }
+        }
+        ["String", "prototype", "padStart" | "padEnd" | "split" | "slice" | "substring" | "replace" | "replaceAll"] => {
+            2.0
+        }
+        ["String", "prototype", "trim" | "trimStart" | "trimEnd" | "toUpperCase" | "toLowerCase" | "toString"
+        | "valueOf"] => 0.0,
+        ["Array", "prototype", "push" | "unshift" | "concat" | "at" | "every" | "fill" | "filter" | "find"
+        | "findIndex" | "findLast" | "findLastIndex" | "flatMap" | "forEach" | "includes"
+        | "indexOf" | "join" | "lastIndexOf" | "map" | "reduce" | "reduceRight" | "some"
+        | "sort" | "toSorted"] => 1.0,
         ["Array", "prototype", "copyWithin" | "slice" | "splice" | "toSpliced" | "with"] => 2.0,
-        ["Array", "prototype", "pop" | "shift" | "entries" | "keys" | "values" | "flat" | "reverse" | "toLocaleString" | "toReversed" | "toString"] => 0.0,
+        ["Array", "prototype", "pop" | "shift" | "entries" | "keys" | "values" | "flat" | "reverse" | "toLocaleString"
+        | "toReversed" | "toString"] => 0.0,
         ["Array", "isArray" | "of"] => 1.0,
         ["Array", "from"] => 1.0,
         ["Number", "isInteger" | "isNaN" | "isFinite" | "isSafeInteger" | "parseFloat"] => 1.0,

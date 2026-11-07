@@ -13,7 +13,10 @@ pub(super) fn param_default(
         let at = Span::new(parameter.span.start, parameter.span.end);
         return Ok(Some(Box::new(Expr::Unary {
             op: crate::ast::UnaryOp::Void,
-            operand: Box::new(Expr::Number { value: 0.0, span: at }),
+            operand: Box::new(Expr::Number {
+                value: 0.0,
+                span: at,
+            }),
             span: at,
         })));
     }
@@ -44,31 +47,38 @@ pub(super) fn convert_formal_param(
             // A default that reads a name bound by an earlier destructuring
             // parameter must run after that destructuring: it moves into the body
             // prologue as `p = p === undefined ? <default> : p`.
-            if let (Some(initializer), false, true) =
-                (
+            if let (Some(initializer), false, true) = (
                 parameter.initializer.as_ref(),
                 prologue.is_empty(),
                 ty.as_ref().is_none_or(|annotation| {
                     !annotation.is_array
-                        && source
-                            .get(annotation.name.span.start as usize..annotation.name.span.end as usize)
-                            == Some("any")
+                        && source.get(
+                            annotation.name.span.start as usize..annotation.name.span.end as usize,
+                        ) == Some("any")
                 }),
-            )
-            {
-                let init_text = &source[initializer.span().start as usize..initializer.span().end as usize];
+            ) {
+                let init_text =
+                    &source[initializer.span().start as usize..initializer.span().end as usize];
                 let mentions = PATTERN_PARAM_TEXT.with(|text| {
                     let text = text.borrow();
                     text.split(|c: char| !is_identifier_char(c))
-                        .filter(|word| !word.is_empty() && word.chars().next().is_some_and(|c| !c.is_ascii_digit()))
+                        .filter(|word| {
+                            !word.is_empty()
+                                && word.chars().next().is_some_and(|c| !c.is_ascii_digit())
+                        })
                         .any(|word| contains_word(init_text, word))
                 });
                 if mentions {
                     let at = span(parameter.span);
-                    let name = Name { span: span(identifier.span) };
+                    let name = Name {
+                        span: span(identifier.span),
+                    };
                     let undefined = Expr::Unary {
                         op: crate::ast::UnaryOp::Void,
-                        operand: Box::new(Expr::Number { value: 0.0, span: at }),
+                        operand: Box::new(Expr::Number {
+                            value: 0.0,
+                            span: at,
+                        }),
                         span: at,
                     };
                     let default = default_value.take().expect("initializer was converted");
@@ -89,7 +99,14 @@ pub(super) fn convert_formal_param(
                     }));
                 }
             }
-            Ok(crate::ast::Param { name: Name { span: span(identifier.span) }, ty, default_value, is_rest: false })
+            Ok(crate::ast::Param {
+                name: Name {
+                    span: span(identifier.span),
+                },
+                ty,
+                default_value,
+                is_rest: false,
+            })
         }
         other => {
             PATTERN_PARAM_TEXT.with(|text| {
@@ -114,7 +131,10 @@ pub(super) fn convert_formal_param(
     }
 }
 
-pub(super) fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> Result<Expr, String> {
+pub(super) fn convert_oxc_function(
+    source: &str,
+    function: &OxcFunction<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let Some(body) = function.body.as_ref() else {
         return Err("OXC adapter requires an object method body".into());
@@ -138,7 +158,11 @@ pub(super) fn convert_oxc_function(source: &str, function: &OxcFunction<'_>) -> 
         });
     }
     let mut statements = prologue;
-    statements.extend(convert_function_statements(source, &body.statements, &param_names(&function.params))?);
+    statements.extend(convert_function_statements(
+        source,
+        &body.statements,
+        &param_names(&function.params),
+    )?);
     let mut params = params;
     inject_arguments_object(source, span(function.span), &mut params, &mut statements);
     Ok(Expr::Function(FunctionExpr {
@@ -173,7 +197,9 @@ pub(super) fn convert_arrow(
             return Err("OXC adapter supports identifier rest parameters only".into());
         };
         params.push(crate::ast::Param {
-            name: Name { span: span(identifier.span) },
+            name: Name {
+                span: span(identifier.span),
+            },
             ty: convert_type_annotation(source, rest.type_annotation.as_deref())?,
             default_value: None,
             is_rest: true,
@@ -188,11 +214,21 @@ pub(super) fn convert_arrow(
             value: Some(convert_expression(source, expression)?),
             span: span(expression.span()),
         });
-        Block { statements, span: span(arrow.span) }
+        Block {
+            statements,
+            span: span(arrow.span),
+        }
     } else if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(function_body) = &arrow.body {
         let mut statements = prologue;
-        statements.extend(convert_function_statements(source, &function_body.statements, &param_names(&arrow.params))?);
-        Block { statements, span: span(function_body.span) }
+        statements.extend(convert_function_statements(
+            source,
+            &function_body.statements,
+            &param_names(&arrow.params),
+        )?);
+        Block {
+            statements,
+            span: span(function_body.span),
+        }
     } else {
         return Err("OXC adapter: unexpected arrow body".into());
     };
@@ -269,7 +305,10 @@ pub(super) fn inject_arguments_object(
         Stmt::Let {
             name: Name { span: word },
             ty: None,
-            init: Expr::ArrayLiteral { elements, span: word },
+            init: Expr::ArrayLiteral {
+                elements,
+                span: word,
+            },
             span: word,
         },
     );
@@ -283,7 +322,8 @@ pub(super) fn param_names(params: &oxc_ast::ast::FormalParameters<'_>) -> Vec<St
         flag.set(
             params.rest.is_none()
                 && params.items.iter().all(|item| {
-                    matches!(item.pattern, BindingPattern::BindingIdentifier(_)) && item.initializer.is_none()
+                    matches!(item.pattern, BindingPattern::BindingIdentifier(_))
+                        && item.initializer.is_none()
                 }),
         )
     });

@@ -1,9 +1,6 @@
 use super::*;
 
-pub(super) fn rewrite_boxed_lets(
-    statements: &mut [hir::Stmt],
-    boxed: &HashSet<hir::LocalSlot>,
-) {
+pub(super) fn rewrite_boxed_lets(statements: &mut [hir::Stmt], boxed: &HashSet<hir::LocalSlot>) {
     for statement in statements {
         match statement {
             hir::Stmt::Let { slot, init } if boxed.contains(slot) => {
@@ -52,7 +49,12 @@ pub(super) fn rewrite_boxed_lets(
             hir::Stmt::Labeled { body, .. } => {
                 rewrite_boxed_lets(std::slice::from_mut(body.as_mut()), boxed)
             }
-            hir::Stmt::For { init, cond, update, body } => {
+            hir::Stmt::For {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 let mut loop_cells: Vec<hir::LocalSlot> = Vec::new();
                 if let Some(init) = init {
                     rewrite_boxed_lets(std::slice::from_mut(init.as_mut()), boxed);

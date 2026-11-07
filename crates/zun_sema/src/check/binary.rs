@@ -142,11 +142,7 @@ impl Checker<'_> {
                 // two values), so it is accepted against anything.
                 let both_functions =
                     matches!(lhs.ty, Ty::Function(_)) && matches!(rhs.ty, Ty::Function(_));
-                if lhs.ty == rhs.ty
-                    || both_functions
-                    || lhs.ty == Ty::Any
-                    || rhs.ty == Ty::Any
-                {
+                if lhs.ty == rhs.ty || both_functions || lhs.ty == Ty::Any || rhs.ty == Ty::Any {
                     Ty::Boolean
                 } else {
                     self.error(

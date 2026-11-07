@@ -30,8 +30,14 @@ fn lowers_a_non_capturing_arrow_to_a_synthetic_method() {
 fn lowers_expression_spans_into_sequence_points() {
     let module = lower_src("function main(): number { return 1 + 2; }");
     assert!(!module.sequence_points.is_empty());
-    assert!(module.sequence_points.iter().all(|point| point.method_rid == 1));
-    assert!(module.sequence_points.iter().all(|point| point.source_end > point.source_start));
+    assert!(module
+        .sequence_points
+        .iter()
+        .all(|point| point.method_rid == 1));
+    assert!(module
+        .sequence_points
+        .iter()
+        .all(|point| point.source_end > point.source_start));
 }
 
 #[test]
@@ -99,13 +105,40 @@ fn encodes_i32_and_u32_external_call_types_in_member_metadata() {
         &ast,
         &mut diagnostics,
         &[
-            zun_sema::ExternalFunction { module: "host".into(), name: "signed".into(), params: vec![Ty::Int(IntKind { bits: 32, signed: true })], return_ty: Ty::Int(IntKind { bits: 32, signed: true }) },
-            zun_sema::ExternalFunction { module: "host".into(), name: "unsigned".into(), params: vec![Ty::Int(IntKind { bits: 32, signed: false })], return_ty: Ty::Int(IntKind { bits: 32, signed: false }) },
+            zun_sema::ExternalFunction {
+                module: "host".into(),
+                name: "signed".into(),
+                params: vec![Ty::Int(IntKind {
+                    bits: 32,
+                    signed: true,
+                })],
+                return_ty: Ty::Int(IntKind {
+                    bits: 32,
+                    signed: true,
+                }),
+            },
+            zun_sema::ExternalFunction {
+                module: "host".into(),
+                name: "unsigned".into(),
+                params: vec![Ty::Int(IntKind {
+                    bits: 32,
+                    signed: false,
+                })],
+                return_ty: Ty::Int(IntKind {
+                    bits: 32,
+                    signed: false,
+                }),
+            },
         ],
     );
     assert!(diagnostics.is_empty(), "sema: {diagnostics:?}");
     let module = lower(&hir);
-    let signatures: Vec<_> = module.tables.member_refs.iter().map(|member| module.blobs.get(member.signature).to_vec()).collect();
+    let signatures: Vec<_> = module
+        .tables
+        .member_refs
+        .iter()
+        .map(|member| module.blobs.get(member.signature).to_vec())
+        .collect();
     assert!(signatures.contains(&vec![1, 5, 5]));
     assert!(signatures.contains(&vec![1, 6, 6]));
 }
@@ -202,7 +235,13 @@ fn try_catch_finally_lowers_handler_regions() {
     // One catch region, plus a finally region guarding the try body and another
     // guarding the catch handler (a throw inside `catch` still runs `finally`).
     assert_eq!(body.handlers.len(), 3, "{:?}", body.handlers);
-    assert_eq!(body.handlers.iter().filter(|h| h.kind == HandlerKind::Finally).count(), 2);
+    assert_eq!(
+        body.handlers
+            .iter()
+            .filter(|h| h.kind == HandlerKind::Finally)
+            .count(),
+        2
+    );
     assert!(body.handlers.iter().any(|h| h.kind == HandlerKind::Catch));
     assert!(body.handlers.iter().any(|h| h.kind == HandlerKind::Finally));
 }

@@ -198,9 +198,13 @@ mod tests {
         let mut scheduler = Scheduler::new();
         let promise = promises.create();
 
-        let attachment = scheduler.park(&mut promises, Continuation::new(ContinuationId(0), promise));
+        let attachment =
+            scheduler.park(&mut promises, Continuation::new(ContinuationId(0), promise));
         assert_eq!(attachment, Attachment::Parked);
-        assert!(scheduler.next().is_none(), "a parked waiter is not runnable yet");
+        assert!(
+            scheduler.next().is_none(),
+            "a parked waiter is not runnable yet"
+        );
 
         let outcome = scheduler.settle(&mut promises, promise, Settlement::Fulfilled);
         assert!(outcome.accepted);
@@ -215,7 +219,8 @@ mod tests {
         let promise = promises.create();
         scheduler.settle(&mut promises, promise, Settlement::Fulfilled);
 
-        let attachment = scheduler.park(&mut promises, Continuation::new(ContinuationId(7), promise));
+        let attachment =
+            scheduler.park(&mut promises, Continuation::new(ContinuationId(7), promise));
         assert_eq!(attachment, Attachment::ReadyNow(Settlement::Fulfilled));
         assert_eq!(
             scheduler.next(),
@@ -235,7 +240,10 @@ mod tests {
         let second = scheduler.settle(&mut promises, promise, Settlement::Rejected);
         assert!(!second.accepted, "the first settlement wins");
         assert!(second.woken.is_empty());
-        assert_eq!(promises.state(promise), PromiseState::Settled(Settlement::Fulfilled));
+        assert_eq!(
+            promises.state(promise),
+            PromiseState::Settled(Settlement::Fulfilled)
+        );
     }
 
     #[test]
@@ -271,7 +279,10 @@ mod tests {
 
         let attachment = promises.adopt(outer, inner).expect("adoption is acyclic");
         assert_eq!(attachment, Attachment::ReadyNow(Settlement::Rejected));
-        assert_eq!(promises.state(outer), PromiseState::Settled(Settlement::Rejected));
+        assert_eq!(
+            promises.state(outer),
+            PromiseState::Settled(Settlement::Rejected)
+        );
     }
 
     #[test]
@@ -281,7 +292,11 @@ mod tests {
         let b = promises.create();
         let c = promises.create();
 
-        assert_eq!(promises.adopt(a, a), Err(AdoptError::Cycle), "self-adoption");
+        assert_eq!(
+            promises.adopt(a, a),
+            Err(AdoptError::Cycle),
+            "self-adoption"
+        );
         promises.adopt(a, b).expect("a waits on b");
         promises.adopt(b, c).expect("b waits on c");
         // c adopting a would close the loop a -> b -> c -> a: nothing could settle it.
@@ -294,7 +309,10 @@ mod tests {
         let mut scheduler = Scheduler::new();
         let promise = promises.create();
         for id in [2u32, 0, 1] {
-            scheduler.park(&mut promises, Continuation::new(ContinuationId(id), promise));
+            scheduler.park(
+                &mut promises,
+                Continuation::new(ContinuationId(id), promise),
+            );
         }
         scheduler.settle(&mut promises, promise, Settlement::Fulfilled);
 

@@ -6,7 +6,8 @@ use zun_interp::CaptureOutput;
 fn run(user: &str) -> CaptureOutput {
     let src = &zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -86,7 +87,13 @@ fn structured_clone_copies_objects() {
         console.log(JSON.stringify(original));
         console.log(JSON.stringify(copy));
     }"#);
-    assert_eq!(out.lines, [r#"{"a":1,"list":[50,2],"nested":{"s":"x"}}"#, r#"{"a":1,"list":[1,2],"nested":{"s":"x"}}"#]);
+    assert_eq!(
+        out.lines,
+        [
+            r#"{"a":1,"list":[50,2],"nested":{"s":"x"}}"#,
+            r#"{"a":1,"list":[1,2],"nested":{"s":"x"}}"#
+        ]
+    );
 }
 
 #[test]
@@ -109,8 +116,18 @@ fn url_parses_components() {
     assert_eq!(
         out.lines,
         [
-            "https:", "host.example", "host.example:8080", "8080", "/a/b", "?x=1&y=two", "#frag",
-            "https://user@host.example:8080/a/b?x=1&y=two#frag", "1", "two", "true", "false"
+            "https:",
+            "host.example",
+            "host.example:8080",
+            "8080",
+            "/a/b",
+            "?x=1&y=two",
+            "#frag",
+            "https://user@host.example:8080/a/b?x=1&y=two#frag",
+            "1",
+            "two",
+            "true",
+            "false"
         ]
     );
 }
@@ -148,9 +165,13 @@ fn url_search_params_round_trip_and_encoding() {
     assert_eq!(
         out.lines,
         [
-            "x y", "& z", "2", "a=1&b=x+y&a=2&c=%26+z",
+            "x y",
+            "& z",
+            "2",
+            "a=1&b=x+y&a=2&c=%26+z",
             "a=1&b=x+y&a=2&c=%26+z&d=hello+world%26more",
-            "a=9&c=%26+z&d=hello+world%26more", "hello world&more"
+            "a=9&c=%26+z&d=hello+world%26more",
+            "hello world&more"
         ]
     );
 }
@@ -301,7 +322,17 @@ fn response_parses_a_blob() {
     }"#);
     assert_eq!(
         out.lines,
-        ["200", "true", "OK", "application/json", "a: b", "false", "true", "7", "x"]
+        [
+            "200",
+            "true",
+            "OK",
+            "application/json",
+            "a: b",
+            "false",
+            "true",
+            "7",
+            "x"
+        ]
     );
 }
 

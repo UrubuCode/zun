@@ -27,10 +27,7 @@ impl Checker<'_> {
             || mname == "isPrototypeOf"
             || mname == "propertyIsEnumerable")
             && args.len() == 1
-            && matches!(
-                receiver.ty,
-                Ty::DynamicObject | Ty::Any | Ty::Instance(_)
-            )
+            && matches!(receiver.ty, Ty::DynamicObject | Ty::Any | Ty::Instance(_))
         {
             let argument = self.check_expr(cx, &args[0]);
             let (name, ty) = if mname == "hasOwnProperty" {
@@ -45,7 +42,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, argument] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, argument],
+                },
                 ty,
                 span,
             });
@@ -65,7 +65,9 @@ impl Checker<'_> {
         // `push()` / `unshift()` with no values only report the length.
         if receiver.ty == Ty::Array && matches!(mname, "push" | "unshift") && args.is_empty() {
             return Ok(hir::Expr {
-                kind: hir::ExprKind::ArrayLength { object: Box::new(receiver) },
+                kind: hir::ExprKind::ArrayLength {
+                    object: Box::new(receiver),
+                },
                 ty: Ty::Int(IntKind::U64),
                 span,
             });
@@ -83,12 +85,19 @@ impl Checker<'_> {
             };
             let name = self.fresh_temp_name(cx);
             let slot = cx.declare(&name, Ty::Array);
-            let local = |span| hir::Expr { kind: hir::ExprKind::Local(slot), ty: Ty::Array, span };
+            let local = |span| hir::Expr {
+                kind: hir::ExprKind::Local(slot),
+                ty: Ty::Array,
+                span,
+            };
             let mut calls = Vec::with_capacity(args.len());
             for arg in args.iter().rev() {
                 let value = self.check_expr(cx, arg);
                 calls.push(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![local(span), value] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![local(span), value],
+                    },
                     ty: Ty::Int(IntKind::U64),
                     span,
                 });
@@ -96,7 +105,10 @@ impl Checker<'_> {
             let mut result = calls.pop().expect("at least two unshifts");
             while let Some(effect) = calls.pop() {
                 result = hir::Expr {
-                    kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(effect),
+                        value: Box::new(result),
+                    },
                     ty: Ty::Int(IntKind::U64),
                     span,
                 };
@@ -104,7 +116,10 @@ impl Checker<'_> {
             return Ok(hir::Expr {
                 kind: hir::ExprKind::Sequence {
                     effect: Box::new(hir::Expr {
-                        kind: hir::ExprKind::Assign { slot, value: Box::new(receiver) },
+                        kind: hir::ExprKind::Assign {
+                            slot,
+                            value: Box::new(receiver),
+                        },
                         ty: Ty::Array,
                         span,
                     }),
@@ -133,7 +148,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, list] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, list],
+                },
                 ty: Ty::Array,
                 span,
             });
@@ -155,9 +173,19 @@ impl Checker<'_> {
             && matches!(mname, "fill" | "copyWithin")
             && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
         {
-            let (min, max, native) = if mname == "fill" { (1, 3, "arrayFill") } else { (1, 3, "arrayCopyWithin") };
+            let (min, max, native) = if mname == "fill" {
+                (1, 3, "arrayFill")
+            } else {
+                (1, 3, "arrayCopyWithin")
+            };
             if args.len() < min || args.len() > max {
-                self.error(span, format!("`{mname}` expects {min} to {max} argument(s), found {}", args.len()));
+                self.error(
+                    span,
+                    format!(
+                        "`{mname}` expects {min} to {max} argument(s), found {}",
+                        args.len()
+                    ),
+                );
                 return Ok(self.poison(span));
             }
             let Some((id, _)) = zun_natives::resolve("array", native) else {
@@ -173,23 +201,44 @@ impl Checker<'_> {
                 call_args.push(hir::Expr {
                     kind: hir::ExprKind::Unary {
                         op: hir::UnaryOp::Void,
-                        operand: Box::new(hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span }),
+                        operand: Box::new(hir::Expr {
+                            kind: hir::ExprKind::Null,
+                            ty: Ty::Any,
+                            span,
+                        }),
                     },
                     ty: Ty::Any,
                     span,
                 });
             }
-            return Ok(hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: call_args }, ty: Ty::Array, span });
+            return Ok(hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
+                ty: Ty::Array,
+                span,
+            });
         }
         // Strings hold valid UTF-8 only, so they are always well formed.
-        if receiver.ty == Ty::String && args.is_empty() && matches!(mname, "isWellFormed" | "toWellFormed") {
+        if receiver.ty == Ty::String
+            && args.is_empty()
+            && matches!(mname, "isWellFormed" | "toWellFormed")
+        {
             let Some((id, _)) = zun_natives::resolve("string", mname) else {
                 self.error(span, format!("missing String intrinsic `{mname}`"));
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
-                ty: if mname == "toWellFormed" { Ty::String } else { Ty::Boolean },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver],
+                },
+                ty: if mname == "toWellFormed" {
+                    Ty::String
+                } else {
+                    Ty::Boolean
+                },
                 span,
             });
         }
@@ -199,9 +248,16 @@ impl Checker<'_> {
                 self.error(span, "missing Array intrinsic `arrayJoin`");
                 return Ok(self.poison(span));
             };
-            let separator = hir::Expr { kind: hir::ExprKind::String(",".to_string()), ty: Ty::String, span };
+            let separator = hir::Expr {
+                kind: hir::ExprKind::String(",".to_string()),
+                ty: Ty::String,
+                span,
+            };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, separator] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, separator],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -212,12 +268,19 @@ impl Checker<'_> {
                 // push each value in order; the result is the final length.
                 let name = self.fresh_temp_name(cx);
                 let slot = cx.declare(&name, Ty::Array);
-                let local = |span| hir::Expr { kind: hir::ExprKind::Local(slot), ty: Ty::Array, span };
+                let local = |span| hir::Expr {
+                    kind: hir::ExprKind::Local(slot),
+                    ty: Ty::Array,
+                    span,
+                };
                 let mut pushes = Vec::with_capacity(args.len());
                 for arg in args.iter() {
                     let value = self.check_expr(cx, arg);
                     pushes.push(hir::Expr {
-                        kind: hir::ExprKind::ArrayPush { object: Box::new(local(span)), value: Box::new(value) },
+                        kind: hir::ExprKind::ArrayPush {
+                            object: Box::new(local(span)),
+                            value: Box::new(value),
+                        },
                         ty: Ty::Int(IntKind::U64),
                         span,
                     });
@@ -225,7 +288,10 @@ impl Checker<'_> {
                 let mut result = pushes.pop().expect("at least two pushes");
                 while let Some(effect) = pushes.pop() {
                     result = hir::Expr {
-                        kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                        kind: hir::ExprKind::Sequence {
+                            effect: Box::new(effect),
+                            value: Box::new(result),
+                        },
                         ty: Ty::Int(IntKind::U64),
                         span,
                     };
@@ -233,7 +299,10 @@ impl Checker<'_> {
                 return Ok(hir::Expr {
                     kind: hir::ExprKind::Sequence {
                         effect: Box::new(hir::Expr {
-                            kind: hir::ExprKind::Assign { slot, value: Box::new(receiver) },
+                            kind: hir::ExprKind::Assign {
+                                slot,
+                                value: Box::new(receiver),
+                            },
                             ty: Ty::Array,
                             span,
                         }),
@@ -278,7 +347,9 @@ impl Checker<'_> {
                 let elements = args
                     .iter()
                     .map(|arg| match arg {
-                        ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                        ast::Expr::Spread { expr, .. } => {
+                            ast::ArrayElement::Spread((**expr).clone())
+                        }
                         other => ast::ArrayElement::Expr(other.clone()),
                     })
                     .collect();
@@ -289,7 +360,10 @@ impl Checker<'_> {
                     return Ok(self.poison(span));
                 };
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, list] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, list],
+                    },
                     ty: Ty::Array,
                     span,
                 });
@@ -298,8 +372,10 @@ impl Checker<'_> {
             coerce_numeric_literal(&mut start, Ty::Int(IntKind::U64));
             let mut delete_count = self.check_expr(cx, &args[1]);
             coerce_numeric_literal(&mut delete_count, Ty::Int(IntKind::U64));
-            let static_ints = (start.ty.is_error() || self.is_assignable(start.ty, Ty::Int(IntKind::U64)))
-                && (delete_count.ty.is_error() || self.is_assignable(delete_count.ty, Ty::Int(IntKind::U64)));
+            let static_ints = (start.ty.is_error()
+                || self.is_assignable(start.ty, Ty::Int(IntKind::U64)))
+                && (delete_count.ty.is_error()
+                    || self.is_assignable(delete_count.ty, Ty::Int(IntKind::U64)));
             if !static_ints {
                 // Non-integer (`number` / dynamic) bounds: the runtime argument
                 // list applies the full ToIntegerOrInfinity clamping.
@@ -314,13 +390,18 @@ impl Checker<'_> {
                     return Ok(self.poison(span));
                 };
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, list] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, list],
+                    },
                     ty: Ty::Array,
                     span,
                 });
             }
-            let items: Vec<Option<hir::Expr>> =
-                args[2..].iter().map(|item| Some(self.check_expr(cx, item))).collect();
+            let items: Vec<Option<hir::Expr>> = args[2..]
+                .iter()
+                .map(|item| Some(self.check_expr(cx, item)))
+                .collect();
             let items = hir::Expr {
                 kind: hir::ExprKind::ArrayLiteral { elements: items },
                 ty: Ty::Array,
@@ -343,7 +424,10 @@ impl Checker<'_> {
             if !args.is_empty() {
                 self.error(
                     span,
-                    format!("`Array.toReversed` expects 0 arguments, found {}", args.len()),
+                    format!(
+                        "`Array.toReversed` expects 0 arguments, found {}",
+                        args.len()
+                    ),
                 );
                 return Ok(self.poison(span));
             }
@@ -352,7 +436,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver],
+                },
                 ty: Ty::Array,
                 span,
             });
@@ -363,7 +450,10 @@ impl Checker<'_> {
             if args.len() > 1 {
                 self.error(
                     span,
-                    format!("`Array.toSorted` accepts at most 1 argument, found {}", args.len()),
+                    format!(
+                        "`Array.toSorted` accepts at most 1 argument, found {}",
+                        args.len()
+                    ),
                 );
                 return Ok(self.poison(span));
             }
@@ -384,7 +474,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
                 ty: Ty::Array,
                 span,
             });
@@ -422,7 +515,9 @@ impl Checker<'_> {
             } else {
                 let vspan = value.span;
                 hir::Expr {
-                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(value),
+                    },
                     ty: Ty::Any,
                     span: vspan,
                 }
@@ -432,7 +527,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, index, value] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, index, value],
+                },
                 ty: Ty::Array,
                 span,
             });
@@ -446,7 +544,9 @@ impl Checker<'_> {
                 let elements = args
                     .iter()
                     .map(|arg| match arg {
-                        ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                        ast::Expr::Spread { expr, .. } => {
+                            ast::ArrayElement::Spread((**expr).clone())
+                        }
                         other => ast::ArrayElement::Expr(other.clone()),
                     })
                     .collect();
@@ -461,27 +561,47 @@ impl Checker<'_> {
                 };
                 let name = self.fresh_temp_name(cx);
                 let slot = cx.declare(&name, Ty::Array);
-                let local = |span| hir::Expr { kind: hir::ExprKind::Local(slot), ty: Ty::Array, span };
-                let zero = hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::Int(IntKind::U64), span };
+                let local = |span| hir::Expr {
+                    kind: hir::ExprKind::Local(slot),
+                    ty: Ty::Array,
+                    span,
+                };
+                let zero = hir::Expr {
+                    kind: hir::ExprKind::Number(0.0),
+                    ty: Ty::Int(IntKind::U64),
+                    span,
+                };
                 let copy = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id: slice_id, args: vec![receiver, zero] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: slice_id,
+                        args: vec![receiver, zero],
+                    },
                     ty: Ty::Array,
                     span,
                 };
                 let splice = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id: splice_id, args: vec![local(span), list] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: splice_id,
+                        args: vec![local(span), list],
+                    },
                     ty: Ty::Array,
                     span,
                 };
                 return Ok(hir::Expr {
                     kind: hir::ExprKind::Sequence {
                         effect: Box::new(hir::Expr {
-                            kind: hir::ExprKind::Assign { slot, value: Box::new(copy) },
+                            kind: hir::ExprKind::Assign {
+                                slot,
+                                value: Box::new(copy),
+                            },
                             ty: Ty::Array,
                             span,
                         }),
                         value: Box::new(hir::Expr {
-                            kind: hir::ExprKind::Sequence { effect: Box::new(splice), value: Box::new(local(span)) },
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(splice),
+                                value: Box::new(local(span)),
+                            },
                             ty: Ty::Array,
                             span,
                         }),
@@ -500,10 +620,15 @@ impl Checker<'_> {
             if !delete_count.ty.is_error()
                 && !self.is_assignable(delete_count.ty, Ty::Int(IntKind::U64))
             {
-                self.error(delete_count.span, "`Array.toSpliced` deleteCount must be an integer");
+                self.error(
+                    delete_count.span,
+                    "`Array.toSpliced` deleteCount must be an integer",
+                );
             }
-            let items: Vec<Option<hir::Expr>> =
-                args[2..].iter().map(|item| Some(self.check_expr(cx, item))).collect();
+            let items: Vec<Option<hir::Expr>> = args[2..]
+                .iter()
+                .map(|item| Some(self.check_expr(cx, item)))
+                .collect();
             let items = hir::Expr {
                 kind: hir::ExprKind::ArrayLiteral { elements: items },
                 ty: Ty::Array,
@@ -560,8 +685,10 @@ impl Checker<'_> {
         if receiver.ty == Ty::Array && mname == "concat" {
             // `concat(...items)`: the variadic items are gathered into
             // a managed Array; the native spreads or appends each.
-            let items: Vec<Option<hir::Expr>> =
-                args.iter().map(|item| Some(self.check_expr(cx, item))).collect();
+            let items: Vec<Option<hir::Expr>> = args
+                .iter()
+                .map(|item| Some(self.check_expr(cx, item)))
+                .collect();
             let items = hir::Expr {
                 kind: hir::ExprKind::ArrayLiteral { elements: items },
                 ty: Ty::Array,
@@ -572,7 +699,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, items] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, items],
+                },
                 ty: Ty::Array,
                 span,
             });
@@ -594,7 +724,10 @@ impl Checker<'_> {
             if args.len() > 1 {
                 self.error(
                     span,
-                    format!("`Array.flat` accepts at most 1 argument, found {}", args.len()),
+                    format!(
+                        "`Array.flat` accepts at most 1 argument, found {}",
+                        args.len()
+                    ),
                 );
                 return Ok(self.poison(span));
             }
@@ -618,7 +751,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, depth] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, depth],
+                },
                 ty: Ty::Array,
                 span,
             });
@@ -635,61 +771,62 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if receiver.ty == Ty::Array
-            && matches!(mname, "sort" | "reduce" | "reduceRight")
-        {
+        if receiver.ty == Ty::Array && matches!(mname, "sort" | "reduce" | "reduceRight") {
             // Variable-arity standard Array methods. `sort` takes an
             // optional comparator (default is ascending string order);
             // `reduce`/`reduceRight` require an initial accumulator on
             // this floor (the no-initial form is deferred). The callback
             // is a dynamic function value invoked by the native with the
             // ECMAScript argument shape.
-            let (native_name, return_ty, expected): (&str, Ty, Vec<Ty>) =
-                match (mname, args.len()) {
-                    ("sort", 0) => ("arraySortDefault", Ty::Array, vec![]),
-                    ("sort", 1) => (
-                        "arraySortBy",
-                        Ty::Array,
-                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-                    ),
-                    ("reduce", 2) => (
-                        "arrayReduce",
-                        Ty::Any,
-                        vec![Ty::Function(hir::DYNAMIC_FUNCTION), Ty::Any],
-                    ),
-                    ("reduceRight", 2) => (
-                        "arrayReduceRight",
-                        Ty::Any,
-                        vec![Ty::Function(hir::DYNAMIC_FUNCTION), Ty::Any],
-                    ),
-                    // No-initial-value form: the first/last element seeds
-                    // the accumulator; an empty array throws a TypeError.
-                    ("reduce", 1) => (
-                        "arrayReduceNoInit",
-                        Ty::Any,
-                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-                    ),
-                    ("reduceRight", 1) => (
-                        "arrayReduceRightNoInit",
-                        Ty::Any,
-                        vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-                    ),
-                    (other, found) => {
-                        self.error(
-                            span,
-                            format!(
-                                "`Array.{other}` does not accept {found} argument(s)"
-                            ),
-                        );
-                        return Ok(self.poison(span));
-                    }
-                };
+            let (native_name, return_ty, expected): (&str, Ty, Vec<Ty>) = match (mname, args.len())
+            {
+                ("sort", 0) => ("arraySortDefault", Ty::Array, vec![]),
+                ("sort", 1) => (
+                    "arraySortBy",
+                    Ty::Array,
+                    vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                ),
+                ("reduce", 2) => (
+                    "arrayReduce",
+                    Ty::Any,
+                    vec![Ty::Function(hir::DYNAMIC_FUNCTION), Ty::Any],
+                ),
+                ("reduceRight", 2) => (
+                    "arrayReduceRight",
+                    Ty::Any,
+                    vec![Ty::Function(hir::DYNAMIC_FUNCTION), Ty::Any],
+                ),
+                // No-initial-value form: the first/last element seeds
+                // the accumulator; an empty array throws a TypeError.
+                ("reduce", 1) => (
+                    "arrayReduceNoInit",
+                    Ty::Any,
+                    vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                ),
+                ("reduceRight", 1) => (
+                    "arrayReduceRightNoInit",
+                    Ty::Any,
+                    vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
+                ),
+                (other, found) => {
+                    self.error(
+                        span,
+                        format!("`Array.{other}` does not accept {found} argument(s)"),
+                    );
+                    return Ok(self.poison(span));
+                }
+            };
             let mut call_args = vec![receiver];
-            let undefined_ast = ast::Expr::Unary { op: ast::UnaryOp::Void, operand: Box::new(ast::Expr::Number { value: 0.0, span }), span };
+            let undefined_ast = ast::Expr::Unary {
+                op: ast::UnaryOp::Void,
+                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                span,
+            };
             for (arg, expected_ty) in args.iter().zip(expected) {
                 let mut value = self.check_expr(cx, arg);
                 if matches!(value.ty, Ty::Function(_)) && self.ast_function_takes_this(arg) {
-                    if let Some((bind_id, _)) = zun_natives::resolve("collections", "functionBind") {
+                    if let Some((bind_id, _)) = zun_natives::resolve("collections", "functionBind")
+                    {
                         let checked = self.check_expr(cx, &undefined_ast);
                         let bound_this = self.box_function_argument(checked);
                         value = hir::Expr {
@@ -718,11 +855,17 @@ impl Checker<'_> {
             let Some((id, _)) = zun_natives::resolve("collections", native_name)
                 .or_else(|| zun_natives::resolve("array", native_name))
             else {
-                self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                self.error(
+                    span,
+                    format!("missing collection intrinsic `{native_name}`"),
+                );
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
                 ty: return_ty,
                 span,
             });
@@ -739,9 +882,7 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if receiver.ty == Ty::Promise
-            && matches!(mname, "then" | "catch" | "finally")
-        {
+        if receiver.ty == Ty::Promise && matches!(mname, "then" | "catch" | "finally") {
             // `then`/`catch`/`finally` take optional function callbacks
             // and return a NEW Promise settled from the callback's result
             // (adopting a returned Promise). Absent callback slots lower
@@ -768,10 +909,7 @@ impl Checker<'_> {
                     Some(arg) => {
                         let value = self.check_expr(cx, arg);
                         if !value.ty.is_error()
-                            && !self.is_assignable(
-                                value.ty,
-                                Ty::Function(hir::DYNAMIC_FUNCTION),
-                            )
+                            && !self.is_assignable(value.ty, Ty::Function(hir::DYNAMIC_FUNCTION))
                         {
                             self.error(
                                 value.span,
@@ -792,7 +930,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
                 ty: Ty::Promise,
                 span,
             });
@@ -811,23 +952,32 @@ impl Checker<'_> {
                 "dynamicCall6",
             ][args.len()];
             let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
-                self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                self.error(
+                    span,
+                    format!("missing collection intrinsic `{native_name}`"),
+                );
                 return Ok(self.poison(span));
             };
             let mut call_args = vec![
                 receiver,
-                hir::Expr { kind: hir::ExprKind::String(mname.to_string()), ty: Ty::String, span: method.span },
+                hir::Expr {
+                    kind: hir::ExprKind::String(mname.to_string()),
+                    ty: Ty::String,
+                    span: method.span,
+                },
             ];
             for arg in args {
                 call_args.push(self.check_expr(cx, arg));
             }
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
                 ty: Ty::Any,
                 span,
             });
         }
         Err(receiver)
     }
-
 }

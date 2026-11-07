@@ -27,13 +27,17 @@ pub(super) fn store_into_target(
     let value = Box::new(value);
     match target {
         AssignmentTarget::AssignmentTargetIdentifier(identifier) => Ok(Expr::Assign {
-            target: Name { span: span(identifier.span) },
+            target: Name {
+                span: span(identifier.span),
+            },
             value,
             span: whole,
         }),
         AssignmentTarget::StaticMemberExpression(member) => Ok(Expr::FieldAssign {
             object: Box::new(convert_expression(source, &member.object)?),
-            field: Name { span: span(member.property.span) },
+            field: Name {
+                span: span(member.property.span),
+            },
             value,
             span: whole,
         }),
@@ -46,10 +50,14 @@ pub(super) fn store_into_target(
         AssignmentTarget::PrivateFieldExpression(member) => Ok(Expr::FieldAssign {
             object: Box::new(Expr::PrivateField {
                 object: Box::new(convert_expression(source, &member.object)?),
-                field: Name { span: span(member.field.span) },
+                field: Name {
+                    span: span(member.field.span),
+                },
                 span: span(member.span),
             }),
-            field: Name { span: span(member.field.span) },
+            field: Name {
+                span: span(member.field.span),
+            },
             value,
             span: whole,
         }),
@@ -79,18 +87,31 @@ pub(super) fn lower_assignment_target(
                 }
             }
             let rest = match &array.rest {
-                Some(rest) => Some(Box::new(lower_assignment_target(source, &rest.target, stores, whole)?)),
+                Some(rest) => Some(Box::new(lower_assignment_target(
+                    source,
+                    &rest.target,
+                    stores,
+                    whole,
+                )?)),
                 None => None,
             };
-            Ok(crate::ast::Pattern::Array { elements, rest, span: span(array.span) })
+            Ok(crate::ast::Pattern::Array {
+                elements,
+                rest,
+                span: span(array.span),
+            })
         }
         AssignmentTarget::ObjectAssignmentTarget(object) => {
             let mut properties = Vec::with_capacity(object.properties.len());
             for property in &object.properties {
                 match property {
-                    oxc_ast::ast::AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(shorthand) => {
+                    oxc_ast::ast::AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(
+                        shorthand,
+                    ) => {
                         let temp = fresh_destructure_temp();
-                        let name = Name { span: span(shorthand.binding.span) };
+                        let name = Name {
+                            span: span(shorthand.binding.span),
+                        };
                         stores.push(Stmt::Expr(Expr::Assign {
                             target: name,
                             value: Box::new(Expr::Ident(temp)),
@@ -102,16 +123,26 @@ pub(super) fn lower_assignment_target(
                         };
                         properties.push(crate::ast::PatternProperty {
                             key: crate::ast::PropertyKey::Ident(name),
-                            value: crate::ast::Pattern::Ident { name: temp, ty: None },
+                            value: crate::ast::Pattern::Ident {
+                                name: temp,
+                                ty: None,
+                            },
                             default,
                         });
                     }
-                    oxc_ast::ast::AssignmentTargetProperty::AssignmentTargetPropertyProperty(entry) => {
+                    oxc_ast::ast::AssignmentTargetProperty::AssignmentTargetPropertyProperty(
+                        entry,
+                    ) => {
                         let key = if entry.computed {
                             let Some(key_expression) = entry.name.as_expression() else {
-                                return Err("OXC adapter requires an expression computed key".into());
+                                return Err(
+                                    "OXC adapter requires an expression computed key".into()
+                                );
                             };
-                            crate::ast::PropertyKey::Computed(Box::new(convert_expression(source, key_expression)?))
+                            crate::ast::PropertyKey::Computed(Box::new(convert_expression(
+                                source,
+                                key_expression,
+                            )?))
                         } else {
                             match &entry.name {
                                 PropertyKey::StaticIdentifier(identifier) => {
@@ -127,21 +158,43 @@ pub(super) fn lower_assignment_target(
                                 _ => return Err("OXC adapter supports identifier, string, and numeric property keys only".into()),
                             }
                         };
-                        let (value, default) = lower_maybe_default(source, &entry.binding, stores, whole)?;
-                        properties.push(crate::ast::PatternProperty { key, value, default });
+                        let (value, default) =
+                            lower_maybe_default(source, &entry.binding, stores, whole)?;
+                        properties.push(crate::ast::PatternProperty {
+                            key,
+                            value,
+                            default,
+                        });
                     }
                 }
             }
             let rest = match &object.rest {
-                Some(rest) => Some(Box::new(lower_assignment_target(source, &rest.target, stores, whole)?)),
+                Some(rest) => Some(Box::new(lower_assignment_target(
+                    source,
+                    &rest.target,
+                    stores,
+                    whole,
+                )?)),
                 None => None,
             };
-            Ok(crate::ast::Pattern::Object { properties, rest, span: span(object.span) })
+            Ok(crate::ast::Pattern::Object {
+                properties,
+                rest,
+                span: span(object.span),
+            })
         }
         simple => {
             let temp = fresh_destructure_temp();
-            stores.push(Stmt::Expr(store_into_target(source, simple, Expr::Ident(temp), whole)?));
-            Ok(crate::ast::Pattern::Ident { name: temp, ty: None })
+            stores.push(Stmt::Expr(store_into_target(
+                source,
+                simple,
+                Expr::Ident(temp),
+                whole,
+            )?));
+            Ok(crate::ast::Pattern::Ident {
+                name: temp,
+                ty: None,
+            })
         }
     }
 }
@@ -155,11 +208,19 @@ pub(super) fn lower_maybe_default(
     match maybe {
         oxc_ast::ast::AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(with_default) => {
             let pattern = lower_assignment_target(source, &with_default.binding, stores, whole)?;
-            Ok((pattern, Some(convert_expression(source, &with_default.init)?)))
+            Ok((
+                pattern,
+                Some(convert_expression(source, &with_default.init)?),
+            ))
         }
         other => {
-            let target = other.as_assignment_target().ok_or("OXC adapter: unsupported assignment target")?;
-            Ok((lower_assignment_target(source, target, stores, whole)?, None))
+            let target = other
+                .as_assignment_target()
+                .ok_or("OXC adapter: unsupported assignment target")?;
+            Ok((
+                lower_assignment_target(source, target, stores, whole)?,
+                None,
+            ))
         }
     }
 }
@@ -181,11 +242,22 @@ pub(super) fn convert_destructuring_assignment(
         span: whole,
     }];
     statements.extend(stores);
-    statements.push(Stmt::Return { value: Some(Expr::Ident(whole_temp)), span: whole });
+    statements.push(Stmt::Return {
+        value: Some(Expr::Ident(whole_temp)),
+        span: whole,
+    });
     let iife = Expr::Function(FunctionExpr {
-        params: vec![crate::ast::Param { name: whole_temp, ty: None, default_value: None, is_rest: false }],
+        params: vec![crate::ast::Param {
+            name: whole_temp,
+            ty: None,
+            default_value: None,
+            is_rest: false,
+        }],
         return_type: convert_type_annotation(source, None)?,
-        body: Block { statements, span: whole },
+        body: Block {
+            statements,
+            span: whole,
+        },
         is_arrow: true,
         is_async: false,
         is_generator: false,

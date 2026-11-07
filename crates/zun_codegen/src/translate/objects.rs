@@ -8,7 +8,11 @@
 use super::*;
 
 impl Translator<'_> {
-    pub(crate) fn op_new_obj(&mut self, instr: &zun_il::Instruction, stack: &mut Vec<Slot>) -> Result<(), String> {
+    pub(crate) fn op_new_obj(
+        &mut self,
+        instr: &zun_il::Instruction,
+        stack: &mut Vec<Slot>,
+    ) -> Result<(), String> {
         let type_rid = match instr.operand {
             Operand::Token(t) => t.rid(),
             _ => return Err("newobj operand".into()),
@@ -54,30 +58,37 @@ impl Translator<'_> {
     pub(crate) fn op_unbox_any(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
         let value = stack.pop().ok_or("stack underflow")?;
         if value.1 == JitKind::Other {
-            let payload = self
-                .builder
-                .ins()
-                .load(
-                    types::I64,
-                    MemFlags::trusted(),
-                    value.0,
-                    crate::any_abi::PAYLOAD_OFFSET,
-                );
+            let payload = self.builder.ins().load(
+                types::I64,
+                MemFlags::trusted(),
+                value.0,
+                crate::any_abi::PAYLOAD_OFFSET,
+            );
             let kind = self.method_return_kind;
             if !matches!(kind, JitKind::Num(_) | JitKind::Bool) {
                 return Err("unbox.any carrier target must be scalar".into());
             }
             let result = match kind {
                 JitKind::Bool => self.builder.ins().ireduce(types::I32, payload),
-                JitKind::Num(NumKind::I8 | NumKind::U8) => self.builder.ins().ireduce(types::I8, payload),
-                JitKind::Num(NumKind::I16 | NumKind::U16) => self.builder.ins().ireduce(types::I16, payload),
-                JitKind::Num(NumKind::I32 | NumKind::U32) => self.builder.ins().ireduce(types::I32, payload),
+                JitKind::Num(NumKind::I8 | NumKind::U8) => {
+                    self.builder.ins().ireduce(types::I8, payload)
+                }
+                JitKind::Num(NumKind::I16 | NumKind::U16) => {
+                    self.builder.ins().ireduce(types::I16, payload)
+                }
+                JitKind::Num(NumKind::I32 | NumKind::U32) => {
+                    self.builder.ins().ireduce(types::I32, payload)
+                }
                 JitKind::Num(NumKind::F32) => {
                     let bits = self.builder.ins().ireduce(types::I32, payload);
-                    self.builder.ins().bitcast(types::F32, MemFlags::new(), bits)
+                    self.builder
+                        .ins()
+                        .bitcast(types::F32, MemFlags::new(), bits)
                 }
                 JitKind::Num(NumKind::F64) => {
-                    self.builder.ins().bitcast(types::F64, MemFlags::new(), payload)
+                    self.builder
+                        .ins()
+                        .bitcast(types::F64, MemFlags::new(), payload)
                 }
                 JitKind::Num(NumKind::I64 | NumKind::U64) => payload,
                 _ => unreachable!(),
@@ -108,7 +119,11 @@ impl Translator<'_> {
         Ok(())
     }
 
-    pub(crate) fn op_load_static(&mut self, instr: &zun_il::Instruction, stack: &mut Vec<Slot>) -> Result<(), String> {
+    pub(crate) fn op_load_static(
+        &mut self,
+        instr: &zun_il::Instruction,
+        stack: &mut Vec<Slot>,
+    ) -> Result<(), String> {
         let (kind, owner, field) = self.static_info(&instr.operand)?;
         let get = self.static_get_fref();
         let owner_c = self.builder.ins().iconst(types::I64, owner as i64);
@@ -124,7 +139,11 @@ impl Translator<'_> {
         Ok(())
     }
 
-    pub(crate) fn op_store_static(&mut self, instr: &zun_il::Instruction, stack: &mut Vec<Slot>) -> Result<(), String> {
+    pub(crate) fn op_store_static(
+        &mut self,
+        instr: &zun_il::Instruction,
+        stack: &mut Vec<Slot>,
+    ) -> Result<(), String> {
         let (kind, owner, field) = self.static_info(&instr.operand)?;
         let (val, _) = stack.pop().ok_or("stack underflow")?;
         if matches!(kind, JitKind::Object | JitKind::Array) {
@@ -135,7 +154,9 @@ impl Translator<'_> {
         let owner_c = self.builder.ins().iconst(types::I64, owner as i64);
         let field_c = self.builder.ins().iconst(types::I64, field as i64);
         let kind_c = self.builder.ins().iconst(types::I64, kind.to_byte() as i64);
-        self.builder.ins().call(set, &[owner_c, field_c, raw, kind_c]);
+        self.builder
+            .ins()
+            .call(set, &[owner_c, field_c, raw, kind_c]);
         stack.push((val, kind)); // stsfld leaves the stored value
         Ok(())
     }

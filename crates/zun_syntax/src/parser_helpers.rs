@@ -32,7 +32,10 @@ pub(crate) fn decode_string(raw: &str) -> String {
             '`' => out.push('`'),
             // `\xHH` — exactly two hex digits.
             'x' => match hex_escape(&inner[i..], 2) {
-                Some((ch, n)) => { out.push(ch); i += n; }
+                Some((ch, n)) => {
+                    out.push(ch);
+                    i += n;
+                }
                 None => out.push('x'),
             },
             // `\uHHHH`, or `\u{H...}` with a braced code point.
@@ -52,7 +55,10 @@ pub(crate) fn decode_string(raw: &str) -> String {
                     }
                 } else {
                     match hex_escape(&inner[i..], 4) {
-                        Some((ch, n)) => { out.push(ch); i += n; }
+                        Some((ch, n)) => {
+                            out.push(ch);
+                            i += n;
+                        }
                         None => out.push('u'),
                     }
                 }
@@ -81,37 +87,153 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
     let shift = |span: &mut Span| *span = Span::new(span.start + base, span.end + base);
     match expr {
         Expr::Ident(name) => shift(&mut name.span),
-        Expr::Assign { target, value, .. } => { shift(&mut target.span); rebase_expression_names(value, base); }
-        Expr::Binary { lhs, rhs, .. } => { rebase_expression_names(lhs, base); rebase_expression_names(rhs, base); }
-        Expr::Conditional { condition, when_true, when_false, .. } => { rebase_expression_names(condition, base); rebase_expression_names(when_true, base); rebase_expression_names(when_false, base); }
-        Expr::Unary { operand, .. } | Expr::Cast { expr: operand, .. } => rebase_expression_names(operand, base),
+        Expr::Assign { target, value, .. } => {
+            shift(&mut target.span);
+            rebase_expression_names(value, base);
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            rebase_expression_names(lhs, base);
+            rebase_expression_names(rhs, base);
+        }
+        Expr::Conditional {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } => {
+            rebase_expression_names(condition, base);
+            rebase_expression_names(when_true, base);
+            rebase_expression_names(when_false, base);
+        }
+        Expr::Unary { operand, .. } | Expr::Cast { expr: operand, .. } => {
+            rebase_expression_names(operand, base)
+        }
         Expr::Await { operand, .. } => rebase_expression_names(operand, base),
         Expr::ImportCall { specifier, .. } => rebase_expression_names(specifier, base),
         Expr::Yield { value, .. } => rebase_expression_names(value, base),
-        Expr::Call { callee, args, .. } => { shift(&mut callee.span); for arg in args { rebase_expression_names(arg, base); } }
-        Expr::ComputedCall { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
-        Expr::MethodCall { receiver, method, args, .. } | Expr::OptionalMethodCall { object: receiver, method, args, .. } => { rebase_expression_names(receiver, base); shift(&mut method.span); for arg in args { rebase_expression_names(arg, base); } }
-        Expr::StaticMethodCall { class, method, args, .. } => { shift(&mut class.span); shift(&mut method.span); for arg in args { rebase_expression_names(arg, base); } }
-        Expr::StaticField { class, field, .. } => { shift(&mut class.span); shift(&mut field.span); }
+        Expr::Call { callee, args, .. } => {
+            shift(&mut callee.span);
+            for arg in args {
+                rebase_expression_names(arg, base);
+            }
+        }
+        Expr::ComputedCall { callee, args, .. } => {
+            rebase_expression_names(callee, base);
+            for arg in args {
+                rebase_expression_names(arg, base);
+            }
+        }
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        }
+        | Expr::OptionalMethodCall {
+            object: receiver,
+            method,
+            args,
+            ..
+        } => {
+            rebase_expression_names(receiver, base);
+            shift(&mut method.span);
+            for arg in args {
+                rebase_expression_names(arg, base);
+            }
+        }
+        Expr::StaticMethodCall {
+            class,
+            method,
+            args,
+            ..
+        } => {
+            shift(&mut class.span);
+            shift(&mut method.span);
+            for arg in args {
+                rebase_expression_names(arg, base);
+            }
+        }
+        Expr::StaticField { class, field, .. } => {
+            shift(&mut class.span);
+            shift(&mut field.span);
+        }
         Expr::Spread { expr, .. } => rebase_expression_names(expr, base),
-        Expr::OptionalField { object, field, .. } | Expr::Field { object, field, .. } | Expr::PrivateField { object, field, .. } => { rebase_expression_names(object, base); shift(&mut field.span); }
-        Expr::OptionalIndex { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
+        Expr::OptionalField { object, field, .. }
+        | Expr::Field { object, field, .. }
+        | Expr::PrivateField { object, field, .. } => {
+            rebase_expression_names(object, base);
+            shift(&mut field.span);
+        }
+        Expr::OptionalIndex { object, index, .. } => {
+            rebase_expression_names(object, base);
+            rebase_expression_names(index, base);
+        }
         Expr::ChainRoot { .. } => {}
-        Expr::TempBind { value, body, .. } => { rebase_expression_names(value, base); rebase_expression_names(body, base); }
-        Expr::OptionalChain { object, body, .. } => { rebase_expression_names(object, base); rebase_expression_names(body, base); }
-        Expr::OptionalCall { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
-        Expr::New { class, args, .. } => { shift(&mut class.span); for arg in args { rebase_expression_names(arg, base); } }
-        Expr::NewDynamic { callee, args, .. } => { rebase_expression_names(callee, base); for arg in args { rebase_expression_names(arg, base); } }
-        Expr::FieldAssign { object, field, value, .. } | Expr::PrivateFieldAssign { object, field, value, .. } => { rebase_expression_names(object, base); shift(&mut field.span); rebase_expression_names(value, base); }
-        Expr::Index { object, index, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); }
-        Expr::IndexAssign { object, index, value, .. } => { rebase_expression_names(object, base); rebase_expression_names(index, base); rebase_expression_names(value, base); }
+        Expr::TempBind { value, body, .. } => {
+            rebase_expression_names(value, base);
+            rebase_expression_names(body, base);
+        }
+        Expr::OptionalChain { object, body, .. } => {
+            rebase_expression_names(object, base);
+            rebase_expression_names(body, base);
+        }
+        Expr::OptionalCall { callee, args, .. } => {
+            rebase_expression_names(callee, base);
+            for arg in args {
+                rebase_expression_names(arg, base);
+            }
+        }
+        Expr::New { class, args, .. } => {
+            shift(&mut class.span);
+            for arg in args {
+                rebase_expression_names(arg, base);
+            }
+        }
+        Expr::NewDynamic { callee, args, .. } => {
+            rebase_expression_names(callee, base);
+            for arg in args {
+                rebase_expression_names(arg, base);
+            }
+        }
+        Expr::FieldAssign {
+            object,
+            field,
+            value,
+            ..
+        }
+        | Expr::PrivateFieldAssign {
+            object,
+            field,
+            value,
+            ..
+        } => {
+            rebase_expression_names(object, base);
+            shift(&mut field.span);
+            rebase_expression_names(value, base);
+        }
+        Expr::Index { object, index, .. } => {
+            rebase_expression_names(object, base);
+            rebase_expression_names(index, base);
+        }
+        Expr::IndexAssign {
+            object,
+            index,
+            value,
+            ..
+        } => {
+            rebase_expression_names(object, base);
+            rebase_expression_names(index, base);
+            rebase_expression_names(value, base);
+        }
         Expr::ObjectLiteral { properties, .. } => {
             for member in properties {
                 match member {
                     ObjectMember::Property(property) => {
                         match &mut property.key {
                             PropertyKey::Ident(name) => shift(&mut name.span),
-                            PropertyKey::String { span, .. } | PropertyKey::Number { span, .. } => shift(span),
+                            PropertyKey::String { span, .. } | PropertyKey::Number { span, .. } => {
+                                shift(span)
+                            }
                             PropertyKey::Computed(key) => rebase_expression_names(key, base),
                         }
                         rebase_expression_names(&mut property.value, base);
@@ -123,45 +245,81 @@ pub(crate) fn rebase_expression_names(expr: &mut Expr, base: u32) {
         Expr::ArrayLiteral { elements, .. } => {
             for element in elements {
                 match element {
-                    ArrayElement::Expr(expr) | ArrayElement::Spread(expr) => rebase_expression_names(expr, base),
+                    ArrayElement::Expr(expr) | ArrayElement::Spread(expr) => {
+                        rebase_expression_names(expr, base)
+                    }
                     ArrayElement::Hole => {}
                 }
             }
         }
-        Expr::TaggedTemplate { tag, exprs, .. } => { rebase_expression_names(tag, base); for expr in exprs { rebase_expression_names(expr, base); } }
-        Expr::Function(_) | Expr::Number { .. } | Expr::BigInt { .. } | Expr::String { .. } | Expr::Template { .. } | Expr::RegexLiteral { .. } | Expr::Bool { .. } | Expr::Null { .. } => {}
+        Expr::TaggedTemplate { tag, exprs, .. } => {
+            rebase_expression_names(tag, base);
+            for expr in exprs {
+                rebase_expression_names(expr, base);
+            }
+        }
+        Expr::Function(_)
+        | Expr::Number { .. }
+        | Expr::BigInt { .. }
+        | Expr::String { .. }
+        | Expr::Template { .. }
+        | Expr::RegexLiteral { .. }
+        | Expr::Bool { .. }
+        | Expr::Null { .. } => {}
     }
 }
 
-pub(crate) fn parse_template_parts(raw: &str, span: Span, diagnostics: &mut Vec<Diagnostic>) -> Vec<crate::ast::TemplatePart> {
+pub(crate) fn parse_template_parts(
+    raw: &str,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<crate::ast::TemplatePart> {
     let inner = &raw[1..raw.len() - 1];
     let mut parts = Vec::new();
     let mut cursor = 0;
     while let Some(relative) = find_template_marker(&inner[cursor..]) {
         let start = cursor + relative;
-        if start > cursor { parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..start]))); }
+        if start > cursor {
+            parts.push(crate::ast::TemplatePart::Text(decode_template_text(
+                &inner[cursor..start],
+            )));
+        }
         let expression_start = start + 2;
         let Some(end) = find_template_interpolation_end(inner, expression_start) else {
-            diagnostics.push(Diagnostic::error("unterminated template interpolation").with_code("SYN0004").with_span(span));
+            diagnostics.push(
+                Diagnostic::error("unterminated template interpolation")
+                    .with_code("SYN0004")
+                    .with_span(span),
+            );
             return parts;
         };
         let expression = inner[expression_start..end].trim();
         let mut expression_diagnostics = Vec::new();
-        let Some(mut parsed) = parse_expression_fragment(expression, &mut expression_diagnostics) else {
+        let Some(mut parsed) = parse_expression_fragment(expression, &mut expression_diagnostics)
+        else {
             diagnostics.extend(expression_diagnostics);
-            diagnostics.push(Diagnostic::error("invalid template interpolation").with_code("SYN0005").with_span(span));
+            diagnostics.push(
+                Diagnostic::error("invalid template interpolation")
+                    .with_code("SYN0005")
+                    .with_span(span),
+            );
             cursor = end + 1;
             continue;
         };
-        if !expression_diagnostics.is_empty() { diagnostics.extend(expression_diagnostics); }
-        else {
+        if !expression_diagnostics.is_empty() {
+            diagnostics.extend(expression_diagnostics);
+        } else {
             let offset = expression.as_ptr() as usize - raw.as_ptr() as usize;
             rebase_expression_names(&mut parsed, span.start + offset as u32);
             parts.push(crate::ast::TemplatePart::Expr(Box::new(parsed)));
         }
         cursor = end + 1;
     }
-    if cursor < inner.len() { parts.push(crate::ast::TemplatePart::Text(decode_template_text(&inner[cursor..]))); }
+    if cursor < inner.len() {
+        parts.push(crate::ast::TemplatePart::Text(decode_template_text(
+            &inner[cursor..],
+        )));
+    }
     parts
 }
 
@@ -223,19 +381,37 @@ pub(crate) fn parse_tagged_template_parts(
     (cooked, raws, exprs)
 }
 
-pub(crate) fn parse_expression_fragment(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<Expr> {
+pub(crate) fn parse_expression_fragment(
+    source: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Expr> {
     let tokens = lex(source, diagnostics);
-    let mut parser = Parser { source, tokens, pos: 0, diagnostics, splits: Vec::new() };
+    let mut parser = Parser {
+        source,
+        tokens,
+        pos: 0,
+        diagnostics,
+        splits: Vec::new(),
+    };
     let expression = parser.expression();
-    if parser.at(TokenKind::Eof) && diagnostics.is_empty() { Some(expression) } else { None }
+    if parser.at(TokenKind::Eof) && diagnostics.is_empty() {
+        Some(expression)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn find_template_marker(source: &str) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut index = 0;
     while index + 1 < bytes.len() {
-        if bytes[index] == b'\\' { index += 2; continue; }
-        if bytes[index] == b'$' && bytes[index + 1] == b'{' { return Some(index); }
+        if bytes[index] == b'\\' {
+            index += 2;
+            continue;
+        }
+        if bytes[index] == b'$' && bytes[index + 1] == b'{' {
+            return Some(index);
+        }
         index += 1;
     }
     None
@@ -248,16 +424,25 @@ pub(crate) fn find_template_interpolation_end(source: &str, start: usize) -> Opt
     let mut index = start;
     while index < bytes.len() {
         let byte = bytes[index];
-        if byte == b'\\' { index += 2; continue; }
+        if byte == b'\\' {
+            index += 2;
+            continue;
+        }
         if let Some(current) = quote {
-            if byte == current { quote = None; }
+            if byte == current {
+                quote = None;
+            }
             index += 1;
             continue;
         }
-        if matches!(byte, b'"' | b'\'') { quote = Some(byte); }
-        else if byte == b'{' { depth += 1; }
-        else if byte == b'}' {
-            if depth == 0 { return Some(index); }
+        if matches!(byte, b'"' | b'\'') {
+            quote = Some(byte);
+        } else if byte == b'{' {
+            depth += 1;
+        } else if byte == b'}' {
+            if depth == 0 {
+                return Some(index);
+            }
             depth -= 1;
         }
         index += 1;
@@ -265,7 +450,9 @@ pub(crate) fn find_template_interpolation_end(source: &str, start: usize) -> Opt
     None
 }
 
-pub(crate) fn decode_template_text(text: &str) -> String { decode_string(&format!("\"{text}\"")) }
+pub(crate) fn decode_template_text(text: &str) -> String {
+    decode_string(&format!("\"{text}\""))
+}
 
 /// Map a token to its binary operator and precedence level (higher binds
 /// tighter). The order mirrors JS: `|| ?? < && < | < ^ < & < == < relational <
@@ -325,21 +512,33 @@ impl Parser<'_> {
             TokenKind::Number => {
                 self.bump();
                 let value = self.text(t).parse::<f64>().unwrap_or_else(|_| f64::NAN);
-                Expr::Number { value, span: t.span }
+                Expr::Number {
+                    value,
+                    span: t.span,
+                }
             }
             TokenKind::BigInt => {
                 self.bump();
                 let text = self.text(t);
-                Expr::BigInt { value: text[..text.len() - 1].to_owned(), span: t.span }
+                Expr::BigInt {
+                    value: text[..text.len() - 1].to_owned(),
+                    span: t.span,
+                }
             }
             TokenKind::String => {
                 self.bump();
-                Expr::String { value: decode_string(self.text(t)), span: t.span }
+                Expr::String {
+                    value: decode_string(self.text(t)),
+                    span: t.span,
+                }
             }
             TokenKind::Template => {
                 self.bump();
                 let raw = self.text(t).to_string();
-                Expr::Template { parts: parse_template_parts(&raw, t.span, &mut self.diagnostics), span: t.span }
+                Expr::Template {
+                    parts: parse_template_parts(&raw, t.span, &mut self.diagnostics),
+                    span: t.span,
+                }
             }
             TokenKind::Regex => {
                 self.bump();
@@ -352,9 +551,24 @@ impl Parser<'_> {
                     span: t.span,
                 }
             }
-            TokenKind::KwTrue => { self.bump(); Expr::Bool { value: true, span: t.span } }
-            TokenKind::KwFalse => { self.bump(); Expr::Bool { value: false, span: t.span } }
-            TokenKind::KwNull => { self.bump(); Expr::Null { span: t.span } }
+            TokenKind::KwTrue => {
+                self.bump();
+                Expr::Bool {
+                    value: true,
+                    span: t.span,
+                }
+            }
+            TokenKind::KwFalse => {
+                self.bump();
+                Expr::Bool {
+                    value: false,
+                    span: t.span,
+                }
+            }
+            TokenKind::KwNull => {
+                self.bump();
+                Expr::Null { span: t.span }
+            }
             TokenKind::KwNew => {
                 let start = self.bump().span;
                 if self.at(TokenKind::LParen) {
@@ -365,7 +579,11 @@ impl Parser<'_> {
                     self.expect(TokenKind::LParen, "`(`");
                     let args = self.arguments();
                     let close = self.tokens[self.pos - 1].span;
-                    return Expr::NewDynamic { callee: Box::new(callee), args, span: start.to(close) };
+                    return Expr::NewDynamic {
+                        callee: Box::new(callee),
+                        args,
+                        span: start.to(close),
+                    };
                 }
                 let class = self.dotted_name("a class name");
                 // `new Box<number>(...)`: constructor type arguments are erased.
@@ -375,7 +593,11 @@ impl Parser<'_> {
                 self.expect(TokenKind::LParen, "`(`");
                 let args = self.arguments();
                 let close = self.tokens[self.pos - 1].span;
-                Expr::New { class, args, span: start.to(close) }
+                Expr::New {
+                    class,
+                    args,
+                    span: start.to(close),
+                }
             }
             TokenKind::KwFunction => self.function_expression(false),
             TokenKind::KwAsync => {
@@ -385,7 +607,12 @@ impl Parser<'_> {
                 }
                 let params = if self.at(TokenKind::Ident) {
                     let name = self.name("an async arrow parameter");
-                    vec![Param { name, ty: None, default_value: None, is_rest: false }]
+                    vec![Param {
+                        name,
+                        ty: None,
+                        default_value: None,
+                        is_rest: false,
+                    }]
                 } else {
                     self.expect(TokenKind::LParen, "`(` after async");
                     let params = self.parameters();
@@ -408,18 +635,29 @@ impl Parser<'_> {
                 let start = self.bump().span;
                 self.expect(TokenKind::LParen, "`(` after import");
                 let specifier = self.expression();
-                let end = self.expect(TokenKind::RParen, "`)` after import specifier").map_or(specifier.span(), |token| token.span);
-                Expr::ImportCall { span: start.to(end), specifier: Box::new(specifier) }
+                let end = self
+                    .expect(TokenKind::RParen, "`)` after import specifier")
+                    .map_or(specifier.span(), |token| token.span);
+                Expr::ImportCall {
+                    span: start.to(end),
+                    specifier: Box::new(specifier),
+                }
             }
             TokenKind::KwAwait => {
                 let start = self.bump().span;
                 let operand = self.expression();
-                Expr::Await { span: start.to(operand.span()), operand: Box::new(operand) }
+                Expr::Await {
+                    span: start.to(operand.span()),
+                    operand: Box::new(operand),
+                }
             }
             TokenKind::KwYield => {
                 let start = self.bump().span;
                 let value = self.expression();
-                Expr::Yield { span: start.to(value.span()), value: Box::new(value) }
+                Expr::Yield {
+                    span: start.to(value.span()),
+                    value: Box::new(value),
+                }
             }
             TokenKind::Ident => {
                 self.bump();
@@ -427,7 +665,12 @@ impl Parser<'_> {
                 if self.eat(TokenKind::Arrow) {
                     let body = self.arrow_body();
                     return Expr::Function(FunctionExpr {
-                        params: vec![Param { name, ty: None, default_value: None, is_rest: false }],
+                        params: vec![Param {
+                            name,
+                            ty: None,
+                            default_value: None,
+                            is_rest: false,
+                        }],
                         return_type: None,
                         span: t.span.to(body.span),
                         body,
@@ -447,7 +690,15 @@ impl Parser<'_> {
                     self.expect(TokenKind::RParen, "`)` after arrow parameters");
                     self.expect(TokenKind::Arrow, "`=>` after arrow parameters");
                     let body = self.arrow_body();
-                    return Expr::Function(FunctionExpr { params, return_type: None, span: start.to(body.span), body, is_arrow: true, is_async: false, is_generator: false });
+                    return Expr::Function(FunctionExpr {
+                        params,
+                        return_type: None,
+                        span: start.to(body.span),
+                        body,
+                        is_arrow: true,
+                        is_async: false,
+                        is_generator: false,
+                    });
                 }
                 self.bump();
                 let inner = self.expression();
@@ -490,7 +741,11 @@ impl Parser<'_> {
             if self.at(TokenKind::Ident) {
                 let text = self.text(self.peek());
                 if (text == "get" || text == "set") && self.accessor_follows() {
-                    accessor = Some(if text == "get" { PropertyKind::Get } else { PropertyKind::Set });
+                    accessor = Some(if text == "get" {
+                        PropertyKind::Get
+                    } else {
+                        PropertyKind::Set
+                    });
                     self.bump(); // consume `get`/`set`
                 }
             }
@@ -510,7 +765,10 @@ impl Parser<'_> {
                     TokenKind::Number => {
                         let token = self.bump();
                         let value = self.text(token).parse::<f64>().unwrap_or(f64::NAN);
-                        PropertyKey::Number { value, span: token.span }
+                        PropertyKey::Number {
+                            value,
+                            span: token.span,
+                        }
                     }
                     kind if kind == TokenKind::Ident || kind.is_keyword() => {
                         let token = self.bump();
@@ -546,7 +804,9 @@ impl Parser<'_> {
                     Expr::Ident(*name)
                 } else {
                     self.error_at(self.peek().span, "`:` after property name");
-                    Expr::Null { span: self.peek().span }
+                    Expr::Null {
+                        span: self.peek().span,
+                    }
                 };
                 properties.push(ObjectMember::Property(ObjectProperty {
                     key,
@@ -685,14 +945,22 @@ impl Parser<'_> {
                         self.error_at(field.span, "private methods are not supported");
                     }
                     let span = expr.span().to(field.span);
-                    expr = Expr::PrivateField { object: Box::new(expr), field, span };
+                    expr = Expr::PrivateField {
+                        object: Box::new(expr),
+                        field,
+                        span,
+                    };
                 }
                 TokenKind::Dot => {
                     self.bump();
                     if self.eat(TokenKind::Hash) {
                         let field = self.name("a private field name");
                         let span = expr.span().to(field.span);
-                        expr = Expr::PrivateField { object: Box::new(expr), field, span };
+                        expr = Expr::PrivateField {
+                            object: Box::new(expr),
+                            field,
+                            span,
+                        };
                         continue;
                     }
                     let member = self.member_name("a field or method name");
@@ -909,13 +1177,27 @@ impl Parser<'_> {
                 }
                 Expr::Field { object, field, .. } => {
                     let span = object.span().to(value.span());
-                    return Expr::FieldAssign { object, field, value: Box::new(value), span };
+                    return Expr::FieldAssign {
+                        object,
+                        field,
+                        value: Box::new(value),
+                        span,
+                    };
                 }
                 Expr::PrivateField { object, field, .. } => {
                     let span = object.span().to(value.span());
                     let private_span = object.span().to(field.span);
-                    let private = Expr::PrivateField { object, field, span: private_span };
-                    return Expr::FieldAssign { object: Box::new(private), field, value: Box::new(value), span };
+                    let private = Expr::PrivateField {
+                        object,
+                        field,
+                        span: private_span,
+                    };
+                    return Expr::FieldAssign {
+                        object: Box::new(private),
+                        field,
+                        value: Box::new(value),
+                        span,
+                    };
                 }
                 Expr::Index { object, index, .. } => {
                     let span = object.span().to(value.span());
@@ -1123,7 +1405,12 @@ impl Parser<'_> {
                 // the parameter is `any` (it accepts the value or `null`),
                 // defaulting to `null` when the argument is omitted. The empty
                 // span resolves to `Ty::Any` in sema.
-                ty = Some(TypeAnnotation { name: Name { span: Span::empty_at(name.span.start) }, is_array: false });
+                ty = Some(TypeAnnotation {
+                    name: Name {
+                        span: Span::empty_at(name.span.start),
+                    },
+                    is_array: false,
+                });
                 Some(Box::new(Expr::Null { span: name.span }))
             } else {
                 None
@@ -1206,7 +1493,9 @@ impl Parser<'_> {
             TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket
         ) {
             self.skip_type_atom();
-            Name { span: Span::empty_at(start) }
+            Name {
+                span: Span::empty_at(start),
+            }
         } else {
             let name = self.type_name(what);
             // Generic type arguments (`Array<T>`, `Map<K, V>`, `Box<number>`)
@@ -1229,7 +1518,12 @@ impl Parser<'_> {
         // if one member was, so array-ness is dropped.
         if self.at(TokenKind::Pipe) || self.at(TokenKind::Amp) {
             self.skip_union_rest();
-            return TypeAnnotation { name: Name { span: Span::empty_at(start) }, is_array: false };
+            return TypeAnnotation {
+                name: Name {
+                    span: Span::empty_at(start),
+                },
+                is_array: false,
+            };
         }
         TypeAnnotation { name, is_array }
     }

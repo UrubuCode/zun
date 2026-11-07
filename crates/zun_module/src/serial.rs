@@ -32,7 +32,12 @@ pub fn write_tables(tables: &Tables) -> Vec<u8> {
         w.extend([r.name.0, r.signature.0, kind]);
     });
     write_table(&mut out, &tables.method_defs, |w, r| {
-        w.extend([r.name.0, r.signature.0, r.body_offset, u32::from(r.is_static)]);
+        w.extend([
+            r.name.0,
+            r.signature.0,
+            r.body_offset,
+            u32::from(r.is_static),
+        ]);
     });
     write_table(&mut out, &tables.type_refs, |w, r| {
         w.extend([r.scope.to_raw(), r.name.0, r.namespace.0]);

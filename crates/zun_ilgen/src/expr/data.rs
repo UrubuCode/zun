@@ -15,7 +15,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     Operand::Token(Token::new(TableKind::MethodDef, rid)),
                 ));
             }
-            RegexPlan::Fallback { regexp_new_id, is_match_id, pattern, flags } => {
+            RegexPlan::Fallback {
+                regexp_new_id,
+                is_match_id,
+                pattern,
+                flags,
+            } => {
                 // regexpIsMatch(regexpNew(pattern, flags), subject) —
                 // identical to the ordinary (non-static) regex path.
                 let (new_id, match_id) = (*regexp_new_id, *is_match_id);
@@ -46,7 +51,13 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Allocate with default field values, then run the constructor.
-    pub(super) fn lower_new_with_constructor(&mut self, class: &hir::ClassIndex, defaults: &[hir::Expr], func: &hir::FuncIndex, args: &[hir::Expr]) {
+    pub(super) fn lower_new_with_constructor(
+        &mut self,
+        class: &hir::ClassIndex,
+        defaults: &[hir::Expr],
+        func: &hir::FuncIndex,
+        args: &[hir::Expr],
+    ) {
         // Allocate with default field values, then run the constructor
         // on a duplicate of the instance handle. Every call leaves one
         // value (void included), so discard it; the instance remains.
@@ -70,8 +81,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         // a duplicated handle at its positional index, discarding the
         // value `StoreArray` leaves behind. The array stays on the stack
         // as the literal's result. `StoreArray` boxes each value to Any.
-        let length = i32::try_from(elements.len())
-            .expect("array literal length exceeds i32 range");
+        let length = i32::try_from(elements.len()).expect("array literal length exceeds i32 range");
         self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(length)));
         self.emit(Instruction::simple(Opcode::NewArray));
         for (index, element) in elements.iter().enumerate() {
@@ -79,8 +89,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             // overwrite the default fill with `undefined`, so a hole
             // reads as `undefined` (not `0`) while still counting toward
             // `length`.
-            let index = i32::try_from(index)
-                .expect("array literal index exceeds i32 range");
+            let index = i32::try_from(index).expect("array literal index exceeds i32 range");
             self.emit(Instruction::simple(Opcode::Dup));
             self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(index)));
             match element {
@@ -94,7 +103,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                     // `undefined`, but is absent from own-key enumeration).
                     let (id, _) = zun_natives::resolve("collections", "arrayMakeHole")
                         .expect("arrayMakeHole intrinsic");
-                    self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32)));
+                    self.emit(Instruction::new(
+                        Opcode::CallBuiltin,
+                        Operand::Imm32(id as i32),
+                    ));
                     self.emit(Instruction::simple(Opcode::Pop));
                 }
             }
@@ -119,7 +131,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 hir::ArrayPart::Hole => {
                     let (id, _) = zun_natives::resolve("collections", "arrayPushHole")
                         .expect("arrayPushHole intrinsic");
-                    self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32)));
+                    self.emit(Instruction::new(
+                        Opcode::CallBuiltin,
+                        Operand::Imm32(id as i32),
+                    ));
                 }
                 hir::ArrayPart::Spread { builtin, source } => {
                     self.expr(source);
@@ -136,7 +151,13 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Instance field store; leaves the stored value.
-    pub(super) fn lower_field_set(&mut self, object: &hir::Expr, class: &hir::ClassIndex, field_slot: &u16, value: &hir::Expr) {
+    pub(super) fn lower_field_set(
+        &mut self,
+        object: &hir::Expr,
+        class: &hir::ClassIndex,
+        field_slot: &u16,
+        value: &hir::Expr,
+    ) {
         // [object, value] -> stfld -> [value]. stfld leaves the stored
         // value so the assignment yields it; in statement position the
         // always-pop rule discards it.

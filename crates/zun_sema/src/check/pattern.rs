@@ -23,16 +23,28 @@ impl Checker<'_> {
             }
             ast::Pattern::Array { elements, rest, .. } => {
                 // A string destructures by code point.
-                let value = if value.ty == Ty::String { self.spread_source_to_array(value) } else { value };
+                let value = if value.ty == Ty::String {
+                    self.spread_source_to_array(value)
+                } else {
+                    value
+                };
                 if !matches!(value.ty, Ty::Array | Ty::Any | Ty::Error) {
                     self.error(span, "array destructuring requires an Array or any value");
                 }
                 // With defaults the iterator is pulled one element at a time so a
                 // throwing default closes it before later elements are read.
                 if value.ty == Ty::Any
-                    && elements.iter().flatten().any(|element| element.default.is_some())
+                    && elements
+                        .iter()
+                        .flatten()
+                        .any(|element| element.default.is_some())
                 {
-                    if let (Some((open, _)), Some((step, _)), Some((rest_id, _)), Some((finish, _))) = (
+                    if let (
+                        Some((open, _)),
+                        Some((step, _)),
+                        Some((rest_id, _)),
+                        Some((finish, _)),
+                    ) = (
                         zun_natives::resolve("array", "destructOpen"),
                         zun_natives::resolve("array", "destructStep"),
                         zun_natives::resolve("array", "destructRest"),
@@ -42,18 +54,29 @@ impl Checker<'_> {
                         out.push(hir::Stmt::Let {
                             slot: source,
                             init: hir::Expr {
-                                kind: hir::ExprKind::CallBuiltin { id: open, args: vec![value] },
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id: open,
+                                    args: vec![value],
+                                },
                                 ty: Ty::Any,
                                 span,
                             },
                         });
-                        let local = || hir::Expr { kind: hir::ExprKind::Local(source), ty: Ty::Any, span };
+                        let local = || hir::Expr {
+                            kind: hir::ExprKind::Local(source),
+                            ty: Ty::Any,
+                            span,
+                        };
                         let finish_call = |throwing: bool| hir::Expr {
                             kind: hir::ExprKind::CallBuiltin {
                                 id: finish,
                                 args: vec![
                                     local(),
-                                    hir::Expr { kind: hir::ExprKind::Boolean(throwing), ty: Ty::Boolean, span },
+                                    hir::Expr {
+                                        kind: hir::ExprKind::Boolean(throwing),
+                                        ty: Ty::Boolean,
+                                        span,
+                                    },
                                 ],
                             },
                             ty: Ty::Boolean,
@@ -68,7 +91,11 @@ impl Checker<'_> {
                                         id: step,
                                         args: vec![
                                             local(),
-                                            hir::Expr { kind: hir::ExprKind::Number(index as f64), ty: Ty::F64, span },
+                                            hir::Expr {
+                                                kind: hir::ExprKind::Number(index as f64),
+                                                ty: Ty::F64,
+                                                span,
+                                            },
                                         ],
                                     },
                                     ty: Ty::Any,
@@ -81,13 +108,18 @@ impl Checker<'_> {
                                     id: step,
                                     args: vec![
                                         local(),
-                                        hir::Expr { kind: hir::ExprKind::Number(index as f64), ty: Ty::F64, span },
+                                        hir::Expr {
+                                            kind: hir::ExprKind::Number(index as f64),
+                                            ty: Ty::F64,
+                                            span,
+                                        },
                                     ],
                                 },
                                 ty: Ty::Any,
                                 span,
                             };
-                            let read = self.apply_default(cx, read, element.default.as_ref(), &mut inner);
+                            let read =
+                                self.apply_default(cx, read, element.default.as_ref(), &mut inner);
                             self.bind_pattern(cx, &element.pattern, read, &mut inner);
                         }
                         if let Some(rest) = rest {
@@ -134,7 +166,10 @@ impl Checker<'_> {
                 let value = if value.ty == Ty::Any {
                     // Without a rest element only `elements.len()` values are taken
                     // and an unfinished iterator is closed afterwards.
-                    let limited = rest.is_none().then(|| zun_natives::resolve("array", "arrayDestructure")).flatten();
+                    let limited = rest
+                        .is_none()
+                        .then(|| zun_natives::resolve("array", "arrayDestructure"))
+                        .flatten();
                     if let Some((id, _)) = limited {
                         hir::Expr {
                             kind: hir::ExprKind::CallBuiltin {
@@ -152,21 +187,27 @@ impl Checker<'_> {
                             span,
                         }
                     } else {
-                    match zun_natives::resolve("array", "arrayFrom") {
-                        Some((id, _)) => hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
-                            ty: Ty::Array,
-                            span,
-                        },
-                        None => value,
-                    }
+                        match zun_natives::resolve("array", "arrayFrom") {
+                            Some((id, _)) => hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![value],
+                                },
+                                ty: Ty::Array,
+                                span,
+                            },
+                            None => value,
+                        }
                     }
                 } else {
                     value
                 };
                 let temp = cx.declare(&self.fresh_temp_name(cx), value.ty);
                 let temp_ty = value.ty;
-                out.push(hir::Stmt::Let { slot: temp, init: value });
+                out.push(hir::Stmt::Let {
+                    slot: temp,
+                    init: value,
+                });
                 for (index, element) in elements.iter().enumerate() {
                     let Some(element) = element else { continue };
                     let read = self.array_element_read(temp, temp_ty, index, span);
@@ -178,43 +219,59 @@ impl Checker<'_> {
                     self.bind_pattern(cx, rest, read, out);
                 }
             }
-            ast::Pattern::Object { properties, rest, .. } => {
-                if !matches!(value.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_) | Ty::Error) {
+            ast::Pattern::Object {
+                properties, rest, ..
+            } => {
+                if !matches!(
+                    value.ty,
+                    Ty::Any | Ty::DynamicObject | Ty::Instance(_) | Ty::Error
+                ) {
                     self.error(span, "object destructuring requires an object value");
                 }
                 let temp = cx.declare(&self.fresh_temp_name(cx), value.ty);
                 let temp_ty = value.ty;
-                out.push(hir::Stmt::Let { slot: temp, init: value });
+                out.push(hir::Stmt::Let {
+                    slot: temp,
+                    init: value,
+                });
                 let mut excluded: Vec<String> = Vec::new();
                 // Computed keys are evaluated exactly once (into a temp) and
                 // then also excluded from the `...rest` object.
                 let mut computed: Vec<(hir::LocalSlot, Ty)> = Vec::new();
                 for property in properties {
-                    let (read, static_key) = if let ast::PropertyKey::Computed(key_expr) = &property.key {
-                        let key_value = self.check_expr(cx, key_expr);
-                        let key_ty = key_value.ty;
-                        let key_temp = cx.declare(&self.fresh_temp_name(cx), key_ty);
-                        out.push(hir::Stmt::Let { slot: key_temp, init: key_value });
-                        computed.push((key_temp, key_ty));
-                        let object = hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span };
-                        (
-                            hir::Expr {
-                                kind: hir::ExprKind::DynamicGetValue {
-                                    object: Box::new(object),
-                                    key: Box::new(hir::Expr {
-                                        kind: hir::ExprKind::Local(key_temp),
-                                        ty: key_ty,
-                                        span,
-                                    }),
-                                },
-                                ty: Ty::Any,
+                    let (read, static_key) =
+                        if let ast::PropertyKey::Computed(key_expr) = &property.key {
+                            let key_value = self.check_expr(cx, key_expr);
+                            let key_ty = key_value.ty;
+                            let key_temp = cx.declare(&self.fresh_temp_name(cx), key_ty);
+                            out.push(hir::Stmt::Let {
+                                slot: key_temp,
+                                init: key_value,
+                            });
+                            computed.push((key_temp, key_ty));
+                            let object = hir::Expr {
+                                kind: hir::ExprKind::Local(temp),
+                                ty: temp_ty,
                                 span,
-                            },
-                            None,
-                        )
-                    } else {
-                        self.object_member_read(cx, temp, temp_ty, &property.key, span)
-                    };
+                            };
+                            (
+                                hir::Expr {
+                                    kind: hir::ExprKind::DynamicGetValue {
+                                        object: Box::new(object),
+                                        key: Box::new(hir::Expr {
+                                            kind: hir::ExprKind::Local(key_temp),
+                                            ty: key_ty,
+                                            span,
+                                        }),
+                                    },
+                                    ty: Ty::Any,
+                                    span,
+                                },
+                                None,
+                            )
+                        } else {
+                            self.object_member_read(cx, temp, temp_ty, &property.key, span)
+                        };
                     if let Some(key) = static_key {
                         excluded.push(key);
                     }
@@ -224,7 +281,11 @@ impl Checker<'_> {
                 if let Some(rest) = rest {
                     let extra: Vec<hir::Expr> = computed
                         .iter()
-                        .map(|&(slot, ty)| hir::Expr { kind: hir::ExprKind::Local(slot), ty, span })
+                        .map(|&(slot, ty)| hir::Expr {
+                            kind: hir::ExprKind::Local(slot),
+                            ty,
+                            span,
+                        })
                         .collect();
                     let read = self.object_rest_read(temp, temp_ty, &excluded, extra, span);
                     self.bind_pattern(cx, rest, read, out);
@@ -236,7 +297,13 @@ impl Checker<'_> {
     /// Read array element `index` from the temp holding the source array.
     /// Uses `arrayAt`, which yields `undefined` for an out-of-range index
     /// (so trailing holes and defaults read `undefined` rather than trapping).
-    pub(in crate::check) fn array_element_read(&mut self, temp: hir::LocalSlot, temp_ty: Ty, index: usize, span: Span) -> hir::Expr {
+    pub(in crate::check) fn array_element_read(
+        &mut self,
+        temp: hir::LocalSlot,
+        temp_ty: Ty,
+        index: usize,
+        span: Span,
+    ) -> hir::Expr {
         let Some((id, _)) = zun_natives::resolve("array", "arrayAt") else {
             self.error(span, "missing `arrayAt` intrinsic");
             return self.poison(span);
@@ -245,8 +312,16 @@ impl Checker<'_> {
             kind: hir::ExprKind::CallBuiltin {
                 id,
                 args: vec![
-                    hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span },
-                    hir::Expr { kind: hir::ExprKind::Number(index as f64), ty: Ty::F64, span },
+                    hir::Expr {
+                        kind: hir::ExprKind::Local(temp),
+                        ty: temp_ty,
+                        span,
+                    },
+                    hir::Expr {
+                        kind: hir::ExprKind::Number(index as f64),
+                        ty: Ty::F64,
+                        span,
+                    },
                 ],
             },
             ty: Ty::Any,
@@ -255,7 +330,13 @@ impl Checker<'_> {
     }
 
     /// Collect array elements from `start` to the end into a fresh Array.
-    pub(in crate::check) fn array_rest_read(&mut self, temp: hir::LocalSlot, temp_ty: Ty, start: usize, span: Span) -> hir::Expr {
+    pub(in crate::check) fn array_rest_read(
+        &mut self,
+        temp: hir::LocalSlot,
+        temp_ty: Ty,
+        start: usize,
+        span: Span,
+    ) -> hir::Expr {
         let Some((id, _)) = zun_natives::resolve("array", "arraySlice") else {
             self.error(span, "missing `arraySlice` intrinsic");
             return self.poison(span);
@@ -264,7 +345,11 @@ impl Checker<'_> {
             kind: hir::ExprKind::CallBuiltin {
                 id,
                 args: vec![
-                    hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span },
+                    hir::Expr {
+                        kind: hir::ExprKind::Local(temp),
+                        ty: temp_ty,
+                        span,
+                    },
                     hir::Expr {
                         kind: hir::ExprKind::Number(start as f64),
                         ty: Ty::Int(IntKind::U64),
@@ -287,7 +372,11 @@ impl Checker<'_> {
         key: &ast::PropertyKey,
         span: Span,
     ) -> (hir::Expr, Option<String>) {
-        let object = hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span };
+        let object = hir::Expr {
+            kind: hir::ExprKind::Local(temp),
+            ty: temp_ty,
+            span,
+        };
         let name = match key {
             ast::PropertyKey::Ident(name) => Some(self.text(name).to_string()),
             ast::PropertyKey::String { value, .. } => Some(value.clone()),
@@ -300,7 +389,11 @@ impl Checker<'_> {
                 if let Some((field_slot, ty)) = self.field_of(class, &name) {
                     return (
                         hir::Expr {
-                            kind: hir::ExprKind::FieldGet { object: Box::new(object), class, field_slot },
+                            kind: hir::ExprKind::FieldGet {
+                                object: Box::new(object),
+                                class,
+                                field_slot,
+                            },
                             ty,
                             span,
                         },
@@ -310,7 +403,10 @@ impl Checker<'_> {
             }
             return (
                 hir::Expr {
-                    kind: hir::ExprKind::DynamicGet { object: Box::new(object), name: name.clone() },
+                    kind: hir::ExprKind::DynamicGet {
+                        object: Box::new(object),
+                        name: name.clone(),
+                    },
                     ty: Ty::Any,
                     span,
                 },
@@ -318,11 +414,16 @@ impl Checker<'_> {
             );
         }
         // Computed key: evaluate the key expression and read dynamically.
-        let ast::PropertyKey::Computed(expr) = key else { unreachable!() };
+        let ast::PropertyKey::Computed(expr) = key else {
+            unreachable!()
+        };
         let key_expr = self.check_expr(cx, expr);
         (
             hir::Expr {
-                kind: hir::ExprKind::DynamicGetValue { object: Box::new(object), key: Box::new(key_expr) },
+                kind: hir::ExprKind::DynamicGetValue {
+                    object: Box::new(object),
+                    key: Box::new(key_expr),
+                },
                 ty: Ty::Any,
                 span,
             },
@@ -358,9 +459,15 @@ impl Checker<'_> {
             kind: hir::ExprKind::CallBuiltin {
                 id,
                 args: vec![
-                    hir::Expr { kind: hir::ExprKind::Local(temp), ty: temp_ty, span },
                     hir::Expr {
-                        kind: hir::ExprKind::ArrayLiteral { elements: excluded_elements },
+                        kind: hir::ExprKind::Local(temp),
+                        ty: temp_ty,
+                        span,
+                    },
+                    hir::Expr {
+                        kind: hir::ExprKind::ArrayLiteral {
+                            elements: excluded_elements,
+                        },
                         ty: Ty::Array,
                         span,
                     },

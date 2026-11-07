@@ -5,7 +5,9 @@ pub(super) fn is_number_literal(expr: &hir::Expr) -> bool {
 }
 
 fn fits_int(v: f64, k: IntKind) -> bool {
-    if v.fract() != 0.0 { return false; }
+    if v.fract() != 0.0 {
+        return false;
+    }
     let (lo, hi) = int_range(k);
     v >= lo && v <= hi
 }
@@ -26,10 +28,16 @@ pub(super) fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
         let span = expr.span;
         let inner = std::mem::replace(
             expr,
-            hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+            hir::Expr {
+                kind: hir::ExprKind::Null,
+                ty: Ty::Any,
+                span,
+            },
         );
         *expr = hir::Expr {
-            kind: hir::ExprKind::Convert { value: Box::new(inner) },
+            kind: hir::ExprKind::Convert {
+                value: Box::new(inner),
+            },
             ty: expected,
             span,
         };
@@ -42,23 +50,40 @@ pub(super) fn coerce_numeric_literal(expr: &mut hir::Expr, expected: Ty) {
         && matches!(
             (expr.ty, expected),
             (Ty::Int(_), Ty::F64)
-                | (Ty::F64, Ty::Int(IntKind { bits: 64, signed: true }))
+                | (
+                    Ty::F64,
+                    Ty::Int(IntKind {
+                        bits: 64,
+                        signed: true
+                    })
+                )
         )
     {
         let span = expr.span;
         let inner = std::mem::replace(
             expr,
-            hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+            hir::Expr {
+                kind: hir::ExprKind::Null,
+                ty: Ty::Any,
+                span,
+            },
         );
         *expr = hir::Expr {
-            kind: hir::ExprKind::Convert { value: Box::new(inner) },
+            kind: hir::ExprKind::Convert {
+                value: Box::new(inner),
+            },
             ty: expected,
             span,
         };
         return;
     }
-    if !is_number_literal(expr) { return; }
-    let v = match expr.kind { hir::ExprKind::Number(v) => v, _ => return };
+    if !is_number_literal(expr) {
+        return;
+    }
+    let v = match expr.kind {
+        hir::ExprKind::Number(v) => v,
+        _ => return,
+    };
     match expected {
         Ty::Float(_) => expr.ty = expected,
         Ty::Int(k) if fits_int(v, k) => expr.ty = expected,

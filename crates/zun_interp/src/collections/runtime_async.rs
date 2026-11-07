@@ -17,7 +17,11 @@ impl<'a> Interp<'a> {
                 let message = "Chaining cycle detected for promise #<Promise>";
                 if let Some(Value::Object(error)) = self.make_error_value("TypeError", message) {
                     let reason = zun_core::Any::object(error.addr() as usize);
-                    self.settle_promise_reject_value(target, reason, format!("TypeError: {message}"));
+                    self.settle_promise_reject_value(
+                        target,
+                        reason,
+                        format!("TypeError: {message}"),
+                    );
                 }
                 return;
             }
@@ -96,12 +100,16 @@ impl<'a> Interp<'a> {
             // A plain object's `then` is read once, through its accessor and
             // prototype chain, and adopted only when callable.
             let dynamic_then = if typed_then.is_none()
-                && zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj) && heap.array_len(obj).is_none())
-            {
+                && zun_gc::with_current_heap(|heap| {
+                    heap.is_dynamic_object(obj) && heap.array_len(obj).is_none()
+                }) {
                 match self.dynamic_member_get(obj, "then") {
                     Ok(Value::Function(handle)) => Some(Value::Function(handle)),
                     Ok(Value::Any(any)) => zun_gc::with_current_heap(|heap| {
-                        match crate::collections::unbox_function_box(Value::unbox_any(any, heap).unwrap_or(Value::Void), heap) {
+                        match crate::collections::unbox_function_box(
+                            Value::unbox_any(any, heap).unwrap_or(Value::Void),
+                            heap,
+                        ) {
                             Value::Function(handle) => Some(Value::Function(handle)),
                             _ => None,
                         }
@@ -142,7 +150,8 @@ impl<'a> Interp<'a> {
     /// kind 0 = the body awaits `value`, 1 = it yielded `value`, 2 = it finished
     /// with `value`. A body exception propagates as a thrown value.
     pub(crate) fn async_gen_resume(&mut self, args: &[Value]) -> Result<Value, RunError> {
-        let generator = as_object_ref(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?).ok_or(RunError::BadToken)?;
+        let generator = as_object_ref(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?)
+            .ok_or(RunError::BadToken)?;
         let mode = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
             Value::Int(n, _) => n,
             Value::Float(n, _) => n as i64,
@@ -193,7 +202,16 @@ impl<'a> Interp<'a> {
                         .unwrap_or(true);
                     (inner, finished)
                 });
-                return finish(if finished { 2 } else if flagged { 0 } else { 1 }, inner);
+                return finish(
+                    if finished {
+                        2
+                    } else if flagged {
+                        0
+                    } else {
+                        1
+                    },
+                    inner,
+                );
             }
             2 => {
                 if done || !started {
@@ -205,7 +223,8 @@ impl<'a> Interp<'a> {
                     });
                     return Err(RunError::Thrown(value));
                 }
-                crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = Some(value));
+                crate::unwind::GENERATOR_THROW_PENDING
+                    .with(|slot| *slot.borrow_mut() = Some(value));
             }
             _ => {
                 if done {
@@ -215,15 +234,27 @@ impl<'a> Interp<'a> {
             }
         }
         crate::unwind::ASYNC_AWAIT.with(|flag| flag.set(false));
-        let result = self.call_managed_collection("generatorIteratorNext", &[Value::Object(roots[0])]);
+        let result =
+            self.call_managed_collection("generatorIteratorNext", &[Value::Object(roots[0])]);
         crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
         crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = None);
         let awaited = crate::unwind::ASYNC_AWAIT.with(|flag| flag.replace(false));
         let value = result?;
         let finished = zun_gc::with_current_heap(|heap| {
-            heap.generator_state(roots[0]).map(|state| state.done).unwrap_or(true)
+            heap.generator_state(roots[0])
+                .map(|state| state.done)
+                .unwrap_or(true)
         });
-        finish(if finished { 2 } else if awaited { 0 } else { 1 }, value)
+        finish(
+            if finished {
+                2
+            } else if awaited {
+                0
+            } else {
+                1
+            },
+            value,
+        )
     }
 
     /// Finish creating a generator object: an `async function*` hands the raw
@@ -263,9 +294,15 @@ impl<'a> Interp<'a> {
     /// Entry of an `async` function: allocate its result Promise and a
     /// generator-style coroutine over the body, run the body to its first
     /// `await` (synchronously, as the spec requires) and hand the Promise back.
-    pub(crate) fn async_start(&mut self, method_rid: u32, args: Vec<Value>) -> Result<Value, RunError> {
+    pub(crate) fn async_start(
+        &mut self,
+        method_rid: u32,
+        args: Vec<Value>,
+    ) -> Result<Value, RunError> {
         let boxed = zun_gc::with_current_heap_mut(|heap| {
-            args.iter().map(|value| gen_box(value, heap)).collect::<Option<Vec<_>>>()
+            args.iter()
+                .map(|value| gen_box(value, heap))
+                .collect::<Option<Vec<_>>>()
         })
         .ok_or(RunError::BadToken)?;
         let (promise, generator) = zun_gc::with_current_heap_mut(|heap| {
@@ -284,7 +321,12 @@ impl<'a> Interp<'a> {
             .tables
             .method_defs
             .get(method_rid as usize - 1)
-            .map(|method| self.module.strings.get(method.name).starts_with("<closure@"))
+            .map(|method| {
+                self.module
+                    .strings
+                    .get(method.name)
+                    .starts_with("<closure@")
+            })
             .unwrap_or(false);
         if dynamic_result {
             Ok(Value::Any(zun_core::Any::object(roots[0].addr() as usize)))
@@ -305,10 +347,11 @@ impl<'a> Interp<'a> {
         let roots = [generator, promise];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         match input {
-            Ok(value) => crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = Some(value)),
-            Err(thrown) => {
-                crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = Some(thrown))
+            Ok(value) => {
+                crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = Some(value))
             }
+            Err(thrown) => crate::unwind::GENERATOR_THROW_PENDING
+                .with(|slot| *slot.borrow_mut() = Some(thrown)),
         }
         crate::unwind::ASYNC_BYPASS.with(|flag| flag.set(true));
         let result =
@@ -317,7 +360,9 @@ impl<'a> Interp<'a> {
         crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
         crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = None);
         let done = zun_gc::with_current_heap(|heap| {
-            heap.generator_state(roots[0]).map(|state| state.done).unwrap_or(true)
+            heap.generator_state(roots[0])
+                .map(|state| state.done)
+                .unwrap_or(true)
         });
         match result {
             Err(RunError::Thrown(thrown)) => {
@@ -362,11 +407,12 @@ impl<'a> Interp<'a> {
                 self.attach_reaction(
                     awaited_roots[0],
                     roots[1],
-                    ReactionKind::AsyncStep { generator: Value::Object(roots[0]) },
+                    ReactionKind::AsyncStep {
+                        generator: Value::Object(roots[0]),
+                    },
                 );
                 Ok(())
             }
         }
     }
-
 }

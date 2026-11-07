@@ -35,7 +35,11 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         locals: &[zun_sema::hir::Ty],
         cells: &[Stmt],
     ) {
-        let is_cell = |slot: u16| cells.iter().any(|s| matches!(s, Stmt::BoxedLet { slot: cell, .. } if *cell == slot));
+        let is_cell = |slot: u16| {
+            cells
+                .iter()
+                .any(|s| matches!(s, Stmt::BoxedLet { slot: cell, .. } if *cell == slot))
+        };
         for (index, default) in defaults.iter().enumerate() {
             let Some(default) = default else { continue };
             let slot = slot_offset + index as u16;
@@ -92,7 +96,8 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             self.finally_bodies.truncate(index);
             let hole_start = self.code.len() as u32;
             self.emit_cleanup(*cleanup);
-            self.finally_holes.push((hole_start, self.code.len() as u32, index));
+            self.finally_holes
+                .push((hole_start, self.code.len() as u32, index));
         }
         self.finally_bodies = saved;
     }
@@ -111,10 +116,17 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     /// Push the result of `generatorIteratorClose(iterator, throwing)`.
     pub(super) fn emit_iterator_close(&mut self, slot: u16, throwing: bool) {
         self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
-        self.emit(Instruction::simple(if throwing { Opcode::ConstTrue } else { Opcode::ConstFalse }));
+        self.emit(Instruction::simple(if throwing {
+            Opcode::ConstTrue
+        } else {
+            Opcode::ConstFalse
+        }));
         let (id, _) = zun_natives::resolve("buffer", "generatorIteratorClose")
             .expect("generatorIteratorClose intrinsic");
-        self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32)));
+        self.emit(Instruction::new(
+            Opcode::CallBuiltin,
+            Operand::Imm32(id as i32),
+        ));
     }
 
     /// Register a handler over `[start, end)`, minus the inlined `finally`
@@ -135,7 +147,9 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             .finally_holes
             .iter()
             .filter(|(hole_start, hole_end, owner)| {
-                (*owner < entry_depth || (*owner == entry_depth && has_finally)) && *hole_start >= start && *hole_end <= end
+                (*owner < entry_depth || (*owner == entry_depth && has_finally))
+                    && *hole_start >= start
+                    && *hole_end <= end
             })
             .map(|(hole_start, hole_end, _)| (*hole_start, *hole_end))
             .collect();
@@ -232,7 +246,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
 
     /// Emit a `conv` to an explicit numeric kind.
     pub(super) fn emit_conv_kind(&mut self, kind: NumKind) {
-        self.emit(Instruction::new(Opcode::Conv, Operand::Imm32(kind.to_imm())));
+        self.emit(Instruction::new(
+            Opcode::Conv,
+            Operand::Imm32(kind.to_imm()),
+        ));
     }
 
     /// Emit the JS `ToInt32`/`ToUint32` coercion of the `number` on top of the
@@ -246,7 +263,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         // fmod by 2^32 first: the f64->i64 conversion saturates, so values at or
         // beyond 2^63 would otherwise lose their low 32 bits. The fmod is exact
         // and sends NaN/Infinity to NaN (which converts to 0).
-        self.emit(Instruction::new(Opcode::ConstF64, Operand::Float64(4294967296.0)));
+        self.emit(Instruction::new(
+            Opcode::ConstF64,
+            Operand::Float64(4294967296.0),
+        ));
         self.emit(Instruction::simple(Opcode::RemF64));
         self.emit_conv_kind(NumKind::I64);
         self.emit_conv_kind(if unsigned { NumKind::U32 } else { NumKind::I32 });

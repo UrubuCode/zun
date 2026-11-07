@@ -9,21 +9,22 @@ impl<'a> Interp<'a> {
     pub(super) fn col_proxy(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
         match name {
             "proxyNew" => {
-                let target = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let handler = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let target =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let handler =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let proxy = zun_gc::with_current_heap_mut(|heap| heap.alloc_proxy(target, handler));
                 Ok(Value::Object(proxy))
             }
             "proxyGet" => {
-                let proxy = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let proxy =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.clone(),
                     _ => return Err(RunError::BadToken),
                 };
-                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
+                else {
                     return Err(RunError::BadToken);
                 };
                 let trap = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "get"));
@@ -47,15 +48,16 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(any(&result).unwrap_or_else(zun_core::Any::null)))
             }
             "proxySet" => {
-                let proxy = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let proxy =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.clone(),
                     _ => return Err(RunError::BadToken),
                 };
-                let value = any(args.get(2).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+                let value =
+                    any(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
+                else {
                     return Err(RunError::BadToken);
                 };
                 let trap = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "set"));
@@ -78,17 +80,24 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(true))
             }
             "proxyHas" | "proxyDelete" => {
-                let proxy = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let proxy =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.clone(),
                     _ => return Err(RunError::BadToken),
                 };
-                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
+                else {
                     return Err(RunError::BadToken);
                 };
-                let trap_name = if name == "proxyHas" { "has" } else { "deleteProperty" };
-                if let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, trap_name)) {
+                let trap_name = if name == "proxyHas" {
+                    "has"
+                } else {
+                    "deleteProperty"
+                };
+                if let Some(callback) =
+                    zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, trap_name))
+                {
                     let mut call_args = Vec::with_capacity(3);
                     if let Some(address) = callback.environment() {
                         call_args.push(Value::Object(unsafe {
@@ -114,10 +123,10 @@ impl<'a> Interp<'a> {
                 // (a GC object carrying the function under `__boxedFn`), so the
                 // proxy's stored target stays a GC object like every other
                 // proxy. The handler is an ordinary dynamic object.
-                let target = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let handler = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let target =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let handler =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let proxy = zun_gc::with_current_heap_mut(|heap| heap.alloc_proxy(target, handler));
                 Ok(Value::Object(proxy))
             }
@@ -127,15 +136,18 @@ impl<'a> Interp<'a> {
                 // Without one: invoke the underlying boxed function with the
                 // `this` argument threaded as the leading positional slot (the
                 // same convention `functionApply` uses).
-                let proxy = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let proxy =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let this_arg = args.get(1).ok_or(RunError::BadToken)?.clone();
-                let array = object(args.get(2).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+                let array =
+                    object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
+                else {
                     return Err(RunError::BadToken);
                 };
-                if let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "apply")) {
+                if let Some(callback) =
+                    zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "apply"))
+                {
                     let result = self.invoke_proxy_trap(
                         callback,
                         vec![Value::Object(target), this_arg, Value::Object(array)],
@@ -163,16 +175,15 @@ impl<'a> Interp<'a> {
                 // `new proxy(...args)`: `handler.construct(target, argsArray,
                 // newTarget)` when present (the descriptor stands in for both
                 // `target` and `newTarget`), else default-construct the class.
-                let proxy = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let array = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let proxy =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let target = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
                     .ok_or(RunError::BadToken)?;
-                let descriptor = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get(target, "__classDesc")
-                })
-                .ok_or(RunError::BadToken)?;
+                let descriptor =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get(target, "__classDesc"))
+                        .ok_or(RunError::BadToken)?;
                 if let Some(callback) =
                     zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "construct"))
                 {

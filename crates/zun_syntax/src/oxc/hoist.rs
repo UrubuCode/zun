@@ -160,7 +160,9 @@ pub(super) fn convert_function_statements(
         if site.in_head
             || params.contains(&site.name)
             || hoisted.contains(&site.name)
-            || sites.iter().any(|other| other.in_head && other.name == site.name)
+            || sites
+                .iter()
+                .any(|other| other.in_head && other.name == site.name)
         {
             continue;
         }
@@ -187,8 +189,10 @@ pub(super) fn convert_function_statements(
     HOISTED_VARS.with(|stack| stack.borrow_mut().push(hoisted_set));
     let shadowing: Vec<&Statement<'_>> = body
         .iter()
-        .filter(|statement| matches!(statement, Statement::FunctionDeclaration(function)
-            if function.id.as_ref().is_some_and(|id| params.iter().any(|p| p == id.name.as_str()))))
+        .filter(|statement| {
+            matches!(statement, Statement::FunctionDeclaration(function)
+            if function.id.as_ref().is_some_and(|id| params.iter().any(|p| p == id.name.as_str())))
+        })
         .collect();
     let outer_shadows = PARAM_SHADOWS.with(|names| {
         std::mem::replace(
@@ -196,7 +200,9 @@ pub(super) fn convert_function_statements(
             shadowing
                 .iter()
                 .filter_map(|statement| match statement {
-                    Statement::FunctionDeclaration(function) => function.id.as_ref().map(|id| id.name.to_string()),
+                    Statement::FunctionDeclaration(function) => {
+                        function.id.as_ref().map(|id| id.name.to_string())
+                    }
                     _ => None,
                 })
                 .collect(),
@@ -298,5 +304,6 @@ pub(super) fn find_var_name_span(body: &[Statement<'_>], name: &str) -> Option<S
             _ => None,
         }
     }
-    body.iter().find_map(|statement| in_statement(statement, name))
+    body.iter()
+        .find_map(|statement| in_statement(statement, name))
 }

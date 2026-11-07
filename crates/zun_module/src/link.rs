@@ -13,7 +13,7 @@
 //! [`LinkError::Unsupported`], because those would need cross-module identity
 //! (and a rebuilt type system) that the single-module interpreter does not have.
 
-use crate::{write_body_with_handlers, read_body, ExceptionHandler, Module};
+use crate::{read_body, write_body_with_handlers, ExceptionHandler, Module};
 use zun_il::{decode_all, encode, Instruction, Operand};
 use zun_metadata::{MethodDef, StringIndex, TableKind, Token};
 
@@ -100,7 +100,13 @@ impl Module {
                 is_static: method.is_static,
             });
         }
-        Ok((merged, LinkedMethods { first_rid: base + 1, count }))
+        Ok((
+            merged,
+            LinkedMethods {
+                first_rid: base + 1,
+                count,
+            },
+        ))
     }
 }
 
@@ -131,7 +137,9 @@ fn relocate_code(
     for instr in instructions {
         let operand = match instr.operand {
             Operand::Token(t) => Operand::Token(relocate_token(t, base, count)?),
-            Operand::TokenImm32(t, imm) => Operand::TokenImm32(relocate_token(t, base, count)?, imm),
+            Operand::TokenImm32(t, imm) => {
+                Operand::TokenImm32(relocate_token(t, base, count)?, imm)
+            }
             Operand::StringRef(index) => {
                 let text = ext.strings.get(StringIndex(index));
                 Operand::StringRef(merged.strings.intern(text).0)
@@ -140,7 +148,13 @@ fn relocate_code(
         };
         // Operand sizes are fixed per opcode, so branch displacements and
         // exception-handler offsets stay valid after re-encoding.
-        encode(&Instruction { opcode: instr.opcode, operand }, &mut out);
+        encode(
+            &Instruction {
+                opcode: instr.opcode,
+                operand,
+            },
+            &mut out,
+        );
     }
     debug_assert_eq!(out.len(), code.len());
     Ok(out)
@@ -157,11 +171,19 @@ mod tests {
         let mut m = Module::new();
         let s = m.strings.intern(string);
         let mut code = Vec::new();
-        encode(&Instruction::new(Opcode::ConstStr, Operand::StringRef(s.0)), &mut code);
+        encode(
+            &Instruction::new(Opcode::ConstStr, Operand::StringRef(s.0)),
+            &mut code,
+        );
         encode(&Instruction::simple(Opcode::Ret), &mut code);
         let body_offset = write_body(&mut m.code, 0, 0, true, 0, &[], &code);
         let name = m.strings.intern("f");
-        m.tables.add_method_def(MethodDef { name, signature: BlobIndex(0), body_offset, is_static: false });
+        m.tables.add_method_def(MethodDef {
+            name,
+            signature: BlobIndex(0),
+            body_offset,
+            is_static: false,
+        });
         m
     }
 
@@ -171,11 +193,19 @@ mod tests {
         base.strings.intern("pad");
         let ext = module_with_method("hello");
         let (merged, placed) = base.link(&ext).unwrap();
-        assert_eq!(placed, LinkedMethods { first_rid: 2, count: 1 });
+        assert_eq!(
+            placed,
+            LinkedMethods {
+                first_rid: 2,
+                count: 1
+            }
+        );
         assert_eq!(merged.tables.method_defs.len(), 2);
         let body = read_body(&merged.code, merged.tables.method_defs[1].body_offset).unwrap();
         let instrs = decode_all(body.code).unwrap();
-        let Operand::StringRef(i) = instrs[0].operand else { panic!("string operand") };
+        let Operand::StringRef(i) = instrs[0].operand else {
+            panic!("string operand")
+        };
         assert_eq!(merged.strings.get(StringIndex(i)), "hello");
         // The source module is untouched.
         assert_eq!(base.tables.method_defs.len(), 1);
@@ -193,6 +223,9 @@ mod tests {
             method_start: 1,
             method_end: 1,
         });
-        assert!(matches!(Module::new().link(&ext), Err(LinkError::Unsupported(_))));
+        assert!(matches!(
+            Module::new().link(&ext),
+            Err(LinkError::Unsupported(_))
+        ));
     }
 }

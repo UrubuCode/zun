@@ -14,25 +14,41 @@ pub extern "C" fn zun_jit_buffer_length(address: i64) -> i64 {
 #[inline]
 pub extern "C" fn zun_jit_data_view_length(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
-    zun_gc::with_current_heap(|heap| heap.data_view_len(object).map(|len| len as i64).unwrap_or(-1))
+    zun_gc::with_current_heap(|heap| {
+        heap.data_view_len(object)
+            .map(|len| len as i64)
+            .unwrap_or(-1)
+    })
 }
 
 #[inline]
 pub extern "C" fn zun_jit_typed_array_length(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
-    zun_gc::with_current_heap(|heap| heap.typed_array_len(object).map(|len| len as i64).unwrap_or(-1))
+    zun_gc::with_current_heap(|heap| {
+        heap.typed_array_len(object)
+            .map(|len| len as i64)
+            .unwrap_or(-1)
+    })
 }
 
 #[inline]
 pub extern "C" fn zun_jit_data_view_byte_length(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
-    zun_gc::with_current_heap(|heap| heap.data_view_byte_len(object).map(|len| len as i64).unwrap_or(-1))
+    zun_gc::with_current_heap(|heap| {
+        heap.data_view_byte_len(object)
+            .map(|len| len as i64)
+            .unwrap_or(-1)
+    })
 }
 
 #[inline]
 pub extern "C" fn zun_jit_typed_array_byte_length(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
-    zun_gc::with_current_heap(|heap| heap.typed_array_byte_len(object).map(|len| len as i64).unwrap_or(-1))
+    zun_gc::with_current_heap(|heap| {
+        heap.typed_array_byte_len(object)
+            .map(|len| len as i64)
+            .unwrap_or(-1)
+    })
 }
 
 /// Read one byte from a managed ArrayBuffer without allocating or collecting.
@@ -71,7 +87,8 @@ pub extern "C" fn zun_jit_buffer_read_f64(address: i64, offset: i64) -> f64 {
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap(|heap| {
-        heap.buffer_read_f64(object, offset as usize).unwrap_or(f64::NAN)
+        heap.buffer_read_f64(object, offset as usize)
+            .unwrap_or(f64::NAN)
     })
 }
 
@@ -83,7 +100,8 @@ pub extern "C" fn zun_jit_buffer_set_u8(address: i64, index: i64, value: i8) -> 
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.buffer_set(object, index as usize, value as u8).unwrap_or(false) as i32
+        heap.buffer_set(object, index as usize, value as u8)
+            .unwrap_or(false) as i32
     })
 }
 
@@ -95,7 +113,8 @@ pub extern "C" fn zun_jit_buffer_write_u32(address: i64, offset: i64, value: i32
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.buffer_write_u32(object, offset as usize, value as u32).unwrap_or(false) as i32
+        heap.buffer_write_u32(object, offset as usize, value as u32)
+            .unwrap_or(false) as i32
     })
 }
 
@@ -107,17 +126,14 @@ pub extern "C" fn zun_jit_buffer_write_f64(address: i64, offset: i64, value: f64
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.buffer_write_f64(object, offset as usize, value).unwrap_or(false) as i32
+        heap.buffer_write_f64(object, offset as usize, value)
+            .unwrap_or(false) as i32
     })
 }
 
 /// Read a u32 from a managed DataView without allocating or collecting.
 #[inline]
-pub extern "C" fn zun_jit_data_view_get_u32(
-    address: i64,
-    offset: i64,
-    little_endian: i32,
-) -> i32 {
+pub extern "C" fn zun_jit_data_view_get_u32(address: i64, offset: i64, little_endian: i32) -> i32 {
     if offset < 0 {
         return -1;
     }
@@ -131,11 +147,7 @@ pub extern "C" fn zun_jit_data_view_get_u32(
 
 /// Read a u16 from a managed DataView without allocating or collecting.
 #[inline]
-pub extern "C" fn zun_jit_data_view_get_u16(
-    address: i64,
-    offset: i64,
-    little_endian: i32,
-) -> i16 {
+pub extern "C" fn zun_jit_data_view_get_u16(address: i64, offset: i64, little_endian: i32) -> i16 {
     if offset < 0 {
         return -1;
     }
@@ -149,11 +161,7 @@ pub extern "C" fn zun_jit_data_view_get_u16(
 
 /// Read an f64 from a managed DataView without allocating or collecting.
 #[inline]
-pub extern "C" fn zun_jit_data_view_get_f64(
-    address: i64,
-    offset: i64,
-    little_endian: i32,
-) -> f64 {
+pub extern "C" fn zun_jit_data_view_get_f64(address: i64, offset: i64, little_endian: i32) -> f64 {
     if offset < 0 {
         return f64::NAN;
     }
@@ -282,7 +290,8 @@ pub extern "C" fn zun_jit_data_view_set_i8(address: i64, offset: i64, value: i8)
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.data_view_set_i8(object, offset as usize, value).unwrap_or(false) as i32
+        heap.data_view_set_i8(object, offset as usize, value)
+            .unwrap_or(false) as i32
     })
 }
 #[inline]
@@ -292,7 +301,8 @@ pub extern "C" fn zun_jit_data_view_set_u8(address: i64, offset: i64, value: i8)
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.data_view_set_u8(object, offset as usize, value as u8).unwrap_or(false) as i32
+        heap.data_view_set_u8(object, offset as usize, value as u8)
+            .unwrap_or(false) as i32
     })
 }
 #[inline]
@@ -374,57 +384,79 @@ pub extern "C" fn zun_jit_u8_array_set(address: i64, index: i64, value: i8) -> i
 /// Read one element from a managed Uint16Array view without allocation.
 #[inline]
 pub extern "C" fn zun_jit_u16_array_get(address: i64, index: i64) -> i16 {
-    if index < 0 { return -1; }
+    if index < 0 {
+        return -1;
+    }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap(|heap| {
-        heap.u16_array_get(object, index as usize).map(|value| value as i16).unwrap_or(-1)
+        heap.u16_array_get(object, index as usize)
+            .map(|value| value as i16)
+            .unwrap_or(-1)
     })
 }
 
 /// Write one element to a managed Uint16Array view without allocation.
 #[inline]
 pub extern "C" fn zun_jit_u16_array_set(address: i64, index: i64, value: i16) -> i32 {
-    if index < 0 { return 0; }
+    if index < 0 {
+        return 0;
+    }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.u16_array_set(object, index as usize, value as u16).unwrap_or(false) as i32
+        heap.u16_array_set(object, index as usize, value as u16)
+            .unwrap_or(false) as i32
     })
 }
 
 /// Read one element from a managed Uint32Array view without allocation.
 #[inline]
 pub extern "C" fn zun_jit_u32_array_get(address: i64, index: i64) -> i32 {
-    if index < 0 { return -1; }
+    if index < 0 {
+        return -1;
+    }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap(|heap| {
-        heap.u32_array_get(object, index as usize).map(|value| value as i32).unwrap_or(-1)
+        heap.u32_array_get(object, index as usize)
+            .map(|value| value as i32)
+            .unwrap_or(-1)
     })
 }
 
 /// Write one element to a managed Uint32Array view without allocation.
 #[inline]
 pub extern "C" fn zun_jit_u32_array_set(address: i64, index: i64, value: i32) -> i32 {
-    if index < 0 { return 0; }
+    if index < 0 {
+        return 0;
+    }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.u32_array_set(object, index as usize, value as u32).unwrap_or(false) as i32
+        heap.u32_array_set(object, index as usize, value as u32)
+            .unwrap_or(false) as i32
     })
 }
 
 /// Read one element from a managed Float64Array view without allocation.
 #[inline]
 pub extern "C" fn zun_jit_f64_array_get(address: i64, index: i64) -> f64 {
-    if index < 0 { return f64::NAN; }
+    if index < 0 {
+        return f64::NAN;
+    }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
-    zun_gc::with_current_heap(|heap| heap.f64_array_get(object, index as usize).unwrap_or(f64::NAN))
+    zun_gc::with_current_heap(|heap| {
+        heap.f64_array_get(object, index as usize)
+            .unwrap_or(f64::NAN)
+    })
 }
 
 /// Write one element to a managed Float64Array view without allocation.
 #[inline]
 pub extern "C" fn zun_jit_f64_array_set(address: i64, index: i64, value: f64) -> i32 {
-    if index < 0 { return 0; }
+    if index < 0 {
+        return 0;
+    }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.f64_array_set(object, index as usize, value).unwrap_or(false) as i32
+        heap.f64_array_set(object, index as usize, value)
+            .unwrap_or(false) as i32
     })
 }

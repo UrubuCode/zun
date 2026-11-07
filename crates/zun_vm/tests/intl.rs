@@ -5,7 +5,8 @@ use zun_interp::CaptureOutput;
 fn run_source(user: &str) -> Vec<String> {
     let src = &zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -52,6 +53,9 @@ fn date_time_format_contains_year() {
             print(g.format(d));
         }"#,
     );
-    assert!(out[0].contains("2020") && out[1].contains("2020"), "{out:?}");
+    assert!(
+        out[0].contains("2020") && out[1].contains("2020"),
+        "{out:?}"
+    );
     assert_ne!(out[0], out[1]);
 }

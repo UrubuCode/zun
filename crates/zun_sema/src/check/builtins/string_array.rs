@@ -4,7 +4,12 @@ impl Checker<'_> {
     /// `new Array(...)` / `Array(...)` whose argument list is not a single
     /// statically-integer length (several arguments, a spread, or a non-integer
     /// single value): lowered to the prelude `__zunArrayCtor(argsArray)`.
-    pub(in crate::check) fn array_ctor_dynamic(&mut self, cx: &mut FunctionCx, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
+    pub(in crate::check) fn array_ctor_dynamic(
+        &mut self,
+        cx: &mut FunctionCx,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
         let func = *self.by_name.get("__zunArrayCtor")?;
         let single_plain = args.len() == 1 && !matches!(args[0], ast::Expr::Spread { .. });
         if single_plain {
@@ -22,18 +27,28 @@ impl Checker<'_> {
             })
             .collect();
         let list = self.check_expr(cx, &ast::Expr::ArrayLiteral { elements, span });
-        Some(hir::Expr { kind: hir::ExprKind::Call { func, args: vec![list] }, ty: Ty::Array, span })
+        Some(hir::Expr {
+            kind: hir::ExprKind::Call {
+                func,
+                args: vec![list],
+            },
+            ty: Ty::Array,
+            span,
+        })
     }
 
     /// Whether an argument is a `function (this: T, ...)` expression that
     /// declares the hidden receiver parameter.
     pub(in crate::check) fn ast_function_takes_this(&self, expr: &ast::Expr) -> bool {
-        let ast::Expr::Function(function) = expr else { return false };
+        let ast::Expr::Function(function) = expr else {
+            return false;
+        };
         if function.is_arrow {
             return false;
         }
         let text = &self.source[function.span.start as usize..function.span.end as usize];
-        text.find('(').is_some_and(|open| text[open + 1..].trim_start().starts_with("this"))
+        text.find('(')
+            .is_some_and(|open| text[open + 1..].trim_start().starts_with("this"))
     }
 
     /// `str.match/replace/search/split(arg)` where `arg` is a dynamic value
@@ -58,16 +73,31 @@ impl Checker<'_> {
             if e.ty == Ty::Any {
                 e
             } else {
-                hir::Expr { span: e.span, kind: hir::ExprKind::BoxAny { value: Box::new(e) }, ty: Ty::Any }
+                hir::Expr {
+                    span: e.span,
+                    kind: hir::ExprKind::BoxAny { value: Box::new(e) },
+                    ty: Ty::Any,
+                }
             }
         };
         let extra = match extra {
             Some(e) => boxed(e),
-            None => boxed(hir::Expr { kind: hir::ExprKind::Number(-1.0), ty: Ty::F64, span }),
+            None => boxed(hir::Expr {
+                kind: hir::ExprKind::Number(-1.0),
+                ty: Ty::F64,
+                span,
+            }),
         };
-        let kind = hir::Expr { kind: hir::ExprKind::Number(kind), ty: Ty::Int(IntKind::I64), span };
+        let kind = hir::Expr {
+            kind: hir::ExprKind::Number(kind),
+            ty: Ty::Int(IntKind::I64),
+            span,
+        };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, first, extra, kind] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![receiver, first, extra, kind],
+            },
             ty: Ty::Any,
             span,
         }
@@ -90,7 +120,10 @@ impl Checker<'_> {
             "fromCharCode" => "fromCharCode1",
             "fromCodePoint" => "fromCodePoint1",
             other => {
-                self.error(method_span, format!("`String.{other}` is not supported in this runtime"));
+                self.error(
+                    method_span,
+                    format!("`String.{other}` is not supported in this runtime"),
+                );
                 return self.poison(span);
             }
         };
@@ -114,10 +147,14 @@ impl Checker<'_> {
                 // A dynamic code goes through ToNumber first.
                 code = self.to_number_expr(code);
             }
-            if code.ty.is_float() || (code.ty.is_int() && !self.is_assignable(code.ty, Ty::Int(IntKind::U32))) {
+            if code.ty.is_float()
+                || (code.ty.is_int() && !self.is_assignable(code.ty, Ty::Int(IntKind::U32)))
+            {
                 let cspan = code.span;
                 code = hir::Expr {
-                    kind: hir::ExprKind::Convert { value: Box::new(code) },
+                    kind: hir::ExprKind::Convert {
+                        value: Box::new(code),
+                    },
                     ty: Ty::Int(IntKind::U32),
                     span: cspan,
                 };
@@ -129,12 +166,18 @@ impl Checker<'_> {
                 );
             }
             let piece = hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id: single_id, args: vec![code] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id: single_id,
+                    args: vec![code],
+                },
                 ty: Ty::String,
                 span,
             };
             acc = hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id: concat_id, args: vec![acc, piece] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id: concat_id,
+                    args: vec![acc, piece],
+                },
                 ty: Ty::String,
                 span,
             };
@@ -160,7 +203,9 @@ impl Checker<'_> {
             } else {
                 let span = value.span;
                 hir::Expr {
-                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(value),
+                    },
                     ty: Ty::Any,
                     span,
                 }
@@ -181,15 +226,20 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![arg],
+                    },
                     ty: Ty::Boolean,
                     span,
                 }
             }
             "of" => {
                 // `Array.of(...items)` is exactly an array literal of the args.
-                let elements =
-                    args.iter().map(|element| Some(self.check_expr(cx, element))).collect();
+                let elements = args
+                    .iter()
+                    .map(|element| Some(self.check_expr(cx, element)))
+                    .collect();
                 hir::Expr {
                     kind: hir::ExprKind::ArrayLiteral { elements },
                     ty: Ty::Array,
@@ -200,7 +250,10 @@ impl Checker<'_> {
                 if args.is_empty() || args.len() > 2 {
                     self.error(
                         span,
-                        format!("`Array.from` expects 1 or 2 argument(s), found {}", args.len()),
+                        format!(
+                            "`Array.from` expects 1 or 2 argument(s), found {}",
+                            args.len()
+                        ),
                     );
                     return self.poison(span);
                 }
@@ -217,7 +270,10 @@ impl Checker<'_> {
                         return self.poison(span);
                     };
                     hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![source, map_fn] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![source, map_fn],
+                        },
                         ty: Ty::Array,
                         span,
                     }
@@ -227,7 +283,10 @@ impl Checker<'_> {
                         return self.poison(span);
                     };
                     hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![source] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![source],
+                        },
                         ty: Ty::Array,
                         span,
                     }
@@ -261,7 +320,13 @@ impl Checker<'_> {
         // typed `any` so those calls route through the dynamic-call path.
         if method == "withResolvers" {
             if !args.is_empty() {
-                self.error(span, format!("`Promise.withResolvers` expects no arguments, found {}", args.len()));
+                self.error(
+                    span,
+                    format!(
+                        "`Promise.withResolvers` expects no arguments, found {}",
+                        args.len()
+                    ),
+                );
                 return self.poison(span);
             }
             let Some((id, _)) = zun_natives::resolve("promise", "promiseWithResolvers") else {
@@ -299,21 +364,32 @@ impl Checker<'_> {
             0 if arg_ty == Ty::Any => &undefined_arg,
             1 => &args[0],
             _ => {
-                self.error(span, format!("`Promise.{method}` expects 1 argument, found {}", args.len()));
+                self.error(
+                    span,
+                    format!(
+                        "`Promise.{method}` expects 1 argument, found {}",
+                        args.len()
+                    ),
+                );
                 return self.poison(span);
             }
         };
         let mut arg = self.check_expr(cx, arg_expr);
         if arg_ty == Ty::Array {
             if !arg.ty.is_error() && !self.is_assignable(arg.ty, Ty::Array) {
-                self.error(arg.span, format!("`Promise.{method}` expects an array of promises"));
+                self.error(
+                    arg.span,
+                    format!("`Promise.{method}` expects an array of promises"),
+                );
             }
         } else {
             // `resolve`/`reject` accept any value; box a non-`any` operand.
             if arg.ty != Ty::Any {
                 arg = hir::Expr {
                     span: arg.span,
-                    kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(arg),
+                    },
                     ty: Ty::Any,
                 };
             }
@@ -323,7 +399,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![arg],
+            },
             ty: Ty::Promise,
             span,
         }

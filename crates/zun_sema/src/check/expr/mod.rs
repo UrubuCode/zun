@@ -13,14 +13,14 @@ mod call_sugar;
 mod field;
 mod ident;
 mod literal;
-mod mcall_dispatch;
 mod mcall_arrays;
 mod mcall_buffers;
-mod mcall_string;
+mod mcall_dispatch;
 mod mcall_managed;
 mod mcall_namespaces;
 mod mcall_number;
 mod mcall_statics;
+mod mcall_string;
 mod member;
 mod method_call;
 mod new;
@@ -32,13 +32,19 @@ mod optional;
 mod spread_optional;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_expr(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
         match expr {
             ast::Expr::Await { .. } => self.check_await(cx, expr),
             ast::Expr::ImportCall { .. } => self.check_import_call(cx, expr),
             ast::Expr::ObjectLiteral { .. } => self.check_object_literal(cx, expr),
-            ast::Expr::ArrayLiteral { elements, .. } => self.lower_array_literal(cx, elements, span),
+            ast::Expr::ArrayLiteral { elements, .. } => {
+                self.lower_array_literal(cx, elements, span)
+            }
             ast::Expr::Yield { .. } => self.check_yield(cx, expr),
             ast::Expr::Number { value, .. } => hir::Expr {
                 kind: hir::ExprKind::Number(*value),
@@ -64,7 +70,9 @@ impl Checker<'_> {
                 ty: Ty::Any,
                 span,
             },
-            ast::Expr::Ident(name) if self.text(name) == "new.target" => self.check_new_target(cx, expr),
+            ast::Expr::Ident(name) if self.text(name) == "new.target" => {
+                self.check_new_target(cx, expr)
+            }
             ast::Expr::Ident(_) => self.check_ident(cx, expr),
             ast::Expr::Assign { .. } => self.check_assign(cx, expr),
             ast::Expr::Binary { .. } => self.check_binary_expr(cx, expr),
@@ -99,7 +107,11 @@ impl Checker<'_> {
                 self.poison(span)
             }
             ast::Expr::Function(_) => self.check_function_expr(cx, expr),
-            ast::Expr::ComputedCall { callee, args, .. } if self.is_regex_symbol_call(cx, callee, args) => self.check_regex_symbol_call_expr(cx, expr),
+            ast::Expr::ComputedCall { callee, args, .. }
+                if self.is_regex_symbol_call(cx, callee, args) =>
+            {
+                self.check_regex_symbol_call_expr(cx, expr)
+            }
             ast::Expr::ComputedCall { .. } => self.check_computed_call(cx, expr),
         }
     }

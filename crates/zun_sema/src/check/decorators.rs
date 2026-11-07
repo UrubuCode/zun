@@ -3,7 +3,10 @@ use crate::check::*;
 impl Checker<'_> {
     /// The signature of a bare `@dec` decorator whose callee is a top-level
     /// `(any, DecoratorContext)` function: the typed-context decorator form.
-    pub(in crate::check) fn typed_decorator_signature(&self, decorator: &ast::Decorator) -> Option<&Signature> {
+    pub(in crate::check) fn typed_decorator_signature(
+        &self,
+        decorator: &ast::Decorator,
+    ) -> Option<&Signature> {
         if decorator.args.is_some() {
             return None;
         }
@@ -84,11 +87,17 @@ impl Checker<'_> {
     /// (decorated, function-returning) instance method in `class_named_methods`,
     /// plus the undecorated overrides of that method in subclasses, so a routed
     /// call site finds the runtime class's own implementation.
-    pub(in crate::check) fn register_routed_methods(&self, program: &ast::Program, body: &mut Vec<hir::Stmt>, span: Span) {
+    pub(in crate::check) fn register_routed_methods(
+        &self,
+        program: &ast::Program,
+        body: &mut Vec<hir::Stmt>,
+        span: Span,
+    ) {
         let Some((set_method, _)) = zun_natives::resolve("collections", "classSetMethod") else {
             return;
         };
-        let mut routed: Vec<(u32, u32)> = self.routed_methods.iter().map(|(&f, &c)| (f, c)).collect();
+        let mut routed: Vec<(u32, u32)> =
+            self.routed_methods.iter().map(|(&f, &c)| (f, c)).collect();
         routed.sort_unstable();
         let register = |class: u32, name: &str, func: u32| {
             hir::Stmt::Expr(hir::Expr {
@@ -117,7 +126,9 @@ impl Checker<'_> {
             })
         };
         for (func, class) in routed {
-            let Some(name) = self.method_name_of(class, func) else { continue };
+            let Some(name) = self.method_name_of(class, func) else {
+                continue;
+            };
             body.push(register(class, &name, func));
             // Undecorated overrides in subclasses.
             for (sub, sub_class) in program.classes.iter().enumerate() {
@@ -128,7 +139,11 @@ impl Checker<'_> {
                 if !sub_class.methods.iter().any(|m| self.text(&m.name) == name) {
                     continue;
                 }
-                let Some(&own) = self.methods_by_class.get(sub as usize).and_then(|m| m.get(&name)) else {
+                let Some(&own) = self
+                    .methods_by_class
+                    .get(sub as usize)
+                    .and_then(|m| m.get(&name))
+                else {
                     continue;
                 };
                 if !self.routed_methods.contains_key(&own) {
@@ -159,7 +174,9 @@ impl Checker<'_> {
         let name = self.method_name_of(owner, func)?;
         let receiver = call_args.remove(0);
         let boxed = hir::Expr {
-            kind: hir::ExprKind::BoxAny { value: Box::new(receiver) },
+            kind: hir::ExprKind::BoxAny {
+                value: Box::new(receiver),
+            },
             ty: Ty::Any,
             span,
         };
@@ -173,7 +190,11 @@ impl Checker<'_> {
                         ty: Ty::Int(IntKind::U32),
                         span,
                     },
-                    hir::Expr { kind: hir::ExprKind::String(name), ty: Ty::String, span },
+                    hir::Expr {
+                        kind: hir::ExprKind::String(name),
+                        ty: Ty::String,
+                        span,
+                    },
                 ],
             },
             ty: Ty::Function(hir::DYNAMIC_FUNCTION),
@@ -192,7 +213,9 @@ impl Checker<'_> {
             return Some(call);
         }
         Some(hir::Expr {
-            kind: hir::ExprKind::Convert { value: Box::new(call) },
+            kind: hir::ExprKind::Convert {
+                value: Box::new(call),
+            },
             ty: return_ty,
             span,
         })
@@ -316,7 +339,12 @@ impl Checker<'_> {
 
     /// `classMethodBox(classRid, name)`: the method's current body as a
     /// `functionBox` record in an `Any`, the `value` a method decorator receives.
-    pub(in crate::check) fn method_value_expr(&self, class_idx: u32, name: &str, span: Span) -> hir::Expr {
+    pub(in crate::check) fn method_value_expr(
+        &self,
+        class_idx: u32,
+        name: &str,
+        span: Span,
+    ) -> hir::Expr {
         let Some((id, _)) = zun_natives::resolve("collections", "classMethodBox") else {
             return decorator_null_value(span);
         };
@@ -329,7 +357,11 @@ impl Checker<'_> {
                         ty: Ty::Int(IntKind::U32),
                         span,
                     },
-                    hir::Expr { kind: hir::ExprKind::String(name.to_string()), ty: Ty::String, span },
+                    hir::Expr {
+                        kind: hir::ExprKind::String(name.to_string()),
+                        ty: Ty::String,
+                        span,
+                    },
                 ],
             },
             ty: Ty::Any,
@@ -365,9 +397,16 @@ impl Checker<'_> {
         // `ctx = make(..); dec(null, ctx); finish(ctx)` so `addInitializer`
         // callbacks live in typed class fields (functions cannot cross `Any`).
         if decorator.args.is_none() {
-            if let Some(stmt) =
-                self.typed_context_decorator(dec_index, signature, make_value(), kind, name, is_static, target, span)
-            {
+            if let Some(stmt) = self.typed_context_decorator(
+                dec_index,
+                signature,
+                make_value(),
+                kind,
+                name,
+                is_static,
+                target,
+                span,
+            ) {
                 return Some(stmt);
             }
         }
@@ -491,7 +530,10 @@ impl Checker<'_> {
         let expr = |kind: hir::ExprKind, ty: Ty| hir::Expr { kind, ty, span };
         let local = || expr(hir::ExprKind::Local(0), ctx_ty);
         let call = expr(
-            hir::ExprKind::Call { func: dec_index, args: vec![value, local()] },
+            hir::ExprKind::Call {
+                func: dec_index,
+                args: vec![value, local()],
+            },
             signature.return_ty,
         );
         let class_rid = |ty: Ty| expr(hir::ExprKind::Number((target.class_idx + 1) as f64), ty);
@@ -518,7 +560,10 @@ impl Checker<'_> {
                     id,
                     args: vec![
                         class_rid(Ty::Int(IntKind::U32)),
-                        expr(hir::ExprKind::Number(target.slot as f64), Ty::Int(IntKind::U32)),
+                        expr(
+                            hir::ExprKind::Number(target.slot as f64),
+                            Ty::Int(IntKind::U32),
+                        ),
                         call,
                     ],
                 },
@@ -546,7 +591,10 @@ impl Checker<'_> {
             },
             result_stmt,
             hir::Stmt::Expr(expr(
-                hir::ExprKind::StaticCall { func: finish, args: vec![local()] },
+                hir::ExprKind::StaticCall {
+                    func: finish,
+                    args: vec![local()],
+                },
                 Ty::Void,
             )),
         ]))
@@ -555,7 +603,11 @@ impl Checker<'_> {
     /// Lower a decorator-factory argument. Only literals are supported (the
     /// module initializer has no local scope); anything else makes the whole
     /// decorator inert.
-    pub(in crate::check) fn lower_decorator_literal_arg(&self, arg: &ast::Expr, span: Span) -> Option<hir::Expr> {
+    pub(in crate::check) fn lower_decorator_literal_arg(
+        &self,
+        arg: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
         Some(match arg {
             ast::Expr::Number { value, .. } => hir::Expr {
                 kind: hir::ExprKind::Number(*value),

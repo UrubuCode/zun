@@ -1,30 +1,34 @@
 use super::*;
 
 /// Convert an OXC property key used in an object binding pattern.
-pub(super) fn convert_binding_key(source: &str, property: &oxc_ast::ast::BindingProperty<'_>)
-    -> Result<crate::ast::PropertyKey, String>
-{
+pub(super) fn convert_binding_key(
+    source: &str,
+    property: &oxc_ast::ast::BindingProperty<'_>,
+) -> Result<crate::ast::PropertyKey, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     if property.computed {
         let Some(key_expression) = property.key.as_expression() else {
             return Err("OXC adapter requires an expression computed key".into());
         };
-        return Ok(crate::ast::PropertyKey::Computed(Box::new(convert_expression(
-            source,
-            key_expression,
-        )?)));
+        return Ok(crate::ast::PropertyKey::Computed(Box::new(
+            convert_expression(source, key_expression)?,
+        )));
     }
     match &property.key {
-        PropertyKey::StaticIdentifier(identifier) => {
-            Ok(crate::ast::PropertyKey::Ident(Name { span: span(identifier.span) }))
-        }
+        PropertyKey::StaticIdentifier(identifier) => Ok(crate::ast::PropertyKey::Ident(Name {
+            span: span(identifier.span),
+        })),
         PropertyKey::StringLiteral(string) => {
             let value = js_str_to_string(string.value);
-            Ok(crate::ast::PropertyKey::String { value: value.to_owned(), span: span(string.span) })
+            Ok(crate::ast::PropertyKey::String {
+                value: value.to_owned(),
+                span: span(string.span),
+            })
         }
-        PropertyKey::NumericLiteral(number) => {
-            Ok(crate::ast::PropertyKey::Number { value: number.value, span: span(number.span) })
-        }
+        PropertyKey::NumericLiteral(number) => Ok(crate::ast::PropertyKey::Number {
+            value: number.value,
+            span: span(number.span),
+        }),
         _ => Err("OXC adapter supports identifier, string, and numeric property keys only".into()),
     }
 }
@@ -38,7 +42,9 @@ pub(super) fn convert_binding_pattern(
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     match pattern {
         BindingPattern::BindingIdentifier(identifier) => Ok(crate::ast::Pattern::Ident {
-            name: Name { span: span(identifier.span) },
+            name: Name {
+                span: span(identifier.span),
+            },
             ty: None,
         }),
         BindingPattern::ArrayPattern(array) => {
@@ -56,20 +62,32 @@ pub(super) fn convert_binding_pattern(
                 Some(rest) => Some(Box::new(convert_binding_pattern(source, &rest.argument)?)),
                 None => None,
             };
-            Ok(crate::ast::Pattern::Array { elements, rest, span: span(array.span) })
+            Ok(crate::ast::Pattern::Array {
+                elements,
+                rest,
+                span: span(array.span),
+            })
         }
         BindingPattern::ObjectPattern(object) => {
             let mut properties = Vec::with_capacity(object.properties.len());
             for property in &object.properties {
                 let key = convert_binding_key(source, property)?;
                 let (value, default) = split_assignment(source, &property.value)?;
-                properties.push(crate::ast::PatternProperty { key, value, default });
+                properties.push(crate::ast::PatternProperty {
+                    key,
+                    value,
+                    default,
+                });
             }
             let rest = match &object.rest {
                 Some(rest) => Some(Box::new(convert_binding_pattern(source, &rest.argument)?)),
                 None => None,
             };
-            Ok(crate::ast::Pattern::Object { properties, rest, span: span(object.span) })
+            Ok(crate::ast::Pattern::Object {
+                properties,
+                rest,
+                span: span(object.span),
+            })
         }
         BindingPattern::AssignmentPattern(_) => {
             // A top-level `=` default is only meaningful attached to its
@@ -101,15 +119,29 @@ pub(super) fn convert_declarator_stmts(
     source: &str,
     declarator: &oxc_ast::ast::VariableDeclarator<'_>,
 ) -> Result<Vec<Stmt>, String> {
-    if let (BindingPattern::BindingIdentifier(id), Some(Expression::ObjectExpression(object)), Some(annotation)) =
-        (&declarator.id, declarator.init.as_ref(), declarator.type_annotation.as_deref())
-    {
-        let annotation_text = source.get(annotation.span.start as usize..annotation.span.end as usize).unwrap_or("");
-        let object_text = source.get(object.span.start as usize..object.span.end as usize).unwrap_or("");
-        if annotation_text.trim_start_matches(':').trim() == "any" && contains_word(object_text, id.name.as_str()) {
+    if let (
+        BindingPattern::BindingIdentifier(id),
+        Some(Expression::ObjectExpression(object)),
+        Some(annotation),
+    ) = (
+        &declarator.id,
+        declarator.init.as_ref(),
+        declarator.type_annotation.as_deref(),
+    ) {
+        let annotation_text = source
+            .get(annotation.span.start as usize..annotation.span.end as usize)
+            .unwrap_or("");
+        let object_text = source
+            .get(object.span.start as usize..object.span.end as usize)
+            .unwrap_or("");
+        if annotation_text.trim_start_matches(':').trim() == "any"
+            && contains_word(object_text, id.name.as_str())
+        {
             let span = |span: oxc_span::Span| Span::new(span.start, span.end);
             let whole = span(declarator.span);
-            let name = Name { span: span(id.span) };
+            let name = Name {
+                span: span(id.span),
+            };
             let value = convert_expression(source, declarator.init.as_ref().expect("checked"))?;
             return Ok(vec![
                 Stmt::Let {
@@ -117,12 +149,19 @@ pub(super) fn convert_declarator_stmts(
                     ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
                     init: Expr::Unary {
                         op: crate::ast::UnaryOp::Void,
-                        operand: Box::new(Expr::Number { value: 0.0, span: whole }),
+                        operand: Box::new(Expr::Number {
+                            value: 0.0,
+                            span: whole,
+                        }),
                         span: whole,
                     },
                     span: whole,
                 },
-                Stmt::Expr(Expr::Assign { target: name, value: Box::new(value), span: whole }),
+                Stmt::Expr(Expr::Assign {
+                    target: name,
+                    value: Box::new(value),
+                    span: whole,
+                }),
             ]);
         }
     }
@@ -142,8 +181,7 @@ pub(super) fn convert_declarator(
             if let (Expression::ClassExpression(_), BindingPattern::BindingIdentifier(binding)) =
                 (initializer, &declarator.id)
             {
-                CLASS_NAME_HINT
-                    .with(|cell| *cell.borrow_mut() = Some(span(binding.span)));
+                CLASS_NAME_HINT.with(|cell| *cell.borrow_mut() = Some(span(binding.span)));
             }
             let converted = convert_expression(source, initializer);
             CLASS_NAME_HINT.with(|cell| *cell.borrow_mut() = None);
@@ -151,13 +189,18 @@ pub(super) fn convert_declarator(
         }
         None => Expr::Unary {
             op: crate::ast::UnaryOp::Void,
-            operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+            operand: Box::new(Expr::Number {
+                value: 0.0,
+                span: span(declarator.span),
+            }),
             span: span(declarator.span),
         },
     };
     match &declarator.id {
         BindingPattern::BindingIdentifier(identifier) => Ok(Stmt::Let {
-            name: Name { span: span(identifier.span) },
+            name: Name {
+                span: span(identifier.span),
+            },
             ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
             init,
             span: span(declarator.span),

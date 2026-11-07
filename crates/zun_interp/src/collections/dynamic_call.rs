@@ -7,18 +7,27 @@ use super::*;
 
 impl<'a> Interp<'a> {
     #[inline]
-    pub(super) fn col_dynamic_call(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+    pub(super) fn col_dynamic_call(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
         match name {
-            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4" | "dynamicCall5" | "dynamicCall6" => {
+            "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4"
+            | "dynamicCall5" | "dynamicCall6" => {
                 // A string receiver (an `any`-typed string): JS String methods.
                 if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
                     // A RegExp argument routes the regex-taking String methods
                     // (`replace`/`replaceAll`/`match`/`matchAll`/`search`) to the
                     // regex natives, as the statically typed forms do.
-                    if let (Value::Str(member), Some(first)) = (args.get(1).ok_or(RunError::BadToken)?, args.get(2)) {
+                    if let (Value::Str(member), Some(first)) =
+                        (args.get(1).ok_or(RunError::BadToken)?, args.get(2))
+                    {
                         let regex = match unbox_arg(first) {
                             Ok(Value::Object(obj))
-                                if zun_gc::with_current_heap(|heap| heap.regex_source(obj).is_some()) =>
+                                if zun_gc::with_current_heap(|heap| {
+                                    heap.regex_source(obj).is_some()
+                                }) =>
                             {
                                 Some(Value::Object(obj))
                             }
@@ -30,33 +39,61 @@ impl<'a> Interp<'a> {
                                 "replace" | "replaceAll" if args.len() == 4 => {
                                     let all = member.as_ref() == "replaceAll";
                                     match unbox_arg(&args[3])? {
-                                        Value::Function(handle) => Some(self.call_managed_collection(
-                                            "replaceFn",
-                                            &[regex, subject, Value::Function(handle), Value::Bool(all)],
-                                        )?),
-                                        Value::Str(replacement) => Some(self.call_managed_collection(
-                                            "regexpReplace",
-                                            &[regex, subject, Value::Str(replacement)],
-                                        )?),
+                                        Value::Function(handle) => {
+                                            Some(self.call_managed_collection(
+                                                "replaceFn",
+                                                &[
+                                                    regex,
+                                                    subject,
+                                                    Value::Function(handle),
+                                                    Value::Bool(all),
+                                                ],
+                                            )?)
+                                        }
+                                        Value::Str(replacement) => {
+                                            Some(self.call_managed_collection(
+                                                "regexpReplace",
+                                                &[regex, subject, Value::Str(replacement)],
+                                            )?)
+                                        }
                                         _ => None,
                                     }
                                 }
-                                "match" => Some(self.call_managed_collection("regexpMatch", &[regex, subject])?),
-                                "search" => Some(self.call_managed_collection("regexpSearch", &[regex, subject])?),
-                                "matchAll" => Some(self.call_managed_collection("stringMatchAll", &[regex, subject])?),
-                                "split" if args.len() == 3 => {
-                                    Some(self.call_managed_collection("regexpSplit", &[regex, subject])?)
+                                "match" => Some(
+                                    self.call_managed_collection("regexpMatch", &[regex, subject])?,
+                                ),
+                                "search" => {
+                                    Some(self.call_managed_collection(
+                                        "regexpSearch",
+                                        &[regex, subject],
+                                    )?)
                                 }
+                                "matchAll" => Some(self.call_managed_collection(
+                                    "stringMatchAll",
+                                    &[regex, subject],
+                                )?),
+                                "split" if args.len() == 3 => Some(
+                                    self.call_managed_collection("regexpSplit", &[regex, subject])?,
+                                ),
                                 "split" if args.len() == 4 => {
                                     let limit = match unbox_arg(&args[3])? {
                                         Value::Void | Value::Null => None,
                                         other => {
                                             let n = self.dyn_to_number(&other)?;
-                                            Some(if n.is_nan() || n <= 0.0 { 0 } else if n >= 4294967295.0 { 4294967295 } else { n as i64 })
+                                            Some(if n.is_nan() || n <= 0.0 {
+                                                0
+                                            } else if n >= 4294967295.0 {
+                                                4294967295
+                                            } else {
+                                                n as i64
+                                            })
                                         }
                                     };
                                     match limit {
-                                        None => Some(self.call_managed_collection("regexpSplit", &[regex, subject])?),
+                                        None => Some(self.call_managed_collection(
+                                            "regexpSplit",
+                                            &[regex, subject],
+                                        )?),
                                         Some(n) => Some(self.call_managed_collection(
                                             "regexpSplitLimit",
                                             &[regex, subject, Value::Int(n, zun_il::NumKind::I64)],
@@ -66,8 +103,9 @@ impl<'a> Interp<'a> {
                                 _ => None,
                             };
                             if let Some(result) = routed {
-                                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
-                                    .unwrap_or_else(zun_core::Any::null);
+                                let boxed =
+                                    zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                        .unwrap_or_else(zun_core::Any::null);
                                 return Ok(Value::Any(boxed));
                             }
                         }
@@ -113,7 +151,8 @@ impl<'a> Interp<'a> {
                             // Coerce a float argument to the native's declared
                             // integer index/width (the typed call path does this
                             // for numeric literals; the dynamic path must too).
-                            for (value, param) in native_values.iter_mut().zip(native.params.iter()) {
+                            for (value, param) in native_values.iter_mut().zip(native.params.iter())
+                            {
                                 if let Value::Float(n, _) = value {
                                     use zun_natives::NativeTy::*;
                                     let kind = match param {
@@ -132,8 +171,10 @@ impl<'a> Interp<'a> {
                                     }
                                 }
                             }
-                            let native_args: Vec<zun_natives::NativeArg> =
-                                native_values.iter().map(crate::native::to_native_arg).collect();
+                            let native_args: Vec<zun_natives::NativeArg> = native_values
+                                .iter()
+                                .map(crate::native::to_native_arg)
+                                .collect();
                             let result = zun_natives::dispatch(id, &native_args, self.output)
                                 .map_err(|e| RunError::Native(e.0))?;
                             let value = crate::native::from_native_value(result, id);
@@ -205,7 +246,11 @@ impl<'a> Interp<'a> {
                     }
                 }
                 if matches!(receiver_concrete, Value::Void | Value::Null) {
-                    let kind = if matches!(receiver_concrete, Value::Null) { "null" } else { "undefined" };
+                    let kind = if matches!(receiver_concrete, Value::Null) {
+                        "null"
+                    } else {
+                        "undefined"
+                    };
                     return match self.new_error_object(
                         "TypeError",
                         &format!("Cannot read properties of {kind} (reading '{member}')"),
@@ -218,13 +263,18 @@ impl<'a> Interp<'a> {
                 // (`(Cls as any).m()`, `this.m()` in a static): resolved on the
                 // class or its bases.
                 if let Value::Any(desc) = &receiver_concrete {
-                    if let Some(rid) = desc.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
+                    if let Some(rid) = desc
+                        .as_class_descriptor()
+                        .and_then(|t| self.user_class_rid(t))
+                    {
                         if let Some((mrid, hidden)) = self.class_static_method(rid, &member) {
                             let mut call_args = args[2..]
                                 .iter()
                                 .map(|arg| match arg {
-                                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                                        .ok_or(RunError::BadToken),
+                                    Value::Any(any) => zun_gc::with_current_heap(|heap| {
+                                        Value::unbox_any(*any, heap)
+                                    })
+                                    .ok_or(RunError::BadToken),
                                     other => Ok(other.clone()),
                                 })
                                 .collect::<Result<Vec<_>, _>>()?;
@@ -247,10 +297,10 @@ impl<'a> Interp<'a> {
                         let unboxed = args[2..]
                             .iter()
                             .map(|arg| match arg {
-                                Value::Any(any) => zun_gc::with_current_heap(|heap| {
-                                    Value::unbox_any(*any, heap)
-                                })
-                                .ok_or(RunError::BadToken),
+                                Value::Any(any) => {
+                                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .ok_or(RunError::BadToken)
+                                }
                                 other => Ok(other.clone()),
                             })
                             .collect::<Result<Vec<_>, _>>()?;
@@ -272,7 +322,9 @@ impl<'a> Interp<'a> {
                                 .get((handle.method_rid() as usize).wrapping_sub(1))
                                 .map(|method| {
                                     let name = self.module.strings.get(method.name);
-                                    name.ends_with("@this>") || name.ends_with("@this@rest>") || name.ends_with("@this")
+                                    name.ends_with("@this>")
+                                        || name.ends_with("@this@rest>")
+                                        || name.ends_with("@this")
                                 })
                                 .unwrap_or(false);
                         if takes_this {
@@ -288,12 +340,16 @@ impl<'a> Interp<'a> {
                 // fn.m()`): called with the function's property bag as `this`.
                 if let Value::Function(handle) = &receiver_concrete {
                     let bag = crate::function_expando_bag(*handle);
-                    if let Some(method) = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(bag, &member)) {
+                    if let Some(method) =
+                        zun_gc::with_current_heap(|heap| heap.dynamic_get_function(bag, &member))
+                    {
                         let call_values = args[2..]
                             .iter()
                             .map(|arg| match arg {
-                                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                                    .ok_or(RunError::BadToken),
+                                Value::Any(any) => {
+                                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .ok_or(RunError::BadToken)
+                                }
                                 other => Ok(other.clone()),
                             })
                             .collect::<Result<Vec<_>, _>>()?;
@@ -304,8 +360,8 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Any(boxed));
                     }
                 }
-                let namespace = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let namespace =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // A built-in iterator object (from `Array`/`Map`/`Set`
                 // `keys`/`values`/`entries`) answers `next()` with a fresh
                 // `{ value, done }` result object, per the iterator protocol.
@@ -326,8 +382,10 @@ impl<'a> Interp<'a> {
                 let call_args = args[2..]
                     .iter()
                     .map(|arg| match arg {
-                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                            .ok_or(RunError::BadToken),
+                        Value::Any(any) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                .ok_or(RunError::BadToken)
+                        }
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -336,17 +394,24 @@ impl<'a> Interp<'a> {
                 if zun_gc::with_current_heap(|heap| heap.proxy_target(namespace).is_some()) {
                     let callee = self.proxy_dynamic_get(namespace, &member)?;
                     let callee = match callee {
-                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
-                            .unwrap_or(Value::Void),
+                        Value::Any(any) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                                .unwrap_or(Value::Void)
+                        }
                         other => other,
                     };
                     let Value::Function(handle) = callee else {
-                        return match self.new_error_object("TypeError", &format!("{member} is not a function")) {
+                        return match self
+                            .new_error_object("TypeError", &format!("{member} is not a function"))
+                        {
                             Some(object) => Err(RunError::Thrown(Value::Object(object))),
                             None => Err(RunError::BadToken),
                         };
                     };
-                    let result = self.invoke_function_value(handle, self.with_this_arg(handle, namespace, call_args))?;
+                    let result = self.invoke_function_value(
+                        handle,
+                        self.with_this_arg(handle, namespace, call_args),
+                    )?;
                     let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                         .unwrap_or_else(zun_core::Any::void);
                     return Ok(Value::Any(boxed));
@@ -419,9 +484,12 @@ impl<'a> Interp<'a> {
                     let mut chars = member.chars();
                     let native_name = match chars.next() {
                         // `sort` has two natives, chosen by the comparator's presence.
-                        _ if member.as_ref() == "sort" => {
-                            if call_args.is_empty() { "arraySortDefault" } else { "arraySortBy" }.to_string()
+                        _ if member.as_ref() == "sort" => if call_args.is_empty() {
+                            "arraySortDefault"
+                        } else {
+                            "arraySortBy"
                         }
+                        .to_string(),
                         Some(first) => {
                             format!("array{}{}", first.to_ascii_uppercase(), chars.as_str())
                         }
@@ -443,7 +511,9 @@ impl<'a> Interp<'a> {
                                         text.trim().parse::<f64>().unwrap_or(f64::NAN),
                                         zun_il::NumKind::F64,
                                     ),
-                                    Value::Bool(b) => Value::Float(f64::from(u8::from(b)), zun_il::NumKind::F64),
+                                    Value::Bool(b) => {
+                                        Value::Float(f64::from(u8::from(b)), zun_il::NumKind::F64)
+                                    }
                                     Value::Null => Value::Float(0.0, zun_il::NumKind::F64),
                                     other => other,
                                 };
@@ -465,7 +535,8 @@ impl<'a> Interp<'a> {
                             let list = zun_gc::with_current_heap_mut(|heap| {
                                 let list = heap.alloc_array(0);
                                 for value in &call_args {
-                                    let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                    let boxed =
+                                        value.box_any(heap).unwrap_or_else(zun_core::Any::void);
                                     heap.array_push(list, boxed);
                                 }
                                 list
@@ -476,7 +547,8 @@ impl<'a> Interp<'a> {
                             let list = zun_gc::with_current_heap_mut(|heap| {
                                 let list = heap.alloc_array(0);
                                 for value in &call_args {
-                                    let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                    let boxed =
+                                        value.box_any(heap).unwrap_or_else(zun_core::Any::void);
                                     heap.array_push(list, boxed);
                                 }
                                 list
@@ -505,22 +577,36 @@ impl<'a> Interp<'a> {
                 // through the same natives typed code uses.
                 {
                     let (is_map, is_set) = zun_gc::with_current_heap(|heap| {
-                        (heap.map_len(namespace).is_some(), heap.set_len(namespace).is_some())
+                        (
+                            heap.map_len(namespace).is_some(),
+                            heap.set_len(namespace).is_some(),
+                        )
                     });
                     // ES2025 Set methods run the prelude helper that follows the
                     // set-like protocol on the argument.
                     if is_set
                         && matches!(
                             member.as_ref(),
-                            "union" | "intersection" | "difference" | "symmetricDifference"
-                                | "isSubsetOf" | "isSupersetOf" | "isDisjointFrom"
+                            "union"
+                                | "intersection"
+                                | "difference"
+                                | "symmetricDifference"
+                                | "isSubsetOf"
+                                | "isSupersetOf"
+                                | "isDisjointFrom"
                         )
                     {
-                        let helper = if member.starts_with("is") { "__zunSetOpBool" } else { "__zunSetOpSet" };
+                        let helper = if member.starts_with("is") {
+                            "__zunSetOpBool"
+                        } else {
+                            "__zunSetOpSet"
+                        };
                         if let Some(rid) = self.free_function_rid(helper) {
                             let other = call_args
                                 .first()
-                                .and_then(|value| zun_gc::with_current_heap_mut(|heap| value.box_any_cell(heap)))
+                                .and_then(|value| {
+                                    zun_gc::with_current_heap_mut(|heap| value.box_any_cell(heap))
+                                })
                                 .unwrap_or_else(zun_core::Any::void);
                             let helper_args = vec![
                                 Value::Object(namespace),
@@ -535,7 +621,10 @@ impl<'a> Interp<'a> {
                     }
                     // A WeakMap / WeakSet reached through `any`. WeakSet and WeakMap
                     // share a store; `add` / `set` tell them apart by name.
-                    if !is_map && !is_set && zun_gc::with_current_heap(|heap| heap.is_weak_collection(namespace)) {
+                    if !is_map
+                        && !is_set
+                        && zun_gc::with_current_heap(|heap| heap.is_weak_collection(namespace))
+                    {
                         let weak_native = match member.as_ref() {
                             "set" => Some("weakMapSet"),
                             "get" => Some("weakMapGet"),
@@ -600,7 +689,9 @@ impl<'a> Interp<'a> {
                 // A typed class instance reached through `any`: dispatch the
                 // named method (virtually) with the instance as receiver.
                 if !is_array
-                    && !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(namespace) && !heap.is_instance_bag(namespace))
+                    && !zun_gc::with_current_heap(|heap| {
+                        heap.is_dynamic_object(namespace) && !heap.is_instance_bag(namespace)
+                    })
                 {
                     if let Some(rid) = self.instance_method_rid(namespace, &member) {
                         let mut method_args = Vec::with_capacity(call_args.len() + 1);
@@ -619,14 +710,26 @@ impl<'a> Interp<'a> {
                         let mut rid = namespace.type_rid();
                         while rid >= 1 {
                             let proto = self.class_prototype_object(rid);
-                            if let Some(handle) = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(proto, &member)) {
-                                let result = self.invoke_function_value(handle, self.with_this_arg(handle, namespace, call_args))?;
-                                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
-                                    .unwrap_or_else(zun_core::Any::void);
+                            if let Some(handle) = zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_get_function(proto, &member)
+                            }) {
+                                let result = self.invoke_function_value(
+                                    handle,
+                                    self.with_this_arg(handle, namespace, call_args),
+                                )?;
+                                let boxed =
+                                    zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                        .unwrap_or_else(zun_core::Any::void);
                                 return Ok(Value::Any(boxed));
                             }
                             rid = match self.module.tables.type_defs.get(rid as usize - 1) {
-                                Some(def) if def.base.table() == Some(zun_metadata::TableKind::TypeDef) && !def.base.is_null() => def.base.rid(),
+                                Some(def)
+                                    if def.base.table()
+                                        == Some(zun_metadata::TableKind::TypeDef)
+                                        && !def.base.is_null() =>
+                                {
+                                    def.base.rid()
+                                }
                                 _ => 0,
                             };
                         }
@@ -651,7 +754,10 @@ impl<'a> Interp<'a> {
                             .tables
                             .method_defs
                             .get((handle.method_rid() as usize).wrapping_sub(1))
-                            .map(|method| { let n = self.module.strings.get(method.name); n.ends_with("@this>") || n.ends_with("@this@rest>") })
+                            .map(|method| {
+                                let n = self.module.strings.get(method.name);
+                                n.ends_with("@this>") || n.ends_with("@this@rest>")
+                            })
                             .unwrap_or(false);
                         if takes_this {
                             call_args.insert(0, Value::Object(namespace));
@@ -669,7 +775,8 @@ impl<'a> Interp<'a> {
                 // defining scope (the method runs on the current heap, so an
                 // object result is valid — unlike the namespace-function path).
                 let is_instance =
-                    zun_gc::with_current_heap(|heap| heap.dynamic_get(namespace, "__instance")).is_some();
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get(namespace, "__instance"))
+                        .is_some();
                 if is_instance {
                     let loader = self.loader.ok_or(RunError::BadToken)?;
                     let result = crate::namespace::call_namespace_instance_method(
@@ -684,7 +791,8 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Any(boxed));
                 }
                 let is_module_member = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get_module_function(namespace, &member).is_some()
+                    heap.dynamic_get_module_function(namespace, &member)
+                        .is_some()
                 });
                 if !is_module_member {
                     // Neither a method nor a namespace export: the member is
@@ -692,10 +800,9 @@ impl<'a> Interp<'a> {
                     if OPTIONAL_PROBE.with(|flag| flag.get()) {
                         return Err(RunError::BadToken);
                     }
-                    return match self.new_error_object(
-                        "TypeError",
-                        &format!("{member} is not a function"),
-                    ) {
+                    return match self
+                        .new_error_object("TypeError", &format!("{member} is not a function"))
+                    {
                         Some(object) => Err(RunError::Thrown(Value::Object(object))),
                         None => Err(RunError::BadToken),
                     };

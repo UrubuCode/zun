@@ -64,20 +64,58 @@ fn managed_view_lengths_use_typed_object_abis() {
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(32);
     let data_view = heap.alloc_data_view(buffer, 0, 12).expect("data view");
-    let u8_view = heap.alloc_typed_array(buffer, 0, 5, zun_core::TypedElement::U8).expect("u8 view");
-    let u16_view = heap.alloc_typed_array(buffer, 0, 4, zun_core::TypedElement::U16).expect("u16 view");
-    let u32_view = heap.alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::U32).expect("u32 view");
-    let f64_view = heap.alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::F64).expect("f64 view");
-    assert!(matches!(jit.call_packed_with_heap(data, &[data_view.addr() as u64], &mut heap), Ok(12)));
-    assert!(matches!(jit.call_packed_with_heap(data_bytes, &[data_view.addr() as u64], &mut heap), Ok(12)));
-    assert!(matches!(jit.call_packed_with_heap(u8, &[u8_view.addr() as u64], &mut heap), Ok(5)));
-    assert!(matches!(jit.call_packed_with_heap(u8_bytes, &[u8_view.addr() as u64], &mut heap), Ok(5)));
-    assert!(matches!(jit.call_packed_with_heap(u16, &[u16_view.addr() as u64], &mut heap), Ok(4)));
-    assert!(matches!(jit.call_packed_with_heap(u16_bytes, &[u16_view.addr() as u64], &mut heap), Ok(8)));
-    assert!(matches!(jit.call_packed_with_heap(u32, &[u32_view.addr() as u64], &mut heap), Ok(2)));
-    assert!(matches!(jit.call_packed_with_heap(u32_bytes, &[u32_view.addr() as u64], &mut heap), Ok(8)));
-    assert!(matches!(jit.call_packed_with_heap(f64, &[f64_view.addr() as u64], &mut heap), Ok(2)));
-    assert!(matches!(jit.call_packed_with_heap(f64_bytes, &[f64_view.addr() as u64], &mut heap), Ok(16)));
+    let u8_view = heap
+        .alloc_typed_array(buffer, 0, 5, zun_core::TypedElement::U8)
+        .expect("u8 view");
+    let u16_view = heap
+        .alloc_typed_array(buffer, 0, 4, zun_core::TypedElement::U16)
+        .expect("u16 view");
+    let u32_view = heap
+        .alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::U32)
+        .expect("u32 view");
+    let f64_view = heap
+        .alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::F64)
+        .expect("f64 view");
+    assert!(matches!(
+        jit.call_packed_with_heap(data, &[data_view.addr() as u64], &mut heap),
+        Ok(12)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(data_bytes, &[data_view.addr() as u64], &mut heap),
+        Ok(12)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(u8, &[u8_view.addr() as u64], &mut heap),
+        Ok(5)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(u8_bytes, &[u8_view.addr() as u64], &mut heap),
+        Ok(5)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(u16, &[u16_view.addr() as u64], &mut heap),
+        Ok(4)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(u16_bytes, &[u16_view.addr() as u64], &mut heap),
+        Ok(8)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(u32, &[u32_view.addr() as u64], &mut heap),
+        Ok(2)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(u32_bytes, &[u32_view.addr() as u64], &mut heap),
+        Ok(8)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(f64, &[f64_view.addr() as u64], &mut heap),
+        Ok(2)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(f64_bytes, &[f64_view.addr() as u64], &mut heap),
+        Ok(16)
+    ));
 }
 
 #[test]
@@ -168,7 +206,11 @@ fn array_buffer_numeric_writes_use_scalar_managed_abis() {
         Ok(1)
     ));
     assert!(matches!(
-        jit.call_packed_with_heap(f64_rid, &[buffer.addr() as u64, 8, 2.5f64.to_bits()], &mut heap),
+        jit.call_packed_with_heap(
+            f64_rid,
+            &[buffer.addr() as u64, 8, 2.5f64.to_bits()],
+            &mut heap
+        ),
         Ok(1)
     ));
     assert_eq!(heap.buffer_get(buffer, 1), Some(0xab));
@@ -258,9 +300,22 @@ fn data_view_scalar_writes_use_width_specific_abis() {
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(16);
     let view = heap.alloc_data_view(buffer, 0, 16).expect("data view");
-    assert!(matches!(jit.call_packed_with_heap(u32_rid, &[view.addr() as u64, 0, 0xfeed_beef, 1], &mut heap), Ok(1)));
-    assert!(matches!(jit.call_packed_with_heap(u16_rid, &[view.addr() as u64, 4, 0xbeef, 1], &mut heap), Ok(1)));
-    assert!(matches!(jit.call_packed_with_heap(f64_rid, &[view.addr() as u64, 8, 2.5f64.to_bits(), 1], &mut heap), Ok(1)));
+    assert!(matches!(
+        jit.call_packed_with_heap(u32_rid, &[view.addr() as u64, 0, 0xfeed_beef, 1], &mut heap),
+        Ok(1)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(u16_rid, &[view.addr() as u64, 4, 0xbeef, 1], &mut heap),
+        Ok(1)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(
+            f64_rid,
+            &[view.addr() as u64, 8, 2.5f64.to_bits(), 1],
+            &mut heap
+        ),
+        Ok(1)
+    ));
     assert_eq!(heap.data_view_get_u32(view, 0, true), Some(0xfeed_beef));
     assert_eq!(heap.data_view_get_u16(view, 4, true), Some(0xbeef));
     assert_eq!(heap.data_view_get_f64(view, 8, true), Some(2.5));
@@ -290,9 +345,17 @@ fn u8_array_access_uses_the_typed_view_abi() {
     assert!(jit.is_compiled(write_rid));
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(2);
-    let view = heap.alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::U8).expect("u8 view");
-    assert!(matches!(jit.call_packed_with_heap(write_rid, &[view.addr() as u64, 1, 0xcd], &mut heap), Ok(1)));
-    assert!(matches!(jit.call_packed_with_heap(read_rid, &[view.addr() as u64, 1], &mut heap), Ok(0xcd)));
+    let view = heap
+        .alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::U8)
+        .expect("u8 view");
+    assert!(matches!(
+        jit.call_packed_with_heap(write_rid, &[view.addr() as u64, 1, 0xcd], &mut heap),
+        Ok(1)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(read_rid, &[view.addr() as u64, 1], &mut heap),
+        Ok(0xcd)
+    ));
 }
 
 #[test]
@@ -300,7 +363,15 @@ fn u16_array_access_uses_the_typed_view_abi() {
     let module = compile(
         "import { u16ArrayGet, u16ArraySet } from \"zun:core\"; function read(view: Uint16Array, index: u64): u16 { return u16ArrayGet(view, index); } function write(view: Uint16Array, index: u64, value: u16): boolean { return u16ArraySet(view, index, value); } function main(): u64 { return 0; }",
     );
-    let find = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("u16 method") as u32 + 1;
+    let find = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("u16 method") as u32
+            + 1
+    };
     let read_rid = find("read");
     let write_rid = find("write");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
@@ -308,10 +379,19 @@ fn u16_array_access_uses_the_typed_view_abi() {
     assert!(jit.is_compiled(write_rid));
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(4);
-    let view = heap.alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::U16).expect("u16 view");
-    let write_result = jit.call_packed_with_heap(write_rid, &[view.addr() as u64, 1, 0xbeef], &mut heap);
-    assert!(matches!(write_result, Ok(1)), "write result: {write_result:?}");
-    assert!(matches!(jit.call_packed_with_heap(read_rid, &[view.addr() as u64, 1], &mut heap), Ok(0xbeef)));
+    let view = heap
+        .alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::U16)
+        .expect("u16 view");
+    let write_result =
+        jit.call_packed_with_heap(write_rid, &[view.addr() as u64, 1, 0xbeef], &mut heap);
+    assert!(
+        matches!(write_result, Ok(1)),
+        "write result: {write_result:?}"
+    );
+    assert!(matches!(
+        jit.call_packed_with_heap(read_rid, &[view.addr() as u64, 1], &mut heap),
+        Ok(0xbeef)
+    ));
 }
 
 #[test]
@@ -319,7 +399,15 @@ fn u32_and_f64_array_access_use_typed_view_abis() {
     let module = compile(
         "import { u32ArrayGet, u32ArraySet, f64ArrayGet, f64ArraySet } from \"zun:core\"; function readU32(view: Uint32Array, index: u64): u32 { return u32ArrayGet(view, index); } function writeU32(view: Uint32Array, index: u64, value: u32): boolean { return u32ArraySet(view, index, value); } function readF64(view: Float64Array, index: u64): number { return f64ArrayGet(view, index); } function writeF64(view: Float64Array, index: u64, value: number): boolean { return f64ArraySet(view, index, value); } function main(): u64 { return 0; }",
     );
-    let find = |name: &str| module.tables.method_defs.iter().position(|method| module.strings.get(method.name) == name).expect("typed array method") as u32 + 1;
+    let find = |name: &str| {
+        module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == name)
+            .expect("typed array method") as u32
+            + 1
+    };
     let read_u32 = find("readU32");
     let write_u32 = find("writeU32");
     let read_f64 = find("readF64");
@@ -331,11 +419,33 @@ fn u32_and_f64_array_access_use_typed_view_abis() {
     assert!(jit.is_compiled(write_f64));
     let mut heap = zun_gc::Heap::new();
     let buffer = heap.alloc_buffer(32);
-    let u32_view = heap.alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::U32).expect("u32 view");
-    let f64_view = heap.alloc_typed_array(buffer, 16, 2, zun_core::TypedElement::F64).expect("f64 view");
-    assert!(matches!(jit.call_packed_with_heap(write_u32, &[u32_view.addr() as u64, 1, 0xdead_beef], &mut heap), Ok(1)));
-    assert!(matches!(jit.call_packed_with_heap(write_f64, &[f64_view.addr() as u64, 1, 3.25f64.to_bits()], &mut heap), Ok(1)));
-    assert!(matches!(jit.call_packed_with_heap(read_u32, &[u32_view.addr() as u64, 1], &mut heap), Ok(0xdead_beef)));
-    assert!(matches!(jit.call_packed_with_heap(read_f64, &[f64_view.addr() as u64, 1], &mut heap), Ok(value) if f64::from_bits(value) == 3.25));
+    let u32_view = heap
+        .alloc_typed_array(buffer, 0, 2, zun_core::TypedElement::U32)
+        .expect("u32 view");
+    let f64_view = heap
+        .alloc_typed_array(buffer, 16, 2, zun_core::TypedElement::F64)
+        .expect("f64 view");
+    assert!(matches!(
+        jit.call_packed_with_heap(
+            write_u32,
+            &[u32_view.addr() as u64, 1, 0xdead_beef],
+            &mut heap
+        ),
+        Ok(1)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(
+            write_f64,
+            &[f64_view.addr() as u64, 1, 3.25f64.to_bits()],
+            &mut heap
+        ),
+        Ok(1)
+    ));
+    assert!(matches!(
+        jit.call_packed_with_heap(read_u32, &[u32_view.addr() as u64, 1], &mut heap),
+        Ok(0xdead_beef)
+    ));
+    assert!(
+        matches!(jit.call_packed_with_heap(read_f64, &[f64_view.addr() as u64, 1], &mut heap), Ok(value) if f64::from_bits(value) == 3.25)
+    );
 }
-

@@ -1,6 +1,9 @@
 use super::*;
 
-pub(super) fn convert_template_literal(source: &str, template: &oxc_ast::ast::TemplateLiteral<'_>) -> Result<Expr, String> {
+pub(super) fn convert_template_literal(
+    source: &str,
+    template: &oxc_ast::ast::TemplateLiteral<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let mut parts = Vec::with_capacity(template.quasis.len() + template.expressions.len());
     for (index, quasi) in template.quasis.iter().enumerate() {
@@ -10,9 +13,7 @@ pub(super) fn convert_template_literal(source: &str, template: &oxc_ast::ast::Te
             .as_ref()
             .and_then(|value| value.as_str())
             .or_else(|| Some(quasi.value.raw.as_str()))
-            .ok_or_else(|| {
-                "OXC adapter cannot represent this template segment".to_owned()
-            })?;
+            .ok_or_else(|| "OXC adapter cannot represent this template segment".to_owned())?;
         parts.push(crate::ast::TemplatePart::Text(text.to_owned()));
         if let Some(expression) = template.expressions.get(index) {
             parts.push(crate::ast::TemplatePart::Expr(Box::new(
@@ -26,7 +27,10 @@ pub(super) fn convert_template_literal(source: &str, template: &oxc_ast::ast::Te
     })
 }
 
-pub(super) fn convert_tagged_template(source: &str, tagged: &oxc_ast::ast::TaggedTemplateExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_tagged_template(
+    source: &str,
+    tagged: &oxc_ast::ast::TaggedTemplateExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let tag = Box::new(convert_expression(source, &tagged.tag)?);
     let quasi = &tagged.quasi;
@@ -58,7 +62,10 @@ pub(super) fn convert_tagged_template(source: &str, tagged: &oxc_ast::ast::Tagge
     })
 }
 
-pub(super) fn convert_sequence(source: &str, sequence: &oxc_ast::ast::SequenceExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_sequence(
+    source: &str,
+    sequence: &oxc_ast::ast::SequenceExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     // Desugar `(a, b, c)` into an immediately-invoked arrow
     // `(() => { a; b; return c; })()` so evaluation order and side
@@ -90,7 +97,10 @@ pub(super) fn convert_sequence(source: &str, sequence: &oxc_ast::ast::SequenceEx
     let iife = Expr::Function(FunctionExpr {
         params: Vec::new(),
         return_type: convert_type_annotation(source, None)?,
-        body: Block { statements, span: whole },
+        body: Block {
+            statements,
+            span: whole,
+        },
         is_arrow: true,
         is_async: false,
         is_generator: false,
@@ -124,7 +134,9 @@ pub(super) fn convert_ts_cast(
     })
 }
 
-pub(super) fn convert_identifier(identifier: &oxc_ast::ast::IdentifierReference<'_>) -> Result<Expr, String> {
+pub(super) fn convert_identifier(
+    identifier: &oxc_ast::ast::IdentifierReference<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     // The global literal identifiers have no variable binding: map them
     // to their values so they resolve like JS (`undefined` ≡ `void 0`,
@@ -132,11 +144,22 @@ pub(super) fn convert_identifier(identifier: &oxc_ast::ast::IdentifierReference<
     match identifier.name.as_str() {
         "undefined" => Ok(Expr::Unary {
             op: crate::ast::UnaryOp::Void,
-            operand: Box::new(Expr::Number { value: 0.0, span: span(identifier.span) }),
+            operand: Box::new(Expr::Number {
+                value: 0.0,
+                span: span(identifier.span),
+            }),
             span: span(identifier.span),
         }),
-        "NaN" => Ok(Expr::Number { value: f64::NAN, span: span(identifier.span) }),
-        "Infinity" => Ok(Expr::Number { value: f64::INFINITY, span: span(identifier.span) }),
-        _ => Ok(Expr::Ident(Name { span: span(identifier.span) })),
+        "NaN" => Ok(Expr::Number {
+            value: f64::NAN,
+            span: span(identifier.span),
+        }),
+        "Infinity" => Ok(Expr::Number {
+            value: f64::INFINITY,
+            span: span(identifier.span),
+        }),
+        _ => Ok(Expr::Ident(Name {
+            span: span(identifier.span),
+        })),
     }
 }

@@ -45,7 +45,11 @@ impl<'a> Interp<'a> {
                             let mut from = 0;
                             while let Some(at) = input[from..].find(&needle) {
                                 let start = from + at;
-                                found.push((to16(start), to16(start + needle.len()), vec![Some(needle.clone())]));
+                                found.push((
+                                    to16(start),
+                                    to16(start + needle.len()),
+                                    vec![Some(needle.clone())],
+                                ));
                                 from = start + needle.len();
                                 if !all {
                                     break;
@@ -62,8 +66,10 @@ impl<'a> Interp<'a> {
                     )
                 };
                 let group_names: Vec<Option<String>> = match &search {
-                    Value::Object(regex) => zun_gc::with_current_heap(|heap| heap.regex_group_names(*regex))
-                        .unwrap_or_default(),
+                    Value::Object(regex) => {
+                        zun_gc::with_current_heap(|heap| heap.regex_group_names(*regex))
+                            .unwrap_or_default()
+                    }
                     _ => Vec::new(),
                 };
                 let has_named = group_names.iter().any(|name| name.is_some());
@@ -77,7 +83,9 @@ impl<'a> Interp<'a> {
                             .iter()
                             .enumerate()
                             .filter_map(|(index, name)| {
-                                name.as_ref().map(|name| (name.clone(), groups.get(index).cloned().flatten()))
+                                name.as_ref().map(|name| {
+                                    (name.clone(), groups.get(index).cloned().flatten())
+                                })
                             })
                             .collect()
                     } else {
@@ -98,7 +106,9 @@ impl<'a> Interp<'a> {
                             heap.dynamic_set_prototype(object, Some(zun_core::Any::null()));
                             for (name, value) in named_groups {
                                 let any = match value {
-                                    Some(text) => zun_core::Any::string(heap.intern_string(text.into())),
+                                    Some(text) => {
+                                        zun_core::Any::string(heap.intern_string(text.into()))
+                                    }
                                     None => zun_core::Any::void(),
                                 };
                                 heap.dynamic_set(object, name, any);
@@ -114,7 +124,10 @@ impl<'a> Interp<'a> {
                 out_units.extend_from_slice(&units[last..]);
                 if let Value::Object(regex) = &search {
                     zun_gc::with_current_heap_mut(|heap| {
-                        if heap.regex_flags(*regex).is_some_and(|flags| flags.contains('g')) {
+                        if heap
+                            .regex_flags(*regex)
+                            .is_some_and(|flags| flags.contains('g'))
+                        {
                             heap.regex_store_last_index(*regex, 0.0)
                         } else {
                             Ok(())
@@ -148,14 +161,18 @@ impl<'a> Interp<'a> {
                 // `"[object <Tag>]"`, else `"[object Object]"`.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let text = match value {
-                    Value::Object(obj) if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) => {
+                    Value::Object(obj)
+                        if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) =>
+                    {
                         self.array_join_dyn(obj, ",")?.unwrap_or_default()
                     }
                     Value::Object(obj)
                         if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) =>
                     {
                         zun_gc::with_current_heap(|heap| {
-                            heap.bigint_value(obj).map(|v| v.to_string()).unwrap_or_default()
+                            heap.bigint_value(obj)
+                                .map(|v| v.to_string())
+                                .unwrap_or_default()
                         })
                     }
                     Value::Object(obj)
@@ -178,9 +195,11 @@ impl<'a> Interp<'a> {
                                     obj,
                                     zun_core::WellKnownSymbol::ToStringTag.id(),
                                 )
-                                .and_then(|any| match Value::unbox_any(any, heap) {
-                                    Some(Value::Str(text)) => Some(text.to_string()),
-                                    _ => None,
+                                .and_then(|any| {
+                                    match Value::unbox_any(any, heap) {
+                                        Some(Value::Str(text)) => Some(text.to_string()),
+                                        _ => None,
+                                    }
                                 })
                             });
                             match tag {
@@ -306,7 +325,9 @@ impl<'a> Interp<'a> {
                 let right = args.get(1).ok_or(RunError::BadToken)?.clone();
                 Ok(Value::Bool(self.loose_equals(left, right)?))
             }
-            "numberToFixedJs" | "numberToExponentialJs" | "numberToPrecisionJs"
+            "numberToFixedJs"
+            | "numberToExponentialJs"
+            | "numberToPrecisionJs"
             | "numberToStringRadixJs" => {
                 let x = match args.first().ok_or(RunError::BadToken)? {
                     Value::Float(number, _) => *number,

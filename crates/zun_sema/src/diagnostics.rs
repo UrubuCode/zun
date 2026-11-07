@@ -9,7 +9,11 @@ pub(crate) const SYNTHETIC_NAME_BASE: u32 = ast::SYNTHETIC_NAME_BASE;
 impl Checker<'_> {
     /// Declare a fresh synthetic local in the current scope and return the
     /// local slot plus an AST name that resolves to it.
-    pub(crate) fn synthetic_local(&self, cx: &mut FunctionCx, ty: Ty) -> (hir::LocalSlot, ast::Name) {
+    pub(crate) fn synthetic_local(
+        &self,
+        cx: &mut FunctionCx,
+        ty: Ty,
+    ) -> (hir::LocalSlot, ast::Name) {
         let index = cx.locals.len() as u32;
         let name = ast::Name {
             span: Span::new(SYNTHETIC_NAME_BASE + index, SYNTHETIC_NAME_BASE + index),

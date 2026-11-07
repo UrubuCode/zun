@@ -112,7 +112,9 @@ impl<'a> Interp<'a> {
             out.extend(expandos);
             return Ok(out);
         }
-        if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)) {
+        if zun_gc::with_current_heap(|heap| {
+            heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
+        }) {
             let keys = zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj))
                 .ok_or(RunError::BadToken)?;
             let mut out = Vec::with_capacity(keys.len());
@@ -175,7 +177,12 @@ impl<'a> Interp<'a> {
         // not own enumerable properties and are skipped.
         let mut hidden_prefix = 0usize;
         for &rid in &chain {
-            let ty = self.module.tables.type_defs.get(rid as usize - 1).ok_or(RunError::BadToken)?;
+            let ty = self
+                .module
+                .tables
+                .type_defs
+                .get(rid as usize - 1)
+                .ok_or(RunError::BadToken)?;
             let name = self.module.strings.get(ty.name);
             if name == "Error" || name == "AggregateError" || name.starts_with("__Builtin") {
                 hidden_prefix = hidden_prefix.max((ty.field_end - ty.field_start) as usize);
@@ -230,8 +237,12 @@ impl<'a> Interp<'a> {
                     .collect()
             });
             out.extend(extras);
-            let is_index = |key: &str| key.parse::<u32>().is_ok_and(|n| n.to_string() == key && n != u32::MAX);
-            let (mut indexed, rest): (Vec<_>, Vec<_>) = out.into_iter().partition(|(key, _)| is_index(key));
+            let is_index = |key: &str| {
+                key.parse::<u32>()
+                    .is_ok_and(|n| n.to_string() == key && n != u32::MAX)
+            };
+            let (mut indexed, rest): (Vec<_>, Vec<_>) =
+                out.into_iter().partition(|(key, _)| is_index(key));
             indexed.sort_by_key(|(key, _)| key.parse::<u32>().unwrap_or(0));
             indexed.extend(rest);
             out = indexed;
@@ -251,8 +262,11 @@ impl<'a> Interp<'a> {
                 .map(|def| self.module.strings.get(def.name) == "StringObject")
                 .unwrap_or(false);
             if is_string_wrapper {
-                let mut names: Vec<String> =
-                    self.object_own_entries(obj)?.into_iter().map(|(name, _)| name).collect();
+                let mut names: Vec<String> = self
+                    .object_own_entries(obj)?
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect();
                 names.push("length".to_owned());
                 return Ok(names);
             }
@@ -265,14 +279,19 @@ impl<'a> Interp<'a> {
                     .collect()
             });
             names.push("length".to_owned());
-            let expandos = zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).unwrap_or_default();
+            let expandos =
+                zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).unwrap_or_default();
             names.extend(expandos);
             return Ok(names);
         }
         if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
             zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).ok_or(RunError::BadToken)
         } else {
-            Ok(self.object_own_entries(obj)?.into_iter().map(|(name, _)| name).collect())
+            Ok(self
+                .object_own_entries(obj)?
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect())
         }
     }
 
@@ -280,7 +299,11 @@ impl<'a> Interp<'a> {
     /// or `{ get, set, enumerable, configurable }` for `obj[key]`, or `None` if
     /// there is no own property.
     /// Data descriptor of an own symbol-keyed property (`None` when absent).
-    pub(crate) fn build_symbol_descriptor(&mut self, obj: zun_gc::Obj, symbol: zun_core::SymbolId) -> Option<zun_gc::Obj> {
+    pub(crate) fn build_symbol_descriptor(
+        &mut self,
+        obj: zun_gc::Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_gc::Obj> {
         zun_gc::with_current_heap_mut(|heap| {
             let value = heap.dynamic_get_symbol(obj, symbol)?;
             let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
@@ -288,23 +311,34 @@ impl<'a> Interp<'a> {
             let out = heap.alloc_dynamic();
             heap.dynamic_set(out, "value".to_owned(), value);
             heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(!frozen));
-            heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(enumerable));
+            heap.dynamic_set(
+                out,
+                "enumerable".to_owned(),
+                zun_core::Any::bool(enumerable),
+            );
             heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(!frozen));
             Some(out)
         })
     }
 
-    pub(crate) fn build_descriptor(&mut self, obj: zun_gc::Obj, key: &str) -> Result<Option<zun_gc::Obj>, RunError> {
+    pub(crate) fn build_descriptor(
+        &mut self,
+        obj: zun_gc::Obj,
+        key: &str,
+    ) -> Result<Option<zun_gc::Obj>, RunError> {
         // Arrays: indexed elements and the `length` data property.
         if let Some((len, level)) = zun_gc::with_current_heap(|heap| {
-            heap.array_len(obj).map(|len| (len, heap.array_integrity(obj)))
+            heap.array_len(obj)
+                .map(|len| (len, heap.array_integrity(obj)))
         }) {
             let entry = if key == "length" {
                 Some((zun_core::Any::int(len as i64), level < 3, false, false))
             } else {
                 match key.parse::<usize>() {
-                    Ok(index) if index < len => zun_gc::with_current_heap(|heap| heap.array_get(obj, index))
-                        .map(|value| (value, level < 3, true, level < 2)),
+                    Ok(index) if index < len => {
+                        zun_gc::with_current_heap(|heap| heap.array_get(obj, index))
+                            .map(|value| (value, level < 3, true, level < 2))
+                    }
                     _ => None,
                 }
             };
@@ -314,23 +348,33 @@ impl<'a> Interp<'a> {
                 && key.parse::<usize>().is_err()
                 && zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key).is_some());
             if !expando {
-            let Some((value, writable, enumerable, configurable)) = entry else {
-                return Ok(None);
-            };
-            let out = zun_gc::with_current_heap_mut(|heap| {
-                let out = heap.alloc_dynamic();
-                heap.dynamic_set(out, "value".to_owned(), value);
-                heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(writable));
-                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(enumerable));
-                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(configurable));
-                out
-            });
-            return Ok(Some(out));
+                let Some((value, writable, enumerable, configurable)) = entry else {
+                    return Ok(None);
+                };
+                let out = zun_gc::with_current_heap_mut(|heap| {
+                    let out = heap.alloc_dynamic();
+                    heap.dynamic_set(out, "value".to_owned(), value);
+                    heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(writable));
+                    heap.dynamic_set(
+                        out,
+                        "enumerable".to_owned(),
+                        zun_core::Any::bool(enumerable),
+                    );
+                    heap.dynamic_set(
+                        out,
+                        "configurable".to_owned(),
+                        zun_core::Any::bool(configurable),
+                    );
+                    out
+                });
+                return Ok(Some(out));
             }
         }
         let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
         if is_dynamic || zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) {
-            let Some(descriptor) = zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key)) else {
+            let Some(descriptor) =
+                zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key))
+            else {
                 return Ok(None);
             };
             let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
@@ -340,7 +384,12 @@ impl<'a> Interp<'a> {
                 });
             };
             match descriptor {
-                zun_core::PropertyDescriptor::Data { value, writable, enumerable, configurable } => {
+                zun_core::PropertyDescriptor::Data {
+                    value,
+                    writable,
+                    enumerable,
+                    configurable,
+                } => {
                     zun_gc::with_current_heap_mut(|heap| {
                         // A function-slot property reports its function as the value.
                         match heap.dynamic_get_function(obj, key) {
@@ -356,7 +405,12 @@ impl<'a> Interp<'a> {
                     set_bool("enumerable", enumerable);
                     set_bool("configurable", configurable);
                 }
-                zun_core::PropertyDescriptor::Accessor { get, set, enumerable, configurable } => {
+                zun_core::PropertyDescriptor::Accessor {
+                    get,
+                    set,
+                    enumerable,
+                    configurable,
+                } => {
                     zun_gc::with_current_heap_mut(|heap| {
                         if let Some(handle) = get {
                             heap.dynamic_set_function(out, "get", handle);
@@ -407,5 +461,4 @@ impl<'a> Interp<'a> {
             None => ProxyRoute::NotProxy,
         }
     }
-
 }

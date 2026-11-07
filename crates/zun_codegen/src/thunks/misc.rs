@@ -39,7 +39,11 @@ pub extern "C" fn zun_jit_array_new(length: i64) -> i64 {
 /// changing execution semantics.
 #[inline]
 pub extern "C" fn zun_jit_osr_poll(counter: i64) -> i64 {
-    if counter <= 0 { 1000 } else { counter }
+    if counter <= 0 {
+        1000
+    } else {
+        counter
+    }
 }
 
 /// Read a numeric dynamic array element without allocating or collecting.
@@ -55,7 +59,11 @@ pub extern "C" fn zun_jit_array_load_f64(address: i64, index: i64) -> f64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap(|heap| {
         heap.array_get(object, index as usize)
-            .and_then(|value| value.as_float().or_else(|| value.as_int().map(|value| value as f64)))
+            .and_then(|value| {
+                value
+                    .as_float()
+                    .or_else(|| value.as_int().map(|value| value as f64))
+            })
             .unwrap_or(f64::NAN)
     })
 }
@@ -120,7 +128,8 @@ pub extern "C" fn zun_jit_array_store_f64(address: i64, index: i64, value: f64) 
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_set(object, index as usize, zun_core::Any::float(value)).is_some() as i32
+        heap.array_set(object, index as usize, zun_core::Any::float(value))
+            .is_some() as i32
     })
 }
 
@@ -132,7 +141,8 @@ pub extern "C" fn zun_jit_array_store_u64(address: i64, index: i64, value: i64) 
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_set(object, index as usize, zun_core::Any::int(value)).is_some() as i32
+        heap.array_set(object, index as usize, zun_core::Any::int(value))
+            .is_some() as i32
     })
 }
 
@@ -152,7 +162,8 @@ pub extern "C" fn zun_jit_array_store_bool(address: i64, index: i64, value: i32)
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_set(object, index as usize, zun_core::Any::bool(value != 0)).is_some() as i32
+        heap.array_set(object, index as usize, zun_core::Any::bool(value != 0))
+            .is_some() as i32
     })
 }
 
@@ -165,8 +176,12 @@ pub extern "C" fn zun_jit_array_store_object(address: i64, index: i64, value: i6
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     let child = unsafe { zun_gc::Obj::from_addr(value as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_set(object, index as usize, zun_core::Any::object(child.addr() as usize))
-            .is_some() as i32
+        heap.array_set(
+            object,
+            index as usize,
+            zun_core::Any::object(child.addr() as usize),
+        )
+        .is_some() as i32
     })
 }
 
@@ -189,7 +204,11 @@ pub extern "C" fn zun_jit_array_pop_f64(address: i64) -> f64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
         heap.array_pop(object)
-            .and_then(|value| value.as_float().or_else(|| value.as_int().map(|value| value as f64)))
+            .and_then(|value| {
+                value
+                    .as_float()
+                    .or_else(|| value.as_int().map(|value| value as f64))
+            })
             .unwrap_or(f64::NAN)
     })
 }
@@ -218,7 +237,9 @@ pub extern "C" fn zun_jit_array_pop_u64(address: i64) -> i64 {
 pub extern "C" fn zun_jit_array_pop_i32(address: i64) -> i32 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_pop(object).and_then(|value| value.as_int()).unwrap_or_default() as i32
+        heap.array_pop(object)
+            .and_then(|value| value.as_int())
+            .unwrap_or_default() as i32
     })
 }
 
@@ -235,7 +256,9 @@ pub extern "C" fn zun_jit_array_push_u64(address: i64, value: i64) -> i64 {
 pub extern "C" fn zun_jit_array_push_i32(address: i64, value: i32) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_push(object, zun_core::Any::int(value as i64)).map(|length| length as i64).unwrap_or(-1)
+        heap.array_push(object, zun_core::Any::int(value as i64))
+            .map(|length| length as i64)
+            .unwrap_or(-1)
     })
 }
 
@@ -243,7 +266,9 @@ pub extern "C" fn zun_jit_array_push_i32(address: i64, value: i32) -> i64 {
 pub extern "C" fn zun_jit_array_pop_bool(address: i64) -> i32 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_pop(object).and_then(|value| value.as_bool()).unwrap_or(false) as i32
+        heap.array_pop(object)
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false) as i32
     })
 }
 
@@ -251,7 +276,9 @@ pub extern "C" fn zun_jit_array_pop_bool(address: i64) -> i32 {
 pub extern "C" fn zun_jit_array_push_bool(address: i64, value: i32) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_push(object, zun_core::Any::bool(value != 0)).map(|length| length as i64).unwrap_or(-1)
+        heap.array_push(object, zun_core::Any::bool(value != 0))
+            .map(|length| length as i64)
+            .unwrap_or(-1)
     })
 }
 
@@ -259,7 +286,9 @@ pub extern "C" fn zun_jit_array_push_bool(address: i64, value: i32) -> i64 {
 pub extern "C" fn zun_jit_array_pop_object(address: i64) -> i64 {
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
-        heap.array_pop(object).and_then(|value| value.as_object()).unwrap_or(0) as i64
+        heap.array_pop(object)
+            .and_then(|value| value.as_object())
+            .unwrap_or(0) as i64
     })
 }
 
@@ -269,7 +298,8 @@ pub extern "C" fn zun_jit_array_push_object(address: i64, value: i64) -> i64 {
     let child = unsafe { zun_gc::Obj::from_addr(value as *mut u64) };
     zun_gc::with_current_heap_mut(|heap| {
         heap.array_push(object, zun_core::Any::object(child.addr() as usize))
-            .map(|length| length as i64).unwrap_or(-1)
+            .map(|length| length as i64)
+            .unwrap_or(-1)
     })
 }
 
@@ -290,7 +320,8 @@ pub unsafe extern "C" fn zun_jit_array_load_any(
         return 0;
     }
     let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
-    let Some(value) = zun_gc::with_current_heap(|heap| heap.array_get(object, index as usize)) else {
+    let Some(value) = zun_gc::with_current_heap(|heap| heap.array_get(object, index as usize))
+    else {
         return 0;
     };
     unsafe { out.write(JitAnyAbi::from_any(value)) };
@@ -302,12 +333,7 @@ pub unsafe extern "C" fn zun_jit_array_load_any(
 /// The raw parts are validated before entering managed storage. This keeps
 /// the dynamic ABI explicit while leaving aggregate stack lowering gated.
 #[inline]
-pub extern "C" fn zun_jit_array_store_any(
-    address: i64,
-    index: i64,
-    tag: u64,
-    payload: u64,
-) -> i32 {
+pub extern "C" fn zun_jit_array_store_any(address: i64, index: i64, tag: u64, payload: u64) -> i32 {
     if index < 0 {
         return 0;
     }

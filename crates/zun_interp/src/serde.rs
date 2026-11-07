@@ -223,8 +223,8 @@ impl Interp<'_> {
                 }
             }
             ObjKind::Map => {
-                let entries =
-                    zun_gc::with_current_heap(|heap| heap.map_entries(obj)).ok_or(RunError::BadToken)?;
+                let entries = zun_gc::with_current_heap(|heap| heap.map_entries(obj))
+                    .ok_or(RunError::BadToken)?;
                 out.push(Tag::Map.to_u8());
                 write_uvarint(out, entries.len() as u64);
                 for (key, value) in entries {
@@ -235,8 +235,8 @@ impl Interp<'_> {
                 }
             }
             ObjKind::Set => {
-                let values =
-                    zun_gc::with_current_heap(|heap| heap.set_values(obj)).ok_or(RunError::BadToken)?;
+                let values = zun_gc::with_current_heap(|heap| heap.set_values(obj))
+                    .ok_or(RunError::BadToken)?;
                 out.push(Tag::Set.to_u8());
                 write_uvarint(out, values.len() as u64);
                 for value in values {
@@ -269,7 +269,9 @@ impl Interp<'_> {
                     zun_gc::with_current_heap(|heap| {
                         let mut found = Vec::new();
                         for symbol in heap.dynamic_symbol_keys(obj) {
-                            let Some(value) = heap.dynamic_get_symbol(obj, symbol) else { continue };
+                            let Some(value) = heap.dynamic_get_symbol(obj, symbol) else {
+                                continue;
+                            };
                             if let Some(key) = heap.symbol_key_for(symbol) {
                                 found.push((0u8, Some(key.to_string()), 0, value));
                             } else if zun_core::WellKnownSymbol::ALL
@@ -281,7 +283,11 @@ impl Interp<'_> {
                         }
                         found
                     });
-                let tag = if symbol_entries.is_empty() { Tag::Object } else { Tag::ObjectSym };
+                let tag = if symbol_entries.is_empty() {
+                    Tag::Object
+                } else {
+                    Tag::ObjectSym
+                };
                 out.push(tag.to_u8());
                 write_uvarint(out, entries.len() as u64);
                 for (key, value) in entries {
@@ -424,7 +430,9 @@ impl Interp<'_> {
                 let bits = reader.read_u32().ok_or_else(bad)?;
                 Ok(Value::Float(f64::from(f32::from_bits(bits)), NumKind::F32))
             }
-            Tag::Str => Ok(Value::Str(Rc::from(reader.read_str().ok_or_else(bad)?.as_str()))),
+            Tag::Str => Ok(Value::Str(Rc::from(
+                reader.read_str().ok_or_else(bad)?.as_str(),
+            ))),
             Tag::Ref => {
                 let index = reader.read_uvarint().ok_or_else(bad)? as usize;
                 memo.get(index).cloned().ok_or_else(|| {
@@ -473,7 +481,9 @@ impl Interp<'_> {
             }
             Tag::TypedArray => {
                 let element = zun_core::TypedElement::from_index(u32::from(de_u8(reader)?))
-                    .ok_or_else(|| RunError::Native("deserialize: unknown typed-array kind".into()))?;
+                    .ok_or_else(|| {
+                        RunError::Native("deserialize: unknown typed-array kind".into())
+                    })?;
                 let bytes = reader.read_bytes().ok_or_else(bad)?.to_vec();
                 let length = bytes.len() / element.size().max(1);
                 let obj = zun_gc::with_current_heap_mut(|heap| {

@@ -1,9 +1,15 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_object_literal(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_object_literal(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::ObjectLiteral { properties, .. } = expr else { unreachable!() };
+        let ast::Expr::ObjectLiteral { properties, .. } = expr else {
+            unreachable!()
+        };
         let entries = self.lower_object_members(cx, properties, span);
         hir::Expr {
             kind: hir::ExprKind::DynamicObjectLiteral { entries },
@@ -12,9 +18,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_bigint_literal(&mut self, _cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_bigint_literal(
+        &mut self,
+        _cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::BigInt { value, .. } = expr else { unreachable!() };
+        let ast::Expr::BigInt { value, .. } = expr else {
+            unreachable!()
+        };
         let Some((id, native)) = zun_natives::resolve("collections", "bigIntNew") else {
             self.error(span, "BigInt literal intrinsic is unavailable");
             return self.poison(span);
@@ -33,9 +45,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_regex_literal(&mut self, _cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_regex_literal(
+        &mut self,
+        _cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::RegexLiteral { pattern, flags, .. } = expr else { unreachable!() };
+        let ast::Expr::RegexLiteral { pattern, flags, .. } = expr else {
+            unreachable!()
+        };
         // Same lowering as `new RegExp(pattern, flags)`.
         let Some((id, _)) = zun_natives::resolve("collections", "regexpNew") else {
             self.error(span, "missing collection intrinsic `regexpNew`");
@@ -56,9 +74,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_template(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_template(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Template { parts, .. } = expr else { unreachable!() };
+        let ast::Expr::Template { parts, .. } = expr else {
+            unreachable!()
+        };
         let mut result = hir::Expr {
             kind: hir::ExprKind::String(String::new()),
             ty: Ty::String,
@@ -76,7 +100,10 @@ impl Checker<'_> {
                     if value.ty == Ty::F64 {
                         if let Some((id, _)) = zun_natives::resolve("number", "toString") {
                             hir::Expr {
-                                kind: hir::ExprKind::CallBuiltin { id, args: vec![value] },
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![value],
+                                },
                                 ty: Ty::String,
                                 span,
                             }
@@ -95,18 +122,26 @@ impl Checker<'_> {
                         } else {
                             hir::Expr {
                                 span: value.span,
-                                kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                                kind: hir::ExprKind::BoxAny {
+                                    value: Box::new(value),
+                                },
                                 ty: Ty::Any,
                             }
                         };
                         hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![arg],
+                            },
                             ty: Ty::String,
                             span,
                         }
                     } else {
                         if value.ty != Ty::String && !value.ty.is_error() {
-                            self.error(value.span, "template interpolation must have type string or number");
+                            self.error(
+                                value.span,
+                                "template interpolation must have type string or number",
+                            );
                         }
                         value
                     }
@@ -125,21 +160,41 @@ impl Checker<'_> {
         result
     }
 
-    pub(in crate::check) fn check_tagged_template_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_tagged_template_expr(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::TaggedTemplate { tag, cooked, cooked_undefined, raw, exprs, .. } = expr else { unreachable!() };
+        let ast::Expr::TaggedTemplate {
+            tag,
+            cooked,
+            cooked_undefined,
+            raw,
+            exprs,
+            ..
+        } = expr
+        else {
+            unreachable!()
+        };
         if !self.tag_is_string_raw(tag) {
             // A user tag is called as `tag(strings, ...substitutions)`.
             let literal = |chunks: &[String]| ast::Expr::ArrayLiteral {
                 elements: chunks
                     .iter()
-                    .map(|chunk| ast::ArrayElement::Expr(ast::Expr::String { value: chunk.clone(), span }))
+                    .map(|chunk| {
+                        ast::ArrayElement::Expr(ast::Expr::String {
+                            value: chunk.clone(),
+                            span,
+                        })
+                    })
                     .collect(),
                 span,
             };
             let cooked_array = self.check_expr(cx, &literal(cooked));
             let raw_array = self.check_expr(cx, &literal(raw));
-            let Some((template_id, _)) = zun_natives::resolve("collections", "templateObject") else {
+            let Some((template_id, _)) = zun_natives::resolve("collections", "templateObject")
+            else {
                 self.error(span, "missing `templateObject` intrinsic");
                 return self.poison(span);
             };
@@ -160,8 +215,16 @@ impl Checker<'_> {
                 }
             }
             let call = match tag.as_ref() {
-                ast::Expr::Ident(name) => ast::Expr::Call { callee: *name, args, span },
-                other => ast::Expr::ComputedCall { callee: Box::new(other.clone()), args, span },
+                ast::Expr::Ident(name) => ast::Expr::Call {
+                    callee: *name,
+                    args,
+                    span,
+                },
+                other => ast::Expr::ComputedCall {
+                    callee: Box::new(other.clone()),
+                    args,
+                    span,
+                },
             };
             let call = self.check_expr(cx, &call);
             let ty = call.ty;
@@ -174,21 +237,24 @@ impl Checker<'_> {
                                 kind: hir::ExprKind::CallBuiltin {
                                     id: template_id,
                                     args: vec![
-                                    cooked_array,
-                                    raw_array,
-                                    hir::Expr {
-                                        kind: hir::ExprKind::Number(span.start as f64),
-                                        ty: Ty::Int(IntKind::I32),
-                                        span,
-                                    },
-                                    hir::Expr {
-                                        kind: hir::ExprKind::String(
-                                            cooked_undefined.iter().map(|u| if *u { '1' } else { '0' }).collect(),
-                                        ),
-                                        ty: Ty::String,
-                                        span,
-                                    },
-                                ],
+                                        cooked_array,
+                                        raw_array,
+                                        hir::Expr {
+                                            kind: hir::ExprKind::Number(span.start as f64),
+                                            ty: Ty::Int(IntKind::I32),
+                                            span,
+                                        },
+                                        hir::Expr {
+                                            kind: hir::ExprKind::String(
+                                                cooked_undefined
+                                                    .iter()
+                                                    .map(|u| if *u { '1' } else { '0' })
+                                                    .collect(),
+                                            ),
+                                            ty: Ty::String,
+                                            span,
+                                        },
+                                    ],
                                 },
                                 ty: Ty::Array,
                                 span,
@@ -206,9 +272,15 @@ impl Checker<'_> {
         self.check_tagged_template(cx, tag, raw, exprs, span)
     }
 
-    pub(in crate::check) fn check_function_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_function_expr(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Function(function) = expr else { unreachable!() };
+        let ast::Expr::Function(function) = expr else {
+            unreachable!()
+        };
         // A `function (this: T, ...)` expression declares an explicit
         // receiver, so it takes the hidden `this` parameter wherever it
         // appears (returned, bound to a variable, passed as an argument).

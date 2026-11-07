@@ -29,11 +29,15 @@ pub(super) fn hoist_module_vars(body: &[Statement<'_>]) -> Vec<Stmt> {
     }
     let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
     for site in &sites {
-        let top_declared = sites.iter().any(|other| other.name == site.name && (!other.nested || other.in_head))
+        let top_declared = sites
+            .iter()
+            .any(|other| other.name == site.name && (!other.nested || other.in_head))
             || TOP_LEVEL_NAMES.with(|names| names.borrow().contains(&site.name));
         if site.nested && !site.in_head && !top_declared && names.insert(site.name.clone()) {
             module_hoisted_lets.push(Stmt::Let {
-                name: Name { span: Span::new(site.id_span.start, site.id_span.end) },
+                name: Name {
+                    span: Span::new(site.id_span.start, site.id_span.end),
+                },
                 ty: None,
                 init: Expr::Unary {
                     op: crate::ast::UnaryOp::Void,
@@ -65,10 +69,9 @@ pub(super) fn convert_import_declaration(
         for specifier in specifiers {
             match specifier {
                 ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
-                    let ModuleExportName::IdentifierName(imported) = &specifier.imported
-                    else {
+                    let ModuleExportName::IdentifierName(imported) = &specifier.imported else {
                         return Err(vec![
-                            "OXC adapter supports identifier named imports only".into(),
+                            "OXC adapter supports identifier named imports only".into()
                         ]);
                     };
                     names.push(crate::ast::ImportName {
@@ -76,10 +79,7 @@ pub(super) fn convert_import_declaration(
                             span: Span::new(imported.span.start, imported.span.end),
                         },
                         local: Name {
-                            span: Span::new(
-                                specifier.local.span.start,
-                                specifier.local.span.end,
-                            ),
+                            span: Span::new(specifier.local.span.start, specifier.local.span.end),
                         },
                         is_default: false,
                         is_namespace: false,
@@ -88,16 +88,10 @@ pub(super) fn convert_import_declaration(
                 ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
                     names.push(crate::ast::ImportName {
                         imported: Name {
-                            span: Span::new(
-                                specifier.local.span.start,
-                                specifier.local.span.end,
-                            ),
+                            span: Span::new(specifier.local.span.start, specifier.local.span.end),
                         },
                         local: Name {
-                            span: Span::new(
-                                specifier.local.span.start,
-                                specifier.local.span.end,
-                            ),
+                            span: Span::new(specifier.local.span.start, specifier.local.span.end),
                         },
                         is_default: true,
                         is_namespace: false,
@@ -109,10 +103,7 @@ pub(super) fn convert_import_declaration(
                             span: Span::new(specifier.span.start, specifier.span.start),
                         },
                         local: Name {
-                            span: Span::new(
-                                specifier.local.span.start,
-                                specifier.local.span.end,
-                            ),
+                            span: Span::new(specifier.local.span.start, specifier.local.span.end),
                         },
                         is_default: false,
                         is_namespace: true,
@@ -168,7 +159,8 @@ pub(super) fn lower_reassigned_function(
                 // there, unlike text inside other functions).
                 || module_code_spans.iter().any(|&(start, end)| {
                     source.get(start..end).is_some_and(|text| name_is_reassigned(text, name))
-                })) {
+                }))
+        {
             let converted = convert_statement_list(source, std::slice::from_ref(statement))
                 .map_err(|error| vec![error])?;
             // Hoist to the module head only when earlier text uses the
@@ -212,7 +204,9 @@ pub(super) fn convert_top_level_function(
                 );
             }
             functions.push(Function {
-                name: Name { span: Span::new(id.span.start, id.span.end) },
+                name: Name {
+                    span: Span::new(id.span.start, id.span.end),
+                },
                 type_params: Vec::new(),
                 decorators: Vec::new(),
                 params,
@@ -224,7 +218,10 @@ pub(super) fn convert_top_level_function(
                 external_module: module,
                 is_async: false,
                 is_generator: false,
-                body: Block { statements: Vec::new(), span: Span::new(function.span.start, function.span.end) },
+                body: Block {
+                    statements: Vec::new(),
+                    span: Span::new(function.span.start, function.span.end),
+                },
                 span: Span::new(function.span.start, function.span.end),
             });
             return Ok(());
@@ -237,8 +234,7 @@ pub(super) fn convert_top_level_function(
     let mut prologue = Vec::new();
     for parameter in &function.params.items {
         params.push(
-            convert_formal_param(source, parameter, &mut prologue)
-                .map_err(|error| vec![error])?,
+            convert_formal_param(source, parameter, &mut prologue).map_err(|error| vec![error])?,
         );
     }
     // The function body converts through the single shared statement
@@ -246,7 +242,8 @@ pub(super) fn convert_top_level_function(
     // destructured-parameter prologue.
     let mut statements = prologue;
     statements.extend(
-        convert_function_statements(source, &body.statements, &param_names(&function.params)).map_err(|error| vec![error])?,
+        convert_function_statements(source, &body.statements, &param_names(&function.params))
+            .map_err(|error| vec![error])?,
     );
     if let Some(rest) = function.params.rest.as_ref() {
         let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument else {
@@ -294,7 +291,12 @@ pub(super) fn convert_top_level_function(
 /// class declarations (the executable module code).
 pub(super) fn collect_module_code_spans(body: &[Statement<'_>]) -> Vec<(usize, usize)> {
     body.iter()
-        .filter(|other| !matches!(other, Statement::FunctionDeclaration(_) | Statement::ClassDeclaration(_)))
+        .filter(|other| {
+            !matches!(
+                other,
+                Statement::FunctionDeclaration(_) | Statement::ClassDeclaration(_)
+            )
+        })
         .map(|other| (other.span().start as usize, other.span().end as usize))
         .collect()
 }

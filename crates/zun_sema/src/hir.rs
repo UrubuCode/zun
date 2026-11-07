@@ -784,7 +784,11 @@ pub enum ExprKind {
         value: Box<Expr>,
     },
     /// Write an Any value using a runtime-evaluated property name.
-    DynamicSetValue { object: Box<Expr>, key: Box<Expr>, value: Box<Expr> },
+    DynamicSetValue {
+        object: Box<Expr>,
+        key: Box<Expr>,
+        value: Box<Expr>,
+    },
     /// Allocate a `DynamicObject` and populate it from an object literal.
     ///
     /// Entries are stored in source order; the object is the result value.
@@ -836,7 +840,11 @@ pub enum ExprKind {
     /// Read a statically declared class field.
     StaticFieldGet { class: ClassIndex, field_slot: u16 },
     /// Write a statically declared class field; the value is the result.
-    StaticFieldSet { class: ClassIndex, field_slot: u16, value: Box<Expr> },
+    StaticFieldSet {
+        class: ClassIndex,
+        field_slot: u16,
+        value: Box<Expr>,
+    },
     /// Virtually invoke a method whose trailing parameter is variadic.
     MethodCallRest {
         /// Statically resolved method index.

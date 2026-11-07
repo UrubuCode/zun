@@ -6,7 +6,8 @@ use zun_interp::CaptureOutput;
 fn run(user: &str) -> CaptureOutput {
     let src = &zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -34,7 +35,15 @@ fn console_renders_values() {
         console.log({ a: 1, b: { c: "y" }, d: [1, 2] });
         console.log(null);
     }"#);
-    assert_eq!(out.lines, ["42", "[ 1, 'x', true ]", "{ a: 1, b: { c: 'y' }, d: [ 1, 2 ] }", "null"]);
+    assert_eq!(
+        out.lines,
+        [
+            "42",
+            "[ 1, 'x', true ]",
+            "{ a: 1, b: { c: 'y' }, d: [ 1, 2 ] }",
+            "null"
+        ]
+    );
 }
 
 #[test]
@@ -52,18 +61,21 @@ fn json_stringify() {
         console.log(JSON.stringify([u, 1]));
         console.log(JSON.stringify(1.0 / 0.0));
     }"#);
-    assert_eq!(out.lines, [
-        "null",
-        "true",
-        "1.5",
-        r#""a\"b\n""#,
-        r#""c\\d\u0001""#,
-        "[1,[2,3],\"x\"]",
-        r#"{"a":1,"b":{"c":[true,null]}}"#,
-        r#"{"a":1}"#,
-        "[null,1]",
-        "null",
-    ]);
+    assert_eq!(
+        out.lines,
+        [
+            "null",
+            "true",
+            "1.5",
+            r#""a\"b\n""#,
+            r#""c\\d\u0001""#,
+            "[1,[2,3],\"x\"]",
+            r#"{"a":1,"b":{"c":[true,null]}}"#,
+            r#"{"a":1}"#,
+            "[null,1]",
+            "null",
+        ]
+    );
 }
 
 #[test]
@@ -79,15 +91,18 @@ fn json_parse() {
         let x = { a: [1, 2, { b: "z" }], n: null, t: true };
         console.log(JSON.stringify(JSON.parse(JSON.stringify(x))));
     }"#);
-    assert_eq!(out.lines, [
-        "12",
-        "hiA\n\\/",
-        "[ 100, -0.5, 0.2 ]",
-        "true",
-        "null",
-        "[ 1, [ 2 ], { k: 'v' } ]",
-        r#"{"a":[1,2,{"b":"z"}],"n":null,"t":true}"#,
-    ]);
+    assert_eq!(
+        out.lines,
+        [
+            "12",
+            "hiA\n\\/",
+            "[ 100, -0.5, 0.2 ]",
+            "true",
+            "null",
+            "[ 1, [ 2 ], { k: 'v' } ]",
+            r#"{"a":[1,2,{"b":"z"}],"n":null,"t":true}"#,
+        ]
+    );
 }
 
 #[test]
@@ -102,4 +117,3 @@ fn json_parse_rejects_malformed() {
     }"#);
     assert_eq!(out.lines, ["syntax error"]);
 }
-

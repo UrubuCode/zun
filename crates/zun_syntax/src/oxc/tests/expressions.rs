@@ -8,8 +8,7 @@ fn converts_loop_control_statements() {
         false,
     )
     .unwrap();
-    let crate::ast::Stmt::ForOf { ref body, .. } = program.functions[0].body.statements[0]
-    else {
+    let crate::ast::Stmt::ForOf { ref body, .. } = program.functions[0].body.statements[0] else {
         panic!("expected for-of loop");
     };
     assert!(matches!(body.statements[0], crate::ast::Stmt::If { .. }));
@@ -27,8 +26,7 @@ fn converts_throw_statements() {
 
 #[test]
 fn converts_identifier_assignments() {
-    let program =
-        parse_subset("function set(value) { value = 42; return value; }", false).unwrap();
+    let program = parse_subset("function set(value) { value = 42; return value; }", false).unwrap();
     assert!(matches!(
         program.functions[0].body.statements[0],
         crate::ast::Stmt::Expr(crate::ast::Expr::Assign { .. })
@@ -51,7 +49,8 @@ fn converts_named_and_default_imports() {
 
 #[test]
 fn converts_namespace_imports() {
-    let program = parse_subset("import * as math from 'zun:core'; function main() {}", true).unwrap();
+    let program =
+        parse_subset("import * as math from 'zun:core'; function main() {}", true).unwrap();
     let binding = &program.imports[0].names[0];
     assert!(binding.is_namespace);
     assert!(!binding.is_default);
@@ -62,15 +61,24 @@ fn converts_namespace_imports() {
 fn converts_initialized_class_fields() {
     let program = parse_subset("class Point { x: number = 5; }", true).unwrap();
     let field = &program.classes[0].fields[0];
-    assert!(matches!(field.initializer.as_deref(), Some(crate::ast::Expr::Number { value, .. }) if *value == 5.0));
+    assert!(
+        matches!(field.initializer.as_deref(), Some(crate::ast::Expr::Number { value, .. }) if *value == 5.0)
+    );
 }
 
 #[test]
 fn converts_optional_computed_members() {
-    let program = parse_subset("function main(object: any, key: any): any { return object?.[key]; }", true).unwrap();
+    let program = parse_subset(
+        "function main(object: any, key: any): any { return object?.[key]; }",
+        true,
+    )
+    .unwrap();
     assert!(matches!(
         program.functions[0].body.statements[0],
-        crate::ast::Stmt::Return { value: Some(crate::ast::Expr::OptionalIndex { .. }), .. }
+        crate::ast::Stmt::Return {
+            value: Some(crate::ast::Expr::OptionalIndex { .. }),
+            ..
+        }
     ));
 }
 
@@ -115,8 +123,7 @@ fn converts_uninitialized_class_fields_and_heritage() {
 
 #[test]
 fn converts_template_literals_and_interpolations() {
-    let program =
-        parse_subset("function greet(name) { return `hello ${name}`; }", false).unwrap();
+    let program = parse_subset("function greet(name) { return `hello ${name}`; }", false).unwrap();
     assert!(matches!(
         program.functions[0].body.statements[0],
         crate::ast::Stmt::Return {
@@ -369,8 +376,7 @@ fn converts_default_parameters() {
 
 #[test]
 fn converts_rest_parameters() {
-    let program =
-        parse_subset("function collect(...values) { return values; }", false).unwrap();
+    let program = parse_subset("function collect(...values) { return values; }", false).unwrap();
     assert!(program.functions[0].params[0].is_rest);
 }
 
@@ -401,15 +407,13 @@ fn converts_named_typescript_function_types() {
 
 #[test]
 fn preserves_typescript_class_field_types() {
-    let program =
-        parse_subset("class Box { value: number; } function main() {}", true).unwrap();
+    let program = parse_subset("class Box { value: number; } function main() {}", true).unwrap();
     assert_eq!(program.classes[0].fields[0].ty.name.span, Span::new(19, 25));
 }
 
 #[test]
 fn converts_optional_method_calls() {
-    let program =
-        parse_subset("function read(value) { return value?.trim(); }", false).unwrap();
+    let program = parse_subset("function read(value) { return value?.trim(); }", false).unwrap();
     assert!(matches!(
         program.functions[0].body.statements[0],
         crate::ast::Stmt::Return {
@@ -432,8 +436,7 @@ fn converts_exported_declarations() {
 
 #[test]
 fn converts_named_default_declarations() {
-    let function =
-        parse_subset("export default function main(): int { return 7; }", true).unwrap();
+    let function = parse_subset("export default function main(): int { return 7; }", true).unwrap();
     let class = parse_subset("export default class Box {}", true).unwrap();
     assert_eq!(function.functions.len(), 1);
     assert_eq!(class.classes.len(), 1);
@@ -443,8 +446,7 @@ fn converts_named_default_declarations() {
 fn accepts_unchanged_export_lists_and_rejects_aliases() {
     let program = parse_subset("function main() {} export { main };", false).unwrap();
     assert_eq!(program.functions.len(), 1);
-    let error =
-        parse_subset("function main() {} export { main as entry };", false).unwrap_err();
+    let error = parse_subset("function main() {} export { main as entry };", false).unwrap_err();
     assert!(error
         .iter()
         .any(|message| message.contains("unchanged local export names")));
@@ -476,11 +478,7 @@ fn converts_object_literals_with_methods_accessors_and_spread() {
 
     // Method shorthand, getters/setters, and spread now convert.
     assert!(parse_subset("function main() { let o = { ...rest }; }", false).is_ok());
-    assert!(parse_subset(
-        "function main() { let o = { m() { return 1; } }; }",
-        false
-    )
-    .is_ok());
+    assert!(parse_subset("function main() { let o = { m() { return 1; } }; }", false).is_ok());
     assert!(parse_subset(
         "function main() { let o = { get a() { return 1; } }; }",
         false

@@ -105,7 +105,12 @@ impl Eq for DynamicObject {}
 /// `Object.getOwnPropertyDescriptor`/`getOwnPropertyDescriptors`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyDescriptor {
-    Data { value: Any, writable: bool, enumerable: bool, configurable: bool },
+    Data {
+        value: Any,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    },
     Accessor {
         get: Option<FunctionHandle>,
         set: Option<FunctionHandle>,
@@ -123,14 +128,23 @@ fn array_index(name: &str) -> Option<u32> {
     if !name.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    name.parse::<u64>().ok().filter(|&n| n < u32::MAX as u64).map(|n| n as u32)
+    name.parse::<u64>()
+        .ok()
+        .filter(|&n| n < u32::MAX as u64)
+        .map(|n| n as u32)
 }
 
 impl DynamicObject {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     /// Mark this table as the expando bag of a typed class instance.
-    pub fn mark_instance_bag(&mut self) { self.instance_bag = true; }
-    pub fn is_instance_bag(&self) -> bool { self.instance_bag }
+    pub fn mark_instance_bag(&mut self) {
+        self.instance_bag = true;
+    }
+    pub fn is_instance_bag(&self) -> bool {
+        self.instance_bag
+    }
     /// Append a brand-new string key in ECMAScript own-key order: canonical
     /// array indices first (ascending), then other strings by insertion.
     fn insert_new(&mut self, name: String, value: Any) {
@@ -263,12 +277,20 @@ impl DynamicObject {
         }
         self.accessors.insert(name.clone());
         match get {
-            Some(handle) => { self.accessor_get.insert(name.clone(), handle); }
-            None => { self.accessor_get.remove(&name); }
+            Some(handle) => {
+                self.accessor_get.insert(name.clone(), handle);
+            }
+            None => {
+                self.accessor_get.remove(&name);
+            }
         }
         match set {
-            Some(handle) => { self.accessor_set.insert(name.clone(), handle); }
-            None => { self.accessor_set.remove(&name); }
+            Some(handle) => {
+                self.accessor_set.insert(name.clone(), handle);
+            }
+            None => {
+                self.accessor_set.remove(&name);
+            }
         }
         self.apply_flags(&name, None, enumerable, configurable);
         true
@@ -304,13 +326,31 @@ impl DynamicObject {
     /// Record the `writable`/`enumerable`/`configurable` cleared-attribute sets
     /// for `name`. `writable` is `None` for an accessor property (writability
     /// does not apply).
-    fn apply_flags(&mut self, name: &str, writable: Option<bool>, enumerable: bool, configurable: bool) {
+    fn apply_flags(
+        &mut self,
+        name: &str,
+        writable: Option<bool>,
+        enumerable: bool,
+        configurable: bool,
+    ) {
         match writable {
-            Some(true) | None => { self.non_writable.remove(name); }
-            Some(false) => { self.non_writable.insert(name.to_owned()); }
+            Some(true) | None => {
+                self.non_writable.remove(name);
+            }
+            Some(false) => {
+                self.non_writable.insert(name.to_owned());
+            }
         }
-        if enumerable { self.non_enumerable.remove(name); } else { self.non_enumerable.insert(name.to_owned()); }
-        if configurable { self.non_configurable.remove(name); } else { self.non_configurable.insert(name.to_owned()); }
+        if enumerable {
+            self.non_enumerable.remove(name);
+        } else {
+            self.non_enumerable.insert(name.to_owned());
+        }
+        if configurable {
+            self.non_configurable.remove(name);
+        } else {
+            self.non_configurable.insert(name.to_owned());
+        }
     }
     /// Whether `name` may be reassigned through the ordinary [`set`](Self::set)
     /// path. An absent key is writable (a plain assignment would create it).
@@ -328,7 +368,9 @@ impl DynamicObject {
         self.index.contains_key(name) && !self.non_configurable.contains(name)
     }
     /// Whether `name` is an accessor (get/set) property.
-    pub fn is_accessor(&self, name: &str) -> bool { self.accessors.contains(name) }
+    pub fn is_accessor(&self, name: &str) -> bool {
+        self.accessors.contains(name)
+    }
     pub fn accessor_getter(&self, name: &str) -> Option<FunctionHandle> {
         self.accessor_get.get(name).copied()
     }
@@ -421,14 +463,25 @@ impl DynamicObject {
     /// non-extensible (`Object.isSealed`).
     pub fn is_sealed(&self) -> bool {
         self.non_extensible
-            && self.properties.iter().all(|(name, _)| self.non_configurable.contains(name))
+            && self
+                .properties
+                .iter()
+                .all(|(name, _)| self.non_configurable.contains(name))
     }
     /// `Object.preventExtensions`.
-    pub fn prevent_extensions(&mut self) { self.non_extensible = true; }
+    pub fn prevent_extensions(&mut self) {
+        self.non_extensible = true;
+    }
     /// Whether new keys may be added (`Object.isExtensible`).
-    pub fn is_extensible(&self) -> bool { !self.non_extensible && !self.frozen }
-    pub fn prototype(&self) -> Option<Any> { self.prototype }
-    pub fn set_prototype(&mut self, prototype: Option<Any>) { self.prototype = prototype; }
+    pub fn is_extensible(&self) -> bool {
+        !self.non_extensible && !self.frozen
+    }
+    pub fn prototype(&self) -> Option<Any> {
+        self.prototype
+    }
+    pub fn set_prototype(&mut self, prototype: Option<Any>) {
+        self.prototype = prototype;
+    }
     pub fn get_symbol(&self, symbol: SymbolId) -> Option<Any> {
         self.symbol_properties.get(&symbol).copied()
     }
@@ -436,7 +489,10 @@ impl DynamicObject {
     /// backing store). Backs `Object.getOwnPropertySymbols` and, later,
     /// symbol-key copying for object spread and serialization.
     pub fn symbol_keys(&self) -> impl Iterator<Item = SymbolId> + '_ {
-        self.symbol_order.iter().copied().filter(|symbol| self.symbol_properties.contains_key(symbol))
+        self.symbol_order
+            .iter()
+            .copied()
+            .filter(|symbol| self.symbol_properties.contains_key(symbol))
     }
     /// Define a symbol-keyed data property with an explicit enumerable flag
     /// (`Object.defineProperty(o, sym, ...)`). Rejected on a non-extensible
@@ -445,14 +501,21 @@ impl DynamicObject {
         if !self.symbol_properties.contains_key(&symbol) && (self.non_extensible || self.frozen) {
             return false;
         }
-        if !self.symbol_properties.contains_key(&symbol) { self.symbol_order.push(symbol); }
+        if !self.symbol_properties.contains_key(&symbol) {
+            self.symbol_order.push(symbol);
+        }
         self.symbol_properties.insert(symbol, value);
-        if enumerable { self.non_enumerable_symbols.remove(&symbol); } else { self.non_enumerable_symbols.insert(symbol); }
+        if enumerable {
+            self.non_enumerable_symbols.remove(&symbol);
+        } else {
+            self.non_enumerable_symbols.insert(symbol);
+        }
         true
     }
     /// Whether the symbol key is an own enumerable property.
     pub fn is_symbol_enumerable(&self, symbol: SymbolId) -> bool {
-        self.symbol_properties.contains_key(&symbol) && !self.non_enumerable_symbols.contains(&symbol)
+        self.symbol_properties.contains_key(&symbol)
+            && !self.non_enumerable_symbols.contains(&symbol)
     }
     /// Whether a plain assignment `obj.name = v` would be accepted by the data
     /// path (strict-mode callers throw when this is `false`). An accessor key
@@ -471,7 +534,10 @@ impl DynamicObject {
     /// `delete obj[symbol]`: removes the own symbol property. Absent keys succeed;
     /// a frozen object refuses (returns `false`).
     pub fn remove_symbol(&mut self, symbol: SymbolId) -> bool {
-        if !self.symbol_properties.contains_key(&symbol) && !self.symbol_functions.contains_key(&symbol) && !self.symbol_getters.contains_key(&symbol) {
+        if !self.symbol_properties.contains_key(&symbol)
+            && !self.symbol_functions.contains_key(&symbol)
+            && !self.symbol_getters.contains_key(&symbol)
+        {
             return true;
         }
         if self.frozen {
@@ -485,13 +551,19 @@ impl DynamicObject {
         true
     }
     pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
-        if !self.symbol_properties.contains_key(&symbol) { self.symbol_order.push(symbol); }
+        if !self.symbol_properties.contains_key(&symbol) {
+            self.symbol_order.push(symbol);
+        }
         self.symbol_properties.insert(symbol, value)
     }
     pub fn get_symbol_getter(&self, symbol: SymbolId) -> Option<FunctionHandle> {
         self.symbol_getters.get(&symbol).copied()
     }
-    pub fn set_symbol_getter(&mut self, symbol: SymbolId, function: FunctionHandle) -> Option<FunctionHandle> {
+    pub fn set_symbol_getter(
+        &mut self,
+        symbol: SymbolId,
+        function: FunctionHandle,
+    ) -> Option<FunctionHandle> {
         self.symbol_getters.insert(symbol, function)
     }
     pub fn get_symbol_function(&self, symbol: SymbolId) -> Option<FunctionHandle> {
@@ -499,16 +571,26 @@ impl DynamicObject {
     }
     /// Own string-keyed function-slot entries (methods), in no particular order.
     pub fn function_entries(&self) -> Vec<(String, FunctionHandle)> {
-        self.string_functions.iter().map(|(name, handle)| (name.clone(), *handle)).collect()
+        self.string_functions
+            .iter()
+            .map(|(name, handle)| (name.clone(), *handle))
+            .collect()
     }
     /// Own symbol-keyed function-slot entries.
     pub fn symbol_function_entries(&self) -> Vec<(SymbolId, FunctionHandle)> {
-        self.symbol_functions.iter().map(|(symbol, handle)| (*symbol, *handle)).collect()
+        self.symbol_functions
+            .iter()
+            .map(|(symbol, handle)| (*symbol, *handle))
+            .collect()
     }
     pub fn get_function(&self, name: &str) -> Option<FunctionHandle> {
         self.string_functions.get(name).copied()
     }
-    pub fn set_function(&mut self, name: impl Into<String>, function: FunctionHandle) -> Option<FunctionHandle> {
+    pub fn set_function(
+        &mut self,
+        name: impl Into<String>,
+        function: FunctionHandle,
+    ) -> Option<FunctionHandle> {
         let name = name.into();
         // Register the key in the ordered property table so own-key
         // enumeration sees function-valued properties in insertion order.
@@ -517,13 +599,21 @@ impl DynamicObject {
         }
         self.string_functions.insert(name, function)
     }
-    pub fn set_symbol_function(&mut self, symbol: SymbolId, function: FunctionHandle) -> Option<FunctionHandle> {
+    pub fn set_symbol_function(
+        &mut self,
+        symbol: SymbolId,
+        function: FunctionHandle,
+    ) -> Option<FunctionHandle> {
         self.symbol_functions.insert(symbol, function)
     }
     pub fn get_module_function(&self, name: &str) -> Option<&ModuleBoundFunction> {
         self.module_functions.get(name)
     }
-    pub fn set_module_function(&mut self, name: impl Into<String>, function: ModuleBoundFunction) -> Option<ModuleBoundFunction> {
+    pub fn set_module_function(
+        &mut self,
+        name: impl Into<String>,
+        function: ModuleBoundFunction,
+    ) -> Option<ModuleBoundFunction> {
         self.module_functions.insert(name.into(), function)
     }
     pub fn module_function_names(&self) -> impl Iterator<Item = &str> + '_ {
@@ -532,7 +622,11 @@ impl DynamicObject {
     pub fn get_module_class(&self, name: &str) -> Option<&ModuleBoundClass> {
         self.module_classes.get(name)
     }
-    pub fn set_module_class(&mut self, name: impl Into<String>, class: ModuleBoundClass) -> Option<ModuleBoundClass> {
+    pub fn set_module_class(
+        &mut self,
+        name: impl Into<String>,
+        class: ModuleBoundClass,
+    ) -> Option<ModuleBoundClass> {
         self.module_classes.insert(name.into(), class)
     }
     /// Remove a string property. A frozen object, or a **non-configurable**
@@ -557,33 +651,74 @@ impl DynamicObject {
         }
         Some(value)
     }
-    pub fn contains(&self, name: &str) -> bool { self.index.contains_key(name) }
-    pub fn len(&self) -> usize { self.properties.len() }
-    pub fn is_empty(&self) -> bool { self.properties.is_empty() }
+    pub fn contains(&self, name: &str) -> bool {
+        self.index.contains_key(name)
+    }
+    pub fn len(&self) -> usize {
+        self.properties.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.properties.is_empty()
+    }
     pub fn object_references(&self) -> impl Iterator<Item = usize> + '_ {
-        self.properties.iter().filter_map(|(_, value)| value.as_object())
+        self.properties
+            .iter()
+            .filter_map(|(_, value)| value.as_object())
             .chain(self.prototype.iter().filter_map(|value| value.as_object()))
-            .chain(self.symbol_properties.values().filter_map(|value| value.as_object()))
-            .chain(self.symbol_functions.values().filter_map(|value| value.environment()))
-            .chain(self.symbol_getters.values().filter_map(|value| value.environment()))
-            .chain(self.string_functions.values().filter_map(|value| value.environment()))
-            .chain(self.accessor_get.values().filter_map(|value| value.environment()))
-            .chain(self.accessor_set.values().filter_map(|value| value.environment()))
+            .chain(
+                self.symbol_properties
+                    .values()
+                    .filter_map(|value| value.as_object()),
+            )
+            .chain(
+                self.symbol_functions
+                    .values()
+                    .filter_map(|value| value.environment()),
+            )
+            .chain(
+                self.symbol_getters
+                    .values()
+                    .filter_map(|value| value.environment()),
+            )
+            .chain(
+                self.string_functions
+                    .values()
+                    .filter_map(|value| value.environment()),
+            )
+            .chain(
+                self.accessor_get
+                    .values()
+                    .filter_map(|value| value.environment()),
+            )
+            .chain(
+                self.accessor_set
+                    .values()
+                    .filter_map(|value| value.environment()),
+            )
     }
 
     pub fn rewrite_object_references(&mut self, map: impl Fn(usize) -> usize + Copy) -> usize {
         let mut rewritten = 0;
         for (_, value) in self.properties.iter_mut() {
             let mapped = value.map_object_address(map);
-            if mapped != *value { rewritten += 1; *value = mapped; }
+            if mapped != *value {
+                rewritten += 1;
+                *value = mapped;
+            }
         }
         if let Some(prototype) = self.prototype.as_mut() {
             let mapped = prototype.map_object_address(map);
-            if mapped != *prototype { rewritten += 1; *prototype = mapped; }
+            if mapped != *prototype {
+                rewritten += 1;
+                *prototype = mapped;
+            }
         }
         for value in self.symbol_properties.values_mut() {
             let mapped = value.map_object_address(map);
-            if mapped != *value { rewritten += 1; *value = mapped; }
+            if mapped != *value {
+                rewritten += 1;
+                *value = mapped;
+            }
         }
         rewritten
     }

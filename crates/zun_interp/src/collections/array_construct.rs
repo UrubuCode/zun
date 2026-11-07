@@ -7,13 +7,19 @@ use super::*;
 
 impl<'a> Interp<'a> {
     #[inline]
-    pub(super) fn col_array_construct(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+    pub(super) fn col_array_construct(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
         match name {
             "arrayIsArray" => {
                 let value = args.first().ok_or(RunError::BadToken)?;
                 let is_array = object(value)
                     .map(|obj| {
-                        zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some() && !heap.array_is_arguments(obj))
+                        zun_gc::with_current_heap(|heap| {
+                            heap.array_len(obj).is_some() && !heap.array_is_arguments(obj)
+                        })
                     })
                     .unwrap_or(false);
                 Ok(Value::Bool(is_array))
@@ -22,8 +28,10 @@ impl<'a> Interp<'a> {
                 // `[a, b] = iterable`: take at most `count` values through the
                 // iteration protocol, then close the iterator if it has more.
                 let concrete = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                        .unwrap_or(Value::Void),
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     other => other.clone(),
                 };
                 let count = match args.get(1) {
@@ -45,7 +53,8 @@ impl<'a> Interp<'a> {
                 let setup = [target];
                 let wrapper = {
                     let _scope = unsafe { zun_gc::NativeRootScope::enter(&setup) };
-                    Self::value_object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?
+                    Self::value_object(&self.protocol_iterator_new(source)?)
+                        .ok_or(RunError::BadToken)?
                 };
                 let roots = [wrapper, setup[0]];
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
@@ -72,14 +81,18 @@ impl<'a> Interp<'a> {
                 // `Array.prototype.fill.call(receiver, value, start, end)`: an Array
                 // takes the typed path; an array-like uses the generic algorithm.
                 let target = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
-                    RunError::Native("TypeError: Array.prototype.fill called on null or undefined".into())
+                    RunError::Native(
+                        "TypeError: Array.prototype.fill called on null or undefined".into(),
+                    )
                 })?;
-                let list = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let list =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let mut params: Vec<Value> = Vec::with_capacity(3);
                 for index in 0..3 {
                     let any = zun_gc::with_current_heap(|heap| heap.array_get(list, index));
                     params.push(match any {
-                        Some(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void),
+                        Some(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void),
                         None => Value::Void,
                     });
                 }
@@ -89,13 +102,18 @@ impl<'a> Interp<'a> {
                     return self.call_managed_collection("arrayFill", &forwarded);
                 }
                 let length_value = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get(target, "length").and_then(|any| Value::unbox_any(any, heap))
+                    heap.dynamic_get(target, "length")
+                        .and_then(|any| Value::unbox_any(any, heap))
                 });
                 let raw = match length_value {
                     Some(value) => self.to_number_value(value)?,
                     None => 0.0,
                 };
-                let length = if raw.is_nan() || raw <= 0.0 { 0.0 } else { raw.trunc().min(9007199254740991.0) };
+                let length = if raw.is_nan() || raw <= 0.0 {
+                    0.0
+                } else {
+                    raw.trunc().min(9007199254740991.0)
+                };
                 let mut bounds = [0.0f64; 2];
                 for (slot, default) in [(1usize, 0.0f64), (2usize, length)] {
                     let value = params[slot].clone();
@@ -104,11 +122,16 @@ impl<'a> Interp<'a> {
                     } else {
                         let n = self.to_number_value(value)?;
                         let integer = if n.is_nan() { 0.0 } else { n.trunc() };
-                        if integer < 0.0 { (length + integer).max(0.0) } else { integer.min(length) }
+                        if integer < 0.0 {
+                            (length + integer).max(0.0)
+                        } else {
+                            integer.min(length)
+                        }
                     };
                     bounds[slot - 1] = relative;
                 }
-                let boxed = zun_gc::with_current_heap_mut(|heap| params[0].box_any(heap)).ok_or(RunError::BadToken)?;
+                let boxed = zun_gc::with_current_heap_mut(|heap| params[0].box_any(heap))
+                    .ok_or(RunError::BadToken)?;
                 zun_gc::with_current_heap_mut(|heap| {
                     let mut index = bounds[0];
                     while index < bounds[1] {
@@ -128,33 +151,50 @@ impl<'a> Interp<'a> {
                     ));
                 }
                 let target = object(&first).ok_or_else(|| {
-                    RunError::Native("TypeError: Array.prototype.reverse called on null or undefined".into())
+                    RunError::Native(
+                        "TypeError: Array.prototype.reverse called on null or undefined".into(),
+                    )
                 })?;
                 if zun_gc::with_current_heap(|heap| heap.array_len(target)).is_some() {
                     return self.call_managed_collection("arrayReverse", &[Value::Object(target)]);
                 }
                 let length_value = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get(target, "length").and_then(|any| Value::unbox_any(any, heap))
+                    heap.dynamic_get(target, "length")
+                        .and_then(|any| Value::unbox_any(any, heap))
                 });
                 let raw = match length_value {
                     Some(value) => self.to_number_value(value)?,
                     None => 0.0,
                 };
-                let length = if raw.is_nan() || raw <= 0.0 { 0u64 } else { raw.trunc().min(4294967295.0) as u64 };
+                let length = if raw.is_nan() || raw <= 0.0 {
+                    0u64
+                } else {
+                    raw.trunc().min(4294967295.0) as u64
+                };
                 zun_gc::with_current_heap_mut(|heap| {
                     for lower in 0..length / 2 {
                         let upper = length - 1 - lower;
                         let (lk, uk) = (lower.to_string(), upper.to_string());
-                        let lv = heap.dynamic_has(target, &lk).then(|| heap.dynamic_get(target, &lk)).flatten();
-                        let uv = heap.dynamic_has(target, &uk).then(|| heap.dynamic_get(target, &uk)).flatten();
+                        let lv = heap
+                            .dynamic_has(target, &lk)
+                            .then(|| heap.dynamic_get(target, &lk))
+                            .flatten();
+                        let uv = heap
+                            .dynamic_has(target, &uk)
+                            .then(|| heap.dynamic_get(target, &uk))
+                            .flatten();
                         match uv {
-                            Some(v) => { heap.dynamic_set(target, lk.clone(), v); }
+                            Some(v) => {
+                                heap.dynamic_set(target, lk.clone(), v);
+                            }
                             None => {
                                 heap.dynamic_delete(target, &lk);
                             }
                         }
                         match lv {
-                            Some(v) => { heap.dynamic_set(target, uk.clone(), v); }
+                            Some(v) => {
+                                heap.dynamic_set(target, uk.clone(), v);
+                            }
                             None => {
                                 heap.dynamic_delete(target, &uk);
                             }
@@ -168,14 +208,19 @@ impl<'a> Interp<'a> {
                 // place; any other object is treated as an array-like (ToLength on
                 // `length`, index keys, `length` written back).
                 let target = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
-                    RunError::Native("TypeError: Array.prototype method called on null or undefined".into())
+                    RunError::Native(
+                        "TypeError: Array.prototype method called on null or undefined".into(),
+                    )
                 })?;
                 let is_push = name == "arrayLikePush";
                 let items: Vec<zun_core::Any> = if is_push {
-                    let list = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                    let list =
+                        object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                     zun_gc::with_current_heap(|heap| {
                         let length = heap.array_len(list).unwrap_or(0);
-                        (0..length).filter_map(|index| heap.array_get(list, index)).collect()
+                        (0..length)
+                            .filter_map(|index| heap.array_get(list, index))
+                            .collect()
                     })
                 } else {
                     Vec::new()
@@ -184,11 +229,13 @@ impl<'a> Interp<'a> {
                     if is_push {
                         let mut length = 0usize;
                         for item in items {
-                            length = zun_gc::with_current_heap_mut(|heap| heap.array_push(target, item))
-                                .unwrap_or(length);
+                            length =
+                                zun_gc::with_current_heap_mut(|heap| heap.array_push(target, item))
+                                    .unwrap_or(length);
                         }
                         if length == 0 {
-                            length = zun_gc::with_current_heap(|heap| heap.array_len(target)).unwrap_or(0);
+                            length = zun_gc::with_current_heap(|heap| heap.array_len(target))
+                                .unwrap_or(0);
                         }
                         return Ok(Value::Float(length as f64, zun_il::NumKind::F64));
                     }
@@ -200,13 +247,18 @@ impl<'a> Interp<'a> {
                     };
                 }
                 let length_value = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get(target, "length").and_then(|any| Value::unbox_any(any, heap))
+                    heap.dynamic_get(target, "length")
+                        .and_then(|any| Value::unbox_any(any, heap))
                 });
                 let raw = match length_value {
                     Some(value) => self.to_number_value(value)?,
                     None => 0.0,
                 };
-                let length = if raw.is_nan() || raw <= 0.0 { 0.0 } else { raw.trunc().min(9007199254740991.0) };
+                let length = if raw.is_nan() || raw <= 0.0 {
+                    0.0
+                } else {
+                    raw.trunc().min(9007199254740991.0)
+                };
                 if is_push {
                     let count = items.len() as f64;
                     if length + count > 9007199254740991.0 {
@@ -216,7 +268,11 @@ impl<'a> Interp<'a> {
                     }
                     zun_gc::with_current_heap_mut(|heap| {
                         for (offset, item) in items.into_iter().enumerate() {
-                            heap.dynamic_set(target, format!("{}", length as u64 + offset as u64), item);
+                            heap.dynamic_set(
+                                target,
+                                format!("{}", length as u64 + offset as u64),
+                                item,
+                            );
                         }
                         let total = Value::Float(length + count, zun_il::NumKind::F64)
                             .box_any(heap)
@@ -253,8 +309,10 @@ impl<'a> Interp<'a> {
             "arrayFromArrayLike" => {
                 // CreateListFromArrayLike: `length` then index reads, never iteration.
                 let concrete = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                        .unwrap_or(Value::Void),
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     other => other.clone(),
                 };
                 if let Value::Str(text) = &concrete {
@@ -271,7 +329,8 @@ impl<'a> Interp<'a> {
                     let array = zun_gc::with_current_heap_mut(|heap| {
                         let array = heap.alloc_array(units.len());
                         for (index, unit) in units.iter().enumerate() {
-                            let value = zun_core::Any::string(heap.intern_string(unit.as_str().into()));
+                            let value =
+                                zun_core::Any::string(heap.intern_string(unit.as_str().into()));
                             heap.array_set(array, index, value);
                         }
                         array
@@ -282,18 +341,27 @@ impl<'a> Interp<'a> {
                     Value::Object(_) => object(&concrete),
                     _ => None,
                 }) else {
-                    return Err(RunError::Native("TypeError: CreateListFromArrayLike called on non-object".into()));
+                    return Err(RunError::Native(
+                        "TypeError: CreateListFromArrayLike called on non-object".into(),
+                    ));
                 };
                 if zun_gc::with_current_heap(|heap| heap.array_len(source)).is_some() {
                     return Ok(Value::Object(source));
                 }
                 let length_value = self.dynamic_member_get(source, "length")?;
                 let length_value = match length_value {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void),
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     other => other,
                 };
                 let raw = self.to_number_value(length_value)?;
-                let length = if raw.is_nan() || raw <= 0.0 { 0usize } else { raw.trunc().min(4294967295.0) as usize };
+                let length = if raw.is_nan() || raw <= 0.0 {
+                    0usize
+                } else {
+                    raw.trunc().min(4294967295.0) as usize
+                };
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
                 let roots = [source, target];
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
@@ -301,9 +369,13 @@ impl<'a> Interp<'a> {
                     // An absent index stays a hole so generic receivers keep `in` shape.
                     let element = self.dynamic_member_get(roots[0], &index.to_string())?;
                     if matches!(element, Value::Void)
-                        && !zun_gc::with_current_heap(|heap| heap.dynamic_has(roots[0], &index.to_string()))
+                        && !zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_has(roots[0], &index.to_string())
+                        })
                     {
-                        zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], zun_core::Any::hole()));
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.array_push(roots[1], zun_core::Any::hole())
+                        });
                         continue;
                     }
                     let boxed = match &element {
@@ -324,8 +396,10 @@ impl<'a> Interp<'a> {
                 // materialisable value) becomes an Array; a protocol iterable
                 // becomes an iterator wrapper pulled one element at a time.
                 let concrete = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                        .unwrap_or(Value::Void),
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     other => other.clone(),
                 };
                 let source = match &concrete {
@@ -341,8 +415,8 @@ impl<'a> Interp<'a> {
                 self.protocol_iterator_new(source)
             }
             "destructStep" => {
-                let wrapper = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let wrapper =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 if zun_gc::with_current_heap(|heap| heap.array_len(wrapper)).is_some() {
                     return self.call_managed_collection("arrayAt", args);
                 }
@@ -352,8 +426,8 @@ impl<'a> Interp<'a> {
                 self.protocol_next(wrapper)
             }
             "destructRest" => {
-                let wrapper = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let wrapper =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 if zun_gc::with_current_heap(|heap| heap.array_len(wrapper)).is_some() {
                     return self.call_managed_collection("arraySlice", args);
                 }
@@ -370,13 +444,14 @@ impl<'a> Interp<'a> {
             }
             "destructFinish" => {
                 // Close the iterator unless it already reported `done`.
-                let wrapper = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let wrapper =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 if zun_gc::with_current_heap(|heap| heap.array_len(wrapper)).is_some() {
                     return Ok(Value::Bool(true));
                 }
                 let exhausted = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get(wrapper, "__zun_done").and_then(|any| any.as_bool())
+                    heap.dynamic_get(wrapper, "__zun_done")
+                        .and_then(|any| any.as_bool())
                 })
                 .unwrap_or(false);
                 if exhausted {
@@ -392,8 +467,10 @@ impl<'a> Interp<'a> {
                 // Build the base array from the source (a managed Array or a
                 // string; other iterables are deferred).
                 let concrete = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                        .unwrap_or(Value::Void),
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     other => other.clone(),
                 };
                 let base = match &concrete {
@@ -419,9 +496,12 @@ impl<'a> Interp<'a> {
                         };
                         // A typed array copies its numeric elements into a plain array.
                         if let Some(count) = crate::typed_arrays::element_len(source) {
-                            let result = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(count));
+                            let result =
+                                zun_gc::with_current_heap_mut(|heap| heap.alloc_array(count));
                             for index in 0..count {
-                                if let Some(value) = crate::typed_arrays::read_element(source, index) {
+                                if let Some(value) =
+                                    crate::typed_arrays::read_element(source, index)
+                                {
                                     zun_gc::with_current_heap_mut(|heap| {
                                         if let Some(any) = value.box_any(heap) {
                                             heap.array_set(result, index, any);
@@ -435,8 +515,15 @@ impl<'a> Interp<'a> {
                             // Mapped form: fall through with the copy as the source.
                             let _ = result;
                         }
-                        let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source).filter(|_| heap.dynamic_get_symbol_function(source, zun_core::WellKnownSymbol::Iterator.id()).is_none()))
-                        else {
+                        let Some(length) = zun_gc::with_current_heap(|heap| {
+                            heap.array_len(source).filter(|_| {
+                                heap.dynamic_get_symbol_function(
+                                    source,
+                                    zun_core::WellKnownSymbol::Iterator.id(),
+                                )
+                                .is_none()
+                            })
+                        }) else {
                             // The mapped form streams the iterable: each element is
                             // mapped as it is produced, and a throwing mapper closes
                             // the iterator (IteratorClose) before propagating.
@@ -448,12 +535,16 @@ impl<'a> Interp<'a> {
                                         Value::Function(handle) => *handle,
                                         _ => return Err(RunError::BadToken),
                                     };
-                                    let result = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                                    let result =
+                                        zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
                                     let roots = [wrapper, result];
                                     let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                                     let mut index = 0usize;
                                     loop {
-                                        if matches!(self.protocol_done(roots[0])?, Value::Bool(true)) {
+                                        if matches!(
+                                            self.protocol_done(roots[0])?,
+                                            Value::Bool(true)
+                                        ) {
                                             break;
                                         }
                                         let value = self.protocol_next(roots[0])?;
@@ -463,8 +554,10 @@ impl<'a> Interp<'a> {
                                         ];
                                         match self.invoke_callback(callback, callback_args) {
                                             Ok(produced) => {
-                                                let boxed = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
-                                                    .ok_or(RunError::BadToken)?;
+                                                let boxed = zun_gc::with_current_heap_mut(|heap| {
+                                                    produced.box_any(heap)
+                                                })
+                                                .ok_or(RunError::BadToken)?;
                                                 zun_gc::with_current_heap_mut(|heap| {
                                                     heap.array_push(roots[1], boxed)
                                                 });
@@ -485,17 +578,21 @@ impl<'a> Interp<'a> {
                             // Any other iterable (Set, Map, iterator, user
                             // iterable) is drained through the iteration protocol.
                             let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
-                            let drained = self.drive_iterable(source, target, |heap, array, value| {
-                                heap.array_push(array, value);
-                            });
+                            let drained =
+                                self.drive_iterable(source, target, |heap, array, value| {
+                                    heap.array_push(array, value);
+                                });
                             let array = match drained {
                                 Ok(array) => array,
                                 Err(error) => {
                                     // A present, non-undefined `[Symbol.iterator]` that fails is an error, not an array-like.
                                     let present = zun_gc::with_current_heap(|heap| {
-                                        heap.dynamic_get_symbol(source, zun_core::WellKnownSymbol::Iterator.id())
-                                            .and_then(|any| Value::unbox_any(any, heap))
-                                            .is_some_and(|v| !matches!(v, Value::Void))
+                                        heap.dynamic_get_symbol(
+                                            source,
+                                            zun_core::WellKnownSymbol::Iterator.id(),
+                                        )
+                                        .and_then(|any| Value::unbox_any(any, heap))
+                                        .is_some_and(|v| !matches!(v, Value::Void))
                                     });
                                     if present {
                                         return Err(error);
@@ -505,13 +602,18 @@ impl<'a> Interp<'a> {
                                         if !heap.is_dynamic_object(source) {
                                             return None;
                                         }
-                                        let length = heap.dynamic_get(source, "length").and_then(|any| {
-                                            match Value::unbox_any(any, heap) {
-                                                Some(Value::Float(n, _)) if n >= 0.0 => Some(n as usize),
-                                                Some(Value::Int(n, _)) if n >= 0 => Some(n as usize),
-                                                _ => None,
-                                            }
-                                        });
+                                        let length =
+                                            heap.dynamic_get(source, "length").and_then(|any| {
+                                                match Value::unbox_any(any, heap) {
+                                                    Some(Value::Float(n, _)) if n >= 0.0 => {
+                                                        Some(n as usize)
+                                                    }
+                                                    Some(Value::Int(n, _)) if n >= 0 => {
+                                                        Some(n as usize)
+                                                    }
+                                                    _ => None,
+                                                }
+                                            });
                                         let length = length.unwrap_or(0);
                                         let array = heap.alloc_array(length);
                                         for index in 0..length {
@@ -521,14 +623,17 @@ impl<'a> Interp<'a> {
                                             let mut cursor = Some(source);
                                             let mut found = None;
                                             while let Some(current) = cursor {
-                                                if let Some(value) = heap.dynamic_get(current, &key) {
+                                                if let Some(value) = heap.dynamic_get(current, &key)
+                                                {
                                                     found = Some(value);
                                                     break;
                                                 }
                                                 cursor = heap
                                                     .dynamic_prototype(current)
                                                     .and_then(|proto| proto.as_object())
-                                                    .map(|addr| unsafe { zun_gc::Obj::from_addr(addr as *mut u64) });
+                                                    .map(|addr| unsafe {
+                                                        zun_gc::Obj::from_addr(addr as *mut u64)
+                                                    });
                                             }
                                             let value = found.unwrap_or_else(zun_core::Any::void);
                                             heap.array_set(array, index, value);
@@ -558,7 +663,11 @@ impl<'a> Interp<'a> {
                                     .array_get(source, index)
                                     .unwrap_or_else(zun_core::Any::void);
                                 // Array.from materialises holes as undefined.
-                                let value = if value.is_hole() { zun_core::Any::void() } else { value };
+                                let value = if value.is_hole() {
+                                    zun_core::Any::void()
+                                } else {
+                                    value
+                                };
                                 heap.array_set(array, index, value);
                             }
                             array
@@ -598,8 +707,10 @@ impl<'a> Interp<'a> {
                 let target =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let concrete = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                        .unwrap_or(Value::Void),
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     other => other.clone(),
                 };
                 match &concrete {
@@ -618,7 +729,9 @@ impl<'a> Interp<'a> {
                     }
                     _ => {
                         let Some(source) = object(&concrete) else {
-                            return match self.new_error_object("TypeError", "spread: value is not iterable") {
+                            return match self
+                                .new_error_object("TypeError", "spread: value is not iterable")
+                            {
                                 Some(error) => Err(RunError::Thrown(Value::Object(error))),
                                 None => Err(RunError::BadToken),
                             };
@@ -626,17 +739,31 @@ impl<'a> Interp<'a> {
                         // A managed Array keeps its direct fast path; anything
                         // else (a Set/Map or a user `[Symbol.iterator]` object)
                         // is drained through the iteration protocol.
-                        if let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(source).filter(|_| heap.dynamic_get_symbol_function(source, zun_core::WellKnownSymbol::Iterator.id()).is_none()))
-                        {
+                        if let Some(length) = zun_gc::with_current_heap(|heap| {
+                            heap.array_len(source).filter(|_| {
+                                heap.dynamic_get_symbol_function(
+                                    source,
+                                    zun_core::WellKnownSymbol::Iterator.id(),
+                                )
+                                .is_none()
+                            })
+                        }) {
                             let roots = [source, target];
                             let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                             for index in 0..length {
-                                let value =
-                                    zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                                        .unwrap_or_else(zun_core::Any::void);
+                                let value = zun_gc::with_current_heap(|heap| {
+                                    heap.array_get(roots[0], index)
+                                })
+                                .unwrap_or_else(zun_core::Any::void);
                                 // Spread materialises holes as undefined.
-                                let value = if value.is_hole() { zun_core::Any::void() } else { value };
-                                zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], value));
+                                let value = if value.is_hole() {
+                                    zun_core::Any::void()
+                                } else {
+                                    value
+                                };
+                                zun_gc::with_current_heap_mut(|heap| {
+                                    heap.array_push(roots[1], value)
+                                });
                             }
                         } else {
                             self.drive_iterable(source, target, |heap, array, value| {

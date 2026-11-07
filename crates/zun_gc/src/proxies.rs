@@ -12,18 +12,23 @@ pub struct ProxyRecord {
 impl Heap {
     pub fn alloc_proxy(&mut self, target: Obj, handler: Obj) -> Obj {
         let proxy = self.alloc(0, 0);
-        self.proxies.insert(proxy.addr() as usize, ProxyRecord { target, handler });
+        self.proxies
+            .insert(proxy.addr() as usize, ProxyRecord { target, handler });
         self.write_barrier(proxy, target.addr() as u64);
         self.write_barrier(proxy, handler.addr() as u64);
         proxy
     }
 
     pub fn proxy_target(&self, proxy: Obj) -> Option<Obj> {
-        self.proxies.get(&(proxy.addr() as usize)).map(|record| record.target)
+        self.proxies
+            .get(&(proxy.addr() as usize))
+            .map(|record| record.target)
     }
 
     pub fn proxy_handler(&self, proxy: Obj) -> Option<Obj> {
-        self.proxies.get(&(proxy.addr() as usize)).map(|record| record.handler)
+        self.proxies
+            .get(&(proxy.addr() as usize))
+            .map(|record| record.handler)
     }
 
     /// Resolve a named trap from the proxy's handler without invoking it.

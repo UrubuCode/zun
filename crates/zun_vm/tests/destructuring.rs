@@ -10,7 +10,8 @@ use zun_interp::CaptureOutput;
 /// Compile `src` through the hand parser, round-trip the `.zm`, run it.
 fn run(src: &str) -> Vec<String> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -32,38 +33,31 @@ fn run_oxc(src: &str) -> Vec<String> {
 
 #[test]
 fn array_pattern_binds_elements() {
-    let out = run(
-        "function main() { let [a, b] = [1, 2]; print((a as number) + (b as number)); }",
-    );
+    let out = run("function main() { let [a, b] = [1, 2]; print((a as number) + (b as number)); }");
     assert_eq!(out, ["3"]);
 }
 
 #[test]
 fn array_pattern_rest_collects_remainder() {
-    let out = run(
-        "function main() { \
+    let out = run("function main() { \
             let [x, ...rest] = [1, 2, 3]; \
             print(x as number); \
             print(rest.length as number); \
             print(rest[0] as number); \
-            print(rest[1] as number); }",
-    );
+            print(rest[1] as number); }");
     assert_eq!(out, ["1", "2", "2", "3"]);
 }
 
 #[test]
 fn array_pattern_hole_skips_element() {
-    let out = run(
-        "function main() { let [, b] = [10, 20]; print(b as number); }",
-    );
+    let out = run("function main() { let [, b] = [10, 20]; print(b as number); }");
     assert_eq!(out, ["20"]);
 }
 
 #[test]
 fn array_pattern_default_fills_undefined() {
-    let out = run(
-        "function main() { let [a, b = 9] = [5]; print(a as number); print(b as number); }",
-    );
+    let out =
+        run("function main() { let [a, b = 9] = [5]; print(a as number); print(b as number); }");
     assert_eq!(out, ["5", "9"]);
 }
 
@@ -114,15 +108,13 @@ fn object_pattern_rest_collects_remaining_keys() {
 #[test]
 fn for_of_entries_destructuring_sums_index_and_value() {
     // NUCLEUS #7 payoff: `for (const [i, v] of arr.entries())`.
-    let out = run(
-        "function main() { \
+    let out = run("function main() { \
             let arr = [10, 20, 30]; \
             let total = 0; \
             for (let [i, v] of arr.entries()) { \
                 total = total + (i as number) + (v as number); \
             } \
-            print(total); }",
-    );
+            print(total); }");
     // indices 0+1+2 = 3, values 10+20+30 = 60 -> 63.
     assert_eq!(out, ["63"]);
 }
@@ -130,24 +122,20 @@ fn for_of_entries_destructuring_sums_index_and_value() {
 #[test]
 fn with_resolvers_destructuring_resolves() {
     // NUCLEUS #9 payoff: bind the function-slot resolver and call it.
-    let out = run(
-        "async function main() { \
+    let out = run("async function main() { \
             let { promise, resolve } = Promise.withResolvers(); \
             resolve(7.0); \
             let v: any = await promise; \
-            print(v as number); }",
-    );
+            print(v as number); }");
     assert_eq!(out, ["7"]);
 }
 
 #[test]
 fn with_resolvers_destructuring_rejects() {
-    let out = run(
-        "async function main() { \
+    let out = run("async function main() { \
             let { promise, reject } = Promise.withResolvers(); \
             reject(\"bad\"); \
             try { let v: any = await promise; } \
-            catch (e: string) { print(e); } }",
-    );
+            catch (e: string) { print(e); } }");
     assert_eq!(out, ["bad"]);
 }

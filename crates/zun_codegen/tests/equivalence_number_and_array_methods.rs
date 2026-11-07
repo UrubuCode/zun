@@ -260,7 +260,10 @@ fn non_capturing_closure_keeps_interpreter_fallback_boundary() {
     .expect("compile non-capturing closure");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with closure fallback");
-    assert!(!jit.is_compiled(entry), "closure calls require Tier 0 environment ABI");
+    assert!(
+        !jit.is_compiled(entry),
+        "closure calls require Tier 0 environment ABI"
+    );
     assert!(matches!(
         interp_entry(&module),
         Value::Float(42.0, zun_il::NumKind::F64)
@@ -581,4 +584,3 @@ fn array_product_keeps_interpreter_fallback() {
     assert!(!jit.is_compiled(entry), "Array methods must remain Tier 0");
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 24.0));
 }
-

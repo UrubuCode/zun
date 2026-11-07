@@ -14,8 +14,14 @@ impl Checker<'_> {
     ) -> hir::Expr {
         // `"name" in Map.prototype` for well-known built-in prototypes: a
         // prototype method is present, a static-only method is absent.
-        if let (ast::Expr::String { value, .. }, ast::Expr::Field { object: proto_owner, field: proto_field, .. }) =
-            (key, object)
+        if let (
+            ast::Expr::String { value, .. },
+            ast::Expr::Field {
+                object: proto_owner,
+                field: proto_field,
+                ..
+            },
+        ) = (key, object)
         {
             if self.text(proto_field) == "prototype" {
                 if let ast::Expr::Ident(global) = proto_owner.as_ref() {
@@ -23,12 +29,21 @@ impl Checker<'_> {
                     if cx.lookup(&global_name).is_none()
                         && !self.classes_by_name.contains_key(global_name.as_str())
                     {
-                        let on_proto =
-                            builtin_function_length(&[global_name.as_str(), "prototype", value.as_str()]).is_some();
+                        let on_proto = builtin_function_length(&[
+                            global_name.as_str(),
+                            "prototype",
+                            value.as_str(),
+                        ])
+                        .is_some();
                         let on_static =
-                            builtin_function_length(&[global_name.as_str(), value.as_str()]).is_some();
+                            builtin_function_length(&[global_name.as_str(), value.as_str()])
+                                .is_some();
                         if on_proto || on_static {
-                            return hir::Expr { kind: hir::ExprKind::Boolean(on_proto), ty: Ty::Boolean, span };
+                            return hir::Expr {
+                                kind: hir::ExprKind::Boolean(on_proto),
+                                ty: Ty::Boolean,
+                                span,
+                            };
                         }
                     }
                 }
@@ -43,7 +58,10 @@ impl Checker<'_> {
             // A Symbol key is looked up by identity, never stringified.
             if let Some((id, _)) = zun_natives::resolve("collections", "symbolHas") {
                 return hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(object), Self::box_to_any(key)] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![Self::box_to_any(object), Self::box_to_any(key)],
+                    },
                     ty: Ty::Boolean,
                     span,
                 };
@@ -58,7 +76,10 @@ impl Checker<'_> {
             // A string reaching `in` came from `Object(str)`: index / length keys.
             if let Some((id, _)) = zun_natives::resolve("string", "stringHasProperty") {
                 return hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![object, key],
+                    },
                     ty: Ty::Boolean,
                     span,
                 };
@@ -74,7 +95,10 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 return hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![object, key],
+                    },
                     ty: Ty::Boolean,
                     span,
                 };
@@ -93,7 +117,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![object, key],
+            },
             ty: Ty::Boolean,
             span,
         }
@@ -112,10 +139,22 @@ impl Checker<'_> {
     ) -> hir::Expr {
         // `delete (arr as any)[k]`: an `as any` cast around a plain identifier
         // does not change which object is deleted from.
-        if let ast::Expr::Index { object, index, span: index_span } = operand {
-            if let ast::Expr::Cast { expr: inner, ty, .. } = object.as_ref() {
+        if let ast::Expr::Index {
+            object,
+            index,
+            span: index_span,
+        } = operand
+        {
+            if let ast::Expr::Cast {
+                expr: inner, ty, ..
+            } = object.as_ref()
+            {
                 if self.text(&ty.name) == "any" && matches!(inner.as_ref(), ast::Expr::Ident(_)) {
-                    let peeled = ast::Expr::Index { object: inner.clone(), index: index.clone(), span: *index_span };
+                    let peeled = ast::Expr::Index {
+                        object: inner.clone(),
+                        index: index.clone(),
+                        span: *index_span,
+                    };
                     return self.check_delete_operator(cx, &peeled, span);
                 }
             }
@@ -126,21 +165,42 @@ impl Checker<'_> {
             let guarded: Option<(&ast::Expr, ast::Expr)> = match operand {
                 ast::Expr::OptionalField { object, field, .. } => Some((
                     object.as_ref(),
-                    ast::Expr::Field { object: Box::new(ast::Expr::ChainRoot { depth: 0, span }), field: *field, span },
+                    ast::Expr::Field {
+                        object: Box::new(ast::Expr::ChainRoot { depth: 0, span }),
+                        field: *field,
+                        span,
+                    },
                 )),
                 ast::Expr::OptionalIndex { object, index, .. } => Some((
                     object.as_ref(),
-                    ast::Expr::Index { object: Box::new(ast::Expr::ChainRoot { depth: 0, span }), index: index.clone(), span },
+                    ast::Expr::Index {
+                        object: Box::new(ast::Expr::ChainRoot { depth: 0, span }),
+                        index: index.clone(),
+                        span,
+                    },
                 )),
-                ast::Expr::OptionalChain { object, body, .. } => Some((object.as_ref(), body.as_ref().clone())),
+                ast::Expr::OptionalChain { object, body, .. } => {
+                    Some((object.as_ref(), body.as_ref().clone()))
+                }
                 _ => None,
             };
             if let Some((guard_ast, body)) = guarded {
                 let guard = self.check_expr(cx, guard_ast);
-                let (slot, tmp) = self.synthetic_local(cx, if matches!(guard.ty, Ty::Any | Ty::DynamicObject) { Ty::Any } else { guard.ty });
+                let (slot, tmp) = self.synthetic_local(
+                    cx,
+                    if matches!(guard.ty, Ty::Any | Ty::DynamicObject) {
+                        Ty::Any
+                    } else {
+                        guard.ty
+                    },
+                );
                 let tmp_expr = ast::Expr::Ident(tmp);
                 self.chain_roots.push(tmp);
-                let delete = ast::Expr::Unary { op: ast::UnaryOp::Delete, operand: Box::new(body), span };
+                let delete = ast::Expr::Unary {
+                    op: ast::UnaryOp::Delete,
+                    operand: Box::new(body),
+                    span,
+                };
                 let cond = if matches!(guard.ty, Ty::Any | Ty::DynamicObject) {
                     ast::Expr::Conditional {
                         condition: Box::new(ast::Expr::Binary {
@@ -159,11 +219,18 @@ impl Checker<'_> {
                 let value = self.check_expr(cx, &cond);
                 self.chain_roots.pop();
                 let ty = value.ty;
-                let bound = if matches!(guard.ty, Ty::Any | Ty::DynamicObject) { Self::box_to_any(guard) } else { guard };
+                let bound = if matches!(guard.ty, Ty::Any | Ty::DynamicObject) {
+                    Self::box_to_any(guard)
+                } else {
+                    guard
+                };
                 return hir::Expr {
                     kind: hir::ExprKind::Sequence {
                         effect: Box::new(hir::Expr {
-                            kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                            kind: hir::ExprKind::Assign {
+                                slot,
+                                value: Box::new(bound),
+                            },
                             ty: Ty::Any,
                             span,
                         }),
@@ -180,12 +247,16 @@ impl Checker<'_> {
                 let probe = self.check_expr(cx, object);
                 if probe.ty == Ty::Array {
                     let mut key = self.check_expr(cx, index);
-                    if !key.ty.is_error() && matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int() {
+                    if !key.ty.is_error() && matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int()
+                    {
                         key = Self::box_to_any(key);
                     }
                     if let Some((id, _)) = zun_natives::resolve("collections", "arrayDeleteIndex") {
                         return hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: vec![probe, key] },
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![probe, key],
+                            },
                             ty: Ty::Boolean,
                             span,
                         };
@@ -204,9 +275,17 @@ impl Checker<'_> {
             }
             ast::Expr::Index { object, index, .. } => {
                 let key = self.check_expr(cx, index);
-                let key = if matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int() { self.to_string_for_parse(key) } else { key };
+                let key = if matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int() {
+                    self.to_string_for_parse(key)
+                } else {
+                    key
+                };
                 // A Symbol key rides the dynamic lane (boxed) to `deleteStrict`.
-                let key = if key.ty == Ty::Symbol { Self::box_to_any(key) } else { key };
+                let key = if key.ty == Ty::Symbol {
+                    Self::box_to_any(key)
+                } else {
+                    key
+                };
                 if !key.ty.is_error() && key.ty != Ty::String && key.ty != Ty::Any {
                     self.error(key.span, "`delete obj[k]` requires a string key");
                 }
@@ -240,7 +319,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![object, key] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![object, key],
+            },
             ty: Ty::Boolean,
             span,
         }
@@ -263,7 +345,11 @@ impl Checker<'_> {
             let mut ok = true;
             loop {
                 match cursor {
-                    ast::Expr::Field { object: inner, field: f, .. } => {
+                    ast::Expr::Field {
+                        object: inner,
+                        field: f,
+                        ..
+                    } => {
                         parts.push(self.text(f).to_string());
                         cursor = inner.as_ref();
                     }
@@ -281,7 +367,9 @@ impl Checker<'_> {
                 parts.reverse();
                 let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
                 let known = builtin_function_length(&refs).is_some()
-                    || (refs.len() == 2 && refs[0] == "Math" && math_function_length(refs[1]).is_some());
+                    || (refs.len() == 2
+                        && refs[0] == "Math"
+                        && math_function_length(refs[1]).is_some());
                 if known
                     && !self.classes_by_name.contains_key(refs[0])
                     && cx.lookup(refs[0]).is_none()
@@ -324,7 +412,10 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 return hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![operand] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![operand],
+                    },
                     ty: Ty::String,
                     span,
                 };
@@ -349,7 +440,10 @@ impl Checker<'_> {
             return folded;
         }
         hir::Expr {
-            kind: hir::ExprKind::Sequence { effect: Box::new(operand), value: Box::new(folded) },
+            kind: hir::ExprKind::Sequence {
+                effect: Box::new(operand),
+                value: Box::new(folded),
+            },
             ty: Ty::String,
             span,
         }
@@ -364,7 +458,10 @@ impl Checker<'_> {
     ) -> hir::Expr {
         let value = self.check_expr(cx, value);
         let ast::Expr::Ident(class_name) = class else {
-            self.error(class.span(), "right operand of `instanceof` must be a class name");
+            self.error(
+                class.span(),
+                "right operand of `instanceof` must be a class name",
+            );
             return self.poison(span);
         };
         let name = self.text(class_name).to_string();
@@ -383,9 +480,16 @@ impl Checker<'_> {
                 return self.poison(span);
             };
             let value = Self::box_to_any(value);
-            let ctor = hir::Expr { kind: hir::ExprKind::String(name), ty: Ty::String, span };
+            let ctor = hir::Expr {
+                kind: hir::ExprKind::String(name),
+                ty: Ty::String,
+                span,
+            };
             return hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![value, ctor] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![value, ctor],
+                },
                 ty: Ty::Boolean,
                 span,
             };
@@ -409,12 +513,17 @@ impl Checker<'_> {
                 } else {
                     hir::Expr {
                         span: value.span,
-                        kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(value),
+                        },
                         ty: Ty::Any,
                     }
                 };
                 return hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![value, rhs] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![value, rhs],
+                    },
                     ty: Ty::Boolean,
                     span,
                 };
@@ -458,7 +567,10 @@ impl Checker<'_> {
                 span,
             };
             return hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![value, class_rid] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![value, class_rid],
+                },
                 ty: Ty::Boolean,
                 span,
             };

@@ -38,7 +38,7 @@ pub fn clif_ty(kind: JitKind) -> Type {
         JitKind::Object | JitKind::Array | JitKind::String => types::I64,
         // A transient function value carries its method rid (no-closure case).
         JitKind::Function => types::I64,
-        JitKind::Other => types::I64,  // never used; eligibility excludes it
+        JitKind::Other => types::I64, // never used; eligibility excludes it
         JitKind::Num(n) => match n {
             NumKind::I8 | NumKind::U8 => types::I8,
             NumKind::I16 | NumKind::U16 => types::I16,
@@ -139,7 +139,11 @@ pub fn translate_body(
     builder.switch_to_block(entry);
     let entry_params: Vec<Value> = builder.block_params(entry).to_vec();
     let mut param_value = 0usize;
-    for (i, &kind) in local_kinds.iter().take(body.param_count as usize).enumerate() {
+    for (i, &kind) in local_kinds
+        .iter()
+        .take(body.param_count as usize)
+        .enumerate()
+    {
         if kind == JitKind::Other {
             let slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
@@ -504,7 +508,14 @@ impl Translator<'_> {
                         self.builder.ins().return_(&[]);
                     }
                 }
-                Opcode::Call | Opcode::CallVirt => self.op_call(instr, i, &mut stack, &mut block_sigs, offset_of_index, index_of_offset)?,
+                Opcode::Call | Opcode::CallVirt => self.op_call(
+                    instr,
+                    i,
+                    &mut stack,
+                    &mut block_sigs,
+                    offset_of_index,
+                    index_of_offset,
+                )?,
                 Opcode::CallBuiltin => self.op_call_builtin(instr, &mut stack, &mut builtin_ids)?,
                 Opcode::NewObj => self.op_new_obj(instr, &mut stack)?,
                 Opcode::ArrayLength => self.op_array_length(&mut stack)?,
@@ -525,7 +536,9 @@ impl Translator<'_> {
                         _ => return Err("array index must be an integer".into()),
                     };
                     let carrier_load = self.method_return_kind == JitKind::Other
-                        || instrs.get(i + 1).is_some_and(|next| next.opcode == Opcode::UnboxAny);
+                        || instrs
+                            .get(i + 1)
+                            .is_some_and(|next| next.opcode == Opcode::UnboxAny);
                     let load_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
                     let load_i64 = self.method_return_kind == JitKind::Num(NumKind::I64);
                     let load_i32 = self.method_return_kind == JitKind::Num(NumKind::I32);
@@ -597,7 +610,13 @@ impl Translator<'_> {
                     );
                     let store_bool = value_kind == JitKind::Bool;
                     if !matches!(array_kind, JitKind::Object | JitKind::Array)
-                        || (!store_object && !store_u64 && !store_i64 && !store_i32 && !store_narrow && !store_bool && value_kind != JitKind::Num(NumKind::F64))
+                        || (!store_object
+                            && !store_u64
+                            && !store_i64
+                            && !store_i32
+                            && !store_narrow
+                            && !store_bool
+                            && value_kind != JitKind::Num(NumKind::F64))
                     {
                         return Err("numeric array store requires object and f64/u64 value".into());
                     }
@@ -609,7 +628,9 @@ impl Translator<'_> {
                     };
                     let store_value = if store_narrow {
                         match value_kind {
-                            JitKind::Num(NumKind::I8 | NumKind::U8) => self.builder.ins().uextend(types::I32, value),
+                            JitKind::Num(NumKind::I8 | NumKind::U8) => {
+                                self.builder.ins().uextend(types::I32, value)
+                            }
                             _ => self.builder.ins().sextend(types::I32, value),
                         }
                     } else {
@@ -665,7 +686,13 @@ impl Translator<'_> {
                 }
                 Opcode::LoadStatic => self.op_load_static(instr, &mut stack)?,
                 Opcode::StoreStatic => self.op_store_static(instr, &mut stack)?,
-                Opcode::Throw => self.op_throw(i, &mut stack, &mut block_sigs, offset_of_index, index_of_offset)?,
+                Opcode::Throw => self.op_throw(
+                    i,
+                    &mut stack,
+                    &mut block_sigs,
+                    offset_of_index,
+                    index_of_offset,
+                )?,
                 Opcode::LoadFunction => {
                     // A no-closure function value is carried as its method rid.
                     let rid = match instr.operand {
@@ -675,7 +702,14 @@ impl Translator<'_> {
                     let value = self.builder.ins().iconst(types::I64, rid as i64);
                     stack.push((value, JitKind::Function));
                 }
-                Opcode::CallIndirect => self.op_call_indirect(instr, i, &mut stack, &mut block_sigs, offset_of_index, index_of_offset)?,
+                Opcode::CallIndirect => self.op_call_indirect(
+                    instr,
+                    i,
+                    &mut stack,
+                    &mut block_sigs,
+                    offset_of_index,
+                    index_of_offset,
+                )?,
                 other => return Err(format!("opcode {other:?} not supported by the typed JIT")),
             }
         }
@@ -752,7 +786,6 @@ impl Translator<'_> {
             .expect("declare zun_jit_osr_poll");
         self.module.declare_func_in_func(id, self.builder.func)
     }
-
 }
 
 #[derive(Clone, Copy)]

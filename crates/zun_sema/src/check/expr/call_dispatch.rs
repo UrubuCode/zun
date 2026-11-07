@@ -108,9 +108,10 @@ impl Checker<'_> {
         // A callee that reads `arguments` learns the real argument count
         // (before default padding) through the last argument's evaluation.
         if self.arguments_functions.contains(&func) {
-            if let (Some(last), Some((mark_id, _))) =
-                (args.pop(), zun_natives::resolve("collections", "setCallArgc"))
-            {
+            if let (Some(last), Some((mark_id, _))) = (
+                args.pop(),
+                zun_natives::resolve("collections", "setCallArgc"),
+            ) {
                 let (ty, last_span) = (last.ty, last.span);
                 args.push(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {

@@ -26,7 +26,10 @@ impl Checker<'_> {
                 self.error(span, "`BigInt` expects one argument");
                 return Some(self.poison(span));
             }
-            let arg = std::mem::take(args).into_iter().next().expect("one argument");
+            let arg = std::mem::take(args)
+                .into_iter()
+                .next()
+                .expect("one argument");
             let native_name = if arg.ty.is_int() || arg.ty.is_float() {
                 "bigIntFromNumber"
             } else if arg.ty == Ty::String {
@@ -38,11 +41,17 @@ impl Checker<'_> {
                 return Some(self.poison(span));
             };
             let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
-                self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                self.error(
+                    span,
+                    format!("missing collection intrinsic `{native_name}`"),
+                );
                 return Some(self.poison(span));
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: Ty::BigInt,
                 span,
             });
@@ -57,7 +66,10 @@ impl Checker<'_> {
                 self.error(span, "`Boolean` expects one argument");
                 return Some(self.poison(span));
             }
-            let arg = std::mem::take(args).into_iter().next().expect("one argument");
+            let arg = std::mem::take(args)
+                .into_iter()
+                .next()
+                .expect("one argument");
             if arg.ty.is_error() {
                 return Some(self.poison(span));
             }
@@ -70,7 +82,10 @@ impl Checker<'_> {
                 return Some(self.poison(span));
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: Ty::Boolean,
                 span,
             });
@@ -88,7 +103,10 @@ impl Checker<'_> {
                 self.error(span, "`String` expects one argument");
                 return Some(self.poison(span));
             }
-            let arg = std::mem::take(args).into_iter().next().expect("one argument");
+            let arg = std::mem::take(args)
+                .into_iter()
+                .next()
+                .expect("one argument");
             if arg.ty.is_error() {
                 return Some(self.poison(span));
             }
@@ -107,12 +125,17 @@ impl Checker<'_> {
             } else {
                 hir::Expr {
                     span: arg.span,
-                    kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(arg),
+                    },
                     ty: Ty::Any,
                 }
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -128,13 +151,20 @@ impl Checker<'_> {
         if name == "Number" && !self.by_name.contains_key(name) {
             // `Number()` with no argument is `+0`.
             if args.is_empty() {
-                return Some(hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::F64, span });
+                return Some(hir::Expr {
+                    kind: hir::ExprKind::Number(0.0),
+                    ty: Ty::F64,
+                    span,
+                });
             }
             if args.len() != 1 {
                 self.error(span, "`Number` expects one argument");
                 return Some(self.poison(span));
             }
-            let arg = std::mem::take(args).into_iter().next().expect("one argument");
+            let arg = std::mem::take(args)
+                .into_iter()
+                .next()
+                .expect("one argument");
             if arg.ty.is_error() {
                 return Some(self.poison(span));
             }
@@ -153,12 +183,17 @@ impl Checker<'_> {
             } else {
                 hir::Expr {
                     span: arg.span,
-                    kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(arg),
+                    },
                     ty: Ty::Any,
                 }
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: Ty::F64,
                 span,
             });
@@ -176,7 +211,9 @@ impl Checker<'_> {
     ) -> Option<hir::Expr> {
         if let Some(&func) = self.by_name.get(name) {
             if self.signatures[func as usize].is_generator {
-                let Some((native_id, _)) = zun_natives::resolve("buffer", "generatorIteratorNewArgs") else {
+                let Some((native_id, _)) =
+                    zun_natives::resolve("buffer", "generatorIteratorNewArgs")
+                else {
                     self.error(span, "missing generator iterator intrinsic");
                     return Some(self.poison(span));
                 };
@@ -188,8 +225,7 @@ impl Checker<'_> {
                         let expected = param_tys.get(args.len()).copied().unwrap_or(Ty::Any);
                         args.push(default_args::missing_arg(expected, span));
                     }
-                    let rest: Vec<Option<hir::Expr>> =
-                        args.drain(rest_index..).map(Some).collect();
+                    let rest: Vec<Option<hir::Expr>> = args.drain(rest_index..).map(Some).collect();
                     let mut packed = hir::Expr {
                         kind: hir::ExprKind::ArrayLiteral { elements: rest },
                         ty: Ty::Array,
@@ -199,7 +235,11 @@ impl Checker<'_> {
                     args.push(packed);
                 }
                 return Some(hir::Expr {
-                    kind: hir::ExprKind::GeneratorCall { func, args, native_id },
+                    kind: hir::ExprKind::GeneratorCall {
+                        func,
+                        args,
+                        native_id,
+                    },
                     ty: Ty::Any,
                     span,
                 });

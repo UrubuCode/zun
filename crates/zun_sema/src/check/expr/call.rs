@@ -1,9 +1,15 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_call(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Call { callee, args, .. } = expr else { unreachable!() };
+        let ast::Expr::Call { callee, args, .. } = expr else {
+            unreachable!()
+        };
         let name = self.text(callee).to_string();
         // AST-phase interceptors (name-based sugar and spread lowering).
         if let Some(e) = self.try_call_name_sugar(cx, callee, &name, args, span) {
@@ -12,8 +18,7 @@ impl Checker<'_> {
         if let Some(e) = self.try_call_spread(cx, callee, &name, args, span) {
             return e;
         }
-        let mut args: Vec<hir::Expr> =
-            args.iter().map(|a| self.check_expr(cx, a)).collect();
+        let mut args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
         // Value-phase interceptors over the checked arguments, in order.
         if let Some(e) = self.try_call_coerce(&name, &mut args, span) {
             return e;
@@ -43,25 +48,62 @@ impl Checker<'_> {
         self.call_named_dispatch(cx, callee, &name, args, span)
     }
 
-    pub(in crate::check) fn check_static_method_call(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_static_method_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::StaticMethodCall { class, method, args, .. } = expr else { unreachable!() };
+        let ast::Expr::StaticMethodCall {
+            class,
+            method,
+            args,
+            ..
+        } = expr
+        else {
+            unreachable!()
+        };
         let class_name = self.text(class).to_string();
-        if let Some(&namespace) = self.core_namespaces.get(&class_name).filter(|_| cx.lookup(&class_name).is_none()) {
+        if let Some(&namespace) = self
+            .core_namespaces
+            .get(&class_name)
+            .filter(|_| cx.lookup(&class_name).is_none())
+        {
             let Some((id, native)) = zun_natives::resolve_core(namespace, self.text(method)) else {
-                self.error(method.span, format!("`zun:core` namespace `{}` has no member `{}`", namespace, self.text(method)));
+                self.error(
+                    method.span,
+                    format!(
+                        "`zun:core` namespace `{}` has no member `{}`",
+                        namespace,
+                        self.text(method)
+                    ),
+                );
                 return self.poison(span);
             };
             if native.params.len() != args.len() {
-                self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), native.params.len(), args.len()));
+                self.error(
+                    span,
+                    format!(
+                        "`{}` expects {} argument(s), found {}",
+                        self.text(method),
+                        native.params.len(),
+                        args.len()
+                    ),
+                );
                 return self.poison(span);
             }
             let mut checked = Vec::with_capacity(args.len());
-            for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+            for (arg, expected) in args
+                .iter()
+                .zip(native.params.iter().map(|ty| native_ty(*ty)))
+            {
                 let mut value = self.check_expr(cx, arg);
                 coerce_numeric_literal(&mut value, expected);
                 if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
-                    self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                    self.error(
+                        value.span,
+                        format!("argument type {:?} does not match {expected:?}", value.ty),
+                    );
                 }
                 checked.push(value);
             }
@@ -73,19 +115,36 @@ impl Checker<'_> {
         }
         if let Some(module) = self.namespace_imports.get(&class_name).cloned() {
             let Some((id, native)) = zun_natives::resolve(&module, self.text(method)) else {
-                self.error(method.span, format!("`{}` has no export named `{}`", module, self.text(method)));
+                self.error(
+                    method.span,
+                    format!("`{}` has no export named `{}`", module, self.text(method)),
+                );
                 return self.poison(span);
             };
             if native.params.len() != args.len() {
-                self.error(span, format!("`{}` expects {} argument(s), found {}", self.text(method), native.params.len(), args.len()));
+                self.error(
+                    span,
+                    format!(
+                        "`{}` expects {} argument(s), found {}",
+                        self.text(method),
+                        native.params.len(),
+                        args.len()
+                    ),
+                );
                 return self.poison(span);
             }
             let mut checked = Vec::with_capacity(args.len());
-            for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+            for (arg, expected) in args
+                .iter()
+                .zip(native.params.iter().map(|ty| native_ty(*ty)))
+            {
                 let mut value = self.check_expr(cx, arg);
                 coerce_numeric_literal(&mut value, expected);
                 if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
-                    self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+                    self.error(
+                        value.span,
+                        format!("argument type {:?} does not match {expected:?}", value.ty),
+                    );
                 }
                 checked.push(value);
             }
@@ -100,7 +159,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         let Some(func) = self.method_of(class_index, self.text(method)) else {
-            self.error(method.span, format!("unknown static method `{}`", self.text(method)));
+            self.error(
+                method.span,
+                format!("unknown static method `{}`", self.text(method)),
+            );
             return self.poison(span);
         };
         let (param_tys, return_ty, optional_count) = {
@@ -109,7 +171,14 @@ impl Checker<'_> {
         };
         let required = param_tys.len().saturating_sub(optional_count);
         if args.len() > param_tys.len() || args.len() < required {
-            self.error(span, format!("static method `{}` expects {} arguments", self.text(method), param_tys.len()));
+            self.error(
+                span,
+                format!(
+                    "static method `{}` expects {} arguments",
+                    self.text(method),
+                    param_tys.len()
+                ),
+            );
             return self.poison(span);
         }
         let mut checked = Vec::with_capacity(args.len());
@@ -121,8 +190,14 @@ impl Checker<'_> {
             // same arguments would accept through any other call
             // shape.
             coerce_numeric_literal(&mut value, expected);
-            if !expected.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
-                self.error(value.span, format!("argument type {:?} does not match {expected:?}", value.ty));
+            if !expected.is_error()
+                && !value.ty.is_error()
+                && !self.is_assignable(value.ty, expected)
+            {
+                self.error(
+                    value.span,
+                    format!("argument type {:?} does not match {expected:?}", value.ty),
+                );
             }
             checked.push(value);
         }
@@ -141,16 +216,32 @@ impl Checker<'_> {
             self.pad_default_args(&mut checked, &sig, span);
         }
         hir::Expr {
-            kind: hir::ExprKind::StaticCall { func, args: checked },
+            kind: hir::ExprKind::StaticCall {
+                func,
+                args: checked,
+            },
             ty: return_ty,
             span,
         }
     }
 
-    pub(in crate::check) fn check_regex_symbol_call_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
-        let ast::Expr::ComputedCall { callee, args, span: call_span } = expr else { unreachable!() };
+    pub(in crate::check) fn check_regex_symbol_call_expr(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
+        let ast::Expr::ComputedCall {
+            callee,
+            args,
+            span: call_span,
+        } = expr
+        else {
+            unreachable!()
+        };
         // `/re/[Symbol.split](str, ...rest)` is `str.split(/re/, ...rest)`.
-        let ast::Expr::Index { object, index, .. } = callee.as_ref() else { unreachable!() };
+        let ast::Expr::Index { object, index, .. } = callee.as_ref() else {
+            unreachable!()
+        };
         let method = match index.as_ref() {
             ast::Expr::Field { field, .. } => *field,
             ast::Expr::StaticField { field, .. } => *field,
@@ -158,8 +249,10 @@ impl Checker<'_> {
         };
         // A non-string subject is coerced with ToString first.
         let subject = self.check_expr(cx, &args[0]);
-        let direct_match_all =
-            matches!(self.well_known_symbol_of_key(index), Some(zun_core::WellKnownSymbol::MatchAll));
+        let direct_match_all = matches!(
+            self.well_known_symbol_of_key(index),
+            Some(zun_core::WellKnownSymbol::MatchAll)
+        );
         if (subject.ty != Ty::String && !subject.ty.is_error()) || direct_match_all {
             let kind = match self.well_known_symbol_of_key(index) {
                 Some(zun_core::WellKnownSymbol::Match) => 0.0,
@@ -185,9 +278,15 @@ impl Checker<'_> {
         self.check_expr(cx, &call)
     }
 
-    pub(in crate::check) fn check_computed_call(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_computed_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::ComputedCall { callee, args, .. } = expr else { unreachable!() };
+        let ast::Expr::ComputedCall { callee, args, .. } = expr else {
+            unreachable!()
+        };
         if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
             // `(arr.method as any)(...args)` on a typed array keeps its receiver:
             // lower it as the method call it denotes.
@@ -201,7 +300,9 @@ impl Checker<'_> {
                     let elements = args
                         .iter()
                         .map(|arg| match arg {
-                            ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                            ast::Expr::Spread { expr, .. } => {
+                                ast::ArrayElement::Spread((**expr).clone())
+                            }
                             other => ast::ArrayElement::Expr(other.clone()),
                         })
                         .collect();
@@ -258,10 +359,7 @@ impl Checker<'_> {
                 Ty::BufferView(kind) => match crate::typed_arrays::iterator_new(kind) {
                     Some(new_name) => new_name,
                     None => {
-                        self.error(
-                            object.span,
-                            "a DataView has no Symbol.iterator".to_string(),
-                        );
+                        self.error(object.span, "a DataView has no Symbol.iterator".to_string());
                         return self.poison(span);
                     }
                 },
@@ -288,32 +386,71 @@ impl Checker<'_> {
         }
         // `console[key](args)` with a runtime key: dispatch on the key over
         // the console methods (the key is evaluated once into a temp).
-        if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
+        if let ast::Expr::Index {
+            object: recv_ast,
+            index: key_ast,
+            ..
+        } = callee.as_ref()
+        {
             let namespace_methods: &[(&str, usize, usize)] = match recv_ast.as_ref() {
                 ast::Expr::Ident(id) if cx.lookup(self.text(id)).is_none() => match self.text(id) {
                     "console" => &[
-                        ("debug", 0, 99), ("info", 0, 99), ("warn", 0, 99), ("error", 0, 99), ("log", 0, 99),
+                        ("debug", 0, 99),
+                        ("info", 0, 99),
+                        ("warn", 0, 99),
+                        ("error", 0, 99),
+                        ("log", 0, 99),
                     ],
                     "JSON" => &[("stringify", 1, 3), ("parse", 1, 2)],
                     "Math" => &[
-                        ("abs", 1, 1), ("floor", 1, 1), ("ceil", 1, 1), ("round", 1, 1), ("max", 0, 99),
-                        ("min", 0, 99), ("sqrt", 1, 1), ("pow", 2, 2), ("trunc", 1, 1), ("sign", 1, 1),
+                        ("abs", 1, 1),
+                        ("floor", 1, 1),
+                        ("ceil", 1, 1),
+                        ("round", 1, 1),
+                        ("max", 0, 99),
+                        ("min", 0, 99),
+                        ("sqrt", 1, 1),
+                        ("pow", 2, 2),
+                        ("trunc", 1, 1),
+                        ("sign", 1, 1),
                     ],
                     "Object" => &[
-                        ("keys", 1, 1), ("values", 1, 1), ("entries", 1, 1), ("assign", 1, 99),
-                        ("freeze", 1, 1), ("isFrozen", 1, 1), ("create", 1, 1), ("getPrototypeOf", 1, 1),
-                        ("defineProperty", 3, 3), ("getOwnPropertyDescriptor", 2, 2),
-                        ("getOwnPropertyNames", 1, 1), ("fromEntries", 1, 1), ("groupBy", 2, 2), ("seal", 1, 1),
-                        ("isSealed", 1, 1), ("isExtensible", 1, 1), ("preventExtensions", 1, 1),
-                        ("setPrototypeOf", 2, 2), ("hasOwn", 2, 2), ("getOwnPropertySymbols", 1, 1),
+                        ("keys", 1, 1),
+                        ("values", 1, 1),
+                        ("entries", 1, 1),
+                        ("assign", 1, 99),
+                        ("freeze", 1, 1),
+                        ("isFrozen", 1, 1),
+                        ("create", 1, 1),
+                        ("getPrototypeOf", 1, 1),
+                        ("defineProperty", 3, 3),
+                        ("getOwnPropertyDescriptor", 2, 2),
+                        ("getOwnPropertyNames", 1, 1),
+                        ("fromEntries", 1, 1),
+                        ("groupBy", 2, 2),
+                        ("seal", 1, 1),
+                        ("isSealed", 1, 1),
+                        ("isExtensible", 1, 1),
+                        ("preventExtensions", 1, 1),
+                        ("setPrototypeOf", 2, 2),
+                        ("hasOwn", 2, 2),
+                        ("getOwnPropertySymbols", 1, 1),
                     ],
                     "Reflect" => &[
-                        ("get", 2, 3), ("set", 3, 4), ("has", 2, 2), ("ownKeys", 1, 1),
-                        ("defineProperty", 3, 3), ("getPrototypeOf", 1, 1), ("deleteProperty", 2, 2),
+                        ("get", 2, 3),
+                        ("set", 3, 4),
+                        ("has", 2, 2),
+                        ("ownKeys", 1, 1),
+                        ("defineProperty", 3, 3),
+                        ("getPrototypeOf", 1, 1),
+                        ("deleteProperty", 2, 2),
                     ],
                     "Array" => &[("isArray", 1, 1), ("from", 1, 3), ("of", 0, 99)],
                     "Number" => &[
-                        ("isInteger", 1, 1), ("isNaN", 1, 1), ("isFinite", 1, 1), ("parseFloat", 1, 1),
+                        ("isInteger", 1, 1),
+                        ("isNaN", 1, 1),
+                        ("isFinite", 1, 1),
+                        ("parseFloat", 1, 1),
                         ("parseInt", 1, 2),
                     ],
                     "String" => &[("fromCharCode", 0, 99)],
@@ -321,20 +458,46 @@ impl Checker<'_> {
                 },
                 ast::Expr::RegexLiteral { .. } => &[("exec", 1, 1), ("test", 1, 1)],
                 // A typed collection/string held in a local: dispatch over its methods.
-                ast::Expr::Ident(id) => match cx.lookup(self.text(id)).map(|slot| cx.locals[slot as usize]) {
+                ast::Expr::Ident(id) => match cx
+                    .lookup(self.text(id))
+                    .map(|slot| cx.locals[slot as usize])
+                {
                     Some(Ty::Map) => &[
-                        ("entries", 0, 0), ("keys", 0, 0), ("values", 0, 0), ("get", 1, 1), ("set", 2, 2),
-                        ("has", 1, 1), ("delete", 1, 1), ("clear", 0, 0),
+                        ("entries", 0, 0),
+                        ("keys", 0, 0),
+                        ("values", 0, 0),
+                        ("get", 1, 1),
+                        ("set", 2, 2),
+                        ("has", 1, 1),
+                        ("delete", 1, 1),
+                        ("clear", 0, 0),
                     ],
                     Some(Ty::Set) => &[
-                        ("entries", 0, 0), ("keys", 0, 0), ("values", 0, 0), ("add", 1, 1),
-                        ("has", 1, 1), ("delete", 1, 1), ("clear", 0, 0),
+                        ("entries", 0, 0),
+                        ("keys", 0, 0),
+                        ("values", 0, 0),
+                        ("add", 1, 1),
+                        ("has", 1, 1),
+                        ("delete", 1, 1),
+                        ("clear", 0, 0),
                     ],
                     Some(Ty::String) => &[
-                        ("toUpperCase", 0, 0), ("toLowerCase", 0, 0), ("trim", 0, 0), ("charAt", 1, 1),
-                        ("charCodeAt", 1, 1), ("slice", 1, 2), ("substring", 1, 2), ("indexOf", 1, 2),
-                        ("split", 1, 2), ("includes", 1, 2), ("startsWith", 1, 2), ("endsWith", 1, 2),
-                        ("repeat", 1, 1), ("padStart", 1, 2), ("padEnd", 1, 2), ("concat", 0, 99),
+                        ("toUpperCase", 0, 0),
+                        ("toLowerCase", 0, 0),
+                        ("trim", 0, 0),
+                        ("charAt", 1, 1),
+                        ("charCodeAt", 1, 1),
+                        ("slice", 1, 2),
+                        ("substring", 1, 2),
+                        ("indexOf", 1, 2),
+                        ("split", 1, 2),
+                        ("includes", 1, 2),
+                        ("startsWith", 1, 2),
+                        ("endsWith", 1, 2),
+                        ("repeat", 1, 1),
+                        ("padStart", 1, 2),
+                        ("padEnd", 1, 2),
+                        ("concat", 0, 99),
                     ],
                     _ => &[],
                 },
@@ -360,7 +523,10 @@ impl Checker<'_> {
                             condition: Box::new(ast::Expr::Binary {
                                 op: ast::BinaryOp::Eq,
                                 lhs: Box::new(ast::Expr::Ident(tmp)),
-                                rhs: Box::new(ast::Expr::String { value: method.to_string(), span }),
+                                rhs: Box::new(ast::Expr::String {
+                                    value: method.to_string(),
+                                    span,
+                                }),
                                 span,
                             }),
                             when_true: Box::new(ast::Expr::MethodCall {
@@ -378,7 +544,10 @@ impl Checker<'_> {
                     return hir::Expr {
                         kind: hir::ExprKind::Sequence {
                             effect: Box::new(hir::Expr {
-                                kind: hir::ExprKind::Assign { slot, value: Box::new(key_hir) },
+                                kind: hir::ExprKind::Assign {
+                                    slot,
+                                    value: Box::new(key_hir),
+                                },
                                 ty: Ty::String,
                                 span,
                             }),
@@ -392,13 +561,22 @@ impl Checker<'_> {
         }
         // `recv[key](args)` on a dynamic receiver: a member call (keeps
         // `this`), dispatched by the stringified key at run time.
-        if let ast::Expr::Index { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
+        if let ast::Expr::Index {
+            object: recv_ast,
+            index: key_ast,
+            ..
+        } = callee.as_ref()
+        {
             if args.len() <= 6 && !matches!(key_ast.as_ref(), ast::Expr::Spread { .. }) {
                 let recv_hir = self.check_expr(cx, recv_ast);
-                if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject | Ty::Array | Ty::Map | Ty::Set | Ty::String) {
+                if matches!(
+                    recv_hir.ty,
+                    Ty::Any | Ty::DynamicObject | Ty::Array | Ty::Map | Ty::Set | Ty::String
+                ) {
                     let key_hir = self.check_expr(cx, key_ast);
-                    let array_ok = !matches!(recv_hir.ty, Ty::Array | Ty::Map | Ty::Set | Ty::String)
-                        || matches!(key_hir.ty, Ty::String | Ty::Any);
+                    let array_ok =
+                        !matches!(recv_hir.ty, Ty::Array | Ty::Map | Ty::Set | Ty::String)
+                            || matches!(key_hir.ty, Ty::String | Ty::Any);
                     // A key of unknown type may be a Symbol: split on its run-time type;
                     // a symbol key reads the member and calls it with the receiver as
                     // `this`, any other key keeps the stringified member dispatch.
@@ -416,7 +594,10 @@ impl Checker<'_> {
                                 operand: Box::new(ast::Expr::Ident(key_tmp)),
                                 span,
                             }),
-                            rhs: Box::new(ast::Expr::String { value: "symbol".to_string(), span }),
+                            rhs: Box::new(ast::Expr::String {
+                                value: "symbol".to_string(),
+                                span,
+                            }),
                             span,
                         };
                         let mut symbol_args = vec![ast::Expr::Ident(recv_tmp)];
@@ -451,28 +632,41 @@ impl Checker<'_> {
                         self.symbol_call_guard = false;
                         let ty = body.ty;
                         let assign_key = hir::Expr {
-                            kind: hir::ExprKind::Assign { slot: key_slot, value: Box::new(Self::box_to_any(key_hir)) },
+                            kind: hir::ExprKind::Assign {
+                                slot: key_slot,
+                                value: Box::new(Self::box_to_any(key_hir)),
+                            },
                             ty: Ty::Any,
                             span,
                         };
                         let inner = hir::Expr {
-                            kind: hir::ExprKind::Sequence { effect: Box::new(assign_key), value: Box::new(body) },
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(assign_key),
+                                value: Box::new(body),
+                            },
                             ty,
                             span,
                         };
                         let assign_recv = hir::Expr {
-                            kind: hir::ExprKind::Assign { slot: recv_slot, value: Box::new(Self::box_to_any(recv_hir)) },
+                            kind: hir::ExprKind::Assign {
+                                slot: recv_slot,
+                                value: Box::new(Self::box_to_any(recv_hir)),
+                            },
                             ty: Ty::Any,
                             span,
                         };
                         return hir::Expr {
-                            kind: hir::ExprKind::Sequence { effect: Box::new(assign_recv), value: Box::new(inner) },
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(assign_recv),
+                                value: Box::new(inner),
+                            },
                             ty,
                             span,
                         };
                     }
                     if array_ok
-                        && (matches!(key_hir.ty, Ty::String | Ty::F64 | Ty::Any) || key_hir.ty.is_int())
+                        && (matches!(key_hir.ty, Ty::String | Ty::F64 | Ty::Any)
+                            || key_hir.ty.is_int())
                     {
                         let key_hir = self.to_string_for_parse(key_hir);
                         let native_name = [
@@ -490,7 +684,10 @@ impl Checker<'_> {
                                 call_args.push(self.check_expr(cx, arg));
                             }
                             return hir::Expr {
-                                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: call_args,
+                                },
                                 ty: Ty::Any,
                                 span,
                             };
@@ -500,7 +697,12 @@ impl Checker<'_> {
             }
         }
         // `recv?.[key](args)`: receiver-guarded member call.
-        if let ast::Expr::OptionalIndex { object: recv_ast, index: key_ast, .. } = callee.as_ref() {
+        if let ast::Expr::OptionalIndex {
+            object: recv_ast,
+            index: key_ast,
+            ..
+        } = callee.as_ref()
+        {
             let recv_hir = self.check_expr(cx, recv_ast);
             if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
                 let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
@@ -514,13 +716,22 @@ impl Checker<'_> {
                     args: args.clone(),
                     span,
                 };
-                return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), tmp_expr, call, span);
+                return self.optional_guarded(
+                    cx,
+                    slot,
+                    Self::box_to_any(recv_hir),
+                    tmp_expr,
+                    call,
+                    span,
+                );
             }
         }
         let callee = self.check_expr(cx, callee);
         if let Ty::Function(func) = callee.ty {
-            let mut args: Vec<hir::Expr> =
-                args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+            let mut args: Vec<hir::Expr> = args
+                .iter()
+                .map(|argument| self.check_expr(cx, argument))
+                .collect();
             if matches!(
                 func,
                 hir::DYNAMIC_FUNCTION | hir::DYNAMIC_PREDICATE | hir::DYNAMIC_REDUCER
@@ -536,7 +747,10 @@ impl Checker<'_> {
                 if func != hir::DYNAMIC_FUNCTION && args.len() != expected {
                     self.error(
                         span,
-                        format!("dynamic function value expects {expected} argument(s), found {}", args.len()),
+                        format!(
+                            "dynamic function value expects {expected} argument(s), found {}",
+                            args.len()
+                        ),
                     );
                 }
                 return hir::Expr {
@@ -563,7 +777,11 @@ impl Checker<'_> {
                 if args.len() < rest_index {
                     self.error(
                         span,
-                        format!("function value expects at least {} argument(s), found {}", rest_index, args.len()),
+                        format!(
+                            "function value expects at least {} argument(s), found {}",
+                            rest_index,
+                            args.len()
+                        ),
                     );
                 }
                 for (arg, &expected) in args.iter_mut().zip(&param_tys).take(rest_index) {
@@ -637,8 +855,10 @@ impl Checker<'_> {
         // A dynamic (`any`) callee is invoked through the counted
         // dynamic-call form, which accepts any argument count.
         if matches!(callee.ty, Ty::Any | Ty::DynamicObject) {
-            let args: Vec<hir::Expr> =
-                args.iter().map(|argument| self.check_expr(cx, argument)).collect();
+            let args: Vec<hir::Expr> = args
+                .iter()
+                .map(|argument| self.check_expr(cx, argument))
+                .collect();
             return hir::Expr {
                 kind: hir::ExprKind::IndirectCall {
                     callee: Box::new(callee),

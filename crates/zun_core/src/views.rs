@@ -19,7 +19,6 @@ pub struct DataView {
     pub(crate) track: bool,
 }
 
-
 /// Typed-array view metadata over a bounded byte window.
 ///
 /// The window (`view`) is the range that was valid when the view was created.
@@ -93,7 +92,10 @@ impl DataView {
     /// end of the buffer now and follows the buffer's length on resize.
     pub fn new_tracking(buffer_length: usize, offset: usize) -> Option<Self> {
         (offset <= buffer_length).then(|| Self {
-            view: ByteView { offset, length: buffer_length - offset },
+            view: ByteView {
+                offset,
+                length: buffer_length - offset,
+            },
             track: true,
         })
     }
@@ -115,7 +117,10 @@ impl DataView {
         } else {
             self.view.length
         };
-        Some(Self { view: ByteView { offset, length }, track: self.track })
+        Some(Self {
+            view: ByteView { offset, length },
+            track: self.track,
+        })
     }
 
     pub fn offset(self) -> usize {
@@ -406,7 +411,11 @@ impl TypedArrayView {
     ) -> Option<Self> {
         let byte_length = length.checked_mul(element.size())?;
         let view = ByteView::new(buffer_length, offset, byte_length)?;
-        (offset % element.size() == 0).then_some(Self { view, element, track: false })
+        (offset % element.size() == 0).then_some(Self {
+            view,
+            element,
+            track: false,
+        })
     }
 
     /// A length-tracking view: created with no explicit length (`new
@@ -532,7 +541,10 @@ impl TypedArrayView {
         let Some(offset) = index.checked_mul(N) else {
             return false;
         };
-        if offset.checked_add(N).is_none_or(|end| end > self.view.len()) {
+        if offset
+            .checked_add(N)
+            .is_none_or(|end| end > self.view.len())
+        {
             return false;
         }
         let base = self.view.offset() + offset;

@@ -60,7 +60,9 @@ impl Value {
                 }
             }
             Value::Function(handle) => {
-                let Some(old) = handle.environment() else { return false };
+                let Some(old) = handle.environment() else {
+                    return false;
+                };
                 let new = relocation.relocate_address(old);
                 if old == new {
                     false
@@ -106,9 +108,9 @@ impl Value {
     /// can hold it. Unboxing a cell yields the function again.
     pub fn box_any_cell(&self, heap: &mut zun_gc::Heap) -> Option<zun_core::Any> {
         match self {
-            Value::Function(handle) => {
-                Some(zun_core::Any::object(heap.function_cell(*handle).addr() as usize))
-            }
+            Value::Function(handle) => Some(zun_core::Any::object(
+                heap.function_cell(*handle).addr() as usize,
+            )),
             other => other.box_any(heap),
         }
     }
@@ -270,7 +272,13 @@ pub fn load_field(kind: u8, obj: zun_gc::Obj, slot: usize, heap: &zun_gc::Heap) 
 /// Store a value into an object field, routing `FIELD_ANY` slots through the
 /// `any_fields` side table (boxing the value to an `Any`) and other kinds
 /// through the inline slot with the usual reference write-barrier.
-pub fn store_field(kind: u8, obj: zun_gc::Obj, slot: usize, value: &Value, heap: &mut zun_gc::Heap) {
+pub fn store_field(
+    kind: u8,
+    obj: zun_gc::Obj,
+    slot: usize,
+    value: &Value,
+    heap: &mut zun_gc::Heap,
+) {
     if kind == FIELD_ANY {
         if let Some(any) = value.box_any(heap) {
             heap.store_any_field(obj, slot, any);
@@ -450,10 +458,15 @@ mod tests {
             Value::Function(zun_core::FunctionHandle::new(7, Some(0x3000))),
             Value::Int(1, zun_il::NumKind::I32),
         ];
-        assert_eq!(Value::rewrite_managed_references(&mut values, &relocation), 3);
+        assert_eq!(
+            Value::rewrite_managed_references(&mut values, &relocation),
+            3
+        );
         assert!(matches!(values[0], Value::Object(object) if object.addr() as usize == 0x2000));
         assert!(matches!(values[1], Value::Any(any) if any.as_object() == Some(0x2000)));
-        assert!(matches!(values[2], Value::Function(handle) if handle.environment() == Some(0x4000)));
+        assert!(
+            matches!(values[2], Value::Function(handle) if handle.environment() == Some(0x4000))
+        );
         assert!(matches!(values[3], Value::Int(1, zun_il::NumKind::I32)));
     }
 }

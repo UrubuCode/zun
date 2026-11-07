@@ -17,7 +17,10 @@ fn numeric_array_load_is_jit_equivalent() {
         .map(|index| index as u32 + 1)
         .expect("read method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric array load");
-    assert!(jit.is_compiled(read_rid), "numeric array reader should be eligible");
+    assert!(
+        jit.is_compiled(read_rid),
+        "numeric array reader should be eligible"
+    );
     let mut heap = zun_gc::Heap::new();
     let array = heap.alloc_array(2);
     heap.array_set(array, 0, zun_core::Any::float(7.0));
@@ -44,7 +47,10 @@ fn numeric_array_store_is_jit_equivalent() {
         .map(|index| index as u32 + 1)
         .expect("write method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric array store");
-    assert!(jit.is_compiled(write_rid), "numeric array writer should be eligible");
+    assert!(
+        jit.is_compiled(write_rid),
+        "numeric array writer should be eligible"
+    );
     let mut heap = zun_gc::Heap::new();
     let array = heap.alloc_array(2);
     let jit_value = {
@@ -53,7 +59,10 @@ fn numeric_array_store_is_jit_equivalent() {
             .expect("jit array store")
     };
     assert_eq!(f64::from_bits(jit_value), 41.0);
-    assert_eq!(heap.array_get(array, 1).and_then(|value| value.as_float()), Some(41.0));
+    assert_eq!(
+        heap.array_get(array, 1).and_then(|value| value.as_float()),
+        Some(41.0)
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 41.0));
 }
 
@@ -83,7 +92,8 @@ fn u64_array_load_is_jit_equivalent() {
 
 #[test]
 fn u64_array_store_is_jit_equivalent() {
-    let src = "function write(values: Array, value: u64): u64 { values[1] = value; return value; }\n\
+    let src =
+        "function write(values: Array, value: u64): u64 { values[1] = value; return value; }\n\
                function main(): u64 { let values = new Array(2); return write(values, 41); }";
     let module = compile(src);
     let rid = module
@@ -101,7 +111,10 @@ fn u64_array_store_is_jit_equivalent() {
         .call_packed_with_heap(rid, &[array.addr() as u64, 41], &mut heap)
         .expect("jit u64 array store");
     assert_eq!(value, 41);
-    assert_eq!(heap.array_get(array, 1).and_then(|item| item.as_int()), Some(41));
+    assert_eq!(
+        heap.array_get(array, 1).and_then(|item| item.as_int()),
+        Some(41)
+    );
     assert!(matches!(interp_entry(&module), Value::Int(value, _) if value == 41));
 }
 
@@ -124,7 +137,8 @@ fn numeric_array_pop_is_jit_equivalent() {
     heap.array_set(array, 0, zun_core::Any::float(41.0));
     let bits = {
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
-        jit.call_packed(rid, &[array.addr() as u64]).expect("jit array pop")
+        jit.call_packed(rid, &[array.addr() as u64])
+            .expect("jit array pop")
     };
     assert_eq!(f64::from_bits(bits), 41.0);
     assert_eq!(heap.array_len(array), Some(0));
@@ -153,7 +167,10 @@ fn numeric_array_push_is_jit_equivalent() {
             .expect("jit array push")
     };
     assert_eq!(f64::from_bits(bits), 1.0);
-    assert_eq!(heap.array_get(array, 0).and_then(|value| value.as_float()), Some(41.0));
+    assert_eq!(
+        heap.array_get(array, 0).and_then(|value| value.as_float()),
+        Some(41.0)
+    );
     assert!(matches!(interp_entry(&module), Value::Float(value, _) if value == 1.0));
 }
 
@@ -164,19 +181,38 @@ fn object_array_push_and_pop_are_jit_equivalent() {
                function push(values: Array, value: Item): u64 { return values.push(value) as u64; }\n\
                function main(): u64 { return 0; }";
     let module = compile(src);
-    let pop_rid = module.tables.method_defs.iter()
+    let pop_rid = module
+        .tables
+        .method_defs
+        .iter()
         .position(|method| module.strings.get(method.name) == "pop_value")
-        .map(|index| index as u32 + 1).expect("object pop method");
-    let push_rid = module.tables.method_defs.iter()
+        .map(|index| index as u32 + 1)
+        .expect("object pop method");
+    let push_rid = module
+        .tables
+        .method_defs
+        .iter()
         .position(|method| module.strings.get(method.name) == "push_value")
-        .map(|index| index as u32 + 1).expect("object push method");
+        .map(|index| index as u32 + 1)
+        .expect("object push method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles object array methods");
-    assert!(!jit.is_compiled(pop_rid), "checked CastClass must remain Tier 0");
+    assert!(
+        !jit.is_compiled(pop_rid),
+        "checked CastClass must remain Tier 0"
+    );
     assert!(jit.is_compiled(push_rid));
     let mut heap = zun_gc::Heap::new();
     let array = heap.alloc_array(0);
     let item = heap.alloc(1, 0);
-    assert_eq!(jit.call_packed_with_heap(push_rid, &[array.addr() as u64, item.addr() as u64], &mut heap).unwrap(), 1);
+    assert_eq!(
+        jit.call_packed_with_heap(
+            push_rid,
+            &[array.addr() as u64, item.addr() as u64],
+            &mut heap
+        )
+        .unwrap(),
+        1
+    );
     assert_eq!(heap.array_len(array), Some(1));
 }
 
@@ -185,11 +221,18 @@ fn checked_string_array_unbox_keeps_interpreter_fallback() {
     let src = "function read(values: Array): string { return values[0] as string; }\n\
                function main(): string { let values = new Array(1); values[0] = box_any(\"ok\"); return read(values); }";
     let module = compile(src);
-    let read_rid = module.tables.method_defs.iter()
+    let read_rid = module
+        .tables
+        .method_defs
+        .iter()
         .position(|method| module.strings.get(method.name) == "read")
-        .map(|index| index as u32 + 1).expect("read method");
+        .map(|index| index as u32 + 1)
+        .expect("read method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles with fallback");
-    assert!(!jit.is_compiled(read_rid), "checked UnboxAny must remain Tier 0");
+    assert!(
+        !jit.is_compiled(read_rid),
+        "checked UnboxAny must remain Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Str(_)));
 }
 
@@ -206,7 +249,10 @@ fn proven_numeric_array_unbox_remains_jit_eligible() {
         .map(|index| index as u32 + 1)
         .expect("read method");
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles numeric unbox");
-    assert!(jit.is_compiled(read_rid), "proven numeric UnboxAny should be eligible");
+    assert!(
+        jit.is_compiled(read_rid),
+        "proven numeric UnboxAny should be eligible"
+    );
     let mut heap = zun_gc::Heap::new();
     let array = heap.alloc_array(1);
     heap.array_set(array, 0, zun_core::Any::int(37));
@@ -244,7 +290,10 @@ fn direct_any_array_load_preserves_the_two_word_return_abi() {
     let carrier = jit
         .call_packed_any_with_heap(read_rid, &[array.addr() as u64], &mut heap)
         .expect("jit object Any return");
-    assert_eq!(carrier.into_any(), Some(zun_core::Any::object(object.addr() as usize)));
+    assert_eq!(
+        carrier.into_any(),
+        Some(zun_core::Any::object(object.addr() as usize))
+    );
 
     let string = heap.intern_string(std::rc::Rc::from("carrier"));
     heap.array_set(array, 0, zun_core::Any::string(string));
@@ -304,7 +353,10 @@ fn direct_any_call_preserves_the_two_word_carrier() {
     let result = jit
         .call_packed_any_with_heap(forward_rid, &[carrier.tag, carrier.payload], &mut heap)
         .expect("jit direct managed Any call");
-    assert_eq!(result.into_any(), Some(zun_core::Any::object(object.addr() as usize)));
+    assert_eq!(
+        result.into_any(),
+        Some(zun_core::Any::object(object.addr() as usize))
+    );
 }
 
 #[test]
@@ -373,7 +425,10 @@ fn direct_any_virtual_call_preserves_the_carrier() {
             &mut heap,
         )
         .expect("jit virtual managed Any call");
-    assert_eq!(result.into_any(), Some(zun_core::Any::object(payload.addr() as usize)));
+    assert_eq!(
+        result.into_any(),
+        Some(zun_core::Any::object(payload.addr() as usize))
+    );
 }
 
 #[test]
@@ -397,21 +452,40 @@ fn generic_map_get_preserves_the_two_word_carrier() {
     heap.map_insert(map, zun_core::Any::int(7), zun_core::Any::int(42));
     let key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(7));
     let result = jit
-        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, key.tag, key.payload], &mut heap)
+        .call_packed_any_with_heap(
+            read_rid,
+            &[map.addr() as u64, key.tag, key.payload],
+            &mut heap,
+        )
         .expect("jit generic mapGet");
     assert_eq!(result.into_any(), Some(zun_core::Any::int(42)));
 
     let value = heap.alloc(1, 0);
-    heap.map_insert(map, zun_core::Any::int(8), zun_core::Any::object(value.addr() as usize));
+    heap.map_insert(
+        map,
+        zun_core::Any::int(8),
+        zun_core::Any::object(value.addr() as usize),
+    );
     let key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(8));
     let result = jit
-        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, key.tag, key.payload], &mut heap)
+        .call_packed_any_with_heap(
+            read_rid,
+            &[map.addr() as u64, key.tag, key.payload],
+            &mut heap,
+        )
         .expect("jit generic managed mapGet");
-    assert_eq!(result.into_any(), Some(zun_core::Any::object(value.addr() as usize)));
+    assert_eq!(
+        result.into_any(),
+        Some(zun_core::Any::object(value.addr() as usize))
+    );
 
     let missing_key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(99));
     let result = jit
-        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, missing_key.tag, missing_key.payload], &mut heap)
+        .call_packed_any_with_heap(
+            read_rid,
+            &[map.addr() as u64, missing_key.tag, missing_key.payload],
+            &mut heap,
+        )
         .expect("jit generic mapGet missing key");
     assert_eq!(result.into_any(), Some(zun_core::Any::void()));
 
@@ -423,9 +497,16 @@ fn generic_map_get_preserves_the_two_word_carrier() {
     );
     let key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::int(10));
     let result = jit
-        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, key.tag, key.payload], &mut heap)
+        .call_packed_any_with_heap(
+            read_rid,
+            &[map.addr() as u64, key.tag, key.payload],
+            &mut heap,
+        )
         .expect("jit generic mapGet string");
-    assert_eq!(result.into_any(), Some(zun_core::Any::string(string_handle)));
+    assert_eq!(
+        result.into_any(),
+        Some(zun_core::Any::string(string_handle))
+    );
 
     let string_key = heap.intern_string(std::rc::Rc::from("key"));
     let string_value = heap.intern_string(std::rc::Rc::from("value"));
@@ -436,7 +517,11 @@ fn generic_map_get_preserves_the_two_word_carrier() {
     );
     let key = zun_codegen::JitAnyAbi::from_any(zun_core::Any::string(string_key));
     let result = jit
-        .call_packed_any_with_heap(read_rid, &[map.addr() as u64, key.tag, key.payload], &mut heap)
+        .call_packed_any_with_heap(
+            read_rid,
+            &[map.addr() as u64, key.tag, key.payload],
+            &mut heap,
+        )
         .expect("jit generic mapGet string key");
     assert_eq!(result.into_any(), Some(zun_core::Any::string(string_value)));
 
@@ -446,4 +531,3 @@ fn generic_map_get_preserves_the_two_word_carrier() {
     );
     assert!(matches!(interp_entry(&interpreter_module), Value::Void));
 }
-

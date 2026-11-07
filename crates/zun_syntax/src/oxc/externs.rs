@@ -78,7 +78,9 @@ pub(super) fn preprocess_externs(source: &str) -> Option<String> {
             }
             let first_end = word_end(j);
             let is_function = &source[j..first_end] == "function"
-                && bytes.get(first_end).is_some_and(|c| c.is_ascii_whitespace());
+                && bytes
+                    .get(first_end)
+                    .is_some_and(|c| c.is_ascii_whitespace());
             if is_function {
                 let mut k = first_end;
                 while k < bytes.len() && bytes[k].is_ascii_whitespace() {
@@ -92,7 +94,8 @@ pub(super) fn preprocess_externs(source: &str) -> Option<String> {
                         let mut module = None;
                         if let Some(from_rel) = head.rfind(" from ") {
                             let tail = head[from_rel + 6..].trim();
-                            if tail.len() >= 2 && (tail.starts_with('"') || tail.starts_with('\'')) {
+                            if tail.len() >= 2 && (tail.starts_with('"') || tail.starts_with('\''))
+                            {
                                 module = Some(tail[1..tail.len() - 1].to_owned());
                                 for slot in &mut out[name_end + from_rel..semi] {
                                     *slot = b' ';
@@ -108,7 +111,11 @@ pub(super) fn preprocess_externs(source: &str) -> Option<String> {
                         continue;
                     }
                 }
-            } else if first_end > j && bytes.get(first_end).is_some_and(|c| *c == b'(' || *c == b'<') {
+            } else if first_end > j
+                && bytes
+                    .get(first_end)
+                    .is_some_and(|c| *c == b'(' || *c == b'<')
+            {
                 for slot in &mut out[i..i + 6] {
                     *slot = b' ';
                 }

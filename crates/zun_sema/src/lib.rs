@@ -8,8 +8,8 @@
 
 pub mod check;
 pub mod hir;
-pub mod typed_arrays;
 mod realm;
+pub mod typed_arrays;
 
 pub use check::{check, check_with_externals, ExternalFunction};
 pub use hir::{Program, Ty};

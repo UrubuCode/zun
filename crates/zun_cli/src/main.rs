@@ -1186,8 +1186,10 @@ mod codegen_gate_tests {
 
     #[test]
     fn plain_program_has_no_codegen() {
-        let module = compile("function main(): number { return 1; }
-");
+        let module = compile(
+            "function main(): number { return 1; }
+",
+        );
         assert!(!module.requires_codegen);
         assert!(module.capabilities().is_empty());
     }
@@ -1201,8 +1203,10 @@ mod codegen_gate_tests {
         assert!(message.contains("x.ts:2:"));
         let host = target_lexicon::Triple::host();
         assert!(ios_codegen_error(&host, "x.ts", EVAL, &module).is_none());
-        let plain = compile("function main(): number { return 1; }
-");
+        let plain = compile(
+            "function main(): number { return 1; }
+",
+        );
         assert!(ios_codegen_error(&ios, "x.ts", "", &plain).is_none());
     }
 }

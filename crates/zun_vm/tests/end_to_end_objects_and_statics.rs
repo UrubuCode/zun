@@ -373,7 +373,10 @@ fn object_is_implements_same_value_including_nan_and_negative_zero() {
             if (Object.is(2.0, 2.0)) { print("two-equal"); }
         }"#,
     );
-    assert_eq!(out, ["nan-equal", "zero-distinct", "neg-equal", "two-equal"]);
+    assert_eq!(
+        out,
+        ["nan-equal", "zero-distinct", "neg-equal", "two-equal"]
+    );
 }
 
 #[test]
@@ -418,7 +421,10 @@ fn number_parse_statics_and_constants() {
             if (Number.EPSILON > 0.0) { print("epsilon-positive"); }
         }"#,
     );
-    assert_eq!(out, ["42", "255", "3.14", "9007199254740991", "epsilon-positive"]);
+    assert_eq!(
+        out,
+        ["42", "255", "3.14", "9007199254740991", "epsilon-positive"]
+    );
 }
 
 #[test]
@@ -447,7 +453,14 @@ fn number_to_exponential() {
     );
     assert_eq!(
         out,
-        ["1.2345e+3", "1.23e+3", "0e+0", "0.00e+0", "-1.23e+3", "1.23e-5"]
+        [
+            "1.2345e+3",
+            "1.23e+3",
+            "0e+0",
+            "0.00e+0",
+            "-1.23e+3",
+            "1.23e-5"
+        ]
     );
 }
 
@@ -606,7 +619,10 @@ fn object_define_property_enforces_writable_and_configurable() {
             dynamic_set(o, "x", box_any(99));
         }"#,
     );
-    assert!(store.contains("Cannot assign to read only property 'x'"), "{store}");
+    assert!(
+        store.contains("Cannot assign to read only property 'x'"),
+        "{store}"
+    );
     let redefine = run_source_expect_error(
         r#"function main() {
             let o = dynamic_new();
@@ -618,7 +634,10 @@ fn object_define_property_enforces_writable_and_configurable() {
             Object.defineProperty(o, "x", d2);
         }"#,
     );
-    assert!(redefine.contains("Cannot redefine property: x"), "{redefine}");
+    assert!(
+        redefine.contains("Cannot redefine property: x"),
+        "{redefine}"
+    );
     let delete = run_source_expect_error(
         r#"function main() {
             let o = dynamic_new();
@@ -741,5 +760,3 @@ fn function_call_threads_this_as_the_leading_argument() {
     );
     assert_eq!(out, ["15"]);
 }
-
-

@@ -50,9 +50,9 @@ pub(super) fn convert_type_annotation(
     // an object or literal type — erases to an untyped (`any`) binding rather
     // than being rejected, matching JS/TS erasure semantics.
     if type_text.is_empty()
-        || !type_text
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '$')
+        || !type_text.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '$'
+        })
     {
         return Ok(None);
     }
@@ -90,7 +90,12 @@ pub(super) fn convert_enum_declaration(
                     _ => return Err("OXC adapter supports literal enum initializers only".into()),
                 }
             }
-            Some(Expression::StringLiteral(text)) => EnumValue::Str(text.value.as_str().ok_or("enum string initializer must be well-formed")?.to_owned()),
+            Some(Expression::StringLiteral(text)) => EnumValue::Str(
+                text.value
+                    .as_str()
+                    .ok_or("enum string initializer must be well-formed")?
+                    .to_owned(),
+            ),
             Some(_) => return Err("OXC adapter supports literal enum initializers only".into()),
         };
         members.push(EnumMember { name, value });

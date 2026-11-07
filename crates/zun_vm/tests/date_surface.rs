@@ -15,7 +15,8 @@ fn run_source(user: &str) -> Vec<String> {
     // user source alone leaves it undefined.
     let src = &zun_prelude::with_prelude(user);
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -267,7 +268,6 @@ fn local_setters_accept_optional_trailing_arguments() {
     assert_eq!(out, vec!["2020", "5", "15", "8", "9", "10", "11", "2020"]);
 }
 
-
 #[test]
 fn set_full_year_on_the_epoch_then_read_it_back() {
     let out = run_source(
@@ -308,5 +308,8 @@ fn invalid_date_is_nan_and_setters_take_optional_trailing_arguments() {
             print(d.toISOString());
         }"#,
     );
-    assert_eq!(out, vec!["NaN", "Invalid Date", "true", "1970-01-01T01:02:03.004Z"]);
+    assert_eq!(
+        out,
+        vec!["NaN", "Invalid Date", "true", "1970-01-01T01:02:03.004Z"]
+    );
 }

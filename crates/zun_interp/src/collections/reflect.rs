@@ -11,25 +11,58 @@ impl<'a> Interp<'a> {
             "collectionHas" => {
                 // `key in collection`: prototype members of Map / Set / the weak
                 // collections plus the Object.prototype members they inherit.
-                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let name = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.to_string(),
                     _ => return Ok(Value::Bool(false)),
                 };
                 let (is_map, is_set) = zun_gc::with_current_heap(|heap| {
-                    (heap.map_len(object).is_some(), heap.set_len(object).is_some())
+                    (
+                        heap.map_len(object).is_some(),
+                        heap.set_len(object).is_some(),
+                    )
                 });
                 let own: &[&str] = if is_map {
-                    &["size", "get", "set", "has", "delete", "clear", "forEach", "keys", "values", "entries"]
+                    &[
+                        "size", "get", "set", "has", "delete", "clear", "forEach", "keys",
+                        "values", "entries",
+                    ]
                 } else if is_set {
-                    &["size", "add", "has", "delete", "clear", "forEach", "keys", "values", "entries", "union", "intersection", "difference", "symmetricDifference", "isSubsetOf", "isSupersetOf", "isDisjointFrom"]
+                    &[
+                        "size",
+                        "add",
+                        "has",
+                        "delete",
+                        "clear",
+                        "forEach",
+                        "keys",
+                        "values",
+                        "entries",
+                        "union",
+                        "intersection",
+                        "difference",
+                        "symmetricDifference",
+                        "isSubsetOf",
+                        "isSupersetOf",
+                        "isDisjointFrom",
+                    ]
                 } else {
                     &["get", "set", "add", "has", "delete"]
                 };
                 let inherited = [
-                    "constructor", "toString", "toLocaleString", "valueOf", "hasOwnProperty",
-                    "isPrototypeOf", "propertyIsEnumerable", "__proto__", "__defineGetter__",
-                    "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
+                    "constructor",
+                    "toString",
+                    "toLocaleString",
+                    "valueOf",
+                    "hasOwnProperty",
+                    "isPrototypeOf",
+                    "propertyIsEnumerable",
+                    "__proto__",
+                    "__defineGetter__",
+                    "__defineSetter__",
+                    "__lookupGetter__",
+                    "__lookupSetter__",
                 ];
                 let hit = own.contains(&name.as_str())
                     || inherited.contains(&name.as_str())
@@ -64,8 +97,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectHas" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let name = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name,
                     _ => return Err(RunError::BadToken),
@@ -73,7 +106,9 @@ impl<'a> Interp<'a> {
                 // An array answers for its elements (holes are absent) and `length`.
                 if zun_gc::with_current_heap(|heap| heap.array_len(object).is_some()) {
                     let in_array = self.call_managed_collection("arrayHas", args)?;
-                    if matches!(in_array, Value::Bool(true)) || !zun_gc::with_current_heap(|heap| heap.dynamic_has(object, name)) {
+                    if matches!(in_array, Value::Bool(true))
+                        || !zun_gc::with_current_heap(|heap| heap.dynamic_has(object, name))
+                    {
                         return Ok(in_array);
                     }
                     return Ok(Value::Bool(true));
@@ -89,18 +124,26 @@ impl<'a> Interp<'a> {
                 // A typed class instance: own fields, then methods / accessors
                 // inherited through its class chain, then `constructor`.
                 let typed = zun_gc::with_current_heap(|heap| {
-                    !heap.is_dynamic_object(object) && heap.array_len(object).is_none() && object.type_rid() >= 1
+                    !heap.is_dynamic_object(object)
+                        && heap.array_len(object).is_none()
+                        && object.type_rid() >= 1
                 });
                 if typed {
                     let name = name.to_string();
                     if name == "constructor" {
                         return Ok(Value::Bool(true));
                     }
-                    if self.object_own_entries_impl(object, false)?.iter().any(|(key, _)| key == &name) {
+                    if self
+                        .object_own_entries_impl(object, false)?
+                        .iter()
+                        .any(|(key, _)| key == &name)
+                    {
                         return Ok(Value::Bool(true));
                     }
                     let found = self.instance_method_rid(object, &name).is_some()
-                        || self.instance_method_rid(object, &format!("get_{name}")).is_some();
+                        || self
+                            .instance_method_rid(object, &format!("get_{name}"))
+                            .is_some();
                     return Ok(Value::Bool(found));
                 }
                 Ok(Value::Bool(false))
@@ -122,8 +165,8 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Bool(key.as_ref() != "prototype"));
                     }
                 }
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let name: std::rc::Rc<str> = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     other => match crate::property_ops::prop_key(other) {
@@ -137,13 +180,20 @@ impl<'a> Interp<'a> {
                 // the operation applies to the proxied target.
                 let mut object = object;
                 if let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(object)) {
-                    if let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(object, "deleteProperty")) {
+                    if let Some(callback) =
+                        zun_gc::with_current_heap(|heap| heap.proxy_trap(object, "deleteProperty"))
+                    {
                         let result = self.invoke_proxy_trap(
                             callback,
                             vec![Value::Object(target), Value::Str(name.clone())],
                         )?;
-                        let verdict = !matches!(result, Value::Bool(false) | Value::Void | Value::Null);
-                        if verdict && !zun_gc::with_current_heap(|heap| heap.dynamic_can_delete(target, name)) {
+                        let verdict =
+                            !matches!(result, Value::Bool(false) | Value::Void | Value::Null);
+                        if verdict
+                            && !zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_can_delete(target, name)
+                            })
+                        {
                             return match self.new_error_object(
                                 "TypeError",
                                 &format!("'deleteProperty' on proxy: trap returned truish for property '{name}' which is non-configurable in the proxy target"),
@@ -179,7 +229,8 @@ impl<'a> Interp<'a> {
                 // A sealed or frozen array refuses to delete an existing element.
                 if let Ok(index) = name.parse::<usize>() {
                     let verdict = zun_gc::with_current_heap(|heap| {
-                        heap.array_len(object).map(|len| index >= len || heap.array_integrity(object) < 2)
+                        heap.array_len(object)
+                            .map(|len| index >= len || heap.array_integrity(object) < 2)
                     });
                     if verdict == Some(false) {
                         return Ok(Value::Bool(false));
@@ -219,14 +270,16 @@ impl<'a> Interp<'a> {
                         any.as_class_descriptor().ok_or(RunError::BadToken)?
                     }
                     _ => {
-                        return match self.new_error_object("TypeError", "value is not a constructor") {
+                        return match self
+                            .new_error_object("TypeError", "value is not a constructor")
+                        {
                             Some(object) => Err(RunError::Thrown(Value::Object(object))),
                             None => Err(RunError::BadToken),
                         };
                     }
                 };
-                let array = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let values = self.read_array_values(array)?;
                 self.construct_class_from_descriptor(token, values)
             }

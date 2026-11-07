@@ -37,10 +37,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             if capture.capture.mode == CaptureMode::ByCell {
                 match capture.capture.source {
                     CaptureSource::Local(slot) => {
-                        self.emit(Instruction::new(
-                            Opcode::LoadLocal,
-                            Operand::Local(slot),
-                        ));
+                        self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
                         self.emit(Instruction::simple(Opcode::BoxAny));
                     }
                     CaptureSource::Environment {
@@ -71,7 +68,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Read a captured variable from the closure environment.
-    pub(super) fn lower_capture_load(&mut self, environment_slot: &u16, mode: &CaptureMode, ty: &Ty) {
+    pub(super) fn lower_capture_load(
+        &mut self,
+        environment_slot: &u16,
+        mode: &CaptureMode,
+        ty: &Ty,
+    ) {
         self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
         self.emit_dynamic_load(&capture_name(*environment_slot));
         if *mode == CaptureMode::ByCell {
@@ -86,7 +88,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Write a captured variable in the closure environment.
-    pub(super) fn lower_capture_store(&mut self, environment_slot: &u16, mode: &CaptureMode, value: &hir::Expr) {
+    pub(super) fn lower_capture_store(
+        &mut self,
+        environment_slot: &u16,
+        mode: &CaptureMode,
+        value: &hir::Expr,
+    ) {
         self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
         if *mode == CaptureMode::ByCell {
             self.emit_dynamic_load(&capture_name(*environment_slot));

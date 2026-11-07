@@ -18,16 +18,29 @@ pub struct OrderedMap {
 }
 
 impl Default for OrderedMap {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OrderedMap {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), buckets: vec![None; 8], tombstones: vec![None; 8], live_len: 0, dead_len: 0, pins: 0 }
+        Self {
+            entries: Vec::new(),
+            buckets: vec![None; 8],
+            tombstones: vec![None; 8],
+            live_len: 0,
+            dead_len: 0,
+            pins: 0,
+        }
     }
 
-    pub fn len(&self) -> usize { self.live_len }
-    pub fn is_empty(&self) -> bool { self.live_len == 0 }
+    pub fn len(&self) -> usize {
+        self.live_len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.live_len == 0
+    }
 
     pub fn get(&self, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
         self.find_index(hash, equal)
@@ -38,19 +51,33 @@ impl OrderedMap {
         self.get(hash, equal).is_some()
     }
 
-    pub fn insert(&mut self, key: Any, value: Any, hash: u64, equal: impl Fn(Any) -> bool) -> Option<Any> {
-        if self.pins == 0 && self.dead_len >= 8 && self.dead_len > self.live_len { self.compact(); }
+    pub fn insert(
+        &mut self,
+        key: Any,
+        value: Any,
+        hash: u64,
+        equal: impl Fn(Any) -> bool,
+    ) -> Option<Any> {
+        if self.pins == 0 && self.dead_len >= 8 && self.dead_len > self.live_len {
+            self.compact();
+        }
         let (existing, insertion_slot) = self.find_insert_slot(hash, &equal);
         if let Some(index) = existing {
-            return Some(self.entries[index].as_mut()
-                .map(|entry| std::mem::replace(&mut entry.1, value)).unwrap());
+            return Some(
+                self.entries[index]
+                    .as_mut()
+                    .map(|entry| std::mem::replace(&mut entry.1, value))
+                    .unwrap(),
+            );
         }
         let index = self.entries.len();
         self.entries.push(Some((key, value, hash)));
         self.buckets[insertion_slot] = Some(index);
         self.tombstones[insertion_slot] = None;
         self.live_len += 1;
-        if self.live_len * 4 > self.buckets.len() * 3 { self.rehash(); }
+        if self.live_len * 4 > self.buckets.len() * 3 {
+            self.rehash();
+        }
         None
     }
 
@@ -68,14 +95,18 @@ impl OrderedMap {
         }
         self.live_len -= 1;
         self.dead_len += 1;
-        if self.pins == 0 && (self.live_len == 0 || (self.dead_len >= 8 && self.dead_len > self.live_len)) {
+        if self.pins == 0
+            && (self.live_len == 0 || (self.dead_len >= 8 && self.dead_len > self.live_len))
+        {
             self.compact();
         }
         Some((removed.0, removed.1))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Any, Any)> + '_ {
-        self.entries.iter().filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
     }
 
     pub fn rewrite_object_references(&mut self, map: impl Fn(usize) -> usize + Copy) -> usize {
@@ -83,8 +114,14 @@ impl OrderedMap {
         for entry in self.entries.iter_mut().flatten() {
             let key = entry.0.map_object_address(map);
             let value = entry.1.map_object_address(map);
-            if key != entry.0 { rewritten += 1; entry.0 = key; }
-            if value != entry.1 { rewritten += 1; entry.1 = value; }
+            if key != entry.0 {
+                rewritten += 1;
+                entry.0 = key;
+            }
+            if value != entry.1 {
+                rewritten += 1;
+                entry.1 = value;
+            }
         }
         for tombstone in self.tombstones.iter_mut().flatten() {
             tombstone.0 = tombstone.0.map_object_address(map);
@@ -93,26 +130,38 @@ impl OrderedMap {
     }
 
     pub fn entry_at(&self, position: usize) -> Option<(Any, Any)> {
-        self.entries.iter().filter_map(|entry| entry.map(|(key, value, _)| (key, value))).nth(position)
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.map(|(key, value, _)| (key, value)))
+            .nth(position)
     }
 
     /// The first live entry at physical slot `from` or later, with its slot index.
     pub fn physical_next(&self, from: usize) -> Option<(usize, Any, Any)> {
-        (from..self.entries.len()).find_map(|slot| {
-            self.entries[slot].map(|(key, value, _)| (slot, key, value))
-        })
+        (from..self.entries.len())
+            .find_map(|slot| self.entries[slot].map(|(key, value, _)| (slot, key, value)))
     }
 
-    pub fn pin(&mut self) { self.pins += 1; }
+    pub fn pin(&mut self) {
+        self.pins += 1;
+    }
 
-    pub fn unpin(&mut self) { self.pins = self.pins.saturating_sub(1); }
+    pub fn unpin(&mut self) {
+        self.pins = self.pins.saturating_sub(1);
+    }
 
     /// Physical slot count (live entries plus tombstones).
-    pub fn physical_len(&self) -> usize { self.entries.len() }
+    pub fn physical_len(&self) -> usize {
+        self.entries.len()
+    }
 
     /// The entry at physical slot `position`; `None` for a tombstone or past the end.
     pub fn physical_entry(&self, position: usize) -> Option<(Any, Any)> {
-        self.entries.get(position).copied().flatten().map(|(key, value, _)| (key, value))
+        self.entries
+            .get(position)
+            .copied()
+            .flatten()
+            .map(|(key, value, _)| (key, value))
     }
 
     pub fn clear(&mut self) {
@@ -155,10 +204,17 @@ impl OrderedMap {
     }
 
     fn compact(&mut self) {
-        self.entries = self.entries.iter().filter_map(|entry| *entry).map(Some).collect();
+        self.entries = self
+            .entries
+            .iter()
+            .filter_map(|entry| *entry)
+            .map(Some)
+            .collect();
         self.dead_len = 0;
         let mut capacity = 8;
-        while self.live_len * 4 > capacity * 3 { capacity *= 2; }
+        while self.live_len * 4 > capacity * 3 {
+            capacity *= 2;
+        }
         self.rebuild_buckets(capacity);
     }
 
@@ -169,9 +225,9 @@ impl OrderedMap {
             match self.buckets[slot] {
                 None => return None,
                 Some(index) => {
-                    if self.entries[index].is_some_and(|(key, _, entry_hash)| {
-                        entry_hash == hash && equal(key)
-                    }) {
+                    if self.entries[index]
+                        .is_some_and(|(key, _, entry_hash)| entry_hash == hash && equal(key))
+                    {
                         return Some(index);
                     }
                 }
@@ -198,9 +254,12 @@ impl OrderedMap {
                     }
                     first_tombstone.get_or_insert(slot);
                 }
-                Some(existing) if self.entries[existing].is_some_and(|(key, _, entry_hash)| {
-                    entry_hash == hash && equal(key)
-                }) => return (Some(existing), slot),
+                Some(existing)
+                    if self.entries[existing]
+                        .is_some_and(|(key, _, entry_hash)| entry_hash == hash && equal(key)) =>
+                {
+                    return (Some(existing), slot)
+                }
                 Some(_) => {}
             }
             slot = (slot + 1) & mask;
@@ -222,7 +281,9 @@ mod tests {
             });
         }
         for key in 0..128i64 {
-            assert!(map.remove(key as u64, |candidate| candidate.as_int() == Some(key)).is_some());
+            assert!(map
+                .remove(key as u64, |candidate| candidate.as_int() == Some(key))
+                .is_some());
         }
         assert!(map.is_empty());
         assert_eq!(map.buckets.len(), 8);
@@ -237,15 +298,25 @@ mod tests {
             });
         }
         for key in (0..64i64).step_by(2) {
-            assert!(map.remove(key as u64, |candidate| candidate.as_int() == Some(key)).is_some());
+            assert!(map
+                .remove(key as u64, |candidate| candidate.as_int() == Some(key))
+                .is_some());
         }
         for key in (0..64i64).step_by(2) {
-            assert!(map.insert(Any::int(key), Any::int(key + 1000), key as u64, |candidate| {
-                candidate.as_int() == Some(key)
-            }).is_none());
+            assert!(map
+                .insert(
+                    Any::int(key),
+                    Any::int(key + 1000),
+                    key as u64,
+                    |candidate| { candidate.as_int() == Some(key) }
+                )
+                .is_none());
         }
         for key in 0..64i64 {
-            assert_eq!(map.get(key as u64, |candidate| candidate.as_int() == Some(key)), Some(Any::int(if key % 2 == 0 { key + 1000 } else { key })));
+            assert_eq!(
+                map.get(key as u64, |candidate| candidate.as_int() == Some(key)),
+                Some(Any::int(if key % 2 == 0 { key + 1000 } else { key }))
+            );
         }
     }
 }

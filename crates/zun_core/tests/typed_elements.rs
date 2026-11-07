@@ -16,7 +16,10 @@ fn window(element: TypedElement, elements: usize) -> (ByteBuffer, TypedArrayView
 fn the_table_has_every_kind_javascript_has() {
     // The independent oracle: the eleven constructors ECMAScript defines,
     // written out rather than read back from the table under test.
-    let mut names: Vec<&str> = TypedElement::ALL.iter().map(|kind| kind.js_name()).collect();
+    let mut names: Vec<&str> = TypedElement::ALL
+        .iter()
+        .map(|kind| kind.js_name())
+        .collect();
     names.sort_unstable();
     assert_eq!(
         names,

@@ -87,7 +87,10 @@ fn loop_module(op: &[Instruction]) -> Module {
     body.push(Instruction::new(Opcode::StoreLocal, Operand::Local(0)));
     // if i < N goto loop
     body.push(Instruction::new(Opcode::LoadLocal, Operand::Local(0)));
-    body.push(Instruction::new(Opcode::ConstI32, Operand::Imm32(ITERATIONS)));
+    body.push(Instruction::new(
+        Opcode::ConstI32,
+        Operand::Imm32(ITERATIONS),
+    ));
     body.push(Instruction::simple(Opcode::CmpLt));
 
     // Encode once to learn each instruction's offset, then patch the branch.
@@ -138,7 +141,10 @@ fn loop_module(op: &[Instruction]) -> Module {
 fn time_ns_per_op(label: &str, op: &[Instruction]) -> f64 {
     let module = loop_module(op);
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(1), "{label} must be JIT-compiled to compare");
+    assert!(
+        jit.is_compiled(1),
+        "{label} must be JIT-compiled to compare"
+    );
 
     let warm = jit.call_entry(1).expect("warm-up run");
     let start = Instant::now();
@@ -163,8 +169,8 @@ fn time_ns_per_op(label: &str, op: &[Instruction]) -> f64 {
 
 /// The native id behind `zun:math`'s `name`, as `call.builtin` takes it.
 fn native(name: &str) -> Instruction {
-    let (id, _) = zun_natives::resolve("math", name)
-        .unwrap_or_else(|| panic!("`zun:math` exports `{name}`"));
+    let (id, _) =
+        zun_natives::resolve("math", name).unwrap_or_else(|| panic!("`zun:math` exports `{name}`"));
     Instruction::new(Opcode::CallBuiltin, Operand::Imm32(id as i32))
 }
 
@@ -172,9 +178,10 @@ fn native(name: &str) -> Instruction {
 #[ignore = "timing; run explicitly with --release --ignored --nocapture"]
 fn round_opcode_versus_native_call() {
     println!("\n{ITERATIONS} iterations each\n");
-    let opcode = time_ns_per_op("round.f64 (instructions)", &[Instruction::simple(
-        Opcode::RoundF64,
-    )]);
+    let opcode = time_ns_per_op(
+        "round.f64 (instructions)",
+        &[Instruction::simple(Opcode::RoundF64)],
+    );
     let call = time_ns_per_op("roundNumber (libm call)", &[native("roundNumber")]);
     println!("  ratio: {:.2}x\n", call / opcode);
 }
@@ -183,9 +190,10 @@ fn round_opcode_versus_native_call() {
 #[ignore = "timing; run explicitly with --release --ignored --nocapture"]
 fn sign_opcode_versus_native_call() {
     println!("\n{ITERATIONS} iterations each\n");
-    let opcode = time_ns_per_op("sign.f64 (instructions)", &[Instruction::simple(
-        Opcode::SignF64,
-    )]);
+    let opcode = time_ns_per_op(
+        "sign.f64 (instructions)",
+        &[Instruction::simple(Opcode::SignF64)],
+    );
     let call = time_ns_per_op("signNumber (libm call)", &[native("signNumber")]);
     println!("  ratio: {:.2}x\n", call / opcode);
 }
@@ -196,9 +204,10 @@ fn sqrt_opcode_versus_native_call() {
     // The uncontroversial one, as a scale reference: a single instruction
     // against a call.
     println!("\n{ITERATIONS} iterations each\n");
-    let opcode = time_ns_per_op("sqrt.f64 (instruction)", &[Instruction::simple(
-        Opcode::SqrtF64,
-    )]);
+    let opcode = time_ns_per_op(
+        "sqrt.f64 (instruction)",
+        &[Instruction::simple(Opcode::SqrtF64)],
+    );
     let call = time_ns_per_op("sqrtNumber (libm call)", &[native("sqrtNumber")]);
     println!("  ratio: {:.2}x\n", call / opcode);
 }

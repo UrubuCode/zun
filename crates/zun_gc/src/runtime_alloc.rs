@@ -49,9 +49,7 @@ pub unsafe extern "C" fn zun_rt_alloc(
         // The JIT has already stopped at this call site. Keep its exact
         // safepoint coordinates published while the allocation slow path is
         // active so a collection can consume the registered stack map.
-        let _frame = unsafe {
-            ActiveNativeFrameScope::enter(registry, pc, caller_sp as *mut u8)
-        };
+        let _frame = unsafe { ActiveNativeFrameScope::enter(registry, pc, caller_sp as *mut u8) };
         with_current_heap_mut(|heap| {
             // Allocation count is a coarse fallback cadence; the nursery
             // budget is the actual generational trigger. Large objects can

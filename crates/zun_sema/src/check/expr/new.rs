@@ -1,9 +1,15 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_new_dynamic(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_new_dynamic(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::NewDynamic { callee, args, .. } = expr else { unreachable!() };
+        let ast::Expr::NewDynamic { callee, args, .. } = expr else {
+            unreachable!()
+        };
         // `new (expr)(...args)`: any expression of proxy type is
         // evaluated to a value, then routed through `proxyConstruct`.
         // Design boundary: only class targets are constructible
@@ -19,9 +25,9 @@ impl Checker<'_> {
                 let base_text = self.text(base).to_string();
                 let base_is_dynamic = !self.classes_by_name.contains_key(&base_text)
                     && !self.realm_globals.contains_key(&base_text)
-                    && cx
-                        .lookup(&base_text)
-                        .is_some_and(|slot| matches!(cx.locals[slot as usize], Ty::Any | Ty::DynamicObject));
+                    && cx.lookup(&base_text).is_some_and(|slot| {
+                        matches!(cx.locals[slot as usize], Ty::Any | Ty::DynamicObject)
+                    });
                 if base_is_dynamic {
                     let member = self.text(field).to_string();
                     let base_expr = self.check_expr(cx, &ast::Expr::Ident(*base));
@@ -59,7 +65,10 @@ impl Checker<'_> {
             for arg in args.iter().rev() {
                 let effect = self.check_expr(cx, arg);
                 result = hir::Expr {
-                    kind: hir::ExprKind::Sequence { effect: Box::new(effect), value: Box::new(result) },
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(effect),
+                        value: Box::new(result),
+                    },
                     ty: Ty::Any,
                     span,
                 };
@@ -82,16 +91,24 @@ impl Checker<'_> {
             return self.poison(span);
         };
         return hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![callee, args_array] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![callee, args_array],
+            },
             ty: Ty::Any,
             span,
         };
     }
 
-
-    pub(in crate::check) fn check_new(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_new(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::New { class, args, .. } = expr else { unreachable!() };
+        let ast::Expr::New { class, args, .. } = expr else {
+            unreachable!()
+        };
         let name = self.text(class).to_string();
         // Forms that must be caught before the realm/built-in paths
         // (collection-argument sugar, `new Function`, cross-module and

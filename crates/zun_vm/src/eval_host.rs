@@ -35,15 +35,16 @@ impl EvalHost for CompilerEvalHost {
             .collect::<Vec<_>>()
             .join(", ");
         let source = format!("function {EVAL_FN}({list}): any {{\n{body}\n}}");
-        let module = zun_compiler::compile_without_prelude(&source, &[]).map_err(|diagnostics| {
-            EvalError(
-                diagnostics
-                    .iter()
-                    .map(|d| d.message.clone())
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            )
-        })?;
+        let module =
+            zun_compiler::compile_without_prelude(&source, &[]).map_err(|diagnostics| {
+                EvalError(
+                    diagnostics
+                        .iter()
+                        .map(|d| d.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                )
+            })?;
         let entry = module
             .tables
             .method_defs

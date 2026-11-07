@@ -24,7 +24,19 @@ fn args(input: &str, pos: usize) -> Vec<Value> {
 }
 
 const PATTERNS: &[&str] = &["a", "abc", "hello", "zun", "aa", "ab-c 1", "é"];
-const INPUTS: &[&str] = &["", "a", "abc", "xabcx", "hello world", "aaa", "zzun zun", "ab-c 1!", "caf\u{e9}", "ab", "abd"];
+const INPUTS: &[&str] = &[
+    "",
+    "a",
+    "abc",
+    "xabcx",
+    "hello world",
+    "aaa",
+    "zzun zun",
+    "ab-c 1!",
+    "caf\u{e9}",
+    "ab",
+    "abd",
+];
 
 #[test]
 fn literal_matcher_runs_on_tier0_and_tier1_and_matches_the_interpreter() {
@@ -87,7 +99,11 @@ fn find_via_compiled_matcher_agrees_with_regex_find() {
                 break;
             }
         }
-        assert_eq!(found, regex.find(input, 0).unwrap().map(|m| m.start()), "{input:?}");
+        assert_eq!(
+            found,
+            regex.find(input, 0).unwrap().map(|m| m.start()),
+            "{input:?}"
+        );
     }
 }
 
@@ -130,13 +146,13 @@ const SLICE2_PATTERNS: &[&str] = &[
     "[ab]c",
     "a.c",
     "(x)|(y)",
-    "abc|abx",   // backtracking: first arm matches a prefix then fails
-    "(a|ab)c",   // capture must be restored across a backtrack
+    "abc|abx", // backtracking: first arm matches a prefix then fails
+    "(a|ab)c", // capture must be restored across a backtrack
 ];
 
 const SLICE2_INPUTS: &[&str] = &[
-    "", "a", "b", "c", "ab", "abc", "abx", "abd", "xabc", "foo", "bar", "baz", "baz",
-    "x", "y", "xy", "ac", "a.c", "aXc", "bc", "cc", "aabc", "ba",
+    "", "a", "b", "c", "ab", "abc", "abx", "abd", "xabc", "foo", "bar", "baz", "baz", "x", "y",
+    "xy", "ac", "a.c", "aXc", "bc", "cc", "aabc", "ba",
 ];
 
 #[test]
@@ -152,14 +168,21 @@ fn backtracking_matcher_agrees_with_interpreter_on_tier0_and_tier1() {
         let Some(compiled) = compile_backtracking(pattern, "", nat) else {
             continue;
         };
-        let CompiledMatcher { buffer_bytes, cap_cells, .. } = compiled;
+        let CompiledMatcher {
+            buffer_bytes,
+            cap_cells,
+            ..
+        } = compiled;
         let bytes = compiled.module.write();
         let loaded = zun_vm::load(&bytes).expect("module verifies and loads");
         let match_rid = compiled.method.rid();
         let alloc_rid = compiled.alloc_method.rid();
 
         let jit = zun_codegen::Jit::new(&loaded).unwrap();
-        assert!(jit.is_compiled(match_rid), "{pattern:?} matchAt must be JIT-eligible");
+        assert!(
+            jit.is_compiled(match_rid),
+            "{pattern:?} matchAt must be JIT-eligible"
+        );
         let hook = zun_vm::JitHook::with_threshold(jit, &loaded, 0);
 
         let regex = Regex::new(pattern, "").unwrap();
@@ -174,7 +197,10 @@ fn backtracking_matcher_agrees_with_interpreter_on_tier0_and_tier1() {
                 let r0 = zun_interp::run_method(
                     &loaded,
                     alloc_rid,
-                    vec![Value::Str(Rc::from(*input)), Value::Int(pos as i64, NumKind::U64)],
+                    vec![
+                        Value::Str(Rc::from(*input)),
+                        Value::Int(pos as i64, NumKind::U64),
+                    ],
                     &mut out,
                 )
                 .unwrap_or_else(|e| panic!("tier0 {pattern:?} {input:?}@{pos}: {e:?}"));
@@ -205,7 +231,10 @@ fn backtracking_matcher_agrees_with_interpreter_on_tier0_and_tier1() {
                 );
             }
         }
-        assert!(hook.jit_is_defined(match_rid), "{pattern:?} matchAt was not JIT-compiled");
+        assert!(
+            hook.jit_is_defined(match_rid),
+            "{pattern:?} matchAt was not JIT-compiled"
+        );
     }
 }
 
@@ -220,8 +249,16 @@ fn int_of(v: Value, pattern: &str, input: &str, pos: usize, tier: &str) -> i64 {
 fn out_of_scope_patterns_fall_back() {
     let nat = matcher_natives();
     // Loops, backrefs, lookaround, assertions, and the `i` flag are later slices.
-    for p in ["a+", "a*", "a?", "a{2,3}", r"(a)\1", "a(?=b)", "(?<=a)b", "^a", "a$", r"\ba"] {
-        assert!(compile_backtracking(p, "", nat).is_none(), "{p} should fall back");
+    for p in [
+        "a+", "a*", "a?", "a{2,3}", r"(a)\1", "a(?=b)", "(?<=a)b", "^a", "a$", r"\ba",
+    ] {
+        assert!(
+            compile_backtracking(p, "", nat).is_none(),
+            "{p} should fall back"
+        );
     }
-    assert!(compile_backtracking("abc", "i", nat).is_none(), "ignore-case falls back");
+    assert!(
+        compile_backtracking("abc", "i", nat).is_none(),
+        "ignore-case falls back"
+    );
 }

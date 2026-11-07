@@ -1,8 +1,20 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_if_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::If { cond, then_block, else_block, .. } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_if_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } = stmt
+        else {
+            unreachable!()
+        };
         let narrowing = self.type_guard_narrowing(cx, cond);
         // A typed shadow copy would swallow writes to the guarded variable
         // (`if (Array.isArray(c)) c = c[0]`), so assigned names stay untyped.
@@ -23,7 +35,9 @@ impl Checker<'_> {
                     span: then_block.span,
                 };
                 let init = hir::Expr {
-                    kind: hir::ExprKind::Convert { value: Box::new(read) },
+                    kind: hir::ExprKind::Convert {
+                        value: Box::new(read),
+                    },
                     ty: narrowed,
                     span: then_block.span,
                 };
@@ -46,8 +60,14 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_while_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::While { cond, body, .. } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_while_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::While { cond, body, .. } = stmt else {
+            unreachable!()
+        };
         let cond = self.check_condition(cx, cond);
         cx.loop_depth += 1;
         let body = self.check_block(cx, body);
@@ -55,8 +75,14 @@ impl Checker<'_> {
         hir::Stmt::While { cond, body }
     }
 
-    pub(in crate::check) fn check_do_while_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::DoWhile { body, cond, .. } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_do_while_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::DoWhile { body, cond, .. } = stmt else {
+            unreachable!()
+        };
         cx.loop_depth += 1;
         let body = self.check_block(cx, body);
         cx.loop_depth -= 1;
@@ -64,8 +90,17 @@ impl Checker<'_> {
         hir::Stmt::DoWhile { body, cond }
     }
 
-    pub(in crate::check) fn check_labeled_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::Labeled { label, statement, .. } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_labeled_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::Labeled {
+            label, statement, ..
+        } = stmt
+        else {
+            unreachable!()
+        };
         let label_text = self.text(label).to_string();
         let labels_loop = matches!(
             statement.as_ref(),
@@ -92,8 +127,14 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_break_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::Break { label, span } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_break_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::Break { label, span } = stmt else {
+            unreachable!()
+        };
         match label {
             Some(label) => {
                 let name = self.text(label);
@@ -112,8 +153,14 @@ impl Checker<'_> {
         hir::Stmt::Break(label.map(|name| self.text(&name).to_string()))
     }
 
-    pub(in crate::check) fn check_continue_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::Continue { label, span } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_continue_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::Continue { label, span } = stmt else {
+            unreachable!()
+        };
         match label {
             Some(label) => {
                 let name = self.text(label);
@@ -130,8 +177,14 @@ impl Checker<'_> {
         hir::Stmt::Continue(label.map(|name| self.text(&name).to_string()))
     }
 
-    pub(in crate::check) fn check_return_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::Return { value, span } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_return_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::Return { value, span } = stmt else {
+            unreachable!()
+        };
         let value = value.as_ref().map(|v| {
             let mut e = self.check_expr(cx, v);
             coerce_numeric_literal(&mut e, cx.return_ty);
@@ -153,7 +206,10 @@ impl Checker<'_> {
                 cx,
                 &ast::Expr::Unary {
                     op: ast::UnaryOp::Void,
-                    operand: Box::new(ast::Expr::Number { value: 0.0, span: *span }),
+                    operand: Box::new(ast::Expr::Number {
+                        value: 0.0,
+                        span: *span,
+                    }),
                     span: *span,
                 },
             ))
@@ -169,10 +225,7 @@ impl Checker<'_> {
                 self.error(*span, format!("expected a {expected:?} return value"));
             }
             (Some(v), expected) => {
-                if !expected.is_error()
-                    && !v.ty.is_error()
-                    && !self.is_assignable(v.ty, expected)
-                {
+                if !expected.is_error() && !v.ty.is_error() && !self.is_assignable(v.ty, expected) {
                     self.error(
                         v.span,
                         format!("return type {:?} does not match {expected:?}", v.ty),
@@ -185,7 +238,14 @@ impl Checker<'_> {
         // first and held in a temporary while the cleanup runs.
         if cx.finally_depth > 0 {
             if let Some(v) = value {
-                if !matches!(v.kind, hir::ExprKind::Number(_) | hir::ExprKind::String(_) | hir::ExprKind::Boolean(_) | hir::ExprKind::Null) && !v.ty.is_error() {
+                if !matches!(
+                    v.kind,
+                    hir::ExprKind::Number(_)
+                        | hir::ExprKind::String(_)
+                        | hir::ExprKind::Boolean(_)
+                        | hir::ExprKind::Null
+                ) && !v.ty.is_error()
+                {
                     let span = v.span;
                     let ty = v.ty;
                     let (slot, _) = self.synthetic_local(cx, ty);
@@ -204,8 +264,20 @@ impl Checker<'_> {
         hir::Stmt::Return(value)
     }
 
-    pub(in crate::check) fn check_try_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::Try { body, catches, finally, .. } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_try_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::Try {
+            body,
+            catches,
+            finally,
+            ..
+        } = stmt
+        else {
+            unreachable!()
+        };
         let has_finally = finally.is_some();
         if has_finally {
             cx.finally_depth += 1;
@@ -245,9 +317,7 @@ impl Checker<'_> {
         if has_finally {
             cx.finally_depth -= 1;
         }
-        let finally_body = finally.as_ref().map(|block| {
-            self.check_block(cx, block)
-        });
+        let finally_body = finally.as_ref().map(|block| self.check_block(cx, block));
         hir::Stmt::Try {
             body,
             catches,

@@ -11,12 +11,18 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             if self.is_async_gen {
                 let (mark_id, _) = zun_natives::resolve("collections", "asyncAwaitMark")
                     .expect("asyncAwaitMark intrinsic");
-                self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(mark_id as i32)));
+                self.emit(Instruction::new(
+                    Opcode::CallBuiltin,
+                    Operand::Imm32(mark_id as i32),
+                ));
             }
             self.emit(Instruction::simple(Opcode::Yield));
             let (sent_id, _) = zun_natives::resolve("collections", "generatorSent")
                 .expect("generatorSent intrinsic");
-            self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(sent_id as i32)));
+            self.emit(Instruction::new(
+                Opcode::CallBuiltin,
+                Operand::Imm32(sent_id as i32),
+            ));
         } else {
             self.emit(Instruction::simple(Opcode::Await));
         }
@@ -28,9 +34,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         self.emit(Instruction::simple(Opcode::Yield));
         // The value of a `yield` expression is what `next(v)` sends back in
         // (undefined when nothing was sent).
-        let (sent_id, _) = zun_natives::resolve("collections", "generatorSent")
-            .expect("generatorSent intrinsic");
-        self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(sent_id as i32)));
+        let (sent_id, _) =
+            zun_natives::resolve("collections", "generatorSent").expect("generatorSent intrinsic");
+        self.emit(Instruction::new(
+            Opcode::CallBuiltin,
+            Operand::Imm32(sent_id as i32),
+        ));
     }
 
     /// Binary operators, including short-circuit, nullish and JS-number bitwise forms.
@@ -146,7 +155,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// The ternary conditional.
-    pub(super) fn lower_conditional(&mut self, condition: &hir::Expr, when_true: &hir::Expr, when_false: &hir::Expr) {
+    pub(super) fn lower_conditional(
+        &mut self,
+        condition: &hir::Expr,
+        when_true: &hir::Expr,
+        when_false: &hir::Expr,
+    ) {
         self.expr(condition);
         let to_false = self.emit_branch(Opcode::BranchFalse);
         self.expr(when_true);

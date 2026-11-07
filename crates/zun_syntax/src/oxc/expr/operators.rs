@@ -1,6 +1,9 @@
 use super::*;
 
-pub(super) fn convert_binary(source: &str, binary: &oxc_ast::ast::BinaryExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_binary(
+    source: &str,
+    binary: &oxc_ast::ast::BinaryExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let op = match binary.operator {
         BinaryOperator::Equality => BinaryOp::LooseEq,
@@ -34,7 +37,10 @@ pub(super) fn convert_binary(source: &str, binary: &oxc_ast::ast::BinaryExpressi
     })
 }
 
-pub(super) fn convert_unary(source: &str, unary: &oxc_ast::ast::UnaryExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_unary(
+    source: &str,
+    unary: &oxc_ast::ast::UnaryExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     // Unary plus (`+x`) is numeric coercion; the language has no such
     // operator, so desugar to `x - 0`, which applies ToNumber to the
@@ -46,7 +52,9 @@ pub(super) fn convert_unary(source: &str, unary: &oxc_ast::ast::UnaryExpression<
         let boxed = Expr::Cast {
             expr: Box::new(operand),
             ty: crate::ast::TypeAnnotation {
-                name: Name { span: Span::new(unary.span.start, unary.span.start) },
+                name: Name {
+                    span: Span::new(unary.span.start, unary.span.start),
+                },
                 is_array: false,
             },
             span: span(unary.span),
@@ -54,7 +62,10 @@ pub(super) fn convert_unary(source: &str, unary: &oxc_ast::ast::UnaryExpression<
         return Ok(Expr::Binary {
             op: BinaryOp::Sub,
             lhs: Box::new(boxed),
-            rhs: Box::new(Expr::Number { value: 0.0, span: span(unary.span) }),
+            rhs: Box::new(Expr::Number {
+                value: 0.0,
+                span: span(unary.span),
+            }),
             span: span(unary.span),
         });
     }
@@ -74,7 +85,10 @@ pub(super) fn convert_unary(source: &str, unary: &oxc_ast::ast::UnaryExpression<
     })
 }
 
-pub(super) fn convert_logical(source: &str, logical: &oxc_ast::ast::LogicalExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_logical(
+    source: &str,
+    logical: &oxc_ast::ast::LogicalExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let op = match logical.operator {
         LogicalOperator::And => BinaryOp::And,

@@ -58,7 +58,10 @@ pub(super) fn call_builtin(
 /// right `name` and `message`); any other message stays an interpreter error.
 fn native_error_to_run_error(interp: &mut Interp<'_>, message: String) -> RunError {
     for class in ["RangeError", "TypeError", "ReferenceError"] {
-        let Some(text) = message.strip_prefix(class).and_then(|rest| rest.strip_prefix(": ")) else {
+        let Some(text) = message
+            .strip_prefix(class)
+            .and_then(|rest| rest.strip_prefix(": "))
+        else {
             continue;
         };
         if let Some(object) = interp.new_error_object(class, text) {
@@ -550,7 +553,13 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
 }
 
 pub(crate) fn managed_typeinfo_builtin(id: u32) -> Option<&'static str> {
-    for name in ["typeofAny", "objectToStringTag", "instanceofClass", "instanceofDynamic", "instanceofBuiltin"] {
+    for name in [
+        "typeofAny",
+        "objectToStringTag",
+        "instanceofClass",
+        "instanceofDynamic",
+        "instanceofBuiltin",
+    ] {
         if zun_natives::resolve("typeinfo", name).map(|(candidate, _)| candidate) == Some(id) {
             return Some(name);
         }

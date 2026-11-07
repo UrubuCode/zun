@@ -6,7 +6,11 @@
 use super::*;
 
 impl<'a> Interp<'a> {
-    pub(super) fn col_class_decorator(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+    pub(super) fn col_class_decorator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
         match name {
             "dynamicConstruct" => {
                 // `new ns.C(...args)`: construct a class export of a dynamically
@@ -16,8 +20,8 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),
                 };
-                let array = object(args.get(2).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let values = self.read_array_values(array)?;
                 let loader = self.loader.ok_or(RunError::BadToken)?;
                 let result = crate::namespace::construct_namespace_class(
@@ -34,8 +38,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(boxed))
             }
             "dynamicSetFunction" => {
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let name = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),
@@ -127,8 +131,13 @@ impl<'a> Interp<'a> {
                     let mut hops = 0;
                     while hops < 64 {
                         hops += 1;
-                        let Some(def) = self.module.tables.type_defs.get(cursor as usize - 1) else { break };
-                        if def.base.is_null() || def.base.table() != Some(zun_metadata::TableKind::TypeDef) {
+                        let Some(def) = self.module.tables.type_defs.get(cursor as usize - 1)
+                        else {
+                            break;
+                        };
+                        if def.base.is_null()
+                            || def.base.table() != Some(zun_metadata::TableKind::TypeDef)
+                        {
                             break;
                         }
                         cursor = def.base.rid();
@@ -176,8 +185,8 @@ impl<'a> Interp<'a> {
                 // `C[Symbol.hasInstance]`). The symbol arrives as an immediate
                 // `Any`; the function value goes into the dedicated
                 // symbol-function slot since functions are not boxable `Any`.
-                let object = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let function = match args.get(2).ok_or(RunError::BadToken)? {
                     Value::Function(function) => *function,
                     _ => return Err(RunError::BadToken),
@@ -222,12 +231,20 @@ impl<'a> Interp<'a> {
                                 let mut rid = obj.type_rid();
                                 let mut hit = false;
                                 while rid >= 1 {
-                                    let Some(def) = self.module.tables.type_defs.get(rid as usize - 1) else { break };
+                                    let Some(def) =
+                                        self.module.tables.type_defs.get(rid as usize - 1)
+                                    else {
+                                        break;
+                                    };
                                     if self.module.strings.get(def.name) == wrapper {
                                         hit = true;
                                         break;
                                     }
-                                    rid = if def.base.is_null() { 0 } else { def.base.rid() };
+                                    rid = if def.base.is_null() {
+                                        0
+                                    } else {
+                                        def.base.rid()
+                                    };
                                 }
                                 hit
                             }
@@ -245,8 +262,13 @@ impl<'a> Interp<'a> {
                 let value = args.first().ok_or(RunError::BadToken)?.clone();
                 // A class descriptor held in an `any` variable: a user (or prelude)
                 // class answers through the runtime class hierarchy.
-                if let Ok(Value::Any(descriptor)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
-                    if let Some(rid) = descriptor.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
+                if let Ok(Value::Any(descriptor)) =
+                    unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                {
+                    if let Some(rid) = descriptor
+                        .as_class_descriptor()
+                        .and_then(|t| self.user_class_rid(t))
+                    {
                         return self.call_managed_collection(
                             "instanceofClass",
                             &[value, Value::Int(rid as i64, zun_il::NumKind::I32)],
@@ -278,33 +300,54 @@ impl<'a> Interp<'a> {
                                     &[value, Value::Int(rid as i64, zun_il::NumKind::I32)],
                                 );
                             }
-                            return self.call_managed_collection("instanceofBuiltin", &[value, Value::Str(class_name.into())]);
+                            return self.call_managed_collection(
+                                "instanceofBuiltin",
+                                &[value, Value::Str(class_name.into())],
+                            );
                         }
                         return Ok(Value::Bool(false));
                     }
                 }
-                let rhs = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let rhs =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // A constructor record (`Error`, `Array` ... read through `any`): the
                 // class it names decides membership.
                 let (record_desc, record_name) = zun_gc::with_current_heap(|heap| {
                     (
                         heap.dynamic_get(rhs, "__classDesc"),
-                        heap.dynamic_get(rhs, "name").and_then(|any| match Value::unbox_any(any, heap) {
-                            Some(Value::Str(text)) => Some(text.to_string()),
-                            _ => None,
+                        heap.dynamic_get(rhs, "name").and_then(|any| {
+                            match Value::unbox_any(any, heap) {
+                                Some(Value::Str(text)) => Some(text.to_string()),
+                                _ => None,
+                            }
                         }),
                     )
                 });
-                if let Some(rid) = record_desc.and_then(|d| d.as_class_descriptor()).and_then(|t| self.user_class_rid(t)) {
+                if let Some(rid) = record_desc
+                    .and_then(|d| d.as_class_descriptor())
+                    .and_then(|t| self.user_class_rid(t))
+                {
                     return self.call_managed_collection(
                         "instanceofClass",
                         &[value, Value::Int(rid as i64, zun_il::NumKind::I32)],
                     );
                 }
                 if let Some(name) = record_name {
-                    if matches!(name.as_str(), "Array" | "Map" | "Set" | "Promise" | "RegExp" | "Object" | "Function" | "Date") {
-                        return self.call_managed_collection("instanceofBuiltin", &[value, Value::Str(name.into())]);
+                    if matches!(
+                        name.as_str(),
+                        "Array"
+                            | "Map"
+                            | "Set"
+                            | "Promise"
+                            | "RegExp"
+                            | "Object"
+                            | "Function"
+                            | "Date"
+                    ) {
+                        return self.call_managed_collection(
+                            "instanceofBuiltin",
+                            &[value, Value::Str(name.into())],
+                        );
                     }
                 }
                 let handler = zun_gc::with_current_heap(|heap| {

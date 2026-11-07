@@ -1,16 +1,28 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_destructure_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::Destructure { pattern, init, .. } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_destructure_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::Destructure { pattern, init, .. } = stmt else {
+            unreachable!()
+        };
         let value = self.check_expr(cx, init);
         let mut out = Vec::new();
         self.bind_pattern(cx, pattern, value, &mut out);
         hir::Stmt::Group(out)
     }
 
-    pub(in crate::check) fn check_let_stmt(&mut self, cx: &mut FunctionCx, stmt: &ast::Stmt) -> hir::Stmt {
-        let ast::Stmt::Let { name, ty, init, .. } = stmt else { unreachable!() };
+    pub(in crate::check) fn check_let_stmt(
+        &mut self,
+        cx: &mut FunctionCx,
+        stmt: &ast::Stmt,
+    ) -> hir::Stmt {
+        let ast::Stmt::Let { name, ty, init, .. } = stmt else {
+            unreachable!()
+        };
         if matches!(init, ast::Expr::Function(_)) && !cx.mutated_names.contains(self.text(name)) {
             self.closure_self_name = Some(self.text(name).to_string());
         }
@@ -24,7 +36,10 @@ impl Checker<'_> {
             if let Some((trim_id, _)) = zun_natives::resolve("collections", "argumentsObject") {
                 let (span_of, ty) = (init.span, init.ty);
                 init = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id: trim_id, args: vec![init] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: trim_id,
+                        args: vec![init],
+                    },
                     ty,
                     span: span_of,
                 };
@@ -58,7 +73,13 @@ impl Checker<'_> {
             // later float assignments type-check.
             None if init.ty.is_int() && cx.mutated_names.contains(self.text(name)) => {
                 let span = init.span;
-                init = hir::Expr { kind: hir::ExprKind::Convert { value: Box::new(init) }, ty: Ty::F64, span };
+                init = hir::Expr {
+                    kind: hir::ExprKind::Convert {
+                        value: Box::new(init),
+                    },
+                    ty: Ty::F64,
+                    span,
+                };
                 Ty::F64
             }
             None => init.ty,
@@ -76,7 +97,11 @@ impl Checker<'_> {
         if reassigned_fn {
             self.reassigned_fn_names.insert(name_text.clone());
         }
-        let var_ty = if reassigned_fn { Ty::Function(hir::DYNAMIC_FUNCTION) } else { var_ty };
+        let var_ty = if reassigned_fn {
+            Ty::Function(hir::DYNAMIC_FUNCTION)
+        } else {
+            var_ty
+        };
         let slot = cx.declare(&name_text, var_ty);
         // A variable that a closure may capture and that is assigned
         // somewhere is boxed from its declaration, so every access

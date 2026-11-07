@@ -28,15 +28,16 @@ impl Translator<'_> {
         let handler = self
             .handlers
             .iter()
-            .filter(|h| {
-                h.try_start as usize <= throw_off && throw_off < h.try_end as usize
-            })
+            .filter(|h| h.try_start as usize <= throw_off && throw_off < h.try_end as usize)
             .min_by_key(|h| h.try_end - h.try_start)
             .ok_or("throw has no enclosing handler")?;
         let target_idx = *index_of_offset
             .get(&(handler.handler_start as usize))
             .ok_or("handler start not on an instruction boundary")?;
-        let target = *self.blocks.get(&target_idx).ok_or("handler block missing")?;
+        let target = *self
+            .blocks
+            .get(&target_idx)
+            .ok_or("handler block missing")?;
         if matches!(exc_kind, JitKind::Object | JitKind::Array | JitKind::String) {
             self.builder.declare_value_needs_stack_map(exc);
         }
@@ -116,9 +117,7 @@ impl Translator<'_> {
         let handler = self
             .handlers
             .iter()
-            .filter(|h| {
-                (h.try_start as usize) <= call_offset && call_offset < h.try_end as usize
-            })
+            .filter(|h| (h.try_start as usize) <= call_offset && call_offset < h.try_end as usize)
             .min_by_key(|h| h.try_end - h.try_start)
             .copied();
 
@@ -143,8 +142,12 @@ impl Translator<'_> {
             let &target_idx = index_of_offset
                 .get(&(handler.handler_start as usize))
                 .ok_or("handler start not on an instruction boundary")?;
-            let catch_block = *self.blocks.get(&target_idx).ok_or("handler block missing")?;
-            let catch_args = self.thread_edge(block_sigs, catch_block, &[(caught, JitKind::Object)]);
+            let catch_block = *self
+                .blocks
+                .get(&target_idx)
+                .ok_or("handler block missing")?;
+            let catch_args =
+                self.thread_edge(block_sigs, catch_block, &[(caught, JitKind::Object)]);
             self.builder.ins().jump(catch_block, &catch_args);
 
             // Not caught here (or no pending): a still-set slot propagates out.
@@ -194,5 +197,4 @@ impl Translator<'_> {
             None => Vec::new(),
         }
     }
-
 }

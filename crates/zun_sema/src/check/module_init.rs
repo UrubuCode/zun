@@ -27,7 +27,10 @@ impl Checker<'_> {
     /// any hoisted top-level function or class, which were registered before any
     /// body was checked. This is how a JS/TS module body runs as the program.
     pub(in crate::check) fn check_top_level(&mut self, statements: &[ast::Stmt]) -> hir::Function {
-        let block = ast::Block { statements: statements.to_vec(), span: Span::new(0, 0) };
+        let block = ast::Block {
+            statements: statements.to_vec(),
+            span: Span::new(0, 0),
+        };
         let mut cx = FunctionCx {
             locals: Vec::new(),
             scopes: vec![Scope::new()],
@@ -114,18 +117,34 @@ impl Checker<'_> {
     /// is `return this;`, and there is at least one. Such a method is fluent: its
     /// result is the receiver's own class.
     pub(in crate::check) fn block_returns_only_this(&self, block: &ast::Block) -> bool {
-        fn walk(checker: &Checker<'_>, block: &ast::Block, this_count: &mut usize, other: &mut bool) {
+        fn walk(
+            checker: &Checker<'_>,
+            block: &ast::Block,
+            this_count: &mut usize,
+            other: &mut bool,
+        ) {
             for statement in &block.statements {
                 stmt(checker, statement, this_count, other);
             }
         }
-        fn stmt(checker: &Checker<'_>, statement: &ast::Stmt, this_count: &mut usize, other: &mut bool) {
+        fn stmt(
+            checker: &Checker<'_>,
+            statement: &ast::Stmt,
+            this_count: &mut usize,
+            other: &mut bool,
+        ) {
             match statement {
-                ast::Stmt::Return { value: Some(value), .. } => match value {
+                ast::Stmt::Return {
+                    value: Some(value), ..
+                } => match value {
                     ast::Expr::Ident(name) if checker.text(name) == "this" => *this_count += 1,
                     _ => *other = true,
                 },
-                ast::Stmt::If { then_block, else_block, .. } => {
+                ast::Stmt::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
                     walk(checker, then_block, this_count, other);
                     if let Some(else_block) = else_block {
                         walk(checker, else_block, this_count, other);
@@ -142,7 +161,12 @@ impl Checker<'_> {
                         walk(checker, &case.body, this_count, other);
                     }
                 }
-                ast::Stmt::Try { body, catches, finally, .. } => {
+                ast::Stmt::Try {
+                    body,
+                    catches,
+                    finally,
+                    ..
+                } => {
                     walk(checker, body, this_count, other);
                     for clause in catches {
                         walk(checker, &clause.body, this_count, other);
@@ -160,7 +184,10 @@ impl Checker<'_> {
         this_count > 0 && !other
     }
 
-    pub(in crate::check) fn build_module_initializer(&self, program: &ast::Program) -> Option<hir::Function> {
+    pub(in crate::check) fn build_module_initializer(
+        &self,
+        program: &ast::Program,
+    ) -> Option<hir::Function> {
         let span = Span::new(0, 0);
         let mut body: Vec<hir::Stmt> = Vec::new();
 
@@ -171,11 +198,23 @@ impl Checker<'_> {
                 .expect("globalSet intrinsic must exist");
             // Namespace globals are plain objects; function-like globals reuse the
             // `Object` descriptor so `typeof globalThis[name]` reports the right kind.
-            let object_token = registry.iter().find(|(n, _)| n.as_str() == "Object").map(|(_, b)| b.token);
+            let object_token = registry
+                .iter()
+                .find(|(n, _)| n.as_str() == "Object")
+                .map(|(_, b)| b.token);
             let extra_globals: Vec<(&str, bool)> = vec![
-                ("Math", true), ("JSON", true), ("Reflect", true), ("Proxy", false), ("parseInt", false),
-                ("parseFloat", false), ("isNaN", false), ("isFinite", false), ("encodeURIComponent", false),
-                ("decodeURIComponent", false), ("encodeURI", false), ("decodeURI", false),
+                ("Math", true),
+                ("JSON", true),
+                ("Reflect", true),
+                ("Proxy", false),
+                ("parseInt", false),
+                ("parseFloat", false),
+                ("isNaN", false),
+                ("isFinite", false),
+                ("encodeURIComponent", false),
+                ("decodeURIComponent", false),
+                ("encodeURI", false),
+                ("decodeURI", false),
             ];
             for (name, is_object) in extra_globals {
                 if registry.iter().any(|(n, _)| n.as_str() == name) && name != "Reflect" {
@@ -185,7 +224,9 @@ impl Checker<'_> {
                     hir::Expr {
                         kind: hir::ExprKind::BoxAny {
                             value: Box::new(hir::Expr {
-                                kind: hir::ExprKind::DynamicObjectLiteral { entries: Vec::new() },
+                                kind: hir::ExprKind::DynamicObjectLiteral {
+                                    entries: Vec::new(),
+                                },
                                 ty: Ty::DynamicObject,
                                 span,
                             }),
@@ -202,9 +243,17 @@ impl Checker<'_> {
                     kind: hir::ExprKind::CallBuiltin {
                         id: set_id,
                         args: vec![
-                            hir::Expr { kind: hir::ExprKind::String(name.to_string()), ty: Ty::String, span },
+                            hir::Expr {
+                                kind: hir::ExprKind::String(name.to_string()),
+                                ty: Ty::String,
+                                span,
+                            },
                             value,
-                            hir::Expr { kind: hir::ExprKind::Boolean(true), ty: Ty::Boolean, span },
+                            hir::Expr {
+                                kind: hir::ExprKind::Boolean(true),
+                                ty: Ty::Boolean,
+                                span,
+                            },
                         ],
                     },
                     ty: Ty::Void,

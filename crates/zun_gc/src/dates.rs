@@ -16,7 +16,9 @@ impl Heap {
         Some(())
     }
     pub fn date_compare(&self, left: Obj, right: Obj) -> Option<std::cmp::Ordering> {
-        self.dates.get(&(left.addr() as usize))?.compare(*self.dates.get(&(right.addr() as usize))?)
+        self.dates
+            .get(&(left.addr() as usize))?
+            .compare(*self.dates.get(&(right.addr() as usize))?)
     }
     pub fn date_utc_date(&self, object: Obj) -> Option<(i32, u32, u32)> {
         self.dates.get(&(object.addr() as usize))?.utc_date()

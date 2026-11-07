@@ -5,7 +5,8 @@ use zun_interp::CaptureOutput;
 
 fn run_source(src: &str) -> Vec<String> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -44,7 +45,8 @@ fn normalize_defaults_to_nfc() {
 fn normalize_rejects_unknown_form() {
     let mut diags = Vec::new();
     let src = "function main() { print(\"x\".normalize(\"BOGUS\").length()); }";
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
     let module = zun_ilgen::lower(&hir);
@@ -55,9 +57,18 @@ fn normalize_rejects_unknown_form() {
 
 #[test]
 fn locale_compare_returns_sign() {
-    assert_eq!(run_source("function main() { print(\"a\".localeCompare(\"b\")); }"), ["-1"]);
-    assert_eq!(run_source("function main() { print(\"b\".localeCompare(\"a\")); }"), ["1"]);
-    assert_eq!(run_source("function main() { print(\"a\".localeCompare(\"a\")); }"), ["0"]);
+    assert_eq!(
+        run_source("function main() { print(\"a\".localeCompare(\"b\")); }"),
+        ["-1"]
+    );
+    assert_eq!(
+        run_source("function main() { print(\"b\".localeCompare(\"a\")); }"),
+        ["1"]
+    );
+    assert_eq!(
+        run_source("function main() { print(\"a\".localeCompare(\"a\")); }"),
+        ["0"]
+    );
 }
 
 #[test]

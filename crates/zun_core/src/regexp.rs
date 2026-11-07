@@ -100,7 +100,11 @@ pub fn byte_of_utf16(input: &str, index: usize) -> usize {
         if units >= index {
             return byte;
         }
-        units += if crate::wtf16::lone_unit(c).is_some() { 1 } else { c.len_utf16() };
+        units += if crate::wtf16::lone_unit(c).is_some() {
+            1
+        } else {
+            c.len_utf16()
+        };
     }
     input.len()
 }
@@ -114,7 +118,9 @@ pub struct RegexError {
 impl RegexError {
     /// An error carrying `message` (a leading `TypeError:` names the thrown class).
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 }
 
@@ -129,7 +135,9 @@ impl std::error::Error for RegexError {}
 impl From<zun_regex::RegexError> for RegexError {
     fn from(error: zun_regex::RegexError) -> Self {
         Self {
-            message: format!("regular expression failed: {error} (possible catastrophic backtracking)"),
+            message: format!(
+                "regular expression failed: {error} (possible catastrophic backtracking)"
+            ),
         }
     }
 }
@@ -138,7 +146,12 @@ impl From<zun_regex::RegexError> for RegexError {
 ///
 /// `.` without `s` must exclude CR / U+2028 / U+2029 (RE2 only excludes LF)
 /// and multiline anchors must treat all four line terminators alike.
-fn needs_backtracking(node: &zun_regex::RegexNode, dot_all: bool, multiline: bool, unicode: bool) -> bool {
+fn needs_backtracking(
+    node: &zun_regex::RegexNode,
+    dot_all: bool,
+    multiline: bool,
+    unicode: bool,
+) -> bool {
     use zun_regex::RegexNode as N;
     match node {
         N::BackRef(_) | N::Look { .. } => true,
@@ -146,7 +159,10 @@ fn needs_backtracking(node: &zun_regex::RegexNode, dot_all: bool, multiline: boo
         // ``/`B` are Unicode-aware in RE2 but ASCII-only in JS.
         N::Assertion(kind) => {
             multiline
-                || matches!(kind, zun_regex::AssertKind::WordBoundary | zun_regex::AssertKind::NotWordBoundary)
+                || matches!(
+                    kind,
+                    zun_regex::AssertKind::WordBoundary | zun_regex::AssertKind::NotWordBoundary
+                )
         }
         // `d`/`w`/`s` are Unicode-aware in RE2 but ASCII / JS-space in JS.
         N::Class(class) => {
@@ -157,10 +173,14 @@ fn needs_backtracking(node: &zun_regex::RegexNode, dot_all: bool, multiline: boo
                     _ => true,
                 })
         }
-        N::Seq(items) | N::Alt(items) => items.iter().any(|n| needs_backtracking(n, dot_all, multiline, unicode)),
+        N::Seq(items) | N::Alt(items) => items
+            .iter()
+            .any(|n| needs_backtracking(n, dot_all, multiline, unicode)),
         // Captures inside a repeated body are reset on each iteration, which
         // RE2 does not do.
-        N::Repeat { node, .. } => node.group_range().is_some() || needs_backtracking(node, dot_all, multiline, unicode),
+        N::Repeat { node, .. } => {
+            node.group_range().is_some() || needs_backtracking(node, dot_all, multiline, unicode)
+        }
         N::Group { node, .. } => needs_backtracking(node, dot_all, multiline, unicode),
         N::Empty | N::Char(_) => false,
     }
@@ -260,7 +280,10 @@ pub fn expand_substitution(
             '<' if has_named => {
                 if let Some(close) = chars[i + 2..].iter().position(|c| *c == '>') {
                     let name: String = chars[i + 2..i + 2 + close].iter().collect();
-                    if let Some(index) = names.iter().position(|n| n.as_deref() == Some(name.as_str())) {
+                    if let Some(index) = names
+                        .iter()
+                        .position(|n| n.as_deref() == Some(name.as_str()))
+                    {
                         out.push_str(groups.get(index).copied().flatten().unwrap_or(""));
                     }
                     i += close + 3;
@@ -321,7 +344,9 @@ impl RegexValue {
         if flags.contains('u') || flags.contains('v') {
             // Unicode mode rejects identity escapes of ordinary letters (`q`).
             let bytes = source.as_bytes();
-            let group_count = zun_regex::parse(&source).map(|p| p.group_count).unwrap_or(0);
+            let group_count = zun_regex::parse(&source)
+                .map(|p| p.group_count)
+                .unwrap_or(0);
             let mut i = 0;
             while i < bytes.len() {
                 if bytes[i] == b'\\' && i + 1 < bytes.len() {
@@ -331,26 +356,46 @@ impl RegexValue {
                         let mut j = i + 1;
                         let mut value = 0usize;
                         while j < bytes.len() && bytes[j].is_ascii_digit() {
-                            value = value.saturating_mul(10).saturating_add((bytes[j] - b'0') as usize);
+                            value = value
+                                .saturating_mul(10)
+                                .saturating_add((bytes[j] - b'0') as usize);
                             j += 1;
                         }
-                        let bad = if next == b'0' { j > i + 2 } else { value > group_count };
+                        let bad = if next == b'0' {
+                            j > i + 2
+                        } else {
+                            value > group_count
+                        };
                         if bad {
-                            return Err(RegexError { message: "invalid escape in unicode mode".into() });
+                            return Err(RegexError {
+                                message: "invalid escape in unicode mode".into(),
+                            });
                         }
                         i = j;
                         continue;
                     }
                     if next == b'p' || next == b'P' {
-                        let bad = || RegexError { message: "invalid property name in unicode mode".into() };
+                        let bad = || RegexError {
+                            message: "invalid property name in unicode mode".into(),
+                        };
                         if bytes.get(i + 2) != Some(&b'{') {
                             return Err(bad());
                         }
-                        let Some(close) = source[i + 3..].find('}') else { return Err(bad()) };
+                        let Some(close) = source[i + 3..].find('}') else {
+                            return Err(bad());
+                        };
                         let body = &source[i + 3..i + 3 + close];
                         let well_formed = match body.split_once('=') {
                             Some((key, value)) => {
-                                ["General_Category", "gc", "Script", "sc", "Script_Extensions", "scx"].contains(&key)
+                                [
+                                    "General_Category",
+                                    "gc",
+                                    "Script",
+                                    "sc",
+                                    "Script_Extensions",
+                                    "scx",
+                                ]
+                                .contains(&key)
                                     && value.chars().next().is_some_and(|c| c.is_ascii_uppercase())
                             }
                             None => body.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
@@ -362,10 +407,14 @@ impl RegexValue {
                         continue;
                     }
                     if next == b'k' && bytes.get(i + 2) != Some(&b'<') {
-                        return Err(RegexError { message: "invalid named reference".into() });
+                        return Err(RegexError {
+                            message: "invalid named reference".into(),
+                        });
                     }
                     if next.is_ascii_alphabetic() && !b"dDwWsSbBfnrtvcxukpPgG".contains(&next) {
-                        return Err(RegexError { message: format!("invalid escape `\\{}`", next as char) });
+                        return Err(RegexError {
+                            message: format!("invalid escape `\\{}`", next as char),
+                        });
                     }
                     i += 2;
                 } else {
@@ -406,7 +455,11 @@ impl RegexValue {
         }
         let backtrack = |source: &str, flags: &str| -> Result<Engine, zun_regex::RegexParseError> {
             // The backtracking engine knows `u` but not `v` (a superset of it).
-            let engine_flags = if flags.contains('v') { flags.replace('v', "u") } else { flags.to_owned() };
+            let engine_flags = if flags.contains('v') {
+                flags.replace('v', "u")
+            } else {
+                flags.to_owned()
+            };
             // Without `u` the pattern is a sequence of UTF-16 code units.
             let unit_source: String;
             let source = if engine_flags.contains('u') || source.is_ascii() {
@@ -421,10 +474,23 @@ impl RegexValue {
         let engine = match &parsed {
             // Non-unicode `i` canonicalizes through toUpperCase (U+212A stays
             // distinct from "k"), which only the backtracking engine models.
-            Ok(_) if flags.contains('i') && !flags.contains('u') && !flags.contains('v') => backtrack(&source, &flags)
-                .map_err(|error| RegexError { message: error.to_string() })?,
-            Ok(ast) if needs_backtracking(&ast.node, flags.contains('s'), flags.contains('m'), flags.contains('u') || flags.contains('v')) => backtrack(&source, &flags)
-                .map_err(|error| RegexError { message: error.to_string() })?,
+            Ok(_) if flags.contains('i') && !flags.contains('u') && !flags.contains('v') => {
+                backtrack(&source, &flags).map_err(|error| RegexError {
+                    message: error.to_string(),
+                })?
+            }
+            Ok(ast)
+                if needs_backtracking(
+                    &ast.node,
+                    flags.contains('s'),
+                    flags.contains('m'),
+                    flags.contains('u') || flags.contains('v'),
+                ) =>
+            {
+                backtrack(&source, &flags).map_err(|error| RegexError {
+                    message: error.to_string(),
+                })?
+            }
             _ => match builder.build() {
                 Ok(compiled) => Engine::Re2(compiled),
                 Err(re2_error) => {
@@ -434,12 +500,21 @@ impl RegexValue {
                             message: re2_error.to_string(),
                         })?
                     } else {
-                        return Err(RegexError { message: re2_error.to_string() });
+                        return Err(RegexError {
+                            message: re2_error.to_string(),
+                        });
                     }
                 }
             },
         };
-        Ok(Self { source, flags, engine, last_index: 0.0, materialized: false, fallback: Default::default() })
+        Ok(Self {
+            source,
+            flags,
+            engine,
+            last_index: 0.0,
+            materialized: false,
+            fallback: Default::default(),
+        })
     }
 
     /// The chars the backtracking engine runs over. Without the `u` flag a
@@ -504,7 +579,9 @@ impl RegexValue {
                 .fallback
                 .get_or_init(|| {
                     let unit_source: String = split_astral(&self.source).into_iter().collect();
-                    zun_regex::Regex::new(&unit_source, &self.flags).ok().map(Arc::new)
+                    zun_regex::Regex::new(&unit_source, &self.flags)
+                        .ok()
+                        .map(Arc::new)
                 })
                 .clone(),
             _ => None,
@@ -522,14 +599,20 @@ impl RegexValue {
                         start_byte = Some(byte);
                         break;
                     }
-                    units += if crate::wtf16::lone_unit(c).is_some() { 1 } else { c.len_utf16() };
+                    units += if crate::wtf16::lone_unit(c).is_some() {
+                        1
+                    } else {
+                        c.len_utf16()
+                    };
                 }
                 let start_byte = match start_byte {
                     Some(byte) => byte,
                     None if units >= start16 => input.len(),
                     None => return Ok(None),
                 };
-                let Some(captures) = re.captures_at(input, start_byte) else { return Ok(None) };
+                let Some(captures) = re.captures_at(input, start_byte) else {
+                    return Ok(None);
+                };
                 let whole = captures.get(0).expect("group 0 always exists");
                 if sticky && whole.start() != start_byte {
                     return Ok(None);
@@ -539,12 +622,18 @@ impl RegexValue {
                     end_byte: whole.end(),
                     start16: crate::wtf16::len16(&input[..whole.start()]),
                     end16: crate::wtf16::len16(&input[..whole.end()]),
-                    groups: captures.iter().map(|group| group.map(|m| m.as_str().to_owned())).collect(),
+                    groups: captures
+                        .iter()
+                        .map(|group| group.map(|m| m.as_str().to_owned()))
+                        .collect(),
                     group_spans16: captures
                         .iter()
                         .map(|group| {
                             group.map(|m| {
-                                (crate::wtf16::len16(&input[..m.start()]), crate::wtf16::len16(&input[..m.end()]))
+                                (
+                                    crate::wtf16::len16(&input[..m.start()]),
+                                    crate::wtf16::len16(&input[..m.end()]),
+                                )
                             })
                         })
                         .collect(),
@@ -552,7 +641,13 @@ impl RegexValue {
             }
             Engine::Backtrack(re) => {
                 let chars = self.chars_of(input);
-                let unit_len = |c: char| if crate::wtf16::lone_unit(c).is_some() { 1 } else { c.len_utf16() };
+                let unit_len = |c: char| {
+                    if crate::wtf16::lone_unit(c).is_some() {
+                        1
+                    } else {
+                        c.len_utf16()
+                    }
+                };
                 let u_mode = self.u_mode();
                 let pos = if u_mode {
                     let mut units = 0usize;
@@ -571,7 +666,11 @@ impl RegexValue {
                 if pos > chars.len() {
                     return Ok(None);
                 }
-                let found = if sticky { re.match_at_chars(&chars, pos)? } else { re.find_chars(&chars, pos)? };
+                let found = if sticky {
+                    re.match_at_chars(&chars, pos)?
+                } else {
+                    re.find_chars(&chars, pos)?
+                };
                 let units_before = |index: usize| -> usize {
                     if u_mode {
                         chars[..index].iter().map(|c| unit_len(*c)).sum()
@@ -586,7 +685,9 @@ impl RegexValue {
                         end_byte: byte_offset(&chars, end),
                         start16: units_before(start),
                         end16: units_before(end),
-                        groups: (0..m.len()).map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b))).collect(),
+                        groups: (0..m.len())
+                            .map(|i| m.group(i).map(|(a, b)| chars_to_string(&chars, a, b)))
+                            .collect(),
                         group_spans16: (0..m.len())
                             .map(|i| m.group(i).map(|(a, b)| (units_before(a), units_before(b))))
                             .collect(),
@@ -604,7 +705,9 @@ impl RegexValue {
         start16: usize,
         sticky: bool,
     ) -> Result<Option<(usize, usize, Vec<Option<String>>)>, RegexError> {
-        Ok(self.match_full(input, start16, sticky)?.map(|m| (m.start_byte, m.end_byte, m.groups)))
+        Ok(self
+            .match_full(input, start16, sticky)?
+            .map(|m| (m.start_byte, m.end_byte, m.groups)))
     }
 
     /// The matches of a global (or single) scan with the ECMAScript advance
@@ -616,7 +719,9 @@ impl RegexValue {
         let mut out = Vec::new();
         let mut pos = 0usize;
         while pos <= total {
-            let Some(m) = self.match_full(input, pos, sticky)? else { break };
+            let Some(m) = self.match_full(input, pos, sticky)? else {
+                break;
+            };
             let (start16, end16) = (m.start16, m.end16);
             out.push(m);
             if !global {
@@ -652,14 +757,18 @@ impl RegexValue {
                 .map(|m| crate::wtf16::len16(&input[..m.start()]))),
             Engine::Backtrack(re) => {
                 let chars = self.chars_of(input);
-                Ok(re
-                    .find_chars(&chars, 0)?
-                    .map(|m| {
-                        chars[..m.start()]
-                            .iter()
-                            .map(|c| if crate::wtf16::lone_unit(*c).is_some() { 1 } else { c.len_utf16() })
-                            .sum()
-                    }))
+                Ok(re.find_chars(&chars, 0)?.map(|m| {
+                    chars[..m.start()]
+                        .iter()
+                        .map(|c| {
+                            if crate::wtf16::lone_unit(*c).is_some() {
+                                1
+                            } else {
+                                c.len_utf16()
+                            }
+                        })
+                        .sum()
+                }))
             }
         }
     }
@@ -708,7 +817,9 @@ impl RegexValue {
                 let mut last = 0;
                 let mut pos = 0;
                 while pos <= chars.len() {
-                    let Some(m) = re.find_chars(&chars, pos)? else { break };
+                    let Some(m) = re.find_chars(&chars, pos)? else {
+                        break;
+                    };
                     let (start, end) = m.span();
                     pos = if end == start { end + 1 } else { end };
                     if start == end && (start == 0 || start >= chars.len() || start == last) {
@@ -802,7 +913,9 @@ impl RegexValue {
                 let chars = self.chars_of(input);
                 let mut pos = 0;
                 while pos <= chars.len() {
-                    let Some(m) = re.find_chars(&chars, pos)? else { break };
+                    let Some(m) = re.find_chars(&chars, pos)? else {
+                        break;
+                    };
                     let (start, end) = m.span();
                     matches.push(
                         (0..m.len())
@@ -878,7 +991,10 @@ impl RegexValue {
             pieces.extend_from_slice(&units[last..start]);
             let refs: Vec<Option<&str>> = groups.iter().map(|g| g.as_deref()).collect();
             let (before, after) = if needs_context {
-                (crate::wtf16::from_units(&units[..start]), crate::wtf16::from_units(&units[end..]))
+                (
+                    crate::wtf16::from_units(&units[..start]),
+                    crate::wtf16::from_units(&units[end..]),
+                )
             } else {
                 (String::new(), String::new())
             };
@@ -946,9 +1062,9 @@ impl RegexValue {
             Engine::Re2(re) => Ok(re.find(input).map(|m| (m.start(), m.end()))),
             Engine::Backtrack(re) => {
                 let chars = self.chars_of(input);
-                Ok(re.find_chars(&chars, 0)?.map(|m| {
-                    (byte_offset(&chars, m.start()), byte_offset(&chars, m.end()))
-                }))
+                Ok(re
+                    .find_chars(&chars, 0)?
+                    .map(|m| (byte_offset(&chars, m.start()), byte_offset(&chars, m.end()))))
             }
         }
     }
@@ -971,11 +1087,20 @@ mod tests {
     #[test]
     fn flags_change_matching_and_bad_flags_are_rejected() {
         assert!(!RegexValue::new("abc").unwrap().is_match("ABC").unwrap());
-        assert!(RegexValue::with_flags("abc", "i").unwrap().is_match("ABC").unwrap());
+        assert!(RegexValue::with_flags("abc", "i")
+            .unwrap()
+            .is_match("ABC")
+            .unwrap());
         assert!(!RegexValue::new("^b$").unwrap().is_match("a\nb\nc").unwrap());
-        assert!(RegexValue::with_flags("^b$", "m").unwrap().is_match("a\nb\nc").unwrap());
+        assert!(RegexValue::with_flags("^b$", "m")
+            .unwrap()
+            .is_match("a\nb\nc")
+            .unwrap());
         assert!(!RegexValue::new("a.b").unwrap().is_match("a\nb").unwrap());
-        assert!(RegexValue::with_flags("a.b", "s").unwrap().is_match("a\nb").unwrap());
+        assert!(RegexValue::with_flags("a.b", "s")
+            .unwrap()
+            .is_match("a\nb")
+            .unwrap());
         assert!(RegexValue::with_flags("a", "g").is_ok());
         // `y`, `d` and `v` are accepted flags (sticky, indices, unicodeSets).
         assert!(RegexValue::with_flags("a", "y").is_ok());
@@ -990,7 +1115,12 @@ mod tests {
         let value = RegexValue::new(r"(a)(x)?(b)").unwrap();
         assert_eq!(
             value.captures("zab").unwrap(),
-            Some(vec![Some("ab".into()), Some("a".into()), None, Some("b".into())])
+            Some(vec![
+                Some("ab".into()),
+                Some("a".into()),
+                None,
+                Some("b".into())
+            ])
         );
         assert_eq!(value.captures("zzz").unwrap(), None);
     }

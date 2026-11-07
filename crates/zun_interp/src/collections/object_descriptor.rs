@@ -6,11 +6,17 @@
 use super::*;
 
 impl<'a> Interp<'a> {
-    pub(super) fn col_object_descriptor(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
+    pub(super) fn col_object_descriptor(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
         match name {
             "templateObject" => {
-                let cooked = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let raw = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let cooked =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let raw =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // One template object per call site, cached on the global object.
                 let site = match args.get(2) {
                     Some(Value::Int(n, _)) => *n,
@@ -20,10 +26,16 @@ impl<'a> Interp<'a> {
                 let key = format!("template#{site}");
                 if site >= 0 {
                     let cached = zun_gc::with_current_heap_mut(|heap| {
-                        { let g = heap.global_object(); heap.dynamic_get(g, &key) }.and_then(|a| a.as_object())
+                        {
+                            let g = heap.global_object();
+                            heap.dynamic_get(g, &key)
+                        }
+                        .and_then(|a| a.as_object())
                     });
                     if let Some(addr) = cached {
-                        return Ok(Value::Object(unsafe { zun_gc::Obj::from_addr(addr as *mut u64) }));
+                        return Ok(Value::Object(unsafe {
+                            zun_gc::Obj::from_addr(addr as *mut u64)
+                        }));
                     }
                 }
                 let mask = match args.get(3) {
@@ -37,20 +49,32 @@ impl<'a> Interp<'a> {
                         }
                     }
                     heap.ensure_dynamic_entry(cooked);
-                    heap.dynamic_define_data(cooked, "raw".to_owned(), zun_core::Any::object(raw.addr() as usize), false, false, false);
+                    heap.dynamic_define_data(
+                        cooked,
+                        "raw".to_owned(),
+                        zun_core::Any::object(raw.addr() as usize),
+                        false,
+                        false,
+                        false,
+                    );
                 });
                 self.call_managed_collection("objectFreeze", &[Value::Object(raw)])?;
                 self.call_managed_collection("objectFreeze", &[Value::Object(cooked)])?;
                 if site >= 0 {
                     zun_gc::with_current_heap_mut(|heap| {
                         let global = heap.global_object();
-                        heap.dynamic_set(global, key, zun_core::Any::object(cooked.addr() as usize));
+                        heap.dynamic_set(
+                            global,
+                            key,
+                            zun_core::Any::object(cooked.addr() as usize),
+                        );
                     });
                 }
                 Ok(Value::Object(cooked))
             }
             "objectGroupBy" => {
-                let source = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let callback = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Function(handle) => *handle,
                     _ => return Err(RunError::BadToken),
@@ -70,15 +94,19 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?;
                     let produced = self.invoke_callback(
                         callback,
-                        vec![Value::Any(element), Value::Any(zun_core::Any::float(index as f64))],
+                        vec![
+                            Value::Any(element),
+                            Value::Any(zun_core::Any::float(index as f64)),
+                        ],
                     )?;
                     let key = match unbox_arg(&produced)? {
                         Value::Void => "undefined".to_string(),
                         Value::Null => "null".to_string(),
                         Value::Float(n, _) if n == 0.0 => "0".to_string(),
                         _ => {
-                            let key_any = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
-                                .ok_or(RunError::BadToken)?;
+                            let key_any =
+                                zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
+                                    .ok_or(RunError::BadToken)?;
                             zun_gc::with_current_heap(|heap| stringify_any(key_any, heap))
                                 .ok_or(RunError::BadToken)?
                         }
@@ -91,7 +119,11 @@ impl<'a> Interp<'a> {
                             Some(address) => unsafe { zun_gc::Obj::from_addr(address as *mut u64) },
                             None => {
                                 let group = heap.alloc_array(0);
-                                heap.dynamic_set(roots[1], key.clone(), zun_core::Any::object(group.addr() as usize));
+                                heap.dynamic_set(
+                                    roots[1],
+                                    key.clone(),
+                                    zun_core::Any::object(group.addr() as usize),
+                                );
                                 group
                             }
                         };
@@ -101,10 +133,9 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(roots[1]))
             }
             "objectFromEntries" => {
-                let not_iterable = || {
-                    RunError::Native("TypeError: object is not iterable".into())
-                };
-                let source = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(not_iterable)?;
+                let not_iterable = || RunError::Native("TypeError: object is not iterable".into());
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or_else(not_iterable)?;
                 // A non-array iterable (Map, Set, generator, user iterable) is
                 // drained into an array of entries first.
                 let array = if zun_gc::with_current_heap(|heap| heap.array_len(source).is_some()) {
@@ -157,7 +188,8 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Bool(matches!(key.as_ref(), "name" | "length")));
                     }
                 }
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
                     Value::Str(key) => key.to_string(),
                     Value::Any(any) if any.as_symbol().is_some() => {
@@ -176,16 +208,21 @@ impl<'a> Interp<'a> {
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
                 let has = if is_dynamic {
                     zun_gc::with_current_heap(|heap| {
-                        heap.dynamic_has(obj, &key) || heap.dynamic_get_function(obj, &key).is_some()
+                        heap.dynamic_has(obj, &key)
+                            || heap.dynamic_get_function(obj, &key).is_some()
                     })
                 } else {
-                    self.object_own_entries(obj)?.iter().any(|(name, _)| name == &key)
+                    self.object_own_entries(obj)?
+                        .iter()
+                        .any(|(name, _)| name == &key)
                 };
                 Ok(Value::Bool(has))
             }
             "objectIsPrototypeOf" => {
-                let prototype = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let target = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let prototype =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let target =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let prototype_addr = prototype.addr() as usize;
                 let mut current = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(target));
                 let mut found = false;
@@ -197,7 +234,8 @@ impl<'a> Interp<'a> {
                         }
                         Some(addr) => {
                             let next = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
-                            current = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(next));
+                            current =
+                                zun_gc::with_current_heap(|heap| heap.dynamic_prototype(next));
                         }
                         None => break,
                     }
@@ -209,23 +247,30 @@ impl<'a> Interp<'a> {
                 let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native("TypeError: Object.defineProperty called on non-object".into())
                 })?;
-                let key_value = match crate::property_ops::prop_key(args.get(1).ok_or(RunError::BadToken)?) {
-                    Some(crate::property_ops::PropKey::Str(text)) => Value::Str(text.into()),
-                    Some(crate::property_ops::PropKey::Sym(symbol)) => {
-                        Value::Any(zun_core::Any::symbol(symbol))
-                    }
-                    // An object key is coerced with ToPropertyKey (string hint).
-                    None => match object(args.get(1).ok_or(RunError::BadToken)?) {
-                        Some(key_object) => match self.ordinary_to_primitive(key_object, "string")? {
-                            Some(Value::Str(text)) => Value::Str(text),
-                            _ => Value::Str("[object Object]".into()),
+                let key_value =
+                    match crate::property_ops::prop_key(args.get(1).ok_or(RunError::BadToken)?) {
+                        Some(crate::property_ops::PropKey::Str(text)) => Value::Str(text.into()),
+                        Some(crate::property_ops::PropKey::Sym(symbol)) => {
+                            Value::Any(zun_core::Any::symbol(symbol))
+                        }
+                        // An object key is coerced with ToPropertyKey (string hint).
+                        None => match object(args.get(1).ok_or(RunError::BadToken)?) {
+                            Some(key_object) => {
+                                match self.ordinary_to_primitive(key_object, "string")? {
+                                    Some(Value::Str(text)) => Value::Str(text),
+                                    _ => Value::Str("[object Object]".into()),
+                                }
+                            }
+                            None => return Err(RunError::BadToken),
                         },
-                        None => return Err(RunError::BadToken),
-                    },
-                };
-                let desc = crate::property_ops::descriptor_object(args.get(2).ok_or(RunError::BadToken)?).ok_or_else(|| {
-                    RunError::Native("TypeError: Property description must be an object".into())
-                })?;
+                    };
+                let desc =
+                    crate::property_ops::descriptor_object(args.get(2).ok_or(RunError::BadToken)?)
+                        .ok_or_else(|| {
+                            RunError::Native(
+                                "TypeError: Property description must be an object".into(),
+                            )
+                        })?;
                 let obj = match self.proxy_route(proxy, "defineProperty") {
                     ProxyRoute::Trap(callback, target) => {
                         let result = self.invoke_proxy_trap(
@@ -235,7 +280,9 @@ impl<'a> Interp<'a> {
                         if strict {
                             return Ok(Value::Object(proxy));
                         }
-                        return Ok(Value::Bool(zun_gc::with_current_heap(|heap| is_truthy(&result, heap))));
+                        return Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                            is_truthy(&result, heap)
+                        })));
                     }
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
@@ -246,8 +293,10 @@ impl<'a> Interp<'a> {
                 )
             }
             "objectDefineProperties" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let descs = object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let descs =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // Each own enumerable key of `descs` maps a property name to a
                 // descriptor object.
                 let names = self.object_own_names(descs)?;
@@ -259,12 +308,16 @@ impl<'a> Interp<'a> {
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                 let mut gathered: Vec<String> = Vec::new();
                 for name in names {
-                    if !zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(roots[1], &name)) {
+                    if !zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_is_enumerable(roots[1], &name)
+                    }) {
                         continue;
                     }
                     let value = self.dynamic_member_get(roots[1], &name)?;
                     let Some(desc) = crate::property_ops::descriptor_object(&value) else {
-                        return Err(RunError::Native("TypeError: Property description must be an object".into()));
+                        return Err(RunError::Native(
+                            "TypeError: Property description must be an object".into(),
+                        ));
                     };
                     let desc = self.normalize_descriptor(desc)?;
                     zun_gc::with_current_heap_mut(|heap| {
@@ -278,7 +331,11 @@ impl<'a> Interp<'a> {
                         .map(|addr| unsafe { zun_gc::Obj::from_addr(addr as *mut u64) })
                         .ok_or(RunError::BadToken)?;
                     let obj = roots[0];
-                    if !self.define_own_property(obj, &crate::property_ops::PropKey::Str(name.clone()), desc) {
+                    if !self.define_own_property(
+                        obj,
+                        &crate::property_ops::PropKey::Str(name.clone()),
+                        desc,
+                    ) {
                         return Err(RunError::Native(format!(
                             "TypeError: Cannot redefine property: {name}"
                         )));
@@ -287,23 +344,39 @@ impl<'a> Interp<'a> {
                 // Symbol-keyed descriptors of the map define symbol properties.
                 let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(roots[1]));
                 for symbol in symbols {
-                    if !zun_gc::with_current_heap(|heap| heap.dynamic_is_symbol_enumerable(roots[1], symbol)) {
+                    if !zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_is_symbol_enumerable(roots[1], symbol)
+                    }) {
                         continue;
                     }
-                    let Some(any) = zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol(roots[1], symbol)) else { continue };
-                    let value = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void);
+                    let Some(any) =
+                        zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol(roots[1], symbol))
+                    else {
+                        continue;
+                    };
+                    let value = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                        .unwrap_or(Value::Void);
                     let Some(desc) = crate::property_ops::descriptor_object(&value) else {
-                        return Err(RunError::Native("TypeError: Property description must be an object".into()));
+                        return Err(RunError::Native(
+                            "TypeError: Property description must be an object".into(),
+                        ));
                     };
                     let desc = self.normalize_descriptor(desc)?;
-                    if !self.define_own_property(roots[0], &crate::property_ops::PropKey::Sym(symbol), desc) {
-                        return Err(RunError::Native("TypeError: Cannot redefine property".into()));
+                    if !self.define_own_property(
+                        roots[0],
+                        &crate::property_ops::PropKey::Sym(symbol),
+                        desc,
+                    ) {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot redefine property".into(),
+                        ));
                     }
                 }
                 Ok(Value::Object(roots[0]))
             }
             "objectGetOwnPropertyDescriptor" => {
-                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.to_string(),
                     other => match crate::property_ops::prop_key(other) {
@@ -338,7 +411,10 @@ impl<'a> Interp<'a> {
                 // `length`; a number or boolean owns nothing.
                 match unbox_arg(args.first().ok_or(RunError::BadToken)?) {
                     Ok(Value::Str(text)) => {
-                        let units: Vec<String> = text.encode_utf16().map(|u| String::from_utf16_lossy(&[u])).collect();
+                        let units: Vec<String> = text
+                            .encode_utf16()
+                            .map(|u| String::from_utf16_lossy(&[u]))
+                            .collect();
                         let out = zun_gc::with_current_heap_mut(|heap| {
                             let out = heap.alloc_dynamic();
                             let mut entries: Vec<(String, zun_core::Any, bool)> = Vec::new();
@@ -346,14 +422,34 @@ impl<'a> Interp<'a> {
                                 let id = heap.intern_string(unit.as_str().into());
                                 entries.push((index.to_string(), zun_core::Any::string(id), true));
                             }
-                            entries.push(("length".to_string(), zun_core::Any::float(units.len() as f64), false));
+                            entries.push((
+                                "length".to_string(),
+                                zun_core::Any::float(units.len() as f64),
+                                false,
+                            ));
                             for (name, value, enumerable) in entries {
                                 let descriptor = heap.alloc_dynamic();
                                 heap.dynamic_set(descriptor, "value", value);
-                                heap.dynamic_set(descriptor, "writable", zun_core::Any::bool(false));
-                                heap.dynamic_set(descriptor, "enumerable", zun_core::Any::bool(enumerable));
-                                heap.dynamic_set(descriptor, "configurable", zun_core::Any::bool(false));
-                                heap.dynamic_set(out, name, zun_core::Any::object(descriptor.addr() as usize));
+                                heap.dynamic_set(
+                                    descriptor,
+                                    "writable",
+                                    zun_core::Any::bool(false),
+                                );
+                                heap.dynamic_set(
+                                    descriptor,
+                                    "enumerable",
+                                    zun_core::Any::bool(enumerable),
+                                );
+                                heap.dynamic_set(
+                                    descriptor,
+                                    "configurable",
+                                    zun_core::Any::bool(false),
+                                );
+                                heap.dynamic_set(
+                                    out,
+                                    name,
+                                    zun_core::Any::object(descriptor.addr() as usize),
+                                );
                             }
                             out
                         });
@@ -365,7 +461,8 @@ impl<'a> Interp<'a> {
                     }
                     _ => {}
                 }
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let names = self.object_own_names(obj)?;
                 let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
                 for name in names {
@@ -388,7 +485,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(out))
             }
             "objectGetOwnPropertyNames" => {
-                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let proxy =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // `Reflect.ownKeys(proxy)` consults the `ownKeys` trap; the trap
                 // returns the key array directly.
                 let obj = match self.proxy_route(proxy, "ownKeys") {
@@ -417,8 +515,11 @@ impl<'a> Interp<'a> {
                 // Own string keys followed by own symbol keys. A proxy's
                 // `ownKeys` trap result is returned as is.
                 let names = self.call_managed_collection("objectGetOwnPropertyNames", args)?;
-                let Value::Object(names_array) = names else { return Ok(names) };
-                let target = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let Value::Object(names_array) = names else {
+                    return Ok(names);
+                };
+                let target =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(target));
                 if symbols.is_empty() {
                     return Ok(Value::Object(names_array));
@@ -437,7 +538,8 @@ impl<'a> Interp<'a> {
                 // `Object.getOwnPropertySymbols(obj)` — an array of the object's
                 // own symbol keys (as `Any` symbol values), in insertion-stable
                 // id order. A non-dynamic/typed object has no symbol keys.
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(obj));
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(symbols.len());
@@ -466,7 +568,8 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Bool(true));
                 };
                 if let Some((level, len)) = zun_gc::with_current_heap(|heap| {
-                    heap.array_len(obj).map(|len| (heap.array_integrity(obj), len))
+                    heap.array_len(obj)
+                        .map(|len| (heap.array_integrity(obj), len))
                 }) {
                     return Ok(Value::Bool(level >= 2 || (level >= 1 && len == 0)));
                 }
@@ -529,7 +632,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(extensible))
             }
             "objectPropertyIsEnumerable" => {
-                let obj = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let obj =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.to_string(),
                     _ => return Err(RunError::BadToken),
@@ -539,7 +643,9 @@ impl<'a> Interp<'a> {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(obj, &key))
                 } else {
                     // Typed declared fields are enumerable own properties.
-                    self.object_own_entries(obj)?.iter().any(|(name, _)| name == &key)
+                    self.object_own_entries(obj)?
+                        .iter()
+                        .any(|(name, _)| name == &key)
                 };
                 Ok(Value::Bool(enumerable))
             }
@@ -577,7 +683,9 @@ impl<'a> Interp<'a> {
                         "function"
                     } else if zun_gc::with_current_heap(|heap| {
                         heap.is_dynamic_object(obj)
-                            && heap.dynamic_get(obj, "__classDesc").is_some_and(|d| d.as_class_descriptor().is_some())
+                            && heap
+                                .dynamic_get(obj, "__classDesc")
+                                .is_some_and(|d| d.as_class_descriptor().is_some())
                     }) {
                         // A `constructor` record stands for its class value.
                         "function"
@@ -627,11 +735,16 @@ impl<'a> Interp<'a> {
                     Value::Object(obj) => {
                         let obj = *obj;
                         let custom = zun_gc::with_current_heap(|heap| {
-                            heap.dynamic_get_symbol(obj, zun_core::WellKnownSymbol::ToStringTag.id())
-                                .and_then(|any| match Value::unbox_any(any, heap) {
+                            heap.dynamic_get_symbol(
+                                obj,
+                                zun_core::WellKnownSymbol::ToStringTag.id(),
+                            )
+                            .and_then(|any| {
+                                match Value::unbox_any(any, heap) {
                                     Some(Value::Str(text)) => Some(text.to_string()),
                                     _ => None,
-                                })
+                                }
+                            })
                         });
                         let class_tag = self
                             .module
@@ -646,7 +759,11 @@ impl<'a> Interp<'a> {
                         } else {
                             zun_gc::with_current_heap(|heap| {
                                 if heap.array_len(obj).is_some() {
-                                    if heap.array_is_arguments(obj) { "Arguments" } else { "Array" }
+                                    if heap.array_is_arguments(obj) {
+                                        "Arguments"
+                                    } else {
+                                        "Array"
+                                    }
                                 } else if heap.array_iterator_done(obj).is_some() {
                                     "Array Iterator"
                                 } else if heap.generator_state(obj).is_some() {
@@ -686,10 +803,10 @@ impl<'a> Interp<'a> {
                 // A typed class carrying a `[Symbol.hasInstance]` method decides
                 // membership itself: call it with the operand (boxed to `any`)
                 // and return `ToBoolean` of the result.
-                if let Some(&handler) = self.class_symbol_methods.get(&(
-                    class_rid,
-                    zun_core::WellKnownSymbol::HasInstance.id().get(),
-                )) {
+                if let Some(&handler) = self
+                    .class_symbol_methods
+                    .get(&(class_rid, zun_core::WellKnownSymbol::HasInstance.id().get()))
+                {
                     let operand = args.first().ok_or(RunError::BadToken)?.clone();
                     let boxed = match operand {
                         Value::Any(_) => operand,
@@ -705,7 +822,11 @@ impl<'a> Interp<'a> {
                 let found = match object(args.first().ok_or(RunError::BadToken)?) {
                     // A BigInt payload object is a primitive: its core type id
                     // must not be read as a module class rid.
-                    Some(obj) if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) => false,
+                    Some(obj)
+                        if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) =>
+                    {
+                        false
+                    }
                     Some(obj) => self.types.is_assignable(obj.type_rid(), class_rid),
                     None => false,
                 };
@@ -716,8 +837,8 @@ impl<'a> Interp<'a> {
             // away); `deserialize` reads a byte view and rebuilds the graph.
             "serialize" => self.serialize_value(args.first().ok_or(RunError::BadToken)?),
             "deserialize" => {
-                let view = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let view =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 self.deserialize_value(view)
             }
             _ => Err(RunError::BadToken),

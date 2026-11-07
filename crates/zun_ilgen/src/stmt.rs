@@ -134,7 +134,13 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// `for (init; cond; update) { body }`.
-    fn lower_for(&mut self, init: &'a Option<Box<Stmt>>, cond: &hir::Expr, update: &Option<hir::Expr>, body: &'a [Stmt]) {
+    fn lower_for(
+        &mut self,
+        init: &'a Option<Box<Stmt>>,
+        cond: &hir::Expr,
+        update: &Option<hir::Expr>,
+        body: &'a [Stmt],
+    ) {
         if let Some(init) = init {
             self.stmt(init);
         }
@@ -166,7 +172,15 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Iterator-protocol loop, with the iterator-close cleanup for generic iterators.
-    fn lower_for_of(&mut self, iterator: &hir::Expr, iterator_slot: &hir::LocalSlot, done: &hir::Expr, next: &hir::Expr, binding: &hir::LocalSlot, body: &'a [Stmt]) {
+    fn lower_for_of(
+        &mut self,
+        iterator: &hir::Expr,
+        iterator_slot: &hir::LocalSlot,
+        done: &hir::Expr,
+        next: &hir::Expr,
+        binding: &hir::LocalSlot,
+        body: &'a [Stmt],
+    ) {
         self.expr(iterator);
         self.emit(Instruction::new(
             Opcode::StoreLocal,
@@ -190,7 +204,10 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         let loop_index = self.break_patches.len() - 1;
         let entry_depth = self.finally_bodies.len();
         if needs_close {
-            self.finally_bodies.push(Cleanup::IterClose { slot: *iterator_slot, loop_index });
+            self.finally_bodies.push(Cleanup::IterClose {
+                slot: *iterator_slot,
+                loop_index,
+            });
         }
         let body_start = self.code.len() as u32;
         self.expr(next);
@@ -213,7 +230,16 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             self.emit(Instruction::simple(Opcode::Pop));
             self.emit(Instruction::simple(Opcode::Rethrow));
             let handler_end = self.code.len() as u32;
-            self.push_protected(entry_depth, true, body_start, body_end, handler_start, handler_end, HandlerKind::Finally, None);
+            self.push_protected(
+                entry_depth,
+                true,
+                body_start,
+                body_end,
+                handler_start,
+                handler_end,
+                HandlerKind::Finally,
+                None,
+            );
         }
         self.patch_to_here(to_exit);
         self.continue_targets.pop();
@@ -269,16 +295,24 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     fn lower_break(&mut self, label: &Option<String>) {
         // An unlabeled `break` targets the innermost loop or switch,
         // never a plain labeled block.
-        let target = label.as_ref().and_then(|name| {
-            self.loop_labels.iter().rposition(|candidate| candidate.as_ref() == Some(name))
-        }).or_else(|| {
-            (0..self.break_patches.len()).rev().find(|&i| {
-                !self.continue_targets[i].is_empty()
-                    || self.loop_labels[i].as_deref() == Some("\0switch")
+        let target = label
+            .as_ref()
+            .and_then(|name| {
+                self.loop_labels
+                    .iter()
+                    .rposition(|candidate| candidate.as_ref() == Some(name))
             })
-        });
+            .or_else(|| {
+                (0..self.break_patches.len()).rev().find(|&i| {
+                    !self.continue_targets[i].is_empty()
+                        || self.loop_labels[i].as_deref() == Some("\0switch")
+                })
+            });
         if let Some(index) = target {
-            self.run_finally_to(self.break_finally_depths.get(index).copied().unwrap_or(0), None);
+            self.run_finally_to(
+                self.break_finally_depths.get(index).copied().unwrap_or(0),
+                None,
+            );
         }
         let patch = self.emit_branch(Opcode::Branch);
         if let Some(index) = target {
@@ -290,12 +324,27 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
 
     /// `continue`, running pending `finally` cleanups first.
     fn lower_continue(&mut self, label: &Option<String>) {
-        let target_index = label.as_ref().and_then(|name| {
-            self.loop_labels.iter().rposition(|candidate| candidate.as_ref() == Some(name))
-        }).or_else(|| (0..self.continue_targets.len()).rev().find(|&i| !self.continue_targets[i].is_empty()));
+        let target_index = label
+            .as_ref()
+            .and_then(|name| {
+                self.loop_labels
+                    .iter()
+                    .rposition(|candidate| candidate.as_ref() == Some(name))
+            })
+            .or_else(|| {
+                (0..self.continue_targets.len())
+                    .rev()
+                    .find(|&i| !self.continue_targets[i].is_empty())
+            });
         if let Some(index) = target_index {
-            self.run_finally_to(self.break_finally_depths.get(index).copied().unwrap_or(0), Some(index));
-            let target = self.continue_targets[index].last().copied().unwrap_or(usize::MAX);
+            self.run_finally_to(
+                self.break_finally_depths.get(index).copied().unwrap_or(0),
+                Some(index),
+            );
+            let target = self.continue_targets[index]
+                .last()
+                .copied()
+                .unwrap_or(usize::MAX);
             if target == usize::MAX {
                 let patch = self.emit_branch(Opcode::Branch);
                 if let Some(patches) = self.continue_patches.get_mut(index) {
@@ -317,7 +366,8 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             self.finally_bodies.truncate(index);
             let hole_start = self.code.len() as u32;
             self.emit_cleanup(*cleanup);
-            self.finally_holes.push((hole_start, self.code.len() as u32, index));
+            self.finally_holes
+                .push((hole_start, self.code.len() as u32, index));
         }
         self.finally_bodies = saved;
         if let Some(v) = value {
@@ -327,7 +377,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// try/catch/finally, emitting the protected regions and handlers.
-    fn lower_try(&mut self, body: &'a [Stmt], catches: &'a [hir::CatchClause], finally_body: &'a Option<Vec<Stmt>>) {
+    fn lower_try(
+        &mut self,
+        body: &'a [Stmt],
+        catches: &'a [hir::CatchClause],
+        finally_body: &'a Option<Vec<Stmt>>,
+    ) {
         let entry_depth = self.finally_bodies.len();
         let has_finally_flag = finally_body.is_some();
         let try_start = self.code.len() as u32;
@@ -371,7 +426,16 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 Ty::Instance(index) => Some(Token::new(TableKind::TypeDef, index + 1)),
                 _ => None,
             };
-            self.push_protected(entry_depth, has_finally_flag, try_start, try_end, handler_start, handler_end, HandlerKind::Catch, catch_type);
+            self.push_protected(
+                entry_depth,
+                has_finally_flag,
+                try_start,
+                try_end,
+                handler_start,
+                handler_end,
+                HandlerKind::Catch,
+                catch_type,
+            );
         }
 
         if let Some(finally_body) = finally_body {
@@ -379,10 +443,28 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             self.stmts(finally_body);
             self.emit(Instruction::simple(Opcode::Rethrow));
             let handler_end = self.code.len() as u32;
-            self.push_protected(entry_depth, has_finally_flag, try_start, try_end, handler_start, handler_end, HandlerKind::Finally, None);
+            self.push_protected(
+                entry_depth,
+                has_finally_flag,
+                try_start,
+                try_end,
+                handler_start,
+                handler_end,
+                HandlerKind::Finally,
+                None,
+            );
             // An exception thrown inside a catch body also runs the finally.
             for (body_start, body_end) in catch_body_ranges {
-                self.push_protected(entry_depth, has_finally_flag, body_start, body_end, handler_start, handler_end, HandlerKind::Finally, None);
+                self.push_protected(
+                    entry_depth,
+                    has_finally_flag,
+                    body_start,
+                    body_end,
+                    handler_start,
+                    handler_end,
+                    HandlerKind::Finally,
+                    None,
+                );
             }
         }
         for exit in exits {

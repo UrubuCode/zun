@@ -67,7 +67,6 @@ fn array_literal_feeds_set_and_map_constructors() {
     assert_eq!(out, ["3", "1"]);
 }
 
-
 #[test]
 fn array_map_passes_value_index_array_and_builds_a_new_array() {
     let out = run_source(&format!(
@@ -462,7 +461,10 @@ fn array_reduce_empty_no_initial_throws() {
         "function main() {             let a = new Array(0);             try {                 a.reduce((acc: any, v: any, i: any, arr: any) => (acc as number) + (v as number));                 print(\"no throw\");             } catch (e: any) { print(e.message as string); } }",
     );
     assert_eq!(out.len(), 1);
-    assert!(out[0].contains("Reduce of empty array"), "unexpected: {out:?}");
+    assert!(
+        out[0].contains("Reduce of empty array"),
+        "unexpected: {out:?}"
+    );
 }
 
 #[test]
@@ -586,4 +588,3 @@ fn function_name_and_length_resolve_from_the_signature() {
     );
     assert_eq!(out, ["add3", "3"]);
 }
-

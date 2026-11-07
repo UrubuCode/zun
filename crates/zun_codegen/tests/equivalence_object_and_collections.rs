@@ -11,7 +11,10 @@ fn generator_for_of_preserves_tier0_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "generator suspension requires Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "generator suspension requires Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(7.0, _)));
 }
 
@@ -22,15 +25,17 @@ fn generator_arguments_preserve_tier0_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "generator suspension requires Tier 0");
+    assert!(
+        !jit.is_compiled(entry),
+        "generator suspension requires Tier 0"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(5.0, _)));
 }
 
 #[test]
 fn jit_can_allocate_an_array_for_a_scalar_length_result_with_heap_scope() {
-    let module = compile(
-        "function main(): u64 { let values = new Array(3); return values.length; }",
-    );
+    let module =
+        compile("function main(): u64 { let values = new Array(3); return values.length; }");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
     assert!(jit.is_compiled(entry));
@@ -203,9 +208,13 @@ fn numeric_map_and_set_has_use_typed_jit_abis() {
         .expect("mapRead method") as u32
         + 1;
     let method_rid = |name: &str| -> u32 {
-        module.tables.method_defs.iter()
+        module
+            .tables
+            .method_defs
+            .iter()
             .position(|method| module.strings.get(method.name) == name)
-            .expect("typed collection method") as u32 + 1
+            .expect("typed collection method") as u32
+            + 1
     };
     let map_i64_rid = method_rid("mapContainsI64");
     let set_i64_rid = method_rid("setContainsI64");
@@ -236,24 +245,107 @@ fn numeric_map_and_set_has_use_typed_jit_abis() {
     heap.map_insert(map, zun_core::Any::float(7.5), zun_core::Any::float(42.0));
     heap.set_add(set, zun_core::Any::float(7.5));
     let key = 7.5f64.to_bits();
-    assert_eq!(jit.call_packed_with_heap(map_rid, &[map.addr() as u64, key], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(set_rid, &[set.addr() as u64, key], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(insert_rid, &[set.addr() as u64, 8.5f64.to_bits()], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(set_rid, &[set.addr() as u64, 8.5f64.to_bits()], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(map_insert_rid, &[map.addr() as u64, 8.5f64.to_bits(), 9.5f64.to_bits()], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(map_read_rid, &[map.addr() as u64, 8.5f64.to_bits(), 0.0f64.to_bits()], &mut heap).unwrap(), 9.5f64.to_bits());
-    assert_eq!(jit.call_packed_with_heap(map_read_rid, &[map.addr() as u64, 99.0f64.to_bits(), 4.5f64.to_bits()], &mut heap).unwrap(), 4.5f64.to_bits());
-    assert_eq!(jit.call_packed_with_heap(map_rid, &[map.addr() as u64, 8.5f64.to_bits()], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(map_remove_rid, &[map.addr() as u64, key], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(set_remove_rid, &[set.addr() as u64, key], &mut heap).unwrap(), 1);
+    assert_eq!(
+        jit.call_packed_with_heap(map_rid, &[map.addr() as u64, key], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(set_rid, &[set.addr() as u64, key], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(
+            insert_rid,
+            &[set.addr() as u64, 8.5f64.to_bits()],
+            &mut heap
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(set_rid, &[set.addr() as u64, 8.5f64.to_bits()], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(
+            map_insert_rid,
+            &[map.addr() as u64, 8.5f64.to_bits(), 9.5f64.to_bits()],
+            &mut heap
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(
+            map_read_rid,
+            &[map.addr() as u64, 8.5f64.to_bits(), 0.0f64.to_bits()],
+            &mut heap
+        )
+        .unwrap(),
+        9.5f64.to_bits()
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(
+            map_read_rid,
+            &[map.addr() as u64, 99.0f64.to_bits(), 4.5f64.to_bits()],
+            &mut heap
+        )
+        .unwrap(),
+        4.5f64.to_bits()
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(map_rid, &[map.addr() as u64, 8.5f64.to_bits()], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(map_remove_rid, &[map.addr() as u64, key], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(set_remove_rid, &[set.addr() as u64, key], &mut heap)
+            .unwrap(),
+        1
+    );
     heap.map_insert(map, zun_core::Any::int(7), zun_core::Any::int(42));
     heap.set_add(set, zun_core::Any::int(7));
-    assert_eq!(jit.call_packed_with_heap(map_i64_rid, &[map.addr() as u64, 7], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(set_i64_rid, &[set.addr() as u64, 7], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(add_i64_rid, &[set.addr() as u64, 8], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(map_insert_i64_rid, &[map.addr() as u64, 8, 9], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(map_read_i64_rid, &[map.addr() as u64, 8, 0], &mut heap).unwrap(), 9);
-    assert_eq!(jit.call_packed_with_heap(map_remove_i64_rid, &[map.addr() as u64, 8], &mut heap).unwrap(), 1);
-    assert_eq!(jit.call_packed_with_heap(set_remove_i64_rid, &[set.addr() as u64, 8], &mut heap).unwrap(), 1);
+    assert_eq!(
+        jit.call_packed_with_heap(map_i64_rid, &[map.addr() as u64, 7], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(set_i64_rid, &[set.addr() as u64, 7], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(add_i64_rid, &[set.addr() as u64, 8], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(map_insert_i64_rid, &[map.addr() as u64, 8, 9], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(map_read_i64_rid, &[map.addr() as u64, 8, 0], &mut heap)
+            .unwrap(),
+        9
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(map_remove_i64_rid, &[map.addr() as u64, 8], &mut heap)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        jit.call_packed_with_heap(set_remove_i64_rid, &[set.addr() as u64, 8], &mut heap)
+            .unwrap(),
+        1
+    );
 }
-

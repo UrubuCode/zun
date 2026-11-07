@@ -28,13 +28,18 @@ impl Checker<'_> {
                 let elements = args
                     .iter()
                     .map(|arg| match arg {
-                        ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                        ast::Expr::Spread { expr, .. } => {
+                            ast::ArrayElement::Spread((**expr).clone())
+                        }
                         other => ast::ArrayElement::Expr(other.clone()),
                     })
                     .collect();
                 let list = self.check_expr(cx, &ast::Expr::ArrayLiteral { elements, span });
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::Call { func, args: vec![receiver, list] },
+                    kind: hir::ExprKind::Call {
+                        func,
+                        args: vec![receiver, list],
+                    },
                     ty: Ty::String,
                     span,
                 });
@@ -68,7 +73,10 @@ impl Checker<'_> {
                     self.error(value.span, "`concat` expects string arguments");
                 }
                 acc = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, value] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![acc, value],
+                    },
                     ty: Ty::String,
                     span,
                 };
@@ -95,16 +103,26 @@ impl Checker<'_> {
         if receiver.ty == Ty::String
             && matches!(
                 mname,
-                "substring" | "substr" | "slice" | "indexOf" | "lastIndexOf" | "includes"
-                    | "startsWith" | "endsWith" | "padStart" | "padEnd" | "charAt" | "repeat"
-                    | "charCodeAt" | "codePointAt" | "at"
+                "substring"
+                    | "substr"
+                    | "slice"
+                    | "indexOf"
+                    | "lastIndexOf"
+                    | "includes"
+                    | "startsWith"
+                    | "endsWith"
+                    | "padStart"
+                    | "padEnd"
+                    | "charAt"
+                    | "repeat"
+                    | "charCodeAt"
+                    | "codePointAt"
+                    | "at"
             )
             && args.len() <= 2
         {
             let checked: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
-            let natural_literal = |e: &hir::Expr| {
-                matches!(e.kind, hir::ExprKind::Number(v) if e.ty == Ty::F64 && v.fract() == 0.0 && v >= 0.0)
-            };
+            let natural_literal = |e: &hir::Expr| matches!(e.kind, hir::ExprKind::Number(v) if e.ty == Ty::F64 && v.fract() == 0.0 && v >= 0.0);
             let static_ok = checked.iter().all(|e| !e.ty.is_error())
                 && match mname {
                     "substring" => {
@@ -116,7 +134,8 @@ impl Checker<'_> {
                     // which the integer-typed native cannot express.
                     "charCodeAt" | "codePointAt" => checked.len() == 1 && checked[0].ty.is_int(),
                     "repeat" => {
-                        checked.len() == 1 && (checked[0].ty.is_int() || natural_literal(&checked[0]))
+                        checked.len() == 1
+                            && (checked[0].ty.is_int() || natural_literal(&checked[0]))
                     }
                     "at" => checked.len() == 1 && checked[0].ty == Ty::F64,
                     "indexOf" | "lastIndexOf" | "includes" | "startsWith" | "endsWith" => {
@@ -169,7 +188,10 @@ impl Checker<'_> {
                     _ => Ty::String,
                 };
                 let call = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: call_args,
+                    },
                     ty: Ty::Any,
                     span,
                 };
@@ -177,7 +199,9 @@ impl Checker<'_> {
                     return Ok(call);
                 }
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::Convert { value: Box::new(call) },
+                    kind: hir::ExprKind::Convert {
+                        value: Box::new(call),
+                    },
                     ty: result_ty,
                     span,
                 });
@@ -208,25 +232,30 @@ impl Checker<'_> {
                 self.error(span, "missing String intrinsic `slice`");
                 return Ok(self.poison(span));
             };
-            let mut bound = |checker: &mut Self, arg: Option<&ast::Expr>, default: f64| {
-                match arg {
-                    Some(arg) => {
-                        let mut value = checker.check_expr(cx, arg);
-                        coerce_numeric_literal(&mut value, Ty::F64);
-                        if !value.ty.is_error() && !checker.is_assignable(value.ty, Ty::F64) {
-                            checker.error(value.span, "`slice` index must be a number");
-                        }
-                        value
+            let mut bound = |checker: &mut Self, arg: Option<&ast::Expr>, default: f64| match arg {
+                Some(arg) => {
+                    let mut value = checker.check_expr(cx, arg);
+                    coerce_numeric_literal(&mut value, Ty::F64);
+                    if !value.ty.is_error() && !checker.is_assignable(value.ty, Ty::F64) {
+                        checker.error(value.span, "`slice` index must be a number");
                     }
-                    None => hir::Expr { kind: hir::ExprKind::Number(default), ty: Ty::F64, span },
+                    value
                 }
+                None => hir::Expr {
+                    kind: hir::ExprKind::Number(default),
+                    ty: Ty::F64,
+                    span,
+                },
             };
             let start = bound(self, args.first(), 0.0);
             // 2^53: past any representable string length, so it clamps to
             // the length and means "to the end".
             let end = bound(self, args.get(1), 9_007_199_254_740_992.0);
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, start, end] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, start, end],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -260,12 +289,16 @@ impl Checker<'_> {
                     let mut limit = self.check_expr(cx, &args[1]);
                     coerce_numeric_literal(&mut limit, Ty::Int(IntKind::I64));
                     limit = self.split_limit_expr(limit);
-                    let Some((id, _)) = zun_natives::resolve("collections", "regexpSplitLimit") else {
+                    let Some((id, _)) = zun_natives::resolve("collections", "regexpSplitLimit")
+                    else {
                         self.error(span, "missing collection intrinsic `regexpSplitLimit`");
                         return Ok(self.poison(span));
                     };
                     return Ok(hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver, limit] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![first, receiver, limit],
+                        },
                         ty: Ty::Array,
                         span,
                     });
@@ -275,7 +308,10 @@ impl Checker<'_> {
                     return Ok(self.poison(span));
                 };
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![first, receiver],
+                    },
                     ty: Ty::Array,
                     span,
                 });
@@ -289,7 +325,8 @@ impl Checker<'_> {
                     let mut value = self.check_expr(cx, arg);
                     coerce_numeric_literal(&mut value, Ty::Int(IntKind::I64));
                     value = self.split_limit_expr(value);
-                    if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::Int(IntKind::I64)) {
+                    if !value.ty.is_error() && !self.is_assignable(value.ty, Ty::Int(IntKind::I64))
+                    {
                         self.error(value.span, "`split` limit must be an integer");
                     }
                     value
@@ -306,7 +343,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, first, limit] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, first, limit],
+                },
                 ty: Ty::Array,
                 span,
             });
@@ -329,29 +369,42 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if receiver.ty == Ty::String
-            && mname == "replaceAll"
-            && args.len() == 2
-        {
+        if receiver.ty == Ty::String && mname == "replaceAll" && args.len() == 2 {
             let first = self.check_expr(cx, &args[0]);
             let replacement = self.check_expr(cx, &args[1]);
             if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
-                return Ok(self.string_symbol_dispatch(span, 5.0, receiver, first, Some(replacement)));
+                return Ok(self.string_symbol_dispatch(
+                    span,
+                    5.0,
+                    receiver,
+                    first,
+                    Some(replacement),
+                ));
             }
             // A dynamic (`any`) replacement is a function or ToString'd at run time.
             if replacement.ty == Ty::Any && matches!(first.ty, Ty::RegExp | Ty::String) {
                 let first = Self::box_to_any(first);
-                return Ok(self.string_symbol_dispatch(span, 5.0, receiver, first, Some(replacement)));
+                return Ok(self.string_symbol_dispatch(
+                    span,
+                    5.0,
+                    receiver,
+                    first,
+                    Some(replacement),
+                ));
             }
             // A RegExp search must carry the `g` flag (checked at run time).
             let first = if first.ty == Ty::RegExp {
-                let Some((guard, _)) = zun_natives::resolve("collections", "regexpReplaceAllGuard") else {
+                let Some((guard, _)) = zun_natives::resolve("collections", "regexpReplaceAllGuard")
+                else {
                     self.error(span, "missing collection intrinsic `regexpReplaceAllGuard`");
                     return Ok(self.poison(span));
                 };
                 hir::Expr {
                     span: first.span,
-                    kind: hir::ExprKind::CallBuiltin { id: guard, args: vec![first] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: guard,
+                        args: vec![first],
+                    },
                     ty: Ty::RegExp,
                 }
             } else {
@@ -361,8 +414,16 @@ impl Checker<'_> {
                 return Ok(self.replace_with_function(span, first, receiver, replacement, true));
             }
             let (first, replacement) = if first.ty != Ty::RegExp {
-                let first = if first.ty == Ty::String { first } else { self.to_string_for_parse(first) };
-                let replacement = if replacement.ty == Ty::String { replacement } else { self.to_string_for_parse(replacement) };
+                let first = if first.ty == Ty::String {
+                    first
+                } else {
+                    self.to_string_for_parse(first)
+                };
+                let replacement = if replacement.ty == Ty::String {
+                    replacement
+                } else {
+                    self.to_string_for_parse(replacement)
+                };
                 (first, replacement)
             } else {
                 (first, replacement)
@@ -373,13 +434,19 @@ impl Checker<'_> {
                     return Ok(self.poison(span));
                 };
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, first, replacement] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, first, replacement],
+                    },
                     ty: Ty::String,
                     span,
                 });
             }
             if replacement.ty != Ty::String && !replacement.ty.is_error() {
-                self.error(replacement.span, "`replaceAll` replacement must be a string");
+                self.error(
+                    replacement.span,
+                    "`replaceAll` replacement must be a string",
+                );
                 return Ok(self.poison(span));
             }
             let Some((id, _)) = zun_natives::resolve("collections", "regexpReplace") else {
@@ -387,7 +454,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver, replacement] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![first, receiver, replacement],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -408,7 +478,13 @@ impl Checker<'_> {
             let first = self.check_expr(cx, &args[0]);
             let replacement = self.check_expr(cx, &args[1]);
             if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
-                return Ok(self.string_symbol_dispatch(span, 1.0, receiver, first, Some(replacement)));
+                return Ok(self.string_symbol_dispatch(
+                    span,
+                    1.0,
+                    receiver,
+                    first,
+                    Some(replacement),
+                ));
             }
             if matches!(replacement.ty, Ty::Function(_))
                 && matches!(first.ty, Ty::RegExp | Ty::String)
@@ -418,13 +494,16 @@ impl Checker<'_> {
             // A dynamic (`any`) replacement is a function or ToString'd at run time.
             if replacement.ty == Ty::Any && matches!(first.ty, Ty::RegExp | Ty::String) {
                 let first = Self::box_to_any(first);
-                return Ok(self.string_symbol_dispatch(span, 1.0, receiver, first, Some(replacement)));
+                return Ok(self.string_symbol_dispatch(
+                    span,
+                    1.0,
+                    receiver,
+                    first,
+                    Some(replacement),
+                ));
             }
             if replacement.ty != Ty::String && !replacement.ty.is_error() {
-                self.error(
-                    replacement.span,
-                    "`replace` replacement must be a string",
-                );
+                self.error(replacement.span, "`replace` replacement must be a string");
                 return Ok(self.poison(span));
             }
             if first.ty == Ty::RegExp {
@@ -433,7 +512,10 @@ impl Checker<'_> {
                     return Ok(self.poison(span));
                 };
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![first, receiver, replacement] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![first, receiver, replacement],
+                    },
                     ty: Ty::String,
                     span,
                 });
@@ -447,15 +529,16 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, first, replacement] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, first, replacement],
+                },
                 ty: Ty::String,
                 span,
             });
         }
         // String methods taking a RegExp: match/search.
-        if receiver.ty == Ty::String
-            && matches!(mname, "match" | "search")
-        {
+        if receiver.ty == Ty::String && matches!(mname, "match" | "search") {
             let expected_args = 1;
             if args.len() == expected_args {
                 let first = self.check_expr(cx, &args[0]);
@@ -465,10 +548,7 @@ impl Checker<'_> {
                 }
                 {
                     if first.ty != Ty::RegExp && !first.ty.is_error() {
-                        self.error(
-                            first.span,
-                            format!("`{mname}` expects a RegExp argument"),
-                        );
+                        self.error(first.span, format!("`{mname}` expects a RegExp argument"));
                         return Ok(self.poison(span));
                     }
                     let (native_name, return_ty) = match mname {
@@ -476,9 +556,7 @@ impl Checker<'_> {
                         _ => ("regexpSearch", Ty::Int(IntKind::I32)),
                     };
                     let call_args = vec![first, receiver];
-                    let Some((id, _)) =
-                        zun_natives::resolve("collections", native_name)
-                    else {
+                    let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                         self.error(
                             span,
                             format!("missing collection intrinsic `{native_name}`"),
@@ -486,7 +564,10 @@ impl Checker<'_> {
                         return Ok(self.poison(span));
                     };
                     return Ok(hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: call_args,
+                        },
                         ty: return_ty,
                         span,
                     });
@@ -504,5 +585,4 @@ impl Checker<'_> {
         // token and can never be unregistered (per the ECMAScript spec).
         Err(receiver)
     }
-
 }

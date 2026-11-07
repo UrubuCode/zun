@@ -67,9 +67,10 @@ impl<'a> Interp<'a> {
                                 self.settle_promise_reject(roots[0], message.to_string());
                             }
                             other => {
-                                let reason =
-                                    zun_gc::with_current_heap_mut(|heap| other.clone().box_any(heap))
-                                        .unwrap_or_else(zun_core::Any::null);
+                                let reason = zun_gc::with_current_heap_mut(|heap| {
+                                    other.clone().box_any(heap)
+                                })
+                                .unwrap_or_else(zun_core::Any::null);
                                 let message = value_to_error_string(other);
                                 self.settle_promise_reject_value(roots[0], reason, message);
                             }
@@ -80,17 +81,17 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(roots[0]))
             }
             "promiseResolve" => {
-                let promise = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let value = any(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let promise =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value =
+                    any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // Settle through the scheduler directly: the heap cell holds the
                 // value, and bridged reactions/frames wake via the scheduler.
                 Ok(Value::Bool(self.settle_promise_resolve(promise, value)))
             }
             "promiseReject" => {
-                let promise = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let promise =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let error = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(error) => error.to_string(),
                     _ => return Err(RunError::BadToken),
@@ -98,8 +99,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(self.settle_promise_reject(promise, error)))
             }
             "promiseState" => {
-                let promise = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let promise =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let state = zun_gc::with_current_heap(|heap| heap.promise_state(promise))
                     .ok_or(RunError::BadToken)?;
                 let state = match state {
@@ -110,36 +111,36 @@ impl<'a> Interp<'a> {
                 Ok(Value::Int(state, zun_il::NumKind::U8))
             }
             "promiseResult" => {
-                let promise = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let promise =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let value = zun_gc::with_current_heap(|heap| heap.promise_result(promise))
                     .ok_or(RunError::BadToken)?;
                 Ok(Value::Any(value))
             }
             "promiseIsReady" => {
-                let promise = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let promise =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(Value::Bool(
                     zun_gc::with_current_heap(|heap| heap.promise_is_ready(promise))
                         .ok_or(RunError::BadToken)?,
                 ))
             }
             "promiseThen" => {
-                let source = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let on_fulfilled = callback_arg(args.get(1));
                 let on_rejected = callback_arg(args.get(2));
                 self.promise_then(source, on_fulfilled, on_rejected)
             }
             "promiseCatch" => {
-                let source = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let on_rejected = callback_arg(args.get(1));
                 self.promise_then(source, None, on_rejected)
             }
             "promiseFinally" => {
-                let source = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let source =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let on_finally = callback_arg(args.get(1));
                 self.promise_finally(source, on_finally)
             }
@@ -155,7 +156,8 @@ impl<'a> Interp<'a> {
                 if let Some(obj) = object(value) {
                     let thenable = zun_gc::with_current_heap(|heap| {
                         (heap.is_dynamic_object(obj) && heap.array_len(obj).is_none())
-                            || (!heap.is_dynamic_object(obj) && self.instance_method_rid(obj, "then").is_some())
+                            || (!heap.is_dynamic_object(obj)
+                                && self.instance_method_rid(obj, "then").is_some())
                     });
                     if thenable {
                         let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
@@ -187,8 +189,9 @@ impl<'a> Interp<'a> {
                         self.settle_promise_reject(promise, message.to_string());
                     }
                     other => {
-                        let reason = zun_gc::with_current_heap_mut(|heap| other.clone().box_any(heap))
-                            .unwrap_or_else(zun_core::Any::null);
+                        let reason =
+                            zun_gc::with_current_heap_mut(|heap| other.clone().box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
                         let message = value_to_error_string(other);
                         self.settle_promise_reject_value(promise, reason, message);
                     }
@@ -196,8 +199,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(promise))
             }
             "promiseAll" | "promiseAllSettled" | "promiseRace" | "promiseAny" => {
-                let array = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 self.promise_combinator(name, array)
             }
             "setTimeout" | "setInterval" | "setImmediate" => {
@@ -220,7 +223,11 @@ impl<'a> Interp<'a> {
                     }
                 };
                 let delay = delay.max(0);
-                let period = if name == "setInterval" { Some(delay.max(0)) } else { None };
+                let period = if name == "setInterval" {
+                    Some(delay.max(0))
+                } else {
+                    None
+                };
                 let handle = self.timer_arm(callback, delay, period);
                 Ok(Value::Float(handle as f64, zun_il::NumKind::F64))
             }
@@ -235,7 +242,11 @@ impl<'a> Interp<'a> {
                     _ => 0,
                 }
                 .max(0);
-                let period = if name == "setIntervalArgs" { Some(delay) } else { None };
+                let period = if name == "setIntervalArgs" {
+                    Some(delay)
+                } else {
+                    None
+                };
                 let extra = match args.get(2).and_then(as_object_ref) {
                     Some(array) => self.read_array_values(array)?,
                     None => Vec::new(),

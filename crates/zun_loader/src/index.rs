@@ -279,7 +279,9 @@ impl SignedModuleIndex {
             .ok_or_else(|| LoadError::InvalidManifest("truncated rotated index".into()))?;
         let index = ModuleIndex::read(index_bytes)?;
         if take(payload, &mut prefix_cursor, 4) != Some(b"ZROT") {
-            return Err(LoadError::InvalidManifest("missing signed key rotation".into()));
+            return Err(LoadError::InvalidManifest(
+                "missing signed key rotation".into(),
+            ));
         }
         let mut cursor = prefix_cursor;
         let additions = read_u32(payload, &mut cursor)
@@ -301,7 +303,9 @@ impl SignedModuleIndex {
             key_revocations.push(raw.try_into().unwrap());
         }
         if cursor != payload.len() {
-            return Err(LoadError::InvalidManifest("trailing key rotation bytes".into()));
+            return Err(LoadError::InvalidManifest(
+                "trailing key rotation bytes".into(),
+            ));
         }
         let signed = Self {
             index,

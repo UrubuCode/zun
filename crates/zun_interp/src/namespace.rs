@@ -49,9 +49,11 @@ pub fn zun_dynamic_import(
 ) -> Result<Value, RunError> {
     let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
     let scope = loader.and_then(|loader| {
-        loader
-            .get(specifier)
-            .or_else(|| specifier.strip_prefix("./").and_then(|name| loader.get(name)))
+        loader.get(specifier).or_else(|| {
+            specifier
+                .strip_prefix("./")
+                .and_then(|name| loader.get(name))
+        })
     });
     match scope {
         Some(scope) => {
@@ -83,8 +85,9 @@ pub fn call_namespace_member(
     let Value::Object(namespace) = namespace else {
         return Err(RunError::BadToken);
     };
-    let function = zun_gc::with_current_heap(|heap| heap.dynamic_get_module_function(*namespace, name))
-        .ok_or(RunError::BadToken)?;
+    let function =
+        zun_gc::with_current_heap(|heap| heap.dynamic_get_module_function(*namespace, name))
+            .ok_or(RunError::BadToken)?;
     let scope = loader.get(function.module()).ok_or(RunError::BadToken)?;
     run_method_loaded(scope, loader, function.method_rid(), args, output)
 }
@@ -162,7 +165,10 @@ pub fn construct_namespace_class(
     let fields: Vec<(String, u8)> = (field_start..field_end)
         .map(|field_rid| {
             let field = &scope.module().tables.field_defs[field_rid as usize - 1];
-            (scope.module().strings.get(field.name).to_owned(), field.kind)
+            (
+                scope.module().strings.get(field.name).to_owned(),
+                field.kind,
+            )
         })
         .collect();
 
@@ -200,7 +206,10 @@ pub fn construct_namespace_class(
             .iter()
             .enumerate()
             .map(|(slot, (name, kind))| {
-                (name.clone(), crate::value::load_field(*kind, instance, slot, heap))
+                (
+                    name.clone(),
+                    crate::value::load_field(*kind, instance, slot, heap),
+                )
             })
             .collect()
     });
@@ -255,8 +264,9 @@ pub fn call_namespace_instance_method(
     let Value::Object(wrapper) = instance_wrapper else {
         return Err(RunError::BadToken);
     };
-    let function = zun_gc::with_current_heap(|heap| heap.dynamic_get_module_function(*wrapper, name))
-        .ok_or(RunError::BadToken)?;
+    let function =
+        zun_gc::with_current_heap(|heap| heap.dynamic_get_module_function(*wrapper, name))
+            .ok_or(RunError::BadToken)?;
     // Recover the kept real instance from the hidden slot.
     let address = zun_gc::with_current_heap(|heap| heap.dynamic_get(*wrapper, "__instance"))
         .and_then(|any| any.as_object())
@@ -314,7 +324,10 @@ fn resync_snapshot_fields(scope: &ModuleScope, wrapper: zun_gc::Obj, instance: z
             .iter()
             .enumerate()
             .map(|(slot, (name, kind))| {
-                (name.clone(), crate::value::load_field(*kind, instance, slot, heap))
+                (
+                    name.clone(),
+                    crate::value::load_field(*kind, instance, slot, heap),
+                )
             })
             .collect()
     });
@@ -387,7 +400,9 @@ mod tests {
     #[test]
     fn import_dynamic_il_awaits_a_resolved_namespace() {
         let mut loader = loader_with_lib();
-        loader.load_bytes("app", &app_module("lib", true).write()).unwrap();
+        loader
+            .load_bytes("app", &app_module("lib", true).write())
+            .unwrap();
         let app = loader.get("app").unwrap();
         let mut output = CaptureOutput::default();
         let result = run_method_loaded(app, &loader, 1, vec![], &mut output).unwrap();
@@ -397,14 +412,20 @@ mod tests {
     #[test]
     fn import_dynamic_il_rejects_unknown_modules() {
         let mut loader = loader_with_lib();
-        loader.load_bytes("app", &app_module("missing", true).write()).unwrap();
+        loader
+            .load_bytes("app", &app_module("missing", true).write())
+            .unwrap();
         let app = loader.get("app").unwrap();
         let mut output = CaptureOutput::default();
         let error = run_method_loaded(app, &loader, 1, vec![], &mut output).unwrap_err();
-        assert!(matches!(error, RunError::Thrown(Value::Str(message)) if message.contains("missing")));
+        assert!(
+            matches!(error, RunError::Thrown(Value::Str(message)) if message.contains("missing"))
+        );
         // Without an await the rejected Promise is simply discarded.
         let mut loader = loader_with_lib();
-        loader.load_bytes("app", &app_module("missing", false).write()).unwrap();
+        loader
+            .load_bytes("app", &app_module("missing", false).write())
+            .unwrap();
         let app = loader.get("app").unwrap();
         let result = run_method_loaded(app, &loader, 1, vec![], &mut output).unwrap();
         assert!(matches!(result, Value::Int(7, _)));
@@ -422,36 +443,54 @@ let r: any = await compute(); let n: number = r as number; print(n);";
         )
         .expect("compile lib");
         for oxc in [false, true] {
-        let app = if oxc {
-            zun_compiler::compile_with_oxc(APP_SOURCE, true).expect("compile app with import() via OXC")
-        } else {
-            zun_compiler::compile(APP_SOURCE).expect("compile app with import()")
-        };
-        let mut loader = ModuleLoader::new();
-        loader.load_bytes("lib", &lib.write()).unwrap();
-        loader.load_bytes("app", &app.write()).unwrap();
-        let entry = loader.get("app").unwrap().module().entry_point.unwrap().rid();
-        let mut output = CaptureOutput::default();
-        run_method_loaded(loader.get("app").unwrap(), &loader, entry, vec![], &mut output).unwrap();
-        // The module body awaits `compute()` and prints the imported result.
-        assert_eq!(output.lines, ["42"]);
-        // The same export called directly (what a static import links to).
-        let answer = loader.get("lib").unwrap().export("answer").map(|export| match export {
-            Export::Method(token) => token.rid(),
-            Export::Type(_) => unreachable!(),
-        });
-        let direct = run_method_loaded(
-            loader.get("lib").unwrap(),
-            &loader,
-            answer.unwrap(),
-            vec![Value::Float(41.0, zun_il::NumKind::F64)],
-            &mut output,
-        )
-        .unwrap();
-        let Value::Float(direct, _) = direct else {
-            panic!("unexpected result shape");
-        };
-        assert_eq!(direct, 42.0);
+            let app = if oxc {
+                zun_compiler::compile_with_oxc(APP_SOURCE, true)
+                    .expect("compile app with import() via OXC")
+            } else {
+                zun_compiler::compile(APP_SOURCE).expect("compile app with import()")
+            };
+            let mut loader = ModuleLoader::new();
+            loader.load_bytes("lib", &lib.write()).unwrap();
+            loader.load_bytes("app", &app.write()).unwrap();
+            let entry = loader
+                .get("app")
+                .unwrap()
+                .module()
+                .entry_point
+                .unwrap()
+                .rid();
+            let mut output = CaptureOutput::default();
+            run_method_loaded(
+                loader.get("app").unwrap(),
+                &loader,
+                entry,
+                vec![],
+                &mut output,
+            )
+            .unwrap();
+            // The module body awaits `compute()` and prints the imported result.
+            assert_eq!(output.lines, ["42"]);
+            // The same export called directly (what a static import links to).
+            let answer = loader
+                .get("lib")
+                .unwrap()
+                .export("answer")
+                .map(|export| match export {
+                    Export::Method(token) => token.rid(),
+                    Export::Type(_) => unreachable!(),
+                });
+            let direct = run_method_loaded(
+                loader.get("lib").unwrap(),
+                &loader,
+                answer.unwrap(),
+                vec![Value::Float(41.0, zun_il::NumKind::F64)],
+                &mut output,
+            )
+            .unwrap();
+            let Value::Float(direct, _) = direct else {
+                panic!("unexpected result shape");
+            };
+            assert_eq!(direct, 42.0);
         }
     }
 
@@ -481,10 +520,21 @@ let r: any = await compute(); let n: number = r as number; print(n);";
             let mut loader = ModuleLoader::new();
             loader.load_bytes("lib", &lib.write()).unwrap();
             loader.load_bytes("app", &app.write()).unwrap();
-            let entry = loader.get("app").unwrap().module().entry_point.unwrap().rid();
+            let entry = loader
+                .get("app")
+                .unwrap()
+                .module()
+                .entry_point
+                .unwrap()
+                .rid();
             let mut output = CaptureOutput::default();
-            let result =
-                run_method_loaded(loader.get("app").unwrap(), &loader, entry, vec![], &mut output);
+            let result = run_method_loaded(
+                loader.get("app").unwrap(),
+                &loader,
+                entry,
+                vec![],
+                &mut output,
+            );
             assert!(result.is_ok(), "{result:?} {:?}", output.lines);
             // The module body awaits `compute()` and prints `p.sum()`.
             assert_eq!(output.lines, ["7"]);
@@ -497,7 +547,8 @@ let r: any = await compute(); let n: number = r as number; print(n);";
         let mut heap = zun_gc::Heap::new();
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
         for specifier in ["lib", "./lib"] {
-            let Value::Object(promise) = zun_dynamic_import(Some(&loader), specifier).unwrap() else {
+            let Value::Object(promise) = zun_dynamic_import(Some(&loader), specifier).unwrap()
+            else {
                 panic!("import.dynamic must produce a Promise object");
             };
             let address = zun_gc::with_current_heap(|heap| heap.promise_result(promise))
@@ -566,7 +617,9 @@ let r: any = await compute(); let n: number = r as number; print(n);";
         )
         .is_err());
         // An unknown class name is not constructible.
-        assert!(construct_namespace_class(&loader, &namespace, "Missing", vec![], &mut output).is_err());
+        assert!(
+            construct_namespace_class(&loader, &namespace, "Missing", vec![], &mut output).is_err()
+        );
     }
 
     #[test]
@@ -644,8 +697,8 @@ let r: any = await compute(); let n: number = r as number; print(n);";
         )
         .unwrap();
 
-        let result = call_namespace_instance_method(&loader, &wrapper, "bump", vec![], &mut output)
-            .unwrap();
+        let result =
+            call_namespace_instance_method(&loader, &wrapper, "bump", vec![], &mut output).unwrap();
         let value = match result {
             Value::Float(value, _) => value,
             Value::Any(any) => any.as_float().expect("numeric result"),
@@ -687,13 +740,16 @@ let r: any = await compute(); let n: number = r as number; print(n);";
 
         // Snapshot reads the construction-time value before any method runs.
         let before = {
-            let Value::Object(object) = wrapper else { panic!("object wrapper") };
-            zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "n")).and_then(|any| any.as_float())
+            let Value::Object(object) = wrapper else {
+                panic!("object wrapper")
+            };
+            zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "n"))
+                .and_then(|any| any.as_float())
         };
         assert_eq!(before, Some(41.0));
 
-        let result = call_namespace_instance_method(&loader, &wrapper, "bump", vec![], &mut output)
-            .unwrap();
+        let result =
+            call_namespace_instance_method(&loader, &wrapper, "bump", vec![], &mut output).unwrap();
         let returned = match result {
             Value::Float(value, _) => value,
             Value::Any(any) => any.as_float().expect("numeric result"),
@@ -703,8 +759,11 @@ let r: any = await compute(); let n: number = r as number; print(n);";
 
         // After the mutating call the snapshot field agrees with the instance.
         let after = {
-            let Value::Object(object) = wrapper else { panic!("object wrapper") };
-            zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "n")).and_then(|any| any.as_float())
+            let Value::Object(object) = wrapper else {
+                panic!("object wrapper")
+            };
+            zun_gc::with_current_heap(|heap| heap.dynamic_get(object, "n"))
+                .and_then(|any| any.as_float())
         };
         assert_eq!(after, Some(42.0));
     }
@@ -733,6 +792,8 @@ let r: any = await compute(); let n: number = r as number; print(n);";
         .unwrap();
         assert!(matches!(result, Value::Int(42, zun_il::NumKind::I32)));
         // v1 scope: value exports and unknown members are not callable yet.
-        assert!(call_namespace_member(&loader, &namespace, "missing", vec![], &mut output).is_err());
+        assert!(
+            call_namespace_member(&loader, &namespace, "missing", vec![], &mut output).is_err()
+        );
     }
 }

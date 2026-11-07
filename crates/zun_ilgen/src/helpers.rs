@@ -30,18 +30,20 @@ pub(crate) fn jitkind_byte(ty: Ty) -> u8 {
         Some(n) => JitKind::Num(n),
         None if ty == Ty::Boolean => JitKind::Bool,
         None if ty == Ty::String => JitKind::String,
-        None
-            if matches!(
-                ty,
-                Ty::Instance(_)
-                    | Ty::Buffer
-                    | Ty::BufferView(_)
-                    | Ty::Map
-                    | Ty::Set
-                    | Ty::WeakMap
-                    | Ty::WeakSet
-                    | Ty::WeakRef
-            ) => JitKind::Object,
+        None if matches!(
+            ty,
+            Ty::Instance(_)
+                | Ty::Buffer
+                | Ty::BufferView(_)
+                | Ty::Map
+                | Ty::Set
+                | Ty::WeakMap
+                | Ty::WeakSet
+                | Ty::WeakRef
+        ) =>
+        {
+            JitKind::Object
+        }
         None if ty == Ty::Array => JitKind::Array,
         // A concrete (non-dynamic) function value: a stored/typed function local
         // or return. Carried as a one-word method rid (`LoadFunction` → rid,

@@ -13,8 +13,10 @@ impl Checker<'_> {
         }
         for f in &program.functions {
             let name = self.text(&f.name).to_string();
-            if matches!(f.body.statements.first(), Some(ast::Stmt::Let { name, .. }) if self.text(name) == "arguments") {
-                self.arguments_functions.insert(self.signatures.len() as u32);
+            if matches!(f.body.statements.first(), Some(ast::Stmt::Let { name, .. }) if self.text(name) == "arguments")
+            {
+                self.arguments_functions
+                    .insert(self.signatures.len() as u32);
             }
             let params: Vec<Ty> = f
                 .params
@@ -106,7 +108,11 @@ impl Checker<'_> {
                                 .any(|word| word == "this" || word == "super")
                         });
                 let mut params = if m.is_static {
-                    if hidden_class_param { vec![Ty::Any] } else { Vec::new() }
+                    if hidden_class_param {
+                        vec![Ty::Any]
+                    } else {
+                        Vec::new()
+                    }
                 } else {
                     vec![receiver_ty]
                 };
@@ -123,7 +129,9 @@ impl Checker<'_> {
                     && !m.is_async
                     && !m.is_generator
                     && !program.classes.iter().any(|other| {
-                        other.base.is_some_and(|base| self.text(&base) == self.text(&class.name))
+                        other
+                            .base
+                            .is_some_and(|base| self.text(&base) == self.text(&class.name))
                     })
                     && self.block_returns_only_this(&m.body);
                 let return_ty = match &m.return_type {
@@ -257,8 +265,15 @@ impl Checker<'_> {
     /// (`Symbol.hasInstance`, `Symbol.iterator`, …).
     /// `re[Symbol.replace|match|matchAll|split|search](str, ...)` on a RegExp
     /// value (a literal, or any expression statically typed `RegExp`).
-    pub(in crate::check) fn is_regex_symbol_call(&mut self, cx: &mut FunctionCx, callee: &ast::Expr, args: &[ast::Expr]) -> bool {
-        let (ast::Expr::Index { object, index, .. }, Some(first)) = (callee, args.first()) else { return false };
+    pub(in crate::check) fn is_regex_symbol_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+    ) -> bool {
+        let (ast::Expr::Index { object, index, .. }, Some(first)) = (callee, args.first()) else {
+            return false;
+        };
         if matches!(first, ast::Expr::Spread { .. }) {
             return false;
         }
@@ -272,13 +287,19 @@ impl Checker<'_> {
         ) {
             return false;
         }
-        matches!(object.as_ref(), ast::Expr::RegexLiteral { .. }) || self.check_expr(cx, object).ty == Ty::RegExp
+        matches!(object.as_ref(), ast::Expr::RegexLiteral { .. })
+            || self.check_expr(cx, object).ty == Ty::RegExp
     }
 
-    pub(in crate::check) fn well_known_symbol_of_key(&self, key: &ast::Expr) -> Option<zun_core::WellKnownSymbol> {
+    pub(in crate::check) fn well_known_symbol_of_key(
+        &self,
+        key: &ast::Expr,
+    ) -> Option<zun_core::WellKnownSymbol> {
         let (object, field) = match key {
             ast::Expr::Field { object, field, .. } => {
-                let ast::Expr::Ident(name) = object.as_ref() else { return None };
+                let ast::Expr::Ident(name) = object.as_ref() else {
+                    return None;
+                };
                 (self.text(name), self.text(field))
             }
             ast::Expr::StaticField { class, field, .. } => (self.text(class), self.text(field)),

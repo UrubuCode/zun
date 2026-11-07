@@ -198,7 +198,10 @@ pub fn trim_module(module: &Module) -> Result<Module, String> {
 
 /// Remove unreachable bodies while retaining methods named by a root manifest.
 pub fn trim_module_with_roots(module: &Module, roots: &[u32]) -> Result<Module, String> {
-    let reachable: HashSet<u32> = trim_report_with_roots(module, roots)?.reachable_methods.into_iter().collect();
+    let reachable: HashSet<u32> = trim_report_with_roots(module, roots)?
+        .reachable_methods
+        .into_iter()
+        .collect();
     let mut tables = module.tables.clone();
     let mut code = Vec::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
@@ -303,9 +306,11 @@ pub fn compile_with_cached_std(
 pub fn compile_with_default_std(source: &str) -> Result<Module, Vec<Diagnostic>> {
     let (_, standard) = compile_prelude()?;
     let loader = compile_with_cached_std(source, &standard)?;
-    let scope = loader
-        .get("app")
-        .ok_or_else(|| vec![Diagnostic::error("default std compilation did not produce app module")])?;
+    let scope = loader.get("app").ok_or_else(|| {
+        vec![Diagnostic::error(
+            "default std compilation did not produce app module",
+        )]
+    })?;
     Module::read(&scope.module().write())
         .map_err(|error| vec![Diagnostic::error(error.to_string())])
 }
@@ -322,9 +327,8 @@ fn compile_with_cached_module(
     // which must see the `Response` class) are linked as source below, not
     // exported by the cached module, so only `prelude.zun`'s own functions are
     // imported.
-    externals.retain(|function| {
-        zun_prelude::PRELUDE.contains(&format!("function {}(", function.name))
-    });
+    externals
+        .retain(|function| zun_prelude::PRELUDE.contains(&format!("function {}(", function.name)));
     for function in &mut externals {
         function.module = module_name.to_owned();
     }
@@ -352,8 +356,7 @@ fn compile_with_cached_module(
     // (classes cannot be imported across a module boundary, so they are
     // concatenated as source); `prelude_classes_match_the_linked_source` keeps
     // this path and `with_prelude` in sync.
-    let mut linked_source =
-        format!("{source}\nimport {{ {imports} }} from \"{module_name}\";\n");
+    let mut linked_source = format!("{source}\nimport {{ {imports} }} from \"{module_name}\";\n");
     for class in zun_prelude::PRELUDE_CLASSES {
         linked_source.push_str(class);
         linked_source.push('\n');
@@ -399,9 +402,7 @@ const PRELUDE_CACHE_MAGIC: [u8; 4] = *b"ZPRC";
 const PRELUDE_CACHE_VERSION: u16 = 1;
 
 /// Persist the compiled prelude as a versioned cache envelope.
-pub fn write_prelude_cache(
-    path: impl AsRef<std::path::Path>,
-) -> Result<u64, PreludeCacheError> {
+pub fn write_prelude_cache(path: impl AsRef<std::path::Path>) -> Result<u64, PreludeCacheError> {
     let (fingerprint, module) = compile_prelude().map_err(|diagnostics| {
         PreludeCacheError::Invalid(
             diagnostics
@@ -423,9 +424,7 @@ pub fn write_prelude_cache(
 }
 
 /// Read a prelude cache and reject it unless it matches the current source.
-pub fn read_prelude_cache(
-    path: impl AsRef<std::path::Path>,
-) -> Result<Module, PreludeCacheError> {
+pub fn read_prelude_cache(path: impl AsRef<std::path::Path>) -> Result<Module, PreludeCacheError> {
     let bytes = std::fs::read(path).map_err(PreludeCacheError::Io)?;
     if bytes.len() < 18 || bytes[..4] != PRELUDE_CACHE_MAGIC {
         return Err(PreludeCacheError::Invalid("bad cache header".into()));
@@ -450,8 +449,7 @@ pub fn read_prelude_cache(
             "trailing bytes after module payload".into(),
         ));
     }
-    zun_module::Module::read(payload)
-        .map_err(|error| PreludeCacheError::Invalid(error.to_string()))
+    zun_module::Module::read(payload).map_err(|error| PreludeCacheError::Invalid(error.to_string()))
 }
 
 fn compile_source_with_externals(
@@ -502,10 +500,7 @@ fn compile_program_with_externals(
 /// OXC owns JavaScript/TypeScript parsing for this entry point; the resulting
 /// Zun AST still goes through the same semantic checker and IL lowering as the
 /// established parser path.
-pub fn compile_with_oxc(
-    source: &str,
-    typescript: bool,
-) -> Result<Module, Vec<Diagnostic>> {
+pub fn compile_with_oxc(source: &str, typescript: bool) -> Result<Module, Vec<Diagnostic>> {
     compile_with_oxc_and_externals(source, typescript, &[])
 }
 
@@ -523,13 +518,12 @@ pub fn compile_with_oxc_and_externals(
     let combined = zun_prelude::with_prelude(source);
     // The prelude is TypeScript, so the combined program is always parsed as TS.
     let _ = typescript;
-    let ast = zun_syntax::oxc::parse_subset(&combined, true)
-        .map_err(|errors| {
-            errors
-                .into_iter()
-                .map(Diagnostic::error)
-                .collect::<Vec<_>>()
-        })?;
+    let ast = zun_syntax::oxc::parse_subset(&combined, true).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(Diagnostic::error)
+            .collect::<Vec<_>>()
+    })?;
     compile_program_with_externals(&combined, ast, Vec::new(), external_functions)
 }
 
@@ -585,7 +579,8 @@ where
         let ast = zun_syntax::parse(source, &mut parse_diagnostics);
         for import in ast.imports {
             for binding in import.names {
-                let imported = &source[binding.imported.span.start as usize..binding.imported.span.end as usize];
+                let imported = &source
+                    [binding.imported.span.start as usize..binding.imported.span.end as usize];
                 if let Some(function) = exports.get(&(import.module.clone(), imported.to_owned())) {
                     externals.push(function.clone());
                 }
@@ -752,7 +747,8 @@ where
     for (module, source, program) in parsed {
         for import in program.imports {
             for binding in import.names {
-                let imported = &source[binding.imported.span.start as usize..binding.imported.span.end as usize];
+                let imported = &source
+                    [binding.imported.span.start as usize..binding.imported.span.end as usize];
                 let found = if import.module == zun_natives::CORE_MODULE {
                     zun_natives::is_core_export(imported)
                 } else if import.module.starts_with("zun:") {
@@ -913,7 +909,8 @@ mod tests {
 
     #[test]
     fn compiles_a_standalone_module_importing_a_linked_prelude_function() {
-        let source = "function main(): int { return abs(-7); }\nimport { abs } from \"zun:prelude\";";
+        let source =
+            "function main(): int { return abs(-7); }\nimport { abs } from \"zun:prelude\";";
         let module = compile_without_prelude(
             source,
             &[zun_sema::check::ExternalFunction {
@@ -930,11 +927,9 @@ mod tests {
     #[test]
     fn compiles_against_a_cached_prelude_module_without_concatenation() {
         let (_, prelude) = compile_prelude().expect("prelude should compile");
-        let loader = compile_with_cached_prelude(
-            "function main(): int { return abs(-7); }",
-            &prelude,
-        )
-        .expect("cached prelude should link");
+        let loader =
+            compile_with_cached_prelude("function main(): int { return abs(-7); }", &prelude)
+                .expect("cached prelude should link");
         let app = loader.get("app").expect("app scope");
         assert_eq!(app.module().tables.member_refs.len(), 1);
         assert!(loader.get("zun:prelude").is_some());
@@ -943,13 +938,13 @@ mod tests {
     #[test]
     fn compiles_against_the_default_installed_std_module() {
         let (_, standard) = compile_prelude().expect("standard library should compile");
-        let loader = compile_with_cached_std(
-            "function main(): int { return abs(-7); }",
-            &standard,
-        )
-        .expect("zun:std should link");
+        let loader = compile_with_cached_std("function main(): int { return abs(-7); }", &standard)
+            .expect("zun:std should link");
         assert!(loader.get("zun:std").is_some());
-        assert_eq!(loader.get("app").unwrap().module().tables.member_refs.len(), 1);
+        assert_eq!(
+            loader.get("app").unwrap().module().tables.member_refs.len(),
+            1
+        );
     }
 
     #[test]
@@ -995,14 +990,12 @@ mod tests {
 
     #[test]
     fn rejects_a_cached_prelude_with_missing_exports() {
-        let error = compile_with_cached_prelude(
-            "function main(): int { return abs(-7); }",
-            &Module::new(),
-        )
-        .expect_err("an incomplete prelude must not link");
-        assert!(error.iter().any(|diagnostic| diagnostic
-            .message
-            .contains("missing export `abs`")));
+        let error =
+            compile_with_cached_prelude("function main(): int { return abs(-7); }", &Module::new())
+                .expect_err("an incomplete prelude must not link");
+        assert!(error
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("missing export `abs`")));
     }
 
     #[test]
@@ -1215,7 +1208,9 @@ mod tests {
             }],
         )
         .expect_err("source extern module mismatch must be rejected");
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "SEM0001"));
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "SEM0001"));
     }
 
     #[test]
@@ -1238,7 +1233,9 @@ mod tests {
             ],
         )
         .expect_err("ambiguous external symbols must be rejected");
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "SEM0001"));
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "SEM0001"));
     }
 
     #[test]

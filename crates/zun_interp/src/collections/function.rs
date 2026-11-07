@@ -20,8 +20,8 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 let this_arg = args.get(1).ok_or(RunError::BadToken)?.clone();
-                let array = object(args.get(2).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let spread = self.read_array_values(array)?;
                 // Argument-marshalling site: restore function values that rode
                 // the `Any` lane as `functionBox` wrappers.
@@ -45,8 +45,8 @@ impl<'a> Interp<'a> {
                     Value::Function(handle) => handle,
                     _ => return Err(RunError::BadToken),
                 };
-                let array = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let spread = self.read_array_values(array)?;
                 let call_args = zun_gc::with_current_heap(|heap| {
                     spread
@@ -64,8 +64,8 @@ impl<'a> Interp<'a> {
                     Value::Function(handle) => *handle,
                     _ => return Err(RunError::BadToken),
                 };
-                let array = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let array =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let record = zun_gc::with_current_heap_mut(|heap| {
                     let record = heap.alloc_dynamic();
                     heap.dynamic_set_function(record, "__target", target);
@@ -83,14 +83,15 @@ impl<'a> Interp<'a> {
             "functionConstruct" => self.function_construct(args),
             "functionBoxIs" => {
                 // Handle identity between a `functionBox` record and a function.
-                let boxed = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let boxed =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let target = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Function(handle) => *handle,
                     _ => return Err(RunError::BadToken),
                 };
-                let same = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(boxed, "__boxedFn"))
-                    .is_some_and(|stored| stored == target);
+                let same =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(boxed, "__boxedFn"))
+                        .is_some_and(|stored| stored == target);
                 Ok(Value::Bool(same))
             }
             "functionBox" => {

@@ -28,7 +28,9 @@ impl NativeRootScope {
             id
         });
         NATIVE_ROOTS.with(|registered| {
-            registered.borrow_mut().push((id, roots.as_ptr(), roots.len()));
+            registered
+                .borrow_mut()
+                .push((id, roots.as_ptr(), roots.len()));
         });
         Self { id }
     }
@@ -38,8 +40,7 @@ impl Drop for NativeRootScope {
     fn drop(&mut self) {
         NATIVE_ROOTS.with(|registered| {
             let mut registered = registered.borrow_mut();
-            if let Some(index) = registered.iter().position(|&(id, _, _)| id == self.id)
-            {
+            if let Some(index) = registered.iter().position(|&(id, _, _)| id == self.id) {
                 registered.remove(index);
             }
         });

@@ -187,7 +187,10 @@ impl Parser<'_> {
                     classes.push(self.class_with_decorators(decorators));
                 } else {
                     let t = self.peek();
-                    self.error_at(t.span, "decorators are only supported on classes and class members");
+                    self.error_at(
+                        t.span,
+                        "decorators are only supported on classes and class members",
+                    );
                 }
                 continue;
             }
@@ -244,14 +247,21 @@ impl Parser<'_> {
             } else {
                 EnumValue::Auto
             };
-            members.push(EnumMember { name: member_name, value });
+            members.push(EnumMember {
+                name: member_name,
+                value,
+            });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
         }
         let close = self.peek().span;
         self.expect(TokenKind::RBrace, "`}` to close an enum body");
-        EnumDecl { name, members, span: start.to(close) }
+        EnumDecl {
+            name,
+            members,
+            span: start.to(close),
+        }
     }
 
     /// Parse an enum member initializer: a string literal, a number, or a
@@ -267,7 +277,10 @@ impl Parser<'_> {
             let n = self.text(t).parse::<f64>().unwrap_or(f64::NAN);
             return EnumValue::Num(if negate { -n } else { n });
         }
-        self.error_at(self.peek().span, "an enum member value must be a number or string literal");
+        self.error_at(
+            self.peek().span,
+            "an enum member value must be a number or string literal",
+        );
         EnumValue::Auto
     }
 
@@ -284,7 +297,12 @@ impl Parser<'_> {
         self.expect(TokenKind::Eq, "`=` in a type alias");
         let value = if generic {
             self.skip_type();
-            TypeAnnotation { name: Name { span: Span::empty_at(start.start) }, is_array: false }
+            TypeAnnotation {
+                name: Name {
+                    span: Span::empty_at(start.start),
+                },
+                is_array: false,
+            }
         } else {
             self.type_annotation("a type")
         };
@@ -333,7 +351,9 @@ impl Parser<'_> {
         TypeAliasDecl {
             name,
             value: TypeAnnotation {
-                name: Name { span: Span::empty_at(start.start) },
+                name: Name {
+                    span: Span::empty_at(start.start),
+                },
                 is_array: false,
             },
         }
@@ -350,7 +370,12 @@ impl Parser<'_> {
                 } else {
                     imported.clone()
                 };
-                names.push(ImportName { imported, local, is_default: false, is_namespace: false });
+                names.push(ImportName {
+                    imported,
+                    local,
+                    is_default: false,
+                    is_namespace: false,
+                });
                 if !self.eat(TokenKind::Comma) {
                     break;
                 }
@@ -361,7 +386,12 @@ impl Parser<'_> {
             // sema/linking decides whether that export is a type or value.
             let local = self.name("a default import name");
             let imported = local.clone();
-            names.push(ImportName { imported, local, is_default: true, is_namespace: false });
+            names.push(ImportName {
+                imported,
+                local,
+                is_default: true,
+                is_namespace: false,
+            });
         }
         self.expect(TokenKind::KwFrom, "`from`");
         let module = match self.expect(TokenKind::String, "a module string") {
@@ -385,9 +415,9 @@ impl Parser<'_> {
         let mut decorators = Vec::new();
         while self.at(TokenKind::At) {
             let start = self.bump().span; // `@`
-            // The callee is an identifier optionally followed by a `.name`
-            // member chain (`@foo`, `@foo.bar.baz`). Computed member access and
-            // other expression forms are not part of the decorator grammar.
+                                          // The callee is an identifier optionally followed by a `.name`
+                                          // member chain (`@foo`, `@foo.bar.baz`). Computed member access and
+                                          // other expression forms are not part of the decorator grammar.
             let name = self.name("a decorator name");
             let mut callee = Expr::Ident(name);
             while self.at(TokenKind::Dot) {
@@ -488,7 +518,11 @@ impl Parser<'_> {
                     let name = Name { span: key.span() };
                     let function = self.method(name, is_extern, true, None);
                     let span = open.to(function.span);
-                    symbol_methods.push(ClassSymbolMethod { key, function, span });
+                    symbol_methods.push(ClassSymbolMethod {
+                        key,
+                        function,
+                        span,
+                    });
                 } else {
                     self.error_at(key.span(), "a computed class member must be a method");
                 }
@@ -498,16 +532,26 @@ impl Parser<'_> {
                 continue;
             }
             let member_name = self.member_name("a field or method name");
-            let accessor = if !is_static && !is_extern && !self.at(TokenKind::LParen)
-                && (self.text(self.tokens[self.pos - 1]) == "get" || self.text(self.tokens[self.pos - 1]) == "set")
+            let accessor = if !is_static
+                && !is_extern
+                && !self.at(TokenKind::LParen)
+                && (self.text(self.tokens[self.pos - 1]) == "get"
+                    || self.text(self.tokens[self.pos - 1]) == "set")
             {
-                let kind = if self.text(self.tokens[self.pos - 1]) == "get" { AccessorKind::Get } else { AccessorKind::Set };
+                let kind = if self.text(self.tokens[self.pos - 1]) == "get" {
+                    AccessorKind::Get
+                } else {
+                    AccessorKind::Set
+                };
                 Some((kind, self.name("a property name")))
-            } else { None };
+            } else {
+                None
+            };
             // A `(` after the name starts a method; a `<` starts a generic
             // method (`m<T>()`); `:` starts a field.
             if self.at(TokenKind::LParen) || self.at(TokenKind::Lt) {
-                let (accessor, name) = accessor.map_or((None, member_name), |(kind, name)| (Some(kind), name));
+                let (accessor, name) =
+                    accessor.map_or((None, member_name), |(kind, name)| (Some(kind), name));
                 let mut method = self.method(name, is_extern, is_static, accessor);
                 method.decorators = member_decorators;
                 methods.push(method);
@@ -555,7 +599,13 @@ impl Parser<'_> {
 
     /// Parse a method, given its already-consumed name. Shares the parameter,
     /// return-type, and body grammar with top-level functions.
-    fn method(&mut self, name: Name, is_extern: bool, is_static: bool, accessor: Option<AccessorKind>) -> Function {
+    fn method(
+        &mut self,
+        name: Name,
+        is_extern: bool,
+        is_static: bool,
+        accessor: Option<AccessorKind>,
+    ) -> Function {
         let type_params = self.type_params();
         self.expect(TokenKind::LParen, "`(`");
         let mut params = Vec::new();
@@ -570,7 +620,12 @@ impl Parser<'_> {
             } else if optional {
                 // `x?: T` with no explicit default is nullable `any` (no union
                 // types), defaulting to `null` when omitted. Empty span → Ty::Any.
-                ty = Some(TypeAnnotation { name: Name { span: Span::empty_at(pname.span.start) }, is_array: false });
+                ty = Some(TypeAnnotation {
+                    name: Name {
+                        span: Span::empty_at(pname.span.start),
+                    },
+                    is_array: false,
+                });
                 Some(Box::new(Expr::Null { span: pname.span }))
             } else {
                 None
@@ -636,7 +691,12 @@ impl Parser<'_> {
             } else if optional {
                 // `x?: T` with no explicit default is nullable `any` (no union
                 // types), defaulting to `null` when omitted. Empty span → Ty::Any.
-                ty = Some(TypeAnnotation { name: Name { span: Span::empty_at(pname.span.start) }, is_array: false });
+                ty = Some(TypeAnnotation {
+                    name: Name {
+                        span: Span::empty_at(pname.span.start),
+                    },
+                    is_array: false,
+                });
                 Some(Box::new(Expr::Null { span: pname.span }))
             } else {
                 None
@@ -666,7 +726,10 @@ impl Parser<'_> {
                 .expect(TokenKind::Semi, "`;` after extern function")
                 .map(|token| token.span)
                 .unwrap_or(name.span);
-            Block { statements: Vec::new(), span: name.span.to(end) }
+            Block {
+                statements: Vec::new(),
+                span: name.span.to(end),
+            }
         } else {
             self.block()
         };
@@ -750,7 +813,10 @@ impl Parser<'_> {
             TokenKind::Number => {
                 let token = self.bump();
                 let value = self.text(token).parse::<f64>().unwrap_or(f64::NAN);
-                PropertyKey::Number { value, span: token.span }
+                PropertyKey::Number {
+                    value,
+                    span: token.span,
+                }
             }
             kind if kind == TokenKind::Ident || kind.is_keyword() => {
                 let token = self.bump();
@@ -789,7 +855,11 @@ impl Parser<'_> {
         }
         let end = self.peek().span;
         self.expect(TokenKind::RBracket, "`]` after array pattern");
-        Pattern::Array { elements, rest, span: start.to(end) }
+        Pattern::Array {
+            elements,
+            rest,
+            span: start.to(end),
+        }
     }
 
     fn object_pattern(&mut self) -> Pattern {
@@ -809,22 +879,39 @@ impl Parser<'_> {
             } else {
                 // Shorthand `{ x }`: the key identifier is also the binding.
                 match &key {
-                    PropertyKey::Ident(name) => Pattern::Ident { name: *name, ty: None },
+                    PropertyKey::Ident(name) => Pattern::Ident {
+                        name: *name,
+                        ty: None,
+                    },
                     _ => {
-                        self.error_at(self.peek().span, "a renamed binding (`key: target`) is required here");
-                        Pattern::Ident { name: self.name("a binding name"), ty: None }
+                        self.error_at(
+                            self.peek().span,
+                            "a renamed binding (`key: target`) is required here",
+                        );
+                        Pattern::Ident {
+                            name: self.name("a binding name"),
+                            ty: None,
+                        }
                     }
                 }
             };
             let default = self.eat(TokenKind::Eq).then(|| self.assignment());
-            properties.push(PatternProperty { key, value, default });
+            properties.push(PatternProperty {
+                key,
+                value,
+                default,
+            });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
         }
         let end = self.peek().span;
         self.expect(TokenKind::RBrace, "`}` after object pattern");
-        Pattern::Object { properties, rest, span: start.to(end) }
+        Pattern::Object {
+            properties,
+            rest,
+            span: start.to(end),
+        }
     }
 
     /// Parse switch cases and reduce them to the existing if/else AST.
@@ -959,7 +1046,12 @@ impl Parser<'_> {
                 self.expect(TokenKind::RParen, "`)` after for-of iterable");
                 let body = self.block();
                 let span = start.to(body.span);
-                return Stmt::ForOf { pattern, iterable, body, span };
+                return Stmt::ForOf {
+                    pattern,
+                    iterable,
+                    body,
+                    span,
+                };
             }
             let name = self.name("a for binding name");
             let ty = self.optional_type_annotation();
@@ -1015,7 +1107,6 @@ impl Parser<'_> {
     }
 
     // --- expressions (precedence climbing) ---
-
 }
 
 #[cfg(test)]

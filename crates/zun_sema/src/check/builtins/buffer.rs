@@ -25,7 +25,14 @@ impl Checker<'_> {
                 checker.error(span, format!("missing Buffer intrinsic `{native}`"));
                 return checker.poison(span);
             };
-            hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: call_args }, ty, span }
+            hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
+                ty,
+                span,
+            }
         };
         match method {
             "from" => {
@@ -46,12 +53,15 @@ impl Checker<'_> {
                             }
                             None => string_lit("utf8", span),
                         };
-                        call(self, "nodeBufferFromString", vec![source, encoding], u8_view)
+                        call(
+                            self,
+                            "nodeBufferFromString",
+                            vec![source, encoding],
+                            u8_view,
+                        )
                     }
                     Ty::Array => call(self, "nodeBufferFromArray", vec![source], u8_view),
-                    Ty::Buffer => {
-                        call(self, "nodeBufferFromArrayBuffer", vec![source], u8_view)
-                    }
+                    Ty::Buffer => call(self, "nodeBufferFromArrayBuffer", vec![source], u8_view),
                     other if !other.is_error() => {
                         self.error(
                             source.span,
@@ -99,7 +109,10 @@ impl Checker<'_> {
             }
             "concat" => {
                 if args.len() != 1 {
-                    self.error(span, "`Buffer.concat` expects 1 argument (a list)".to_string());
+                    self.error(
+                        span,
+                        "`Buffer.concat` expects 1 argument (a list)".to_string(),
+                    );
                     return self.poison(span);
                 }
                 let list = self.check_expr(cx, &args[0]);
@@ -117,7 +130,9 @@ impl Checker<'_> {
                 if arg.ty != Ty::Any && !arg.ty.is_error() {
                     arg = hir::Expr {
                         span: arg.span,
-                        kind: hir::ExprKind::BoxAny { value: Box::new(arg) },
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(arg),
+                        },
                         ty: Ty::Any,
                     };
                 }
@@ -125,7 +140,10 @@ impl Checker<'_> {
             }
             "byteLength" => {
                 if args.is_empty() || args.len() > 2 {
-                    self.error(span, "`Buffer.byteLength` expects 1 or 2 arguments".to_string());
+                    self.error(
+                        span,
+                        "`Buffer.byteLength` expects 1 or 2 arguments".to_string(),
+                    );
                     return self.poison(span);
                 }
                 let string = self.check_expr(cx, &args[0]);
@@ -136,10 +154,18 @@ impl Checker<'_> {
                     Some(arg) => self.check_expr(cx, arg),
                     None => string_lit("utf8", span),
                 };
-                call(self, "nodeBufferByteLength", vec![string, encoding], Ty::Int(IntKind::U64))
+                call(
+                    self,
+                    "nodeBufferByteLength",
+                    vec![string, encoding],
+                    Ty::Int(IntKind::U64),
+                )
             }
             other => {
-                self.error(method_span, format!("`Buffer.{other}` is not supported in this runtime"));
+                self.error(
+                    method_span,
+                    format!("`Buffer.{other}` is not supported in this runtime"),
+                );
                 self.poison(span)
             }
         }
@@ -175,7 +201,14 @@ impl Checker<'_> {
                 checker.error(span, format!("missing Buffer intrinsic `{native}`"));
                 return checker.poison(span);
             };
-            hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: call_args }, ty, span }
+            hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
+                ty,
+                span,
+            }
         };
         // Check an optional integer argument, applying `default` when absent.
         macro_rules! opt_int {
@@ -211,7 +244,12 @@ impl Checker<'_> {
                 };
                 let start = opt_int!(1, 0);
                 let end = opt_int!(2, u64::MAX);
-                call(self, "nodeBufferToString", vec![receiver, encoding, start, end], Ty::String)
+                call(
+                    self,
+                    "nodeBufferToString",
+                    vec![receiver, encoding, start, end],
+                    Ty::String,
+                )
             }
             "write" => {
                 if args.is_empty() || args.len() > 3 {
@@ -227,7 +265,12 @@ impl Checker<'_> {
                     Some(arg) => self.check_expr(cx, arg),
                     None => string_lit("utf8", span),
                 };
-                call(self, "nodeBufferWrite", vec![receiver, string, offset, encoding], u64_ty)
+                call(
+                    self,
+                    "nodeBufferWrite",
+                    vec![receiver, string, offset, encoding],
+                    u64_ty,
+                )
             }
             "slice" => {
                 if args.len() > 2 {
@@ -238,8 +281,10 @@ impl Checker<'_> {
                 // default is a large positive sentinel the floor clamps to the
                 // real length (a negative sentinel would be read as `len-1`).
                 let i64_ty = Ty::Int(IntKind::I64);
-                let opt_signed = |checker: &mut Self, cx: &mut FunctionCx, pos: usize, default: f64| {
-                    match args.get(pos) {
+                let opt_signed =
+                    |checker: &mut Self, cx: &mut FunctionCx, pos: usize, default: f64| match args
+                        .get(pos)
+                    {
                         Some(arg) => {
                             let mut value = checker.check_expr(cx, arg);
                             coerce_numeric_literal(&mut value, i64_ty);
@@ -253,8 +298,7 @@ impl Checker<'_> {
                             ty: i64_ty,
                             span,
                         },
-                    }
-                };
+                    };
                 let start = opt_signed(self, cx, 0, 0.0);
                 let end = opt_signed(self, cx, 1, (1i64 << 53) as f64);
                 call(self, "nodeBufferSlice", vec![receiver, start, end], u8_view)
@@ -295,8 +339,10 @@ impl Checker<'_> {
                 // with `slice`). The `sourceEnd` default is a large positive
                 // sentinel the floor clamps to the real length (NUCLEUS #21).
                 let i64_ty = Ty::Int(IntKind::I64);
-                let opt_signed = |checker: &mut Self, cx: &mut FunctionCx, pos: usize, default: f64| {
-                    match args.get(pos) {
+                let opt_signed =
+                    |checker: &mut Self, cx: &mut FunctionCx, pos: usize, default: f64| match args
+                        .get(pos)
+                    {
                         Some(arg) => {
                             let mut value = checker.check_expr(cx, arg);
                             coerce_numeric_literal(&mut value, i64_ty);
@@ -310,8 +356,7 @@ impl Checker<'_> {
                             ty: i64_ty,
                             span,
                         },
-                    }
-                };
+                    };
                 let target_start = opt_signed(self, cx, 1, 0.0);
                 let source_start = opt_signed(self, cx, 2, 0.0);
                 let source_end = opt_signed(self, cx, 3, (1i64 << 53) as f64);
@@ -349,12 +394,18 @@ impl Checker<'_> {
                 } else {
                     hir::Expr {
                         span: needle_raw.span,
-                        kind: hir::ExprKind::BoxAny { value: Box::new(needle_raw) },
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(needle_raw),
+                        },
                         ty: Ty::Any,
                     }
                 };
                 let i64_ty = Ty::Int(IntKind::I64);
-                let default_offset = if mname == "lastIndexOf" { (1i64 << 53) as f64 } else { 0.0 };
+                let default_offset = if mname == "lastIndexOf" {
+                    (1i64 << 53) as f64
+                } else {
+                    0.0
+                };
                 let byte_offset = match args.get(1) {
                     Some(arg) => {
                         let mut value = self.check_expr(cx, arg);
@@ -379,7 +430,12 @@ impl Checker<'_> {
                     "lastIndexOf" => ("nodeBufferLastIndexOf", Ty::Int(IntKind::I64)),
                     _ => ("nodeBufferIncludes", Ty::Boolean),
                 };
-                call(self, native, vec![receiver, needle, byte_offset, encoding], ret)
+                call(
+                    self,
+                    native,
+                    vec![receiver, needle, byte_offset, encoding],
+                    ret,
+                )
             }
             // Variable-width integer readers `readUIntLE(offset, byteLength)`.
             "readUIntLE" | "readUIntBE" | "readIntLE" | "readIntBE" => {
@@ -389,13 +445,19 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 if args.len() != 2 {
-                    self.error(span, format!("`{mname}` expects an offset and a byteLength"));
+                    self.error(
+                        span,
+                        format!("`{mname}` expects an offset and a byteLength"),
+                    );
                     return self.poison(span);
                 }
                 let offset = opt_int!(0, 0);
                 let byte_length = opt_int!(1, 1);
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, offset, byte_length] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, offset, byte_length],
+                    },
                     ty: native_ty(info.ret),
                     span,
                 }
@@ -408,7 +470,10 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 if args.len() != 3 {
-                    self.error(span, format!("`{mname}` expects a value, offset and byteLength"));
+                    self.error(
+                        span,
+                        format!("`{mname}` expects a value, offset and byteLength"),
+                    );
                     return self.poison(span);
                 }
                 // Node order `(value, offset, byteLength)`; native takes
@@ -417,7 +482,10 @@ impl Checker<'_> {
                 let value_ty = native_ty(info.params[2]);
                 coerce_numeric_literal(&mut value, value_ty);
                 if !value.ty.is_error() && !self.is_assignable(value.ty, value_ty) {
-                    self.error(value.span, format!("argument type {:?} does not match {value_ty:?}", value.ty));
+                    self.error(
+                        value.span,
+                        format!("argument type {:?} does not match {value_ty:?}", value.ty),
+                    );
                 }
                 let offset = opt_int!(1, 0);
                 let byte_length = opt_int!(2, 1);
@@ -442,7 +510,10 @@ impl Checker<'_> {
                 }
                 let offset = opt_int!(0, 0);
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, offset] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, offset],
+                    },
                     ty: native_ty(info.ret),
                     span,
                 }
@@ -463,11 +534,17 @@ impl Checker<'_> {
                 let value_ty = native_ty(info.params[2]);
                 coerce_numeric_literal(&mut value, value_ty);
                 if !value.ty.is_error() && !self.is_assignable(value.ty, value_ty) {
-                    self.error(value.span, format!("argument type {:?} does not match {value_ty:?}", value.ty));
+                    self.error(
+                        value.span,
+                        format!("argument type {:?} does not match {value_ty:?}", value.ty),
+                    );
                 }
                 let offset = opt_int!(1, 0);
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, offset, value] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, offset, value],
+                    },
                     ty: Ty::Int(IntKind::U64),
                     span,
                 }
@@ -484,6 +561,9 @@ impl Checker<'_> {
 /// `readUInt16LE` -> `nodeBufferReadUInt16LE`.
 pub(in crate::check) fn buffer_accessor_native(method: &str) -> String {
     let mut chars = method.chars();
-    let first = chars.next().map(|c| c.to_ascii_uppercase()).unwrap_or_default();
+    let first = chars
+        .next()
+        .map(|c| c.to_ascii_uppercase())
+        .unwrap_or_default();
     format!("nodeBuffer{first}{}", chars.as_str())
 }

@@ -39,7 +39,15 @@ pub fn encode(text: &str) -> impl Iterator<Item = u16> + '_ {
 
 /// Number of UTF-16 code units in `text`.
 pub fn len16(text: &str) -> usize {
-    text.chars().map(|c| if lone_unit(c).is_some() { 1 } else { c.len_utf16() }).sum()
+    text.chars()
+        .map(|c| {
+            if lone_unit(c).is_some() {
+                1
+            } else {
+                c.len_utf16()
+            }
+        })
+        .sum()
 }
 
 /// Build the storage form from UTF-16 units; unpaired surrogates become stand-ins.
@@ -48,7 +56,10 @@ pub fn from_units(units: &[u16]) -> String {
     let mut i = 0;
     while i < units.len() {
         let u = units[i];
-        if (0xD800..0xDC00).contains(&u) && i + 1 < units.len() && (0xDC00..0xE000).contains(&units[i + 1]) {
+        if (0xD800..0xDC00).contains(&u)
+            && i + 1 < units.len()
+            && (0xDC00..0xE000).contains(&units[i + 1])
+        {
             let cp = 0x10000 + (((u as u32) - 0xD800) << 10) + ((units[i + 1] as u32) - 0xDC00);
             out.push(char::from_u32(cp).unwrap());
             i += 2;
@@ -66,7 +77,17 @@ pub fn from_units(units: &[u16]) -> String {
 /// Text safe to hand to a real UTF-8 sink: stand-ins become U+FFFD, as Node's stdout does.
 pub fn to_utf8_lossy(text: &str) -> Cow<'_, str> {
     if text.chars().any(|c| lone_unit(c).is_some()) {
-        Cow::Owned(text.chars().map(|c| if lone_unit(c).is_some() { '\u{FFFD}' } else { c }).collect())
+        Cow::Owned(
+            text.chars()
+                .map(|c| {
+                    if lone_unit(c).is_some() {
+                        '\u{FFFD}'
+                    } else {
+                        c
+                    }
+                })
+                .collect(),
+        )
     } else {
         Cow::Borrowed(text)
     }
@@ -80,7 +101,10 @@ mod tests {
     fn lone_surrogates_round_trip() {
         let s = from_units(&[0x61, 0xD800, 0x62, 0xDE00, 0xD83D, 0xDE00]);
         assert_eq!(len16(&s), 6);
-        assert_eq!(encode(&s).collect::<Vec<_>>(), vec![0x61, 0xD800, 0x62, 0xDE00, 0xD83D, 0xDE00]);
+        assert_eq!(
+            encode(&s).collect::<Vec<_>>(),
+            vec![0x61, 0xD800, 0x62, 0xDE00, 0xD83D, 0xDE00]
+        );
         assert_eq!(to_utf8_lossy(&s), "a\u{FFFD}b\u{FFFD}\u{1F600}");
     }
 }
@@ -88,8 +112,16 @@ mod tests {
 /// Concatenate two strings, merging a trailing lone high surrogate on the left
 /// with a leading lone low surrogate on the right into one astral scalar.
 pub fn concat(left: &str, right: &str) -> String {
-    let high = left.chars().next_back().and_then(lone_unit).filter(|u| (0xD800..0xDC00).contains(u));
-    let low = right.chars().next().and_then(lone_unit).filter(|u| (0xDC00..0xE000).contains(u));
+    let high = left
+        .chars()
+        .next_back()
+        .and_then(lone_unit)
+        .filter(|u| (0xD800..0xDC00).contains(u));
+    let low = right
+        .chars()
+        .next()
+        .and_then(lone_unit)
+        .filter(|u| (0xDC00..0xE000).contains(u));
     if let (Some(h), Some(l)) = (high, low) {
         let head = &left[..left.len() - 4];
         let tail = &right[4..];
@@ -110,9 +142,22 @@ pub fn concat(left: &str, right: &str) -> String {
 pub fn is_js_space(c: char) -> bool {
     matches!(
         c,
-        '\u{9}' | '\u{a}' | '\u{b}' | '\u{c}' | '\u{d}' | '\u{20}' | '\u{a0}' | '\u{1680}'
-            | '\u{2000}'..='\u{200a}'
-            | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+        '\u{9}'
+            | '\u{a}'
+            | '\u{b}'
+            | '\u{c}'
+            | '\u{d}'
+            | '\u{20}'
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
     )
 }
 

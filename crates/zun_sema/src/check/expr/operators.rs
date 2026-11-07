@@ -1,8 +1,14 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_await(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
-        let ast::Expr::Await { operand, .. } = expr else { unreachable!() };
+    pub(in crate::check) fn check_await(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
+        let ast::Expr::Await { operand, .. } = expr else {
+            unreachable!()
+        };
         let checked = self.check_expr(cx, operand);
         // `await` accepts any value: a non-Promise resumes on the next tick.
         let span = checked.span;
@@ -15,9 +21,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_import_call(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_import_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::ImportCall { specifier, .. } = expr else { unreachable!() };
+        let ast::Expr::ImportCall { specifier, .. } = expr else {
+            unreachable!()
+        };
         let mut checked = self.check_expr(cx, specifier);
         if !checked.ty.is_error() && checked.ty != Ty::String {
             self.error(checked.span, "import() specifier must be a string");
@@ -34,9 +46,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_yield(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_yield(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Yield { value, .. } = expr else { unreachable!() };
+        let ast::Expr::Yield { value, .. } = expr else {
+            unreachable!()
+        };
         if !cx.is_generator {
             self.error(span, "yield is only valid inside a generator function");
         }
@@ -50,9 +68,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_binary_expr(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_binary_expr(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Binary { op, lhs, rhs, .. } = expr else { unreachable!() };
+        let ast::Expr::Binary { op, lhs, rhs, .. } = expr else {
+            unreachable!()
+        };
         if let ast::BinaryOp::In = op {
             return self.check_in_operator(cx, lhs, rhs, span);
         }
@@ -112,10 +136,16 @@ impl Checker<'_> {
                 let span = e.span;
                 let inner = std::mem::replace(
                     e,
-                    hir::Expr { kind: hir::ExprKind::Null, ty: Ty::Any, span },
+                    hir::Expr {
+                        kind: hir::ExprKind::Null,
+                        ty: Ty::Any,
+                        span,
+                    },
                 );
                 *e = hir::Expr {
-                    kind: hir::ExprKind::Convert { value: Box::new(inner) },
+                    kind: hir::ExprKind::Convert {
+                        value: Box::new(inner),
+                    },
                     ty: Ty::F64,
                     span,
                 };
@@ -147,8 +177,7 @@ impl Checker<'_> {
                 return self.poison(span);
             }
             if !simple {
-                let Some((id, _)) = zun_natives::resolve("collections", "looseEquals")
-                else {
+                let Some((id, _)) = zun_natives::resolve("collections", "looseEquals") else {
                     self.error(span, "missing `looseEquals` intrinsic");
                     return self.poison(span);
                 };
@@ -173,7 +202,11 @@ impl Checker<'_> {
                     call
                 };
             }
-            strict_op = if negate { ast::BinaryOp::Ne } else { ast::BinaryOp::Eq };
+            strict_op = if negate {
+                ast::BinaryOp::Ne
+            } else {
+                ast::BinaryOp::Eq
+            };
             &strict_op
         } else {
             op
@@ -198,7 +231,10 @@ impl Checker<'_> {
             if let ast::BinaryOp::UShr = op {
                 if let Some((id, native)) = zun_natives::resolve("collections", "bigIntUshr") {
                     return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![lhs, rhs] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![lhs, rhs],
+                        },
                         ty: native_ty(native.ret),
                         span,
                     };
@@ -267,8 +303,7 @@ impl Checker<'_> {
         // `+` with an object/any operand: ECMAScript ToPrimitive(default)
         // on both sides, then string concat or numeric add, at run time.
         if let ast::BinaryOp::Add = op {
-            let objectish =
-                |t: Ty| matches!(t, Ty::Any | Ty::DynamicObject | Ty::Instance(_));
+            let objectish = |t: Ty| matches!(t, Ty::Any | Ty::DynamicObject | Ty::Instance(_));
             let operable = |t: Ty| {
                 objectish(t)
                     || t == Ty::String
@@ -340,9 +375,8 @@ impl Checker<'_> {
                 | ast::BinaryOp::Shr
                 | ast::BinaryOp::UShr
         ) {
-            let numericish = |t: Ty| {
-                matches!(t, Ty::Int(_)) || matches!(t, Ty::Float(_)) || t == Ty::F64
-            };
+            let numericish =
+                |t: Ty| matches!(t, Ty::Int(_)) || matches!(t, Ty::Float(_)) || t == Ty::F64;
             let needs_coerce = !lhs.ty.is_error()
                 && !rhs.ty.is_error()
                 && !(numericish(lhs.ty) && numericish(rhs.ty))
@@ -406,7 +440,8 @@ impl Checker<'_> {
         let (lhs, rhs) = if matches!(
             *op,
             ast::BinaryOp::Lt | ast::BinaryOp::Le | ast::BinaryOp::Gt | ast::BinaryOp::Ge
-        ) && (matches!(lhs.ty, Ty::Array | Ty::DynamicObject) || matches!(rhs.ty, Ty::Array | Ty::DynamicObject))
+        ) && (matches!(lhs.ty, Ty::Array | Ty::DynamicObject)
+            || matches!(rhs.ty, Ty::Array | Ty::DynamicObject))
             && !lhs.ty.is_error()
             && !rhs.ty.is_error()
         {
@@ -419,8 +454,10 @@ impl Checker<'_> {
         // deciding operand's value (value-preserving short-circuit), so
         // both operands must be boxed to a uniform `any` carrier.
         let (lhs, rhs) = if ty == Ty::Any
-            && matches!(*op, ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
-        {
+            && matches!(
+                *op,
+                ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish
+            ) {
             (Self::box_to_any(lhs), Self::box_to_any(rhs))
         } else {
             (lhs, rhs)
@@ -436,9 +473,21 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_conditional(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_conditional(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Conditional { condition, when_true, when_false, .. } = expr else { unreachable!() };
+        let ast::Expr::Conditional {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } = expr
+        else {
+            unreachable!()
+        };
         let condition = self.check_condition(cx, condition);
         let mut when_true = self.check_expr(cx, when_true);
         let mut when_false = self.check_expr(cx, when_false);
@@ -477,16 +526,19 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_unary(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_unary(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Unary { op, operand, .. } = expr else { unreachable!() };
+        let ast::Expr::Unary { op, operand, .. } = expr else {
+            unreachable!()
+        };
         match op {
             ast::UnaryOp::Typeof => return self.check_typeof_operator(cx, operand, span),
             ast::UnaryOp::Delete => return self.check_delete_operator(cx, operand, span),
-            ast::UnaryOp::Neg
-            | ast::UnaryOp::Not
-            | ast::UnaryOp::BitNot
-            | ast::UnaryOp::Void => {}
+            ast::UnaryOp::Neg | ast::UnaryOp::Not | ast::UnaryOp::BitNot | ast::UnaryOp::Void => {}
         }
         // Fold `-<number literal>` into a single negative number literal
         // so it stays coercible to an int context (e.g. `abs(-7)`).
@@ -500,9 +552,7 @@ impl Checker<'_> {
             }
         }
         let operand = self.check_expr(cx, operand);
-        if operand.ty == Ty::BigInt
-            && matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::BitNot)
-        {
+        if operand.ty == Ty::BigInt && matches!(op, ast::UnaryOp::Neg | ast::UnaryOp::BitNot) {
             let native_name = match op {
                 ast::UnaryOp::Neg => "bigIntNeg",
                 ast::UnaryOp::BitNot => "bigIntNot",
@@ -528,7 +578,10 @@ impl Checker<'_> {
                 Some((id, _)) => {
                     let operand_span = operand.span;
                     hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin { id, args: vec![operand] },
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![operand],
+                        },
                         ty: Ty::Boolean,
                         span: operand_span,
                     }
@@ -558,9 +611,7 @@ impl Checker<'_> {
             ast::UnaryOp::Not => self.expect_ty(&operand, Ty::Boolean),
             // `~` keeps the operand's numeric type (int, or `number` via
             // the int32 coercion lowered in ilgen).
-            ast::UnaryOp::BitNot if operand.ty.is_int() || operand.ty == Ty::F64 => {
-                operand.ty
-            }
+            ast::UnaryOp::BitNot if operand.ty.is_int() || operand.ty == Ty::F64 => operand.ty,
             ast::UnaryOp::BitNot => {
                 self.error(
                     operand.span,
@@ -584,9 +635,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_cast(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_cast(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Cast { expr, ty, .. } = expr else { unreachable!() };
+        let ast::Expr::Cast { expr, ty, .. } = expr else {
+            unreachable!()
+        };
         let value = self.check_expr(cx, expr);
         let target = self.resolve_annotation(ty);
         // `x as any` is a widening assertion: box a concrete value into
@@ -597,7 +654,9 @@ impl Checker<'_> {
             } else {
                 hir::Expr {
                     span,
-                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(value),
+                    },
                     ty: Ty::Any,
                 }
             };
@@ -612,7 +671,16 @@ impl Checker<'_> {
                         || target == Ty::Boolean
                         || target == Ty::Array
                         || target == Ty::String
-                        || matches!(target, Ty::Instance(_) | Ty::BufferView(_) | Ty::Map | Ty::Set | Ty::Promise | Ty::DynamicObject | Ty::Buffer))))
+                        || matches!(
+                            target,
+                            Ty::Instance(_)
+                                | Ty::BufferView(_)
+                                | Ty::Map
+                                | Ty::Set
+                                | Ty::Promise
+                                | Ty::DynamicObject
+                                | Ty::Buffer
+                        ))))
         {
             self.error(span, format!("cannot convert {:?} to {target:?}", value.ty));
             return self.poison(span);

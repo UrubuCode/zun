@@ -16,13 +16,23 @@ pub struct ByteBuffer {
 }
 
 impl ByteBuffer {
-    pub fn new(length: usize) -> Self { Self { bytes: vec![0; length], max: None, detached: false } }
+    pub fn new(length: usize) -> Self {
+        Self {
+            bytes: vec![0; length],
+            max: None,
+            detached: false,
+        }
+    }
 
     /// A resizable buffer of initial byte length `length` that can grow to at
     /// most `max`. Returns `None` when `length > max`, matching the TypeError
     /// the JS constructor throws for `maxByteLength < byteLength`.
     pub fn new_resizable(length: usize, max: usize) -> Option<Self> {
-        (length <= max).then(|| Self { bytes: vec![0; length], max: Some(max), detached: false })
+        (length <= max).then(|| Self {
+            bytes: vec![0; length],
+            max: Some(max),
+            detached: false,
+        })
     }
 
     /// Build a buffer from an exact byte length and growth cap. The bytes are
@@ -35,15 +45,23 @@ impl ByteBuffer {
                 return None;
             }
         }
-        Some(Self { bytes: vec![0; length], max, detached: false })
+        Some(Self {
+            bytes: vec![0; length],
+            max,
+            detached: false,
+        })
     }
 
     /// Whether this buffer was created resizable. A detached buffer is never
     /// resizable.
-    pub fn resizable(&self) -> bool { !self.detached && self.max.is_some() }
+    pub fn resizable(&self) -> bool {
+        !self.detached && self.max.is_some()
+    }
 
     /// Whether this buffer has been detached.
-    pub fn detached(&self) -> bool { self.detached }
+    pub fn detached(&self) -> bool {
+        self.detached
+    }
 
     /// Detach the buffer: take its bytes and growth cap out, leaving a
     /// zero-length detached husk behind. Returns the former `(bytes, max)` so a
@@ -59,38 +77,60 @@ impl ByteBuffer {
 
     /// `ArrayBuffer.prototype.maxByteLength`: the growth cap for a resizable
     /// buffer, or the current (fixed) byte length otherwise.
-    pub fn max_byte_length(&self) -> usize { self.max.unwrap_or(self.bytes.len()) }
+    pub fn max_byte_length(&self) -> usize {
+        self.max.unwrap_or(self.bytes.len())
+    }
 
     /// `ArrayBuffer.prototype.resize(newLength)`. Fails (returns `false`,
     /// leaving the buffer untouched) for a fixed-length buffer or when
     /// `new_length` exceeds `maxByteLength`. Growing zero-fills the new tail;
     /// shrinking preserves the surviving prefix.
     pub fn resize(&mut self, new_length: usize) -> bool {
-        if self.detached { return false; }
-        let Some(max) = self.max else { return false; };
-        if new_length > max { return false; }
+        if self.detached {
+            return false;
+        }
+        let Some(max) = self.max else {
+            return false;
+        };
+        if new_length > max {
+            return false;
+        }
         self.bytes.resize(new_length, 0);
         true
     }
 
-    pub fn len(&self) -> usize { self.bytes.len() }
-    pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
-    pub fn get(&self, index: usize) -> Option<u8> { self.bytes.get(index).copied() }
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+    pub fn get(&self, index: usize) -> Option<u8> {
+        self.bytes.get(index).copied()
+    }
 
     pub fn set(&mut self, index: usize, value: u8) -> bool {
-        let Some(slot) = self.bytes.get_mut(index) else { return false; };
+        let Some(slot) = self.bytes.get_mut(index) else {
+            return false;
+        };
         *slot = value;
         true
     }
-    pub fn as_slice(&self) -> &[u8] { &self.bytes }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
 
     pub fn read_u16(&self, offset: usize) -> Option<u16> {
         let bytes = self.bytes.get(offset..offset.checked_add(2)?)?;
         Some(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
     pub fn write_u16(&mut self, offset: usize, value: u16) -> bool {
-        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(2)) else { return false; };
-        if bytes.len() != 2 { return false; }
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(2)) else {
+            return false;
+        };
+        if bytes.len() != 2 {
+            return false;
+        }
         bytes.copy_from_slice(&value.to_le_bytes());
         true
     }
@@ -99,8 +139,12 @@ impl ByteBuffer {
         Some(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
     pub fn write_u32(&mut self, offset: usize, value: u32) -> bool {
-        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(4)) else { return false; };
-        if bytes.len() != 4 { return false; }
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(4)) else {
+            return false;
+        };
+        if bytes.len() != 4 {
+            return false;
+        }
         bytes.copy_from_slice(&value.to_le_bytes());
         true
     }
@@ -109,8 +153,12 @@ impl ByteBuffer {
         Some(f64::from_le_bytes(bytes.try_into().unwrap()))
     }
     pub fn write_f64(&mut self, offset: usize, value: f64) -> bool {
-        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(8)) else { return false; };
-        if bytes.len() != 8 { return false; }
+        let Some(bytes) = self.bytes.get_mut(offset..offset.saturating_add(8)) else {
+            return false;
+        };
+        if bytes.len() != 8 {
+            return false;
+        }
         bytes.copy_from_slice(&value.to_le_bytes());
         true
     }

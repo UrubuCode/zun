@@ -98,8 +98,7 @@ fn converts_binary_return_expressions() {
 
 #[test]
 fn converts_bigint_literals() {
-    let program =
-        parse_subset("function main() { return 12345678901234567890n; }", false).unwrap();
+    let program = parse_subset("function main() { return 12345678901234567890n; }", false).unwrap();
     assert!(matches!(
         program.functions[0].body.statements[0],
         crate::ast::Stmt::Return {
@@ -153,8 +152,7 @@ fn converts_try_catch_finally_statements() {
 
 #[test]
 fn converts_logical_and_unary_return_expressions() {
-    let program =
-        parse_subset("function choose(value) { return !value && true; }", false).unwrap();
+    let program = parse_subset("function choose(value) { return !value && true; }", false).unwrap();
     assert!(matches!(
         program.functions[0].body.statements[0],
         crate::ast::Stmt::Return {
@@ -192,8 +190,7 @@ fn converts_multiple_supported_body_statements() {
 
 #[test]
 fn converts_initialized_local_declarations() {
-    let program =
-        parse_subset("function main() { let value = 42; return value; }", false).unwrap();
+    let program = parse_subset("function main() { let value = 42; return value; }", false).unwrap();
     assert!(matches!(
         program.functions[0].body.statements[0],
         crate::ast::Stmt::Let { .. }
@@ -322,12 +319,21 @@ fn converts_single_statement_local_branch() {
     // `var` is function-scoped: the declaration hoists to the function head
     // (as `undefined`), and the branch keeps the initializing assignment.
     let statements = &program.functions[0].body.statements;
-    assert!(matches!(statements.first(), Some(crate::ast::Stmt::Let { .. })), "{statements:?}");
-    let Some(crate::ast::Stmt::If { then_block, .. }) = statements.iter().find(|s| matches!(s, crate::ast::Stmt::If { .. })) else {
+    assert!(
+        matches!(statements.first(), Some(crate::ast::Stmt::Let { .. })),
+        "{statements:?}"
+    );
+    let Some(crate::ast::Stmt::If { then_block, .. }) = statements
+        .iter()
+        .find(|s| matches!(s, crate::ast::Stmt::If { .. }))
+    else {
         panic!("expected an if statement");
     };
     assert!(
-        matches!(then_block.statements.as_slice(), [crate::ast::Stmt::Expr(crate::ast::Expr::Assign { .. })]),
+        matches!(
+            then_block.statements.as_slice(),
+            [crate::ast::Stmt::Expr(crate::ast::Expr::Assign { .. })]
+        ),
         "{then_block:?}"
     );
 }
@@ -486,4 +492,3 @@ fn converts_do_while_statements_with_block_bodies() {
         crate::ast::Stmt::DoWhile { .. }
     ));
 }
-

@@ -232,7 +232,9 @@ impl TypeSystem {
                 if base.table() != Some(zun_metadata::TableKind::TypeDef) {
                     return Err(TypeError::BadBase);
                 }
-                let base_index = (base.rid() as usize).checked_sub(1).ok_or(TypeError::BadBase)?;
+                let base_index = (base.rid() as usize)
+                    .checked_sub(1)
+                    .ok_or(TypeError::BadBase)?;
                 if base_index >= count {
                     return Err(TypeError::BadBase);
                 }

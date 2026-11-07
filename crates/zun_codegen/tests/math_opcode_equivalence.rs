@@ -230,7 +230,8 @@ fn math_ops_do_not_force_a_tier0_fallback() {
 /// a synthesized body only has `const.f64`).
 fn compile(src: &str) -> Module {
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema: {diags:?}");
@@ -243,7 +244,10 @@ fn assert_tiers_agree(src: &str) {
     let entry = module.entry_point.expect("entry point").rid();
 
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(entry), "entry should be JIT-eligible:\n{src}");
+    assert!(
+        jit.is_compiled(entry),
+        "entry should be JIT-eligible:\n{src}"
+    );
     let jit_result = match jit.call_entry(entry).expect("jit call") {
         RetVal::Float(value) => value,
         other => panic!("expected a float, got {other:?}"),

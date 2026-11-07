@@ -4,49 +4,51 @@
 //! heap implementation. It is the small Rust equivalent of the runtime-owned
 //! portion of `System.Private.CoreLib`.
 
-pub mod wtf16;
+mod any_value;
+mod arrays;
+mod bigint;
+mod byte_buffer;
+mod collection_iterators;
+mod date_value;
+mod dynamic_object;
+mod error_value;
+mod function_handle;
+mod ids;
+mod module_bound_class;
+mod module_bound_function;
+mod ordered_map;
+mod promise_value;
+mod regexp;
+pub mod serde;
+mod symbols;
 mod typed_elements;
 #[path = "views.rs"]
 mod views;
-mod ordered_map;
-mod collection_iterators;
-mod arrays;
-mod byte_buffer;
-mod dynamic_object;
-mod error_value;
-mod date_value;
-mod ids;
-mod any_value;
-mod function_handle;
-mod module_bound_function;
-mod module_bound_class;
-mod symbols;
-mod promise_value;
-mod regexp;
-mod bigint;
-pub mod serde;
+pub mod wtf16;
 
-pub use ordered_map::OrderedMap;
-pub use collection_iterators::{MapIterator, SetIterator};
+pub use any_value::{Any, AnyTag};
 pub use arrays::{ArrayIterator, ArrayStorage};
+pub use bigint::BigInt;
 pub use byte_buffer::ByteBuffer;
+pub use collection_iterators::{MapIterator, SetIterator};
+pub use date_value::DateValue;
 pub use dynamic_object::{DynamicObject, PropertyDescriptor};
 pub use error_value::ErrorValue;
-pub use date_value::DateValue;
-pub use ids::{CoreTypeId, IntrinsicId};
-pub use any_value::{Any, AnyTag};
 pub use function_handle::FunctionHandle;
-pub use module_bound_function::ModuleBoundFunction;
+pub use ids::{CoreTypeId, IntrinsicId};
 pub use module_bound_class::ModuleBoundClass;
-pub use symbols::{SymbolId, SymbolRegistry, WellKnownSymbol};
+pub use module_bound_function::ModuleBoundFunction;
+pub use ordered_map::OrderedMap;
 pub use promise_value::{ManagedPromise, ManagedPromiseState};
-pub use regexp::{byte_of_utf16, expand_substitution, EngineKind, MatchFull, RegexError, RegexValue};
-pub use bigint::BigInt;
+pub use regexp::{
+    byte_of_utf16, expand_substitution, EngineKind, MatchFull, RegexError, RegexValue,
+};
+pub use symbols::{SymbolId, SymbolRegistry, WellKnownSymbol};
 pub use typed_elements::{clamp_to_u8, same};
 pub use views::ByteView;
 pub use views::DataView;
-pub use views::TypedElement;
 pub use views::TypedArrayView;
+pub use views::TypedElement;
 
 /// Size of one raw object slot in bytes.
 pub const SLOT_SIZE: usize = 8;
@@ -102,7 +104,10 @@ mod tests {
         assert_eq!(promise.state(), ManagedPromiseState::Pending);
         assert!(promise.resolve(Any::object(0x1000)));
         assert_eq!(promise.state(), ManagedPromiseState::Resolved);
-        assert_eq!(promise.result().and_then(|value| value.as_object()), Some(0x1000));
+        assert_eq!(
+            promise.result().and_then(|value| value.as_object()),
+            Some(0x1000)
+        );
         assert!(!promise.reject("late failure"));
     }
 
@@ -424,10 +429,22 @@ mod tests {
                 key.as_int() == Some(value)
             });
         }
-        assert_eq!(map.get(1, |key| key.as_int() == Some(4)).and_then(Any::as_int), Some(40));
-        assert_eq!(map.remove(1, |key| key.as_int() == Some(2)).and_then(|(_, value)| value.as_int()), Some(20));
+        assert_eq!(
+            map.get(1, |key| key.as_int() == Some(4))
+                .and_then(Any::as_int),
+            Some(40)
+        );
+        assert_eq!(
+            map.remove(1, |key| key.as_int() == Some(2))
+                .and_then(|(_, value)| value.as_int()),
+            Some(20)
+        );
         map.insert(Any::int(9), Any::int(90), 1, |key| key.as_int() == Some(9));
-        assert_eq!(map.get(1, |key| key.as_int() == Some(9)).and_then(Any::as_int), Some(90));
+        assert_eq!(
+            map.get(1, |key| key.as_int() == Some(9))
+                .and_then(Any::as_int),
+            Some(90)
+        );
         assert_eq!(map.len(), 6);
     }
 

@@ -5,19 +5,27 @@ impl Checker<'_> {
     /// `static #next = 1`) once, in class declaration order, before the module
     /// body. Literal initializers of a matching type are handled by the module
     /// initializer; this covers every other expression.
-    pub(in crate::check) fn class_static_initializers(&mut self, cx: &mut FunctionCx, class_idx: u32) -> Vec<hir::Stmt> {
+    pub(in crate::check) fn class_static_initializers(
+        &mut self,
+        cx: &mut FunctionCx,
+        class_idx: u32,
+    ) -> Vec<hir::Stmt> {
         let span = Span::new(0, 0);
         let mut out = Vec::new();
         let class_idx = class_idx as usize;
         {
             let fields = self.full_fields(class_idx as u32);
             let initializers = self.full_initializers(class_idx as u32);
-            let first_own = fields.len().saturating_sub(self.classes[class_idx].own_fields.len());
+            let first_own = fields
+                .len()
+                .saturating_sub(self.classes[class_idx].own_fields.len());
             for (slot, (_, field_ty, is_static, _)) in fields.iter().enumerate() {
                 if !*is_static || slot < first_own {
                     continue;
                 }
-                let Some(Some(init)) = initializers.get(slot) else { continue };
+                let Some(Some(init)) = initializers.get(slot) else {
+                    continue;
+                };
                 let init = init.as_ref().clone();
                 let field_ty = *field_ty;
                 let literal = matches!(
@@ -27,15 +35,32 @@ impl Checker<'_> {
                         | (ast::Expr::Bool { .. }, Ty::Boolean)
                 );
                 // `static x;` (an implicit `void 0`) leaves the slot unset.
-                if literal || matches!(init, ast::Expr::Unary { op: ast::UnaryOp::Void, .. }) {
+                if literal
+                    || matches!(
+                        init,
+                        ast::Expr::Unary {
+                            op: ast::UnaryOp::Void,
+                            ..
+                        }
+                    )
+                {
                     continue;
                 }
                 let mut value = self.check_expr(cx, &init);
                 coerce_numeric_literal(&mut value, field_ty);
                 if field_ty == Ty::Any {
                     value = Self::box_to_any(value);
-                } else if !field_ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, field_ty) {
-                    self.error(value.span, format!("cannot assign {:?} to static field of type {field_ty:?}", value.ty));
+                } else if !field_ty.is_error()
+                    && !value.ty.is_error()
+                    && !self.is_assignable(value.ty, field_ty)
+                {
+                    self.error(
+                        value.span,
+                        format!(
+                            "cannot assign {:?} to static field of type {field_ty:?}",
+                            value.ty
+                        ),
+                    );
                     continue;
                 }
                 out.push(hir::Stmt::Expr(hir::Expr {
@@ -106,14 +131,20 @@ impl Checker<'_> {
     /// computed-symbol-key method, attaching the method (as a function value)
     /// to the per-type symbol-method side table at class-definition time. The
     /// class rid is `class index + 1` (one TypeDef per class, in order).
-    pub(in crate::check) fn append_class_symbol_methods(&self, body: &mut Vec<hir::Stmt>, span: Span) {
+    pub(in crate::check) fn append_class_symbol_methods(
+        &self,
+        body: &mut Vec<hir::Stmt>,
+        span: Span,
+    ) {
         if self.class_symbol_methods.is_empty() {
             return;
         }
-        let Some((set_id, _)) = zun_natives::resolve("collections", "classSetSymbolFunction") else {
+        let Some((set_id, _)) = zun_natives::resolve("collections", "classSetSymbolFunction")
+        else {
             return;
         };
-        let Some((well_known_id, _)) = zun_natives::resolve("collections", "symbolWellKnown") else {
+        let Some((well_known_id, _)) = zun_natives::resolve("collections", "symbolWellKnown")
+        else {
             return;
         };
         for &(class_idx, symbol_id, func_index) in &self.class_symbol_methods {
@@ -156,7 +187,11 @@ impl Checker<'_> {
     /// (b) each literal field-initializer default via `classSetFieldDefault`, so
     /// runtime construction (`Reflect.construct`, proxy `construct`) can fill
     /// absent trailing args. Non-literal initializers are not registered.
-    pub(in crate::check) fn append_class_named_methods_and_defaults(&self, body: &mut Vec<hir::Stmt>, span: Span) {
+    pub(in crate::check) fn append_class_named_methods_and_defaults(
+        &self,
+        body: &mut Vec<hir::Stmt>,
+        span: Span,
+    ) {
         let class_rid = |class_idx: usize| hir::Expr {
             kind: hir::ExprKind::Number((class_idx + 1) as f64),
             ty: Ty::Int(IntKind::U32),
@@ -165,7 +200,9 @@ impl Checker<'_> {
         if let Some((set_method, _)) = zun_natives::resolve("collections", "classSetMethod") {
             for class_idx in 0..self.classes.len() {
                 for name in ["valueOf", "toString", "get_name"] {
-                    let Some(func) = self.method_of(class_idx as u32, name) else { continue };
+                    let Some(func) = self.method_of(class_idx as u32, name) else {
+                        continue;
+                    };
                     let sig = &self.signatures[func as usize];
                     if sig.is_static || sig.params.len() != 1 {
                         continue;
@@ -207,7 +244,9 @@ impl Checker<'_> {
                 if !*is_static {
                     continue;
                 }
-                let Some(Some(init)) = initializers.get(slot) else { continue };
+                let Some(Some(init)) = initializers.get(slot) else {
+                    continue;
+                };
                 let (kind, ty) = match (init.as_ref(), *field_ty) {
                     (ast::Expr::Number { value, .. }, Ty::F64) => {
                         (hir::ExprKind::Number(*value), Ty::F64)
@@ -231,12 +270,15 @@ impl Checker<'_> {
                 }));
             }
         }
-        if let Some((set_default, _)) = zun_natives::resolve("collections", "classSetFieldDefault") {
+        if let Some((set_default, _)) = zun_natives::resolve("collections", "classSetFieldDefault")
+        {
             for class_idx in 0..self.classes.len() {
                 let fields = self.full_fields(class_idx as u32);
                 let initializers = self.full_initializers(class_idx as u32);
                 for (slot, (_, field_ty, _, _)) in fields.iter().enumerate() {
-                    let Some(Some(init)) = initializers.get(slot) else { continue };
+                    let Some(Some(init)) = initializers.get(slot) else {
+                        continue;
+                    };
                     let (kind, ty) = match (init.as_ref(), *field_ty) {
                         (ast::Expr::Number { value, .. }, Ty::F64 | Ty::Any) => {
                             (hir::ExprKind::Number(*value), Ty::F64)

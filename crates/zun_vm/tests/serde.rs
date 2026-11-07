@@ -9,7 +9,8 @@ fn run(src: &str) -> Vec<String> {
     let src = zun_prelude::with_prelude(src);
     let src = src.as_str();
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -25,7 +26,8 @@ fn run_expect_error(src: &str) -> String {
     let src = zun_prelude::with_prelude(src);
     let src = src.as_str();
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -216,7 +218,6 @@ fn serialize_of_a_function_is_a_clean_error() {
            function main() {
                serialize(helper);
            }"#,
-
     );
     assert!(
         error.contains("function"),
@@ -227,8 +228,7 @@ fn serialize_of_a_function_is_a_clean_error() {
 /// Registered `Symbol.for` keys round-trip; a unique `Symbol()` key is dropped.
 #[test]
 fn symbol_keyed_entries_registered_round_trip_unique_dropped() {
-    let out = run(
-        r#"import { serialize, deserialize } from "zun:core";
+    let out = run(r#"import { serialize, deserialize } from "zun:core";
 function main() {
     let k = Symbol.for("k");
     let u = Symbol("u");
@@ -240,8 +240,7 @@ function main() {
     let syms = Object.getOwnPropertySymbols(back);
     print(syms.length);
     print(back[Symbol.for("k")] as number);
-}"#,
-    );
+}"#);
     assert_eq!(out, ["1", "7"]);
 }
 

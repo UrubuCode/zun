@@ -98,8 +98,7 @@ impl Checker<'_> {
             let needs_cell = if shadowed_by_body {
                 default_names.contains(&pname) && default_names.contains(&format!("{pname}"))
             } else {
-                cx.mutated_names.contains(&pname)
-                    && cx.mutated_names.contains(&format!("{pname}"))
+                cx.mutated_names.contains(&pname) && cx.mutated_names.contains(&format!("{pname}"))
             };
             if needs_cell && !matches!(cx.locals[slot as usize], Ty::Function(_)) {
                 cx.boxed.insert(slot);
@@ -142,7 +141,9 @@ impl Checker<'_> {
             if external.return_ty != return_ty {
                 self.error(
                     f.name.span,
-                    format!("extern function `{name}` return type does not match the linker signature"),
+                    format!(
+                        "extern function `{name}` return type does not match the linker signature"
+                    ),
                 );
             }
             let args = param_tys
@@ -250,13 +251,18 @@ impl Checker<'_> {
             {
                 let mut this_before_super = false;
                 for statement in &f.body.statements {
-                    let ast::Stmt::Expr(expr) = statement else { continue };
+                    let ast::Stmt::Expr(expr) = statement else {
+                        continue;
+                    };
                     let is_super_call = matches!(expr, ast::Expr::Call { callee, .. } if self.text(callee) == "super");
                     if is_super_call {
                         break;
                     }
                     let text = &self.source[expr.span().start as usize..expr.span().end as usize];
-                    if text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$')).any(|word| word == "this") {
+                    if text
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                        .any(|word| word == "this")
+                    {
                         this_before_super = true;
                         break;
                     }
@@ -286,7 +292,10 @@ impl Checker<'_> {
             .enumerate()
             .map(|(index, parameter)| {
                 parameter.default_value.as_deref().map(|value| {
-                    cx.tdz_names = f.params[index..].iter().map(|p| self.text(&p.name).to_string()).collect();
+                    cx.tdz_names = f.params[index..]
+                        .iter()
+                        .map(|p| self.text(&p.name).to_string())
+                        .collect();
                     let mut checked = self.check_expr(&mut cx, value);
                     cx.tdz_names.clear();
                     let expected = param_tys[index + usize::from(this_class.is_some())];
@@ -357,14 +366,24 @@ impl Checker<'_> {
         // The read happens once (into a temp); the default expression is
         // evaluated lazily, only when the read is `undefined`.
         let temp = cx.declare(&self.fresh_temp_name(cx), Ty::Any);
-        out.push(hir::Stmt::Let { slot: temp, init: Self::box_to_any(read) });
+        out.push(hir::Stmt::Let {
+            slot: temp,
+            init: Self::box_to_any(read),
+        });
         let default = self.check_expr(cx, default);
         let default = Self::box_to_any(default);
-        let temp_read = || hir::Expr { kind: hir::ExprKind::Local(temp), ty: Ty::Any, span };
+        let temp_read = || hir::Expr {
+            kind: hir::ExprKind::Local(temp),
+            ty: Ty::Any,
+            span,
+        };
         hir::Expr {
             kind: hir::ExprKind::Conditional {
                 condition: Box::new(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![temp_read()] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![temp_read()],
+                    },
                     ty: Ty::Boolean,
                     span,
                 }),

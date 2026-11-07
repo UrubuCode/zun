@@ -168,7 +168,14 @@ fn replace(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
             };
             let end = start + needle.len();
             let mut out = String::from(&value[..start]);
-            zun_core::expand_substitution(replacement, &[Some(needle)], &[None], &value[..start], &value[end..], &mut out);
+            zun_core::expand_substitution(
+                replacement,
+                &[Some(needle)],
+                &[None],
+                &value[..start],
+                &value[end..],
+                &mut out,
+            );
             out.push_str(&value[end..]);
             Ok(NativeValue::Str(out))
         }
@@ -227,13 +234,11 @@ fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     };
     let fill = match args.get(2) {
         // An empty fill leaves the string unchanged.
-        Some(NativeArg::Str(fill)) if fill.is_empty() => return Ok(NativeValue::Str(value.to_string())),
-        Some(NativeArg::Str(fill)) => fill,
-        _ => {
-            return Err(NativeError(
-                "padStart: expected a fill string".to_string(),
-            ))
+        Some(NativeArg::Str(fill)) if fill.is_empty() => {
+            return Ok(NativeValue::Str(value.to_string()))
         }
+        Some(NativeArg::Str(fill)) => fill,
+        _ => return Err(NativeError("padStart: expected a fill string".to_string())),
     };
     let length = zun_core::wtf16::len16(value);
     if target <= length {
@@ -267,13 +272,11 @@ fn pad_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
     };
     let fill = match args.get(2) {
         // An empty fill leaves the string unchanged.
-        Some(NativeArg::Str(fill)) if fill.is_empty() => return Ok(NativeValue::Str(value.to_string())),
-        Some(NativeArg::Str(fill)) => fill,
-        _ => {
-            return Err(NativeError(
-                "padEnd: expected a fill string".to_string(),
-            ))
+        Some(NativeArg::Str(fill)) if fill.is_empty() => {
+            return Ok(NativeValue::Str(value.to_string()))
         }
+        Some(NativeArg::Str(fill)) => fill,
+        _ => return Err(NativeError("padEnd: expected a fill string".to_string())),
     };
     let length = zun_core::wtf16::len16(value);
     if target <= length {
@@ -308,14 +311,18 @@ fn to_upper_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
 
 fn trim_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(zun_core::wtf16::js_trim_start(value).to_string())),
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(
+            zun_core::wtf16::js_trim_start(value).to_string(),
+        )),
         _ => Err(NativeError("trimStart: expected a string".to_string())),
     }
 }
 
 fn trim_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(zun_core::wtf16::js_trim_end(value).to_string())),
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(
+            zun_core::wtf16::js_trim_end(value).to_string(),
+        )),
         _ => Err(NativeError("trimEnd: expected a string".to_string())),
     }
 }
@@ -359,7 +366,9 @@ fn ends_with(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
 
 fn trim(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
-        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(zun_core::wtf16::js_trim(value).to_string())),
+        Some(NativeArg::Str(value)) => Ok(NativeValue::Str(
+            zun_core::wtf16::js_trim(value).to_string(),
+        )),
         _ => Err(NativeError("trim: expected a string".to_string())),
     }
 }
@@ -383,7 +392,9 @@ fn repeat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
     if (value.len() as u128) * (count as u128) > 536_870_888 {
         return Err(NativeError("RangeError: Invalid string length".to_string()));
     }
-    Ok(NativeValue::Str(zun_core::wtf16::normalize(value.repeat(count))))
+    Ok(NativeValue::Str(zun_core::wtf16::normalize(
+        value.repeat(count),
+    )))
 }
 
 /// `key in new String(s)`: a code-unit index below the length, or `length`.
@@ -393,19 +404,26 @@ fn string_has_property(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeVal
             if *key == "length" {
                 return Ok(NativeValue::Bool(true));
             }
-            let canonical = key.parse::<u32>().ok().filter(|index| index.to_string() == **key);
-            Ok(NativeValue::Bool(
-                canonical.is_some_and(|index| (index as usize) < zun_core::wtf16::len16(value)),
-            ))
+            let canonical = key
+                .parse::<u32>()
+                .ok()
+                .filter(|index| index.to_string() == **key);
+            Ok(NativeValue::Bool(canonical.is_some_and(|index| {
+                (index as usize) < zun_core::wtf16::len16(value)
+            })))
         }
-        _ => Err(NativeError("stringHasProperty: expected strings".to_string())),
+        _ => Err(NativeError(
+            "stringHasProperty: expected strings".to_string(),
+        )),
     }
 }
 
 fn is_well_formed(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match args.first() {
         Some(NativeArg::Str(value)) => Ok(NativeValue::Bool(
-            !value.chars().any(|c| zun_core::wtf16::lone_unit(c).is_some()),
+            !value
+                .chars()
+                .any(|c| zun_core::wtf16::lone_unit(c).is_some()),
         )),
         _ => Err(NativeError("isWellFormed: expected a string".to_string())),
     }
@@ -416,7 +434,13 @@ fn to_well_formed(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, N
         Some(NativeArg::Str(value)) => Ok(NativeValue::Str(
             value
                 .chars()
-                .map(|c| if zun_core::wtf16::lone_unit(c).is_some() { '�' } else { c })
+                .map(|c| {
+                    if zun_core::wtf16::lone_unit(c).is_some() {
+                        '�'
+                    } else {
+                        c
+                    }
+                })
                 .collect(),
         )),
         _ => Err(NativeError("toWellFormed: expected a string".to_string())),
@@ -447,13 +471,19 @@ fn at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> 
     };
     let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let len = units.len() as f64;
-    let resolved = if relative < 0.0 { len + relative } else { relative };
+    let resolved = if relative < 0.0 {
+        len + relative
+    } else {
+        relative
+    };
     if resolved < 0.0 || resolved >= len {
         // Out of range yields `undefined`, per spec.
         return Ok(NativeValue::Void);
     }
     let index = resolved as usize;
-    Ok(NativeValue::Str(zun_core::wtf16::from_units(&units[index..index + 1])))
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(
+        &units[index..index + 1],
+    )))
 }
 
 fn code_point_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -471,15 +501,16 @@ fn code_point_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
     };
     let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let Some(&first) = units.get(index) else {
-        return Err(NativeError(format!("codePointAt: index {index} is out of bounds")));
+        return Err(NativeError(format!(
+            "codePointAt: index {index} is out of bounds"
+        )));
     };
     // A leading high surrogate followed by a low surrogate combines into an
     // astral code point; otherwise the bare code unit is the code point.
     if (0xD800..=0xDBFF).contains(&first) {
         if let Some(&second) = units.get(index + 1) {
             if (0xDC00..=0xDFFF).contains(&second) {
-                let code = 0x10000
-                    + (((first as u32 - 0xD800) << 10) | (second as u32 - 0xDC00));
+                let code = 0x10000 + (((first as u32 - 0xD800) << 10) | (second as u32 - 0xDC00));
                 return Ok(NativeValue::Int(code as i64));
             }
         }
@@ -511,7 +542,11 @@ fn slice(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     // absent `end` is passed as a value past any string length, so it clamps
     // to `len` here.
     let normalize = |index: f64| -> usize {
-        let resolved = if index < 0.0 { (len + index).max(0.0) } else { index.min(len) };
+        let resolved = if index < 0.0 {
+            (len + index).max(0.0)
+        } else {
+            index.min(len)
+        };
         resolved as usize
     };
     let begin = normalize(start);
@@ -519,7 +554,9 @@ fn slice(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     if begin >= finish {
         return Ok(NativeValue::Str(String::new()));
     }
-    Ok(NativeValue::Str(zun_core::wtf16::from_units(&units[begin..finish])))
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(
+        &units[begin..finish],
+    )))
 }
 
 fn replace_all(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -537,12 +574,22 @@ fn replace_all(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nati
                 let mut out_units: Vec<u16> = Vec::with_capacity(units.len() * 2 + 1);
                 for at in 0..=units.len() {
                     let (before, after) = if needs_context {
-                        (zun_core::wtf16::from_units(&units[..at]), zun_core::wtf16::from_units(&units[at..]))
+                        (
+                            zun_core::wtf16::from_units(&units[..at]),
+                            zun_core::wtf16::from_units(&units[at..]),
+                        )
                     } else {
                         (String::new(), String::new())
                     };
                     let mut piece = String::new();
-                    zun_core::expand_substitution(replacement, &[Some(search)], &[None], &before, &after, &mut piece);
+                    zun_core::expand_substitution(
+                        replacement,
+                        &[Some(search)],
+                        &[None],
+                        &before,
+                        &after,
+                        &mut piece,
+                    );
                     out_units.extend(zun_core::wtf16::encode(&piece));
                     if let Some(&unit) = units.get(at) {
                         out_units.push(unit);
@@ -561,16 +608,27 @@ fn replace_all(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nati
             let mut next_empty = 0;
             loop {
                 let start = if search.is_empty() {
-                    let Some(&at) = boundaries.get(next_empty) else { break };
+                    let Some(&at) = boundaries.get(next_empty) else {
+                        break;
+                    };
                     next_empty += 1;
                     at
                 } else {
-                    let Some(at) = value[from..].find(*search) else { break };
+                    let Some(at) = value[from..].find(*search) else {
+                        break;
+                    };
                     from + at
                 };
                 let end = start + search.len();
                 out.push_str(&value[last..start]);
-                zun_core::expand_substitution(replacement, &[Some(search)], &[None], &value[..start], &value[end..], &mut out);
+                zun_core::expand_substitution(
+                    replacement,
+                    &[Some(search)],
+                    &[None],
+                    &value[..start],
+                    &value[end..],
+                    &mut out,
+                );
                 last = end;
                 from = end;
             }
@@ -587,7 +645,11 @@ fn from_char_code1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, 
     let code = match args.first() {
         Some(NativeArg::Int(code)) => *code as u16,
         Some(NativeArg::Float(code)) => *code as u16,
-        _ => return Err(NativeError("fromCharCode: expected a numeric code".to_string())),
+        _ => {
+            return Err(NativeError(
+                "fromCharCode: expected a numeric code".to_string(),
+            ))
+        }
     };
     // Each code is truncated to a UTF-16 code unit, per spec.
     Ok(NativeValue::Str(zun_core::wtf16::from_units(&[code])))
@@ -600,16 +662,22 @@ fn from_code_point1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
         _ => return Err(NativeError("RangeError: Invalid code point".to_string())),
     };
     if !(0..=0x10FFFF).contains(&code) {
-        return Err(NativeError(format!("RangeError: Invalid code point {code}")));
+        return Err(NativeError(format!(
+            "RangeError: Invalid code point {code}"
+        )));
     }
     let code = code as u32;
     if code <= 0xFFFF {
         // Includes lone surrogates, which `from_utf16_lossy` renders faithfully.
-        Ok(NativeValue::Str(zun_core::wtf16::from_units(&[code as u16])))
+        Ok(NativeValue::Str(zun_core::wtf16::from_units(
+            &[code as u16],
+        )))
     } else {
         match char::from_u32(code) {
             Some(scalar) => Ok(NativeValue::Str(scalar.to_string())),
-            None => Err(NativeError(format!("RangeError: Invalid code point {code}"))),
+            None => Err(NativeError(format!(
+                "RangeError: Invalid code point {code}"
+            ))),
         }
     }
 }
@@ -622,10 +690,18 @@ fn from_code_point1(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
 pub fn normalize_form(value: &str, form: &str) -> Option<String> {
     use icu::normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
     Some(match form {
-        "NFC" => ComposingNormalizerBorrowed::new_nfc().normalize(value).into_owned(),
-        "NFD" => DecomposingNormalizerBorrowed::new_nfd().normalize(value).into_owned(),
-        "NFKC" => ComposingNormalizerBorrowed::new_nfkc().normalize(value).into_owned(),
-        "NFKD" => DecomposingNormalizerBorrowed::new_nfkd().normalize(value).into_owned(),
+        "NFC" => ComposingNormalizerBorrowed::new_nfc()
+            .normalize(value)
+            .into_owned(),
+        "NFD" => DecomposingNormalizerBorrowed::new_nfd()
+            .normalize(value)
+            .into_owned(),
+        "NFKC" => ComposingNormalizerBorrowed::new_nfkc()
+            .normalize(value)
+            .into_owned(),
+        "NFKD" => DecomposingNormalizerBorrowed::new_nfkd()
+            .normalize(value)
+            .into_owned(),
         _ => return None,
     })
 }
@@ -634,7 +710,9 @@ fn normalize(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     use icu::normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
     let (Some(NativeArg::Str(value)), Some(NativeArg::Str(form))) = (args.first(), args.get(1))
     else {
-        return Err(NativeError("normalize: expected (string, form)".to_string()));
+        return Err(NativeError(
+            "normalize: expected (string, form)".to_string(),
+        ));
     };
     let normalized = match *form {
         "NFC" => ComposingNormalizerBorrowed::new_nfc().normalize(value),
@@ -659,11 +737,16 @@ fn locale_compare(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, N
     let (Some(NativeArg::Str(value)), Some(NativeArg::Str(that)), Some(NativeArg::Str(locale))) =
         (args.first(), args.get(1), args.get(2))
     else {
-        return Err(NativeError("localeCompare: expected (string, string, string)".to_string()));
+        return Err(NativeError(
+            "localeCompare: expected (string, string, string)".to_string(),
+        ));
     };
     let locale = intl_locale(locale);
-    let collator = Collator::try_new(CollatorPreferences::from(&locale), CollatorOptions::default())
-        .map_err(|e| NativeError(format!("localeCompare: collator init failed: {e:?}")))?;
+    let collator = Collator::try_new(
+        CollatorPreferences::from(&locale),
+        CollatorOptions::default(),
+    )
+    .map_err(|e| NativeError(format!("localeCompare: collator init failed: {e:?}")))?;
     let ordering = match collator.compare(value, that) {
         Ordering::Less => -1,
         Ordering::Equal => 0,
@@ -682,7 +765,9 @@ fn to_locale_lower_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeVa
                 .lowercase_to_string(value, &intl_locale(locale).id)
                 .into_owned(),
         )),
-        _ => Err(NativeError("toLocaleLowerCase: expected (string, string)".to_string())),
+        _ => Err(NativeError(
+            "toLocaleLowerCase: expected (string, string)".to_string(),
+        )),
     }
 }
 
@@ -696,7 +781,9 @@ fn to_locale_upper_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeVa
                 .uppercase_to_string(value, &intl_locale(locale).id)
                 .into_owned(),
         )),
-        _ => Err(NativeError("toLocaleUpperCase: expected (string, string)".to_string())),
+        _ => Err(NativeError(
+            "toLocaleUpperCase: expected (string, string)".to_string(),
+        )),
     }
 }
 
@@ -713,11 +800,16 @@ fn intl_collator_compare(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeV
     let (Some(NativeArg::Str(locale)), Some(NativeArg::Str(a)), Some(NativeArg::Str(b))) =
         (args.first(), args.get(1), args.get(2))
     else {
-        return Err(NativeError("Intl.Collator.compare: expected (string, string, string)".to_string()));
+        return Err(NativeError(
+            "Intl.Collator.compare: expected (string, string, string)".to_string(),
+        ));
     };
     let locale = intl_locale(locale);
-    let collator = Collator::try_new(CollatorPreferences::from(&locale), CollatorOptions::default())
-        .map_err(|e| NativeError(format!("Intl.Collator: collator init failed: {e:?}")))?;
+    let collator = Collator::try_new(
+        CollatorPreferences::from(&locale),
+        CollatorOptions::default(),
+    )
+    .map_err(|e| NativeError(format!("Intl.Collator: collator init failed: {e:?}")))?;
     Ok(NativeValue::Int(match collator.compare(a, b) {
         Ordering::Less => -1,
         Ordering::Equal => 0,
@@ -974,13 +1066,20 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Str,
             imp: to_locale_upper_case,
         },
-        NativeFn { name: "intlCollatorCompare", params: &[Str, Str, Str], ret: I32, imp: intl_collator_compare },
+        NativeFn {
+            name: "intlCollatorCompare",
+            params: &[Str, Str, Str],
+            ret: I32,
+            imp: intl_collator_compare,
+        },
     ],
 };
 
 fn encode_uri_component(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let Some(NativeArg::Str(value)) = args.first() else {
-        return Err(NativeError("encodeURIComponent: expected a string".to_string()));
+        return Err(NativeError(
+            "encodeURIComponent: expected a string".to_string(),
+        ));
     };
     let mut out = String::new();
     for byte in value.as_bytes() {
@@ -996,14 +1095,18 @@ fn encode_uri_component(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeVa
 
 fn decode_uri_component(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let Some(NativeArg::Str(value)) = args.first() else {
-        return Err(NativeError("decodeURIComponent: expected a string".to_string()));
+        return Err(NativeError(
+            "decodeURIComponent: expected a string".to_string(),
+        ));
     };
     let bytes = value.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' {
-            let hex = bytes.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok());
+            let hex = bytes
+                .get(i + 1..i + 3)
+                .and_then(|h| std::str::from_utf8(h).ok());
             match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 Some(b) => {
                     out.push(b);

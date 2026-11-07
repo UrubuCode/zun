@@ -11,7 +11,9 @@ impl Checker<'_> {
         if index.ty == Ty::F64 || index.ty == Ty::Any {
             let span = index.span;
             return hir::Expr {
-                kind: hir::ExprKind::Convert { value: Box::new(index) },
+                kind: hir::ExprKind::Convert {
+                    value: Box::new(index),
+                },
                 ty: Ty::Int(IntKind::U64),
                 span,
             };
@@ -32,7 +34,11 @@ impl Checker<'_> {
         self.to_number_expr_with(value, "numberCoerceStrict")
     }
 
-    pub(in crate::check) fn to_number_expr_with(&mut self, value: hir::Expr, native: &str) -> hir::Expr {
+    pub(in crate::check) fn to_number_expr_with(
+        &mut self,
+        value: hir::Expr,
+        native: &str,
+    ) -> hir::Expr {
         if value.ty == Ty::F64 || value.ty.is_error() {
             return value;
         }
@@ -44,9 +50,22 @@ impl Checker<'_> {
         let arg = if value.ty == Ty::Any {
             value
         } else {
-            hir::Expr { span, kind: hir::ExprKind::BoxAny { value: Box::new(value) }, ty: Ty::Any }
+            hir::Expr {
+                span,
+                kind: hir::ExprKind::BoxAny {
+                    value: Box::new(value),
+                },
+                ty: Ty::Any,
+            }
         };
-        hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::F64, span }
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![arg],
+            },
+            ty: Ty::F64,
+            span,
+        }
     }
 
     /// Coerce a value to an `f64` argument: integers widen, everything else
@@ -64,7 +83,10 @@ impl Checker<'_> {
             return value;
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(value)] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![Self::box_to_any(value)],
+            },
             ty: Ty::Int(IntKind::I64),
             span,
         }
@@ -79,19 +101,22 @@ impl Checker<'_> {
             return value;
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: vec![Self::box_to_any(value)] },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![Self::box_to_any(value)],
+            },
             ty: Ty::String,
             span,
         }
     }
 
-
-
     pub(in crate::check) fn to_number_for_arg(&mut self, value: hir::Expr) -> hir::Expr {
         if value.ty.is_int() {
             let span = value.span;
             return hir::Expr {
-                kind: hir::ExprKind::Convert { value: Box::new(value) },
+                kind: hir::ExprKind::Convert {
+                    value: Box::new(value),
+                },
                 ty: Ty::F64,
                 span,
             };
@@ -116,10 +141,27 @@ impl Checker<'_> {
         let value = if value.ty == Ty::Any || value.ty.is_error() {
             value
         } else {
-            hir::Expr { span: value.span, kind: hir::ExprKind::BoxAny { value: Box::new(value) }, ty: Ty::Any }
+            hir::Expr {
+                span: value.span,
+                kind: hir::ExprKind::BoxAny {
+                    value: Box::new(value),
+                },
+                ty: Ty::Any,
+            }
         };
-        let name = hir::Expr { kind: hir::ExprKind::String(method.to_string()), ty: Ty::String, span };
-        hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![name, value] }, ty: Ty::F64, span }
+        let name = hir::Expr {
+            kind: hir::ExprKind::String(method.to_string()),
+            ty: Ty::String,
+            span,
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![name, value],
+            },
+            ty: Ty::F64,
+            span,
+        }
     }
 
     pub(in crate::check) fn check_math_static(
@@ -153,7 +195,11 @@ impl Checker<'_> {
             // Start from the identity and fold every argument through the 2-arg
             // native: `f(identity, a) = a` for min/max, `hypot(0, a) = |a|`, so
             // 0/1/N arguments all get the correct value.
-            let mut acc = hir::Expr { kind: hir::ExprKind::Number(identity), ty: Ty::F64, span };
+            let mut acc = hir::Expr {
+                kind: hir::ExprKind::Number(identity),
+                ty: Ty::F64,
+                span,
+            };
             for arg in args {
                 let mut value = self.check_expr(cx, arg);
                 coerce_numeric_literal(&mut value, Ty::F64);
@@ -161,7 +207,10 @@ impl Checker<'_> {
                     value = self.to_number_expr_strict(value);
                 }
                 acc = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![acc, value] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![acc, value],
+                    },
                     ty: Ty::F64,
                     span,
                 };
@@ -227,7 +276,10 @@ impl Checker<'_> {
             return self.poison(span);
         }
         let mut checked = Vec::with_capacity(args.len());
-        for (arg, expected) in args.iter().zip(native.params.iter().map(|ty| native_ty(*ty))) {
+        for (arg, expected) in args
+            .iter()
+            .zip(native.params.iter().map(|ty| native_ty(*ty)))
+        {
             let mut value = self.check_expr(cx, arg);
             coerce_numeric_literal(&mut value, expected);
             if expected == Ty::F64 && !value.ty.is_int() && value.ty != Ty::F64 {
@@ -238,13 +290,20 @@ impl Checker<'_> {
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
                 self.error(
                     value.span,
-                    format!("`Math.{method}` argument type {:?} does not match {expected:?}", value.ty),
+                    format!(
+                        "`Math.{method}` argument type {:?} does not match {expected:?}",
+                        value.ty
+                    ),
                 );
             }
             checked.push(value);
         }
         for _ in 0..missing {
-            checked.push(hir::Expr { kind: hir::ExprKind::Number(f64::NAN), ty: Ty::F64, span });
+            checked.push(hir::Expr {
+                kind: hir::ExprKind::Number(f64::NAN),
+                ty: Ty::F64,
+                span,
+            });
         }
         hir::Expr {
             kind: hir::ExprKind::CallBuiltin { id, args: checked },
@@ -261,20 +320,22 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
-        let resolve = |checker: &mut Self, native: &str| {
-            match zun_natives::resolve("number", native) {
+        let resolve =
+            |checker: &mut Self, native: &str| match zun_natives::resolve("number", native) {
                 Some((id, _)) => Some(id),
                 None => {
                     checker.error(span, format!("missing Number intrinsic `{native}`"));
                     None
                 }
-            }
-        };
+            };
         match method {
             // Strict predicates: exactly one argument, of any type, no coercion.
             "isNaN" | "isFinite" | "isInteger" | "isSafeInteger" => {
                 if args.len() != 1 {
-                    self.error(span, format!("`Number.{method}` expects 1 argument, found {}", args.len()));
+                    self.error(
+                        span,
+                        format!("`Number.{method}` expects 1 argument, found {}", args.len()),
+                    );
                     return self.poison(span);
                 }
                 let native = match method {
@@ -283,26 +344,58 @@ impl Checker<'_> {
                     "isInteger" => "isIntegerStrict",
                     _ => "isSafeIntegerStrict",
                 };
-                let Some(id) = resolve(self, native) else { return self.poison(span) };
+                let Some(id) = resolve(self, native) else {
+                    return self.poison(span);
+                };
                 let arg = self.check_expr(cx, &args[0]);
-                hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::Boolean, span }
+                hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![arg],
+                    },
+                    ty: Ty::Boolean,
+                    span,
+                }
             }
             "parseFloat" => {
                 if args.len() != 1 {
-                    self.error(span, format!("`Number.parseFloat` expects 1 argument, found {}", args.len()));
+                    self.error(
+                        span,
+                        format!(
+                            "`Number.parseFloat` expects 1 argument, found {}",
+                            args.len()
+                        ),
+                    );
                     return self.poison(span);
                 }
-                let Some(id) = resolve(self, "parseFloatPrefix") else { return self.poison(span) };
+                let Some(id) = resolve(self, "parseFloatPrefix") else {
+                    return self.poison(span);
+                };
                 let arg = self.check_expr(cx, &args[0]);
                 let arg = self.to_string_for_parse(arg);
-                hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] }, ty: Ty::F64, span }
+                hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![arg],
+                    },
+                    ty: Ty::F64,
+                    span,
+                }
             }
             "parseInt" => {
                 if args.is_empty() || args.len() > 2 {
-                    self.error(span, format!("`Number.parseInt` expects 1 or 2 arguments, found {}", args.len()));
+                    self.error(
+                        span,
+                        format!(
+                            "`Number.parseInt` expects 1 or 2 arguments, found {}",
+                            args.len()
+                        ),
+                    );
                     return self.poison(span);
                 }
-                let Some(id) = resolve(self, "parseIntRadix") else { return self.poison(span) };
+                let Some(id) = resolve(self, "parseIntRadix") else {
+                    return self.poison(span);
+                };
                 let value = self.check_expr(cx, &args[0]);
                 let value = self.to_string_for_parse(value);
                 let radix = match args.get(1) {
@@ -310,10 +403,15 @@ impl Checker<'_> {
                         let mut radix = self.check_expr(cx, arg);
                         // A dynamic radix goes through ToNumber first.
                         if radix.ty == Ty::Any {
-                            if let Some((nid, _)) = zun_natives::resolve("collections", "numberCoerce") {
+                            if let Some((nid, _)) =
+                                zun_natives::resolve("collections", "numberCoerce")
+                            {
                                 let rspan = radix.span;
                                 radix = hir::Expr {
-                                    kind: hir::ExprKind::CallBuiltin { id: nid, args: vec![radix] },
+                                    kind: hir::ExprKind::CallBuiltin {
+                                        id: nid,
+                                        args: vec![radix],
+                                    },
                                     ty: Ty::F64,
                                     span: rspan,
                                 };
@@ -340,26 +438,46 @@ impl Checker<'_> {
                                 span: rspan,
                             };
                         }
-                        if radix.ty.is_float() || (radix.ty.is_int() && radix.ty != Ty::Int(IntKind::I32)) {
+                        if radix.ty.is_float()
+                            || (radix.ty.is_int() && radix.ty != Ty::Int(IntKind::I32))
+                        {
                             let rspan = radix.span;
                             radix = hir::Expr {
-                                kind: hir::ExprKind::Convert { value: Box::new(radix) },
+                                kind: hir::ExprKind::Convert {
+                                    value: Box::new(radix),
+                                },
                                 ty: Ty::Int(IntKind::I32),
                                 span: rspan,
                             };
                         }
-                        if !radix.ty.is_error() && !self.is_assignable(radix.ty, Ty::Int(IntKind::I32)) {
+                        if !radix.ty.is_error()
+                            && !self.is_assignable(radix.ty, Ty::Int(IntKind::I32))
+                        {
                             self.error(radix.span, "`Number.parseInt` radix must be an integer");
                         }
                         radix
                     }
                     // Absent radix → 0 (auto-detect) at the native boundary.
-                    None => hir::Expr { kind: hir::ExprKind::Number(0.0), ty: Ty::Int(IntKind::I32), span },
+                    None => hir::Expr {
+                        kind: hir::ExprKind::Number(0.0),
+                        ty: Ty::Int(IntKind::I32),
+                        span,
+                    },
                 };
-                hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: vec![value, radix] }, ty: Ty::F64, span }
+                hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![value, radix],
+                    },
+                    ty: Ty::F64,
+                    span,
+                }
             }
             other => {
-                self.error(method_span, format!("`Number.{other}` is not supported in this runtime"));
+                self.error(
+                    method_span,
+                    format!("`Number.{other}` is not supported in this runtime"),
+                );
                 self.poison(span)
             }
         }

@@ -69,7 +69,9 @@ fn newest_runtime_source() -> Option<std::time::SystemTime> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(kind) = entry.file_type() else { continue };
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
             if kind.is_dir() {
                 // Only descend into a crate root or its `src`.
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -107,7 +109,11 @@ fn build_uses_native_oxc_for_javascript_inputs() {
     );
     assert!(source.with_extension("zm").is_file());
 
-    for path in [source.clone(), source.with_extension("zm"), source.with_extension("zman")] {
+    for path in [
+        source.clone(),
+        source.with_extension("zm"),
+        source.with_extension("zman"),
+    ] {
         let _ = std::fs::remove_file(path);
     }
     let _ = std::fs::remove_dir(root);
@@ -136,7 +142,11 @@ fn build_uses_native_oxc_for_mts_inputs() {
     );
     assert!(source.with_extension("zm").is_file());
 
-    for path in [source.clone(), source.with_extension("zm"), source.with_extension("zman")] {
+    for path in [
+        source.clone(),
+        source.with_extension("zm"),
+        source.with_extension("zman"),
+    ] {
         let _ = std::fs::remove_file(path);
     }
     let _ = std::fs::remove_dir(root);
@@ -153,9 +163,17 @@ fn build_uses_native_oxc_for_commonjs_inputs() {
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(source.with_extension("zm").is_file());
-    for path in [source.clone(), source.with_extension("zm"), source.with_extension("zman")] {
+    for path in [
+        source.clone(),
+        source.with_extension("zm"),
+        source.with_extension("zman"),
+    ] {
         let _ = std::fs::remove_file(path);
     }
     let _ = std::fs::remove_dir(root);
@@ -167,8 +185,7 @@ fn build_can_persist_a_valid_prelude_cache() {
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
     let cache = root.join("prelude.zprc");
-    std::fs::write(&source, "function main(): int { return abs(-7); }\n")
-        .expect("write source");
+    std::fs::write(&source, "function main(): int { return abs(-7); }\n").expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .args(["build", "--prelude-cache"])
@@ -192,7 +209,12 @@ fn build_can_persist_a_valid_prelude_cache() {
         .expect("read linked manifest");
     assert_eq!(manifest.dependencies, vec!["zun:std"]);
 
-    for path in [source.clone(), source.with_extension("zm"), source.with_extension("zman"), cache] {
+    for path in [
+        source.clone(),
+        source.with_extension("zm"),
+        source.with_extension("zman"),
+        cache,
+    ] {
         let _ = std::fs::remove_file(path);
     }
     let _ = std::fs::remove_dir(root);
@@ -315,8 +337,7 @@ fn build_aot_runs_a_boolean_entry_point() {
     let root = std::env::temp_dir().join(format!("zun-aot-bool-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
-    std::fs::write(&source, "function main(): boolean { return true; }\n")
-        .expect("write source");
+    std::fs::write(&source, "function main(): boolean { return true; }\n").expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .args(["build", "--aot"])
@@ -345,8 +366,7 @@ fn build_aot_preserves_f32_entry_abi() {
     let root = std::env::temp_dir().join(format!("zun-aot-f32-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
-    std::fs::write(&source, "function main(): f32 { return 7.5; }\n")
-        .expect("write source");
+    std::fs::write(&source, "function main(): f32 { return 7.5; }\n").expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .args(["build", "--aot"])
@@ -375,21 +395,28 @@ fn build_aot_preserves_i32_entry_abi() {
     let root = std::env::temp_dir().join(format!("zun-aot-i32-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temp directory");
     let source = root.join("main.ts");
-    std::fs::write(&source, "function main(): int { return 42; }\n")
-        .expect("write source");
+    std::fs::write(&source, "function main(): int { return 42; }\n").expect("write source");
 
     let build = std::process::Command::new(env!("CARGO_BIN_EXE_zun"))
         .args(["build", "--aot"])
         .arg(&source)
         .output()
         .expect("run zun build");
-    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
 
     let executable = root.join("main.exe");
     let run = std::process::Command::new(&executable)
         .output()
         .expect("run AOT executable");
-    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
 
     for suffix in ["ts", "zm", "zman", "o", "meta.o", "exe", "aot.rs", "pdb"] {
@@ -404,8 +431,7 @@ fn build_aot_preserves_u32_entry_abi() {
     let root = std::env::temp_dir().join(format!("zun-aot-u32-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
-    std::fs::write(&source, "function main(): u32 { return 42; }\n")
-        .expect("write source");
+    std::fs::write(&source, "function main(): u32 { return 42; }\n").expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .args(["build", "--aot"])
@@ -474,7 +500,7 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
         &source,
         "function main(): string { if (true) { return \"managed\"; } return \"fallback\"; }\n",
     )
-        .expect("write source");
+    .expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .env("ZUN_RUNTIME_LIB", root.join("missing-runtime.lib"))
@@ -482,7 +508,11 @@ fn build_aot_keeps_the_module_when_entrypoint_needs_tier0() {
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(String::from_utf8_lossy(&output.stderr).contains("not AOT-eligible"));
     assert!(source.with_extension("zm").is_file());
     assert!(source.with_extension("zman").is_file());
@@ -525,7 +555,8 @@ fn build_aot_runs_scalar_interpreter_fallback_with_runtime_library() {
     let Some(runtime) = aot_runtime_library() else {
         return;
     };
-    let root = std::env::temp_dir().join(format!("zun-aot-runtime-fallback-{}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("zun-aot-runtime-fallback-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
     std::fs::write(
@@ -540,16 +571,30 @@ fn build_aot_runs_scalar_interpreter_fallback_with_runtime_library() {
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let executable = source.with_extension("exe");
-    assert!(executable.is_file(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        executable.is_file(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let manifest = zun_loader::ModuleManifest::read_file(source.with_extension("zman"))
         .expect("read fallback manifest");
     assert_eq!(manifest.native_object, None);
     assert_eq!(manifest.metadata_object.as_deref(), Some("main.meta.o"));
     assert!(manifest.runtime_library.is_some());
-    let run = Command::new(&executable).output().expect("run fallback executable");
-    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    let run = Command::new(&executable)
+        .output()
+        .expect("run fallback executable");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "23");
 
     for extension in ["ts", "zm", "zman", "meta.o", "exe", "aot.rs"] {
@@ -574,11 +619,25 @@ fn build_aot_runs_string_interpreter_fallback_with_runtime_library() {
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let executable = source.with_extension("exe");
-    assert!(executable.is_file(), "{}", String::from_utf8_lossy(&output.stderr));
-    let run = Command::new(&executable).output().expect("run fallback executable");
-    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        executable.is_file(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let run = Command::new(&executable)
+        .output()
+        .expect("run fallback executable");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "managed");
     for extension in ["ts", "zm", "zman", "meta.o", "exe", "aot.rs"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
@@ -594,19 +653,36 @@ fn build_aot_runs_unsigned_interpreter_fallback_with_runtime_library() {
     let root = std::env::temp_dir().join(format!("zun-aot-u64-fallback-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
-    std::fs::write(&source, "function main(): u64 { let value: any = 23; return value as u64; }\n")
-        .expect("write source");
+    std::fs::write(
+        &source,
+        "function main(): u64 { let value: any = 23; return value as u64; }\n",
+    )
+    .expect("write source");
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .env("ZUN_RUNTIME_LIB", &runtime)
         .args(["build", "--aot"])
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let executable = source.with_extension("exe");
-    assert!(executable.is_file(), "{}", String::from_utf8_lossy(&output.stderr));
-    let run = Command::new(&executable).output().expect("run fallback executable");
-    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        executable.is_file(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let run = Command::new(&executable)
+        .output()
+        .expect("run fallback executable");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "23");
     for extension in ["ts", "zm", "zman", "meta.o", "exe", "aot.rs"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
@@ -622,17 +698,30 @@ fn build_aot_preserves_boolean_interpreter_fallback_output() {
     let root = std::env::temp_dir().join(format!("zun-aot-bool-fallback-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
-    std::fs::write(&source, "function main(): boolean { let value: any = true; return value as boolean; }\n")
-        .expect("write source");
+    std::fs::write(
+        &source,
+        "function main(): boolean { let value: any = true; return value as boolean; }\n",
+    )
+    .expect("write source");
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .env("ZUN_RUNTIME_LIB", &runtime)
         .args(["build", "--aot"])
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let run = Command::new(source.with_extension("exe")).output().expect("run fallback executable");
-    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let run = Command::new(source.with_extension("exe"))
+        .output()
+        .expect("run fallback executable");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "true");
     for extension in ["ts", "zm", "zman", "meta.o", "exe", "aot.rs"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
@@ -648,17 +737,30 @@ fn build_aot_runs_floating_interpreter_fallback_with_runtime_library() {
     let root = std::env::temp_dir().join(format!("zun-aot-f64-fallback-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create temporary directory");
     let source = root.join("main.ts");
-    std::fs::write(&source, "function main(): number { let value: any = 2.5; return value as number; }\n")
-        .expect("write source");
+    std::fs::write(
+        &source,
+        "function main(): number { let value: any = 2.5; return value as number; }\n",
+    )
+    .expect("write source");
     let output = Command::new(env!("CARGO_BIN_EXE_zun"))
         .env("ZUN_RUNTIME_LIB", &runtime)
         .args(["build", "--aot"])
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let run = Command::new(source.with_extension("exe")).output().expect("run fallback executable");
-    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let run = Command::new(source.with_extension("exe"))
+        .output()
+        .expect("run fallback executable");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "2.5");
     for extension in ["ts", "zm", "zman", "meta.o", "exe", "aot.rs"] {
         let _ = std::fs::remove_file(source.with_extension(extension));
@@ -682,7 +784,11 @@ fn trim_reports_removed_method_names() {
         .arg(&source)
         .output()
         .expect("run zun");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("trim: removing method #1 unused"));
 

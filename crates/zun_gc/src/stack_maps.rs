@@ -1,7 +1,7 @@
 //! Native/JIT stack-map contracts at the GC boundary.
 
-use std::cell::RefCell;
 use super::RelocationMap;
+use std::cell::RefCell;
 
 thread_local! {
     static ACTIVE_REGISTRIES: RefCell<Vec<*const StackMapRegistry>> = const { RefCell::new(Vec::new()) };
@@ -35,7 +35,11 @@ impl ActiveNativeFrameScope {
     /// Register a frame whose registry and stack pointer remain valid until
     /// the returned scope is dropped.
     pub unsafe fn enter(registry: &StackMapRegistry, pc: usize, sp: *mut u8) -> Self {
-        let frame = ActiveNativeFrame { registry: registry as *const _, pc, sp };
+        let frame = ActiveNativeFrame {
+            registry: registry as *const _,
+            pc,
+            sp,
+        };
         ACTIVE_FRAMES.with(|frames| frames.borrow_mut().push(frame));
         Self { frame }
     }
@@ -65,22 +69,36 @@ pub struct StackMapRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{with_active_native_frames, ActiveNativeFrameScope, NativeStackMap, StackMapRegistry};
+    use super::{
+        with_active_native_frames, ActiveNativeFrameScope, NativeStackMap, StackMapRegistry,
+    };
     use crate::RelocationMap;
 
     #[test]
     fn rewrites_reference_slots_at_a_stopped_safepoint() {
         let mut registry = StackMapRegistry::new();
-        registry.replace([NativeStackMap { pc: 10, span: 4, reference_slots: vec![8] }]);
+        registry.replace([NativeStackMap {
+            pc: 10,
+            span: 4,
+            reference_slots: vec![8],
+        }]);
         let mut frame = [0u8; 16];
         let old = 0x1000usize;
         let new = 0x2000usize;
-        unsafe { (frame.as_mut_ptr().add(8) as *mut u64).write_unaligned(old as u64); }
+        unsafe {
+            (frame.as_mut_ptr().add(8) as *mut u64).write_unaligned(old as u64);
+        }
         let mut relocation = RelocationMap::new();
         relocation.insert_addresses(old, new);
 
-        assert_eq!(unsafe { registry.rewrite_slots_at(10, frame.as_mut_ptr(), &relocation) }, 1);
-        assert_eq!(unsafe { (frame.as_ptr().add(8) as *const u64).read_unaligned() }, new as u64);
+        assert_eq!(
+            unsafe { registry.rewrite_slots_at(10, frame.as_mut_ptr(), &relocation) },
+            1
+        );
+        assert_eq!(
+            unsafe { (frame.as_ptr().add(8) as *const u64).read_unaligned() },
+            new as u64
+        );
     }
 
     #[test]
@@ -90,7 +108,10 @@ mod tests {
         let outer = unsafe { ActiveNativeFrameScope::enter(&registry, 10, frame.as_mut_ptr()) };
         assert_eq!(with_active_native_frames(|frames| frames.len()), 1);
         let inner = unsafe { ActiveNativeFrameScope::enter(&registry, 20, frame.as_mut_ptr()) };
-        assert_eq!(with_active_native_frames(|frames| frames.iter().map(|f| f.pc).collect::<Vec<_>>()), vec![10, 20]);
+        assert_eq!(
+            with_active_native_frames(|frames| frames.iter().map(|f| f.pc).collect::<Vec<_>>()),
+            vec![10, 20]
+        );
         drop(inner);
         assert_eq!(with_active_native_frames(|frames| frames[0].pc), 10);
         drop(outer);
@@ -121,7 +142,10 @@ impl Drop for ActiveStackMapScope {
     fn drop(&mut self) {
         ACTIVE_REGISTRIES.with(|active| {
             let mut active = active.borrow_mut();
-            if let Some(index) = active.iter().rposition(|&registry| registry == self.registry) {
+            if let Some(index) = active
+                .iter()
+                .rposition(|&registry| registry == self.registry)
+            {
                 active.remove(index);
             }
         });
@@ -182,8 +206,7 @@ impl StackMapRegistry {
             .filter_map(|&offset| {
                 let address = unsafe { sp.add(offset as usize) as *const u64 };
                 let value = unsafe { address.read_unaligned() };
-                (value != 0)
-                    .then(|| unsafe { super::Obj::from_addr(value as *mut u64) })
+                (value != 0).then(|| unsafe { super::Obj::from_addr(value as *mut u64) })
             })
             .collect()
     }
@@ -199,7 +222,9 @@ impl StackMapRegistry {
         sp: *mut u8,
         relocation: &RelocationMap,
     ) -> usize {
-        let Some(map) = self.lookup(pc) else { return 0; };
+        let Some(map) = self.lookup(pc) else {
+            return 0;
+        };
         map.reference_slots
             .iter()
             .filter(|&&offset| unsafe {

@@ -39,7 +39,11 @@ pub fn js_min(a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         f64::NAN
     } else if a == 0.0 && b == 0.0 {
-        if a.is_sign_negative() { a } else { b }
+        if a.is_sign_negative() {
+            a
+        } else {
+            b
+        }
     } else if a < b {
         a
     } else {
@@ -52,7 +56,11 @@ pub fn js_max(a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         f64::NAN
     } else if a == 0.0 && b == 0.0 {
-        if a.is_sign_positive() { a } else { b }
+        if a.is_sign_positive() {
+            a
+        } else {
+            b
+        }
     } else if a > b {
         a
     } else {
@@ -66,7 +74,13 @@ pub fn js_max(a: f64, b: f64) -> f64 {
 pub fn apply_math(name: &str, values: &[f64]) -> Option<f64> {
     match name {
         "min" => return Some(values.iter().fold(f64::INFINITY, |acc, &v| js_min(acc, v))),
-        "max" => return Some(values.iter().fold(f64::NEG_INFINITY, |acc, &v| js_max(acc, v))),
+        "max" => {
+            return Some(
+                values
+                    .iter()
+                    .fold(f64::NEG_INFINITY, |acc, &v| js_max(acc, v)),
+            )
+        }
         "hypot" => {
             if values.iter().any(|v| v.is_infinite()) {
                 return Some(f64::INFINITY);
@@ -92,7 +106,11 @@ pub fn apply_math(name: &str, values: &[f64]) -> Option<f64> {
         }
         _ => {}
     }
-    let native_name = if name == "abs" { "abs".to_string() } else { format!("{name}Number") };
+    let native_name = if name == "abs" {
+        "abs".to_string()
+    } else {
+        format!("{name}Number")
+    };
     let (_, native) = crate::resolve("math", &native_name)?;
     let mut args: Vec<NativeArg> = Vec::new();
     for i in 0..native.params.len() {
@@ -199,12 +217,16 @@ fn imul(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError
         Some(NativeArg::Int(value)) => *value as f64,
         _ => return Err(NativeError("imul: expected two numbers".to_string())),
     };
-    Ok(NativeValue::Float(to_int32(a).wrapping_mul(to_int32(b)) as f64))
+    Ok(NativeValue::Float(
+        to_int32(a).wrapping_mul(to_int32(b)) as f64
+    ))
 }
 
 fn clz32(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = float_arg(args, "clz32")?;
-    Ok(NativeValue::Float((to_int32(value) as u32).leading_zeros() as f64))
+    Ok(NativeValue::Float(
+        (to_int32(value) as u32).leading_zeros() as f64
+    ))
 }
 
 fn sin(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -319,7 +341,9 @@ fn hypot(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
         Some(NativeArg::Int(value)) => *value as f64,
         _ => return Err(NativeError("hypot: expected two numbers".to_string())),
     };
-    Ok(NativeValue::Float(apply_math("hypot", &[left, right]).unwrap_or(f64::NAN)))
+    Ok(NativeValue::Float(
+        apply_math("hypot", &[left, right]).unwrap_or(f64::NAN),
+    ))
 }
 
 /// The runtime-backed numeric portion of the standard library.
@@ -548,9 +572,29 @@ pub const MODULE: crate::Module = crate::Module {
             ret: F64,
             imp: clz32,
         },
-        NativeFn { name: "asinNumber", params: &[F64], ret: F64, imp: asin },
-        NativeFn { name: "acosNumber", params: &[F64], ret: F64, imp: acos },
-        NativeFn { name: "atanNumber", params: &[F64], ret: F64, imp: atan },
-        NativeFn { name: "froundNumber", params: &[F64], ret: F64, imp: fround },
+        NativeFn {
+            name: "asinNumber",
+            params: &[F64],
+            ret: F64,
+            imp: asin,
+        },
+        NativeFn {
+            name: "acosNumber",
+            params: &[F64],
+            ret: F64,
+            imp: acos,
+        },
+        NativeFn {
+            name: "atanNumber",
+            params: &[F64],
+            ret: F64,
+            imp: atan,
+        },
+        NativeFn {
+            name: "froundNumber",
+            params: &[F64],
+            ret: F64,
+            imp: fround,
+        },
     ],
 };

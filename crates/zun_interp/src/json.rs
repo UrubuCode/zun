@@ -74,8 +74,10 @@ impl Interp<'_> {
     pub(crate) fn json_stringify(&mut self, args: &[Value]) -> Result<Value, RunError> {
         let concrete = |value: Option<&Value>| -> Value {
             match value {
-                Some(Value::Any(any)) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                    .unwrap_or(Value::Void),
+                Some(Value::Any(any)) => {
+                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or(Value::Void)
+                }
                 Some(other) => other.clone(),
                 None => Value::Void,
             }
@@ -92,7 +94,8 @@ impl Interp<'_> {
                     let mut names: Vec<String> = Vec::new();
                     for index in 0..len {
                         let item = zun_gc::with_current_heap(|heap| {
-                            heap.array_get(*array, index).and_then(|any| Value::unbox_any(any, heap))
+                            heap.array_get(*array, index)
+                                .and_then(|any| Value::unbox_any(any, heap))
                         });
                         let name = match item {
                             Some(Value::Str(text)) => Some(text.to_string()),
@@ -113,10 +116,17 @@ impl Interp<'_> {
         }
         // A Number/String wrapper object as `space` counts as its primitive.
         let space_arg = match as_obj(&space_arg) {
-            Some(obj) if matches!(self.json_class_name(obj).as_str(), "NumberObject" | "StringObject") => {
+            Some(obj)
+                if matches!(
+                    self.json_class_name(obj).as_str(),
+                    "NumberObject" | "StringObject"
+                ) =>
+            {
                 match self.instance_member_get(obj, "value")? {
-                    Some(Value::Any(any)) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
-                        .unwrap_or(Value::Void),
+                    Some(Value::Any(any)) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void)
+                    }
                     Some(other) => other,
                     None => space_arg,
                 }
@@ -125,7 +135,11 @@ impl Interp<'_> {
         };
         let gap = match &space_arg {
             Value::Int(n, _) => " ".repeat((*n).clamp(0, 10) as usize),
-            Value::Float(f, _) => " ".repeat(if f.is_nan() { 0 } else { f.clamp(0.0, 10.0) as usize }),
+            Value::Float(f, _) => " ".repeat(if f.is_nan() {
+                0
+            } else {
+                f.clamp(0.0, 10.0) as usize
+            }),
             Value::Str(text) => text.chars().take(10).collect(),
             _ => String::new(),
         };
@@ -142,8 +156,9 @@ impl Interp<'_> {
         ctx.slot_set(0, holder);
         match self.json_property(&mut ctx, "", 0, value, "", 0)? {
             Some(text) => {
-                let boxed = zun_gc::with_current_heap_mut(|heap| Value::Str(text.into()).box_any(heap))
-                    .unwrap_or_else(zun_core::Any::null);
+                let boxed =
+                    zun_gc::with_current_heap_mut(|heap| Value::Str(text.into()).box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
                 Ok(Value::Any(boxed))
             }
             None => Ok(Value::Any(zun_core::Any::void())),
@@ -160,7 +175,14 @@ impl Interp<'_> {
             .tables
             .method_defs
             .get((handle.method_rid() as usize).wrapping_sub(1))
-            .map(|method| self.module.strings.get(method.name).ends_with("@this>") || self.module.strings.get(method.name).ends_with("@this@rest>"))
+            .map(|method| {
+                self.module.strings.get(method.name).ends_with("@this>")
+                    || self
+                        .module
+                        .strings
+                        .get(method.name)
+                        .ends_with("@this@rest>")
+            })
             .unwrap_or(false)
     }
 
@@ -183,8 +205,8 @@ impl Interp<'_> {
                     }
                     other => other.box_any(heap),
                 })
-                    .map(Value::Any)
-                    .unwrap_or(Value::Void)
+                .map(Value::Any)
+                .unwrap_or(Value::Void)
             })
             .collect();
         let mut call_args = call_args;
@@ -205,7 +227,11 @@ impl Interp<'_> {
         // Elements of an array-like (an `arguments` object, a typed array).
         if let Some(index) = key.parse::<usize>().ok().filter(|i| i.to_string() == key) {
             if let Some(len) = crate::typed_arrays::element_len(obj) {
-                return Ok(if index < len { crate::typed_arrays::read_element(obj, index) } else { None });
+                return Ok(if index < len {
+                    crate::typed_arrays::read_element(obj, index)
+                } else {
+                    None
+                });
             }
             if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) {
                 return Ok(zun_gc::with_current_heap(|heap| {
@@ -216,15 +242,16 @@ impl Interp<'_> {
             }
         }
         if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
-            let (enumerable, getter, accessor, data, function) = zun_gc::with_current_heap(|heap| {
-                (
-                    heap.dynamic_is_enumerable(obj, key),
-                    heap.dynamic_accessor_getter(obj, key),
-                    heap.dynamic_is_accessor(obj, key),
-                    heap.dynamic_get(obj, key),
-                    heap.dynamic_get_function(obj, key),
-                )
-            });
+            let (enumerable, getter, accessor, data, function) =
+                zun_gc::with_current_heap(|heap| {
+                    (
+                        heap.dynamic_is_enumerable(obj, key),
+                        heap.dynamic_accessor_getter(obj, key),
+                        heap.dynamic_is_accessor(obj, key),
+                        heap.dynamic_get(obj, key),
+                        heap.dynamic_get_function(obj, key),
+                    )
+                });
             if function.is_some() {
                 return Ok(Some(Value::Function(function.unwrap())));
             }
@@ -232,12 +259,16 @@ impl Interp<'_> {
                 return Ok(None);
             }
             if let Some(getter) = getter {
-                return self.invoke_function_value(getter, self.with_this_arg(getter, obj, Vec::new())).map(Some);
+                return self
+                    .invoke_function_value(getter, self.with_this_arg(getter, obj, Vec::new()))
+                    .map(Some);
             }
             if accessor {
                 return Ok(Some(Value::Void));
             }
-            return Ok(data.and_then(|any| zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))));
+            return Ok(
+                data.and_then(|any| zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)))
+            );
         }
         self.instance_member_get(obj, key)
     }
@@ -268,7 +299,9 @@ impl Interp<'_> {
         depth: usize,
     ) -> Result<Option<String>, RunError> {
         if depth > MAX_DEPTH - 2 {
-            return Err(RunError::Native("TypeError: Converting circular structure to JSON".into()));
+            return Err(RunError::Native(
+                "TypeError: Converting circular structure to JSON".into(),
+            ));
         }
         let slot = ctx.top;
         ctx.top += 1;
@@ -304,13 +337,19 @@ impl Interp<'_> {
             } else if let Some(millis) = zun_gc::with_current_heap(|heap| heap.date_millis(obj)) {
                 let _ = millis;
                 let iso = zun_gc::with_current_heap(|heap| {
-                    if heap.date_is_valid(obj) == Some(true) { heap.date_iso_datetime(obj) } else { None }
+                    if heap.date_is_valid(obj) == Some(true) {
+                        heap.date_iso_datetime(obj)
+                    } else {
+                        None
+                    }
                 });
                 value = match iso {
                     Some(text) => Value::Str(text.into()),
                     None => Value::Null,
                 };
-            } else if let Some(handle) = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "toJSON")) {
+            } else if let Some(handle) =
+                zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "toJSON"))
+            {
                 let this = Value::Object(ctx.slot_get(slot));
                 value = self.json_call_with_this(handle, this, vec![key_value.clone()])?;
                 if let Some(next) = as_obj(&value) {
@@ -322,8 +361,10 @@ impl Interp<'_> {
                     let this = Value::Object(ctx.slot_get(slot));
                     value = self.call(rid, vec![this], None)?;
                     value = match value {
-                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
-                            .unwrap_or(Value::Void),
+                        Value::Any(any) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                                .unwrap_or(Value::Void)
+                        }
                         other => other,
                     };
                     if let Some(next) = as_obj(&value) {
@@ -350,11 +391,16 @@ impl Interp<'_> {
         // 3. unwrap primitive wrapper objects
         if let Some(obj) = as_obj(&value) {
             let class = self.json_class_name(obj);
-            if matches!(class.as_str(), "NumberObject" | "BooleanObject" | "StringObject") {
+            if matches!(
+                class.as_str(),
+                "NumberObject" | "BooleanObject" | "StringObject"
+            ) {
                 if let Some(inner) = self.instance_member_get(obj, "value")? {
                     value = match inner {
-                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
-                            .unwrap_or(Value::Void),
+                        Value::Any(any) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                                .unwrap_or(Value::Void)
+                        }
                         other => other,
                     };
                 }
@@ -382,7 +428,9 @@ impl Interp<'_> {
             Value::Object(_) => {
                 let obj = ctx.slot_get(slot);
                 // A boxed function value (functions held in arrays/`any`).
-                if zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "__boxedFn").is_some()) {
+                if zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_function(obj, "__boxedFn").is_some()
+                }) {
                     return Ok(None);
                 }
                 if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) {
@@ -398,7 +446,9 @@ impl Interp<'_> {
                         ));
                     }
                 }
-                if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some() && !heap.array_is_arguments(obj)) {
+                if zun_gc::with_current_heap(|heap| {
+                    heap.array_len(obj).is_some() && !heap.array_is_arguments(obj)
+                }) {
                     self.json_array(ctx, slot, indent, depth)
                 } else {
                     self.json_object(ctx, slot, indent, depth)
@@ -430,25 +480,36 @@ impl Interp<'_> {
             // through its getter.
             let item = match &item {
                 Value::Object(record)
-                    if zun_gc::with_current_heap(|heap| heap.dynamic_get(*record, "__elemAcc").is_some()) =>
+                    if zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get(*record, "__elemAcc").is_some()
+                    }) =>
                 {
-                    match zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(*record, "v")) {
+                    match zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_accessor_getter(*record, "v")
+                    }) {
                         Some(getter) => {
                             let this = ctx.slot_get(slot);
-                            self.invoke_function_value(getter, self.with_this_arg(getter, this, Vec::new()))?
+                            self.invoke_function_value(
+                                getter,
+                                self.with_this_arg(getter, this, Vec::new()),
+                            )?
                         }
                         None => Value::Void,
                     }
                 }
                 _ => item,
             };
-            let text = self.json_property(ctx, &index.to_string(), slot, item, &inner, depth + 1)?;
+            let text =
+                self.json_property(ctx, &index.to_string(), slot, item, &inner, depth + 1)?;
             parts.push(text.unwrap_or_else(|| "null".into()));
         }
         Ok(Some(if ctx.gap.is_empty() {
             format!("[{}]", parts.join(","))
         } else {
-            format!("[\n{inner}{}\n{indent}]", parts.join(&format!(",\n{inner}")))
+            format!(
+                "[\n{inner}{}\n{indent}]",
+                parts.join(&format!(",\n{inner}"))
+            )
         }))
     }
 
@@ -472,7 +533,10 @@ impl Interp<'_> {
                             .collect()
                     })
                 } else {
-                    self.object_own_entries(obj)?.into_iter().map(|(key, _)| key).collect()
+                    self.object_own_entries(obj)?
+                        .into_iter()
+                        .map(|(key, _)| key)
+                        .collect()
                 }
             }
         };
@@ -480,7 +544,9 @@ impl Interp<'_> {
         let mut parts: Vec<String> = Vec::new();
         for key in keys {
             let current = ctx.slot_get(slot);
-            let Some(item) = self.json_get(current, &key)? else { continue };
+            let Some(item) = self.json_get(current, &key)? else {
+                continue;
+            };
             let Some(text) = self.json_property(ctx, &key, slot, item, &inner, depth + 1)? else {
                 continue;
             };
@@ -493,7 +559,10 @@ impl Interp<'_> {
         Ok(Some(if ctx.gap.is_empty() {
             format!("{{{}}}", parts.join(","))
         } else {
-            format!("{{\n{inner}{}\n{indent}}}", parts.join(&format!(",\n{inner}")))
+            format!(
+                "{{\n{inner}{}\n{indent}}}",
+                parts.join(&format!(",\n{inner}"))
+            )
         }))
     }
 }

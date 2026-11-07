@@ -8,18 +8,18 @@
 use super::*;
 
 impl Translator<'_> {
-    pub(crate) fn op_const_str(&mut self, instr: &zun_il::Instruction, stack: &mut Vec<Slot>) -> Result<(), String> {
+    pub(crate) fn op_const_str(
+        &mut self,
+        instr: &zun_il::Instruction,
+        stack: &mut Vec<Slot>,
+    ) -> Result<(), String> {
         let Operand::StringRef(index) = instr.operand else {
             return Err("const.str operand".into());
         };
         if self.literal_data_ids.is_null() && self.literal_ptrs.is_null() {
             return Err("const.str requires runtime literal storage".into());
         }
-        let len = self
-            .zm
-            .strings
-            .get(zun_metadata::StringIndex(index))
-            .len();
+        let len = self.zm.strings.get(zun_metadata::StringIndex(index)).len();
         let ptr = if self.literal_data_ids.is_null() {
             let address = unsafe { *self.literal_ptrs.add(index as usize) };
             self.builder.ins().iconst(types::I64, address as i64)
@@ -74,8 +74,7 @@ impl Translator<'_> {
     ) -> Result<bool, String> {
         match method_name {
             Some("length") => {
-                let (receiver, _) =
-                    stack.pop().ok_or("string length receiver")?;
+                let (receiver, _) = stack.pop().ok_or("string length receiver")?;
                 self.builder.declare_value_needs_stack_map(receiver);
                 let length = self.string_length_fref();
                 let call = self.builder.ins().call(length, &[receiver]);
@@ -84,13 +83,9 @@ impl Translator<'_> {
                 return Ok(true);
             }
             Some("contains") | Some("includes") => {
-                let (needle, needle_kind) =
-                    stack.pop().ok_or("string contains needle")?;
-                let (receiver, receiver_kind) =
-                    stack.pop().ok_or("string contains receiver")?;
-                if receiver_kind != JitKind::String
-                    || needle_kind != JitKind::String
-                {
+                let (needle, needle_kind) = stack.pop().ok_or("string contains needle")?;
+                let (receiver, receiver_kind) = stack.pop().ok_or("string contains receiver")?;
+                if receiver_kind != JitKind::String || needle_kind != JitKind::String {
                     return Err("string contains expects string arguments".into());
                 }
                 self.builder.declare_value_needs_stack_map(receiver);
@@ -102,10 +97,8 @@ impl Translator<'_> {
                 return Ok(true);
             }
             Some("charCodeAt") => {
-                let (index, index_kind) =
-                    stack.pop().ok_or("string charCodeAt index")?;
-                let (receiver, receiver_kind) =
-                    stack.pop().ok_or("string charCodeAt receiver")?;
+                let (index, index_kind) = stack.pop().ok_or("string charCodeAt index")?;
+                let (receiver, receiver_kind) = stack.pop().ok_or("string charCodeAt receiver")?;
                 if receiver_kind != JitKind::String
                     || !matches!(index_kind, JitKind::Num(kind) if kind.int_parts().is_some())
                 {
@@ -124,13 +117,10 @@ impl Translator<'_> {
                 return Ok(true);
             }
             Some("startsWith") | Some("endsWith") => {
-                let (needle, needle_kind) =
-                    stack.pop().ok_or("string prefix/suffix")?;
+                let (needle, needle_kind) = stack.pop().ok_or("string prefix/suffix")?;
                 let (receiver, receiver_kind) =
                     stack.pop().ok_or("string prefix/suffix receiver")?;
-                if receiver_kind != JitKind::String
-                    || needle_kind != JitKind::String
-                {
+                if receiver_kind != JitKind::String || needle_kind != JitKind::String {
                     return Err("string prefix/suffix expects string arguments".into());
                 }
                 self.builder.declare_value_needs_stack_map(receiver);
@@ -355,7 +345,10 @@ impl Translator<'_> {
                 self.builder.declare_value_needs_stack_map(needle);
                 self.builder.declare_value_needs_stack_map(replacement);
                 let helper = self.string_replace_fref();
-                let call = self.builder.ins().call(helper, &[receiver, needle, replacement]);
+                let call = self
+                    .builder
+                    .ins()
+                    .call(helper, &[receiver, needle, replacement]);
                 let result = self.builder.inst_results(call)[0];
                 self.builder.declare_value_needs_stack_map(result);
                 stack.push((result, JitKind::String));
@@ -553,18 +546,32 @@ impl Translator<'_> {
 
     pub(crate) fn string_pad_fref(&mut self, name: &str) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
-        for _ in 0..3 { sig.params.push(AbiParam::new(types::I64)); }
+        for _ in 0..3 {
+            sig.params.push(AbiParam::new(types::I64));
+        }
         sig.returns.push(AbiParam::new(types::I64));
-        let symbol = if name == "padEnd" { "zun_jit_string_pad_end" } else { "zun_jit_string_pad_start" };
-        let id = self.module.declare_function(symbol, Linkage::Import, &sig).expect("declare string pad helper");
+        let symbol = if name == "padEnd" {
+            "zun_jit_string_pad_end"
+        } else {
+            "zun_jit_string_pad_start"
+        };
+        let id = self
+            .module
+            .declare_function(symbol, Linkage::Import, &sig)
+            .expect("declare string pad helper");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
     pub(crate) fn string_replace_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);
-        for _ in 0..3 { sig.params.push(AbiParam::new(types::I64)); }
+        for _ in 0..3 {
+            sig.params.push(AbiParam::new(types::I64));
+        }
         sig.returns.push(AbiParam::new(types::I64));
-        let id = self.module.declare_function("zun_jit_string_replace", Linkage::Import, &sig).expect("declare zun_jit_string_replace");
+        let id = self
+            .module
+            .declare_function("zun_jit_string_replace", Linkage::Import, &sig)
+            .expect("declare zun_jit_string_replace");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

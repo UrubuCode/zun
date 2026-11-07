@@ -213,8 +213,7 @@ pub const fn fingerprint() -> u64 {
 /// compile. The user's text comes first so its byte offsets are unchanged.
 pub fn with_prelude(user_source: &str) -> String {
     let classes_len: usize = PRELUDE_CLASSES.iter().map(|c| c.len() + 1).sum();
-    let mut combined =
-        String::with_capacity(user_source.len() + PRELUDE.len() + classes_len + 2);
+    let mut combined = String::with_capacity(user_source.len() + PRELUDE.len() + classes_len + 2);
     combined.push_str(user_source);
     combined.push('\n');
     combined.push_str(PRELUDE);

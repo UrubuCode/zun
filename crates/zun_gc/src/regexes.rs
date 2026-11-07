@@ -35,7 +35,11 @@ impl Heap {
         input: &str,
     ) -> Option<Result<Obj, zun_core::RegexError>> {
         let names = self.regexes.get(&(object.addr() as usize))?.group_names();
-        let has_indices = self.regexes.get(&(object.addr() as usize))?.flags().contains('d');
+        let has_indices = self
+            .regexes
+            .get(&(object.addr() as usize))?
+            .flags()
+            .contains('d');
         let spans = match self
             .regexes
             .get(&(object.addr() as usize))
@@ -46,7 +50,13 @@ impl Heap {
         };
         let outer = self.alloc_array(spans.len());
         for (index, found) in spans.into_iter().enumerate() {
-            let inner = self.alloc_match_array(input, found.start16, found.groups, &names, has_indices.then_some(&found.group_spans16[..]));
+            let inner = self.alloc_match_array(
+                input,
+                found.start16,
+                found.groups,
+                &names,
+                has_indices.then_some(&found.group_spans16[..]),
+            );
             self.array_set(outer, index, zun_core::Any::object(inner.addr() as usize));
         }
         Some(Ok(outer))
@@ -75,7 +85,11 @@ impl Heap {
             self.array_set(array, index, value);
         }
         self.ensure_dynamic_entry(array);
-        self.dynamic_set(array, "index".to_owned(), zun_core::Any::float(start16 as f64));
+        self.dynamic_set(
+            array,
+            "index".to_owned(),
+            zun_core::Any::float(start16 as f64),
+        );
         let input_any = zun_core::Any::string(self.intern_string(input.into()));
         self.dynamic_set(array, "input".to_owned(), input_any);
         let groups_any = if named.is_empty() {
@@ -121,7 +135,11 @@ impl Heap {
                 zun_core::Any::object(object.addr() as usize)
             };
             self.dynamic_set(indices, "groups".to_owned(), indices_groups);
-            self.dynamic_set(array, "indices".to_owned(), zun_core::Any::object(indices.addr() as usize));
+            self.dynamic_set(
+                array,
+                "indices".to_owned(),
+                zun_core::Any::object(indices.addr() as usize),
+            );
         }
         array
     }
@@ -130,7 +148,10 @@ impl Heap {
     pub fn regex_last_index_any(&self, object: Obj) -> Option<zun_core::Any> {
         let regex = self.regexes.get(&(object.addr() as usize))?;
         if regex.is_last_index_materialized() {
-            Some(self.dynamic_get(object, "lastIndex").unwrap_or_else(zun_core::Any::void))
+            Some(
+                self.dynamic_get(object, "lastIndex")
+                    .unwrap_or_else(zun_core::Any::void),
+            )
         } else {
             Some(zun_core::Any::float(regex.last_index()))
         }
@@ -146,7 +167,11 @@ impl Heap {
             zun_core::AnyTag::Null => 0.0,
             zun_core::AnyTag::String => {
                 let text = self.string(any.as_string().unwrap_or(0)).trim().to_owned();
-                if text.is_empty() { 0.0 } else { text.parse::<f64>().unwrap_or(f64::NAN) }
+                if text.is_empty() {
+                    0.0
+                } else {
+                    text.parse::<f64>().unwrap_or(f64::NAN)
+                }
             }
             _ => f64::NAN,
         };
@@ -177,7 +202,9 @@ impl Heap {
     /// non-enumerable, non-configurable data property) so reflection and
     /// `Object.freeze` can act on it.
     pub fn regex_materialize_last_index(&mut self, object: Obj) {
-        let Some(regex) = self.regexes.get_mut(&(object.addr() as usize)) else { return };
+        let Some(regex) = self.regexes.get_mut(&(object.addr() as usize)) else {
+            return;
+        };
         if regex.is_last_index_materialized() {
             return;
         }
@@ -185,13 +212,23 @@ impl Heap {
         regex.mark_last_index_materialized();
         self.ensure_dynamic_entry(object);
         if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
-            properties.force_define_data("lastIndex", zun_core::Any::float(value), true, false, false);
+            properties.force_define_data(
+                "lastIndex",
+                zun_core::Any::float(value),
+                true,
+                false,
+                false,
+            );
         }
     }
 
     /// The checked write of `exec` / `replace` (`Set(R, "lastIndex", v, true)`):
     /// a `TypeError` when the property is not writable.
-    pub fn regex_store_last_index(&mut self, object: Obj, value: f64) -> Result<(), zun_core::RegexError> {
+    pub fn regex_store_last_index(
+        &mut self,
+        object: Obj,
+        value: f64,
+    ) -> Result<(), zun_core::RegexError> {
         let materialized = match self.regexes.get_mut(&(object.addr() as usize)) {
             Some(regex) if !regex.is_last_index_materialized() => {
                 regex.set_last_index(value);
@@ -212,10 +249,18 @@ impl Heap {
     }
 
     /// A user assignment `re.lastIndex = value` of any value.
-    pub fn regex_assign_last_index(&mut self, object: Obj, value: zun_core::Any) -> Result<(), zun_core::RegexError> {
+    pub fn regex_assign_last_index(
+        &mut self,
+        object: Obj,
+        value: zun_core::Any,
+    ) -> Result<(), zun_core::RegexError> {
         match value.tag() {
-            zun_core::AnyTag::Float => self.regex_store_last_index(object, value.as_float().unwrap_or(0.0)),
-            zun_core::AnyTag::Int => self.regex_store_last_index(object, value.as_int().unwrap_or(0) as f64),
+            zun_core::AnyTag::Float => {
+                self.regex_store_last_index(object, value.as_float().unwrap_or(0.0))
+            }
+            zun_core::AnyTag::Int => {
+                self.regex_store_last_index(object, value.as_int().unwrap_or(0) as f64)
+            }
             _ => {
                 self.regex_materialize_last_index(object);
                 if !self.dynamic_can_set(object, "lastIndex") {
@@ -237,10 +282,14 @@ impl Heap {
         &mut self,
         object: Obj,
         input: &str,
-    ) -> Option<Result<Option<(zun_core::MatchFull, Vec<Option<String>>)>, zun_core::RegexError>> {
+    ) -> Option<Result<Option<(zun_core::MatchFull, Vec<Option<String>>)>, zun_core::RegexError>>
+    {
         let (stateful, sticky) = {
             let flags = self.regexes.get(&(object.addr() as usize))?.flags();
-            (flags.contains('g') || flags.contains('y'), flags.contains('y'))
+            (
+                flags.contains('g') || flags.contains('y'),
+                flags.contains('y'),
+            )
         };
         let raw = self.regex_last_index(object)?;
         let last_index = if stateful { raw } else { 0.0 };
@@ -285,7 +334,10 @@ impl Heap {
         object: Obj,
         input: &str,
     ) -> Option<Result<bool, zun_core::RegexError>> {
-        Some(self.regex_builtin_exec(object, input)?.map(|found| found.is_some()))
+        Some(
+            self.regex_builtin_exec(object, input)?
+                .map(|found| found.is_some()),
+        )
     }
 
     /// `RegExp.prototype.exec` with `lastIndex` semantics.
@@ -294,7 +346,11 @@ impl Heap {
         object: Obj,
         input: &str,
     ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
-        let has_indices = self.regexes.get(&(object.addr() as usize))?.flags().contains('d');
+        let has_indices = self
+            .regexes
+            .get(&(object.addr() as usize))?
+            .flags()
+            .contains('d');
         match self.regex_builtin_exec(object, input)? {
             Ok(Some((found, names))) => Some(Ok(Some(self.alloc_match_array(
                 input,
@@ -310,7 +366,9 @@ impl Heap {
 
     /// Capture-group names by group number (index 0 unused), `None` if not a regex.
     pub fn regex_group_names(&self, object: Obj) -> Option<Vec<Option<String>>> {
-        self.regexes.get(&(object.addr() as usize)).map(zun_core::RegexValue::group_names)
+        self.regexes
+            .get(&(object.addr() as usize))
+            .map(zun_core::RegexValue::group_names)
     }
 
     pub fn regex_source(&self, object: Obj) -> Option<&str> {
@@ -351,7 +409,11 @@ impl Heap {
     }
 
     /// `String.prototype.search`: UTF-16 index of the first match, or -1.
-    pub fn regex_search(&self, object: Obj, input: &str) -> Option<Result<i64, zun_core::RegexError>> {
+    pub fn regex_search(
+        &self,
+        object: Obj,
+        input: &str,
+    ) -> Option<Result<i64, zun_core::RegexError>> {
         self.regexes.get(&(object.addr() as usize)).map(|regex| {
             regex
                 .search(input)
@@ -417,7 +479,10 @@ impl Heap {
     ) -> Option<Result<Vec<(usize, usize, Vec<Option<String>>)>, zun_core::RegexError>> {
         let (global, sticky) = {
             let regex = self.regexes.get(&(object.addr() as usize))?;
-            (force_global || regex.flags().contains('g'), regex.flags().contains('y'))
+            (
+                force_global || regex.flags().contains('g'),
+                regex.flags().contains('y'),
+            )
         };
         if !global && sticky {
             // A sticky, non-global replace is a single `exec` driven by `lastIndex`.
@@ -432,7 +497,9 @@ impl Heap {
                 return Some(Err(error));
             }
         }
-        self.regexes.get(&(object.addr() as usize)).map(|regex| regex.match_spans16(input, global))
+        self.regexes
+            .get(&(object.addr() as usize))
+            .map(|regex| regex.match_spans16(input, global))
     }
 
     /// `String.prototype.match` with a global regex: every match's text as an
@@ -442,7 +509,11 @@ impl Heap {
         object: Obj,
         input: &str,
     ) -> Option<Result<Option<Obj>, zun_core::RegexError>> {
-        let spans = match self.regexes.get(&(object.addr() as usize))?.match_spans(input, true) {
+        let spans = match self
+            .regexes
+            .get(&(object.addr() as usize))?
+            .match_spans(input, true)
+        {
             Ok(spans) => spans,
             Err(error) => return Some(Err(error)),
         };
@@ -498,18 +569,28 @@ mod tests {
         assert_eq!(heap.regex_is_match(regex, "zun-42"), Some(Ok(true)));
         assert_eq!(heap.regex_find(regex, "x zun-42"), Some(Ok(Some((2, 8)))));
         assert_eq!(heap.regex_is_match(regex, "zun-x"), Some(Ok(false)));
-        assert_eq!(heap.regex_engine_kind(regex), Some(zun_core::EngineKind::Re2));
+        assert_eq!(
+            heap.regex_engine_kind(regex),
+            Some(zun_core::EngineKind::Re2)
+        );
     }
 
     #[test]
     fn backreference_and_lookaround_use_engine_b_through_the_heap() {
         let mut heap = Heap::new();
         let backref = heap.alloc_regex(r"(\w)\1").expect("valid regex");
-        assert_eq!(heap.regex_engine_kind(backref), Some(zun_core::EngineKind::Backtracking));
+        assert_eq!(
+            heap.regex_engine_kind(backref),
+            Some(zun_core::EngineKind::Backtracking)
+        );
         assert_eq!(heap.regex_is_match(backref, "hello"), Some(Ok(true)));
         assert_eq!(heap.regex_is_match(backref, "helo"), Some(Ok(false)));
         // Capture spans in exec: "é😀" precedes the match; strings are exact.
-        let array = heap.regex_exec(backref, "é😀xyy").unwrap().unwrap().expect("match");
+        let array = heap
+            .regex_exec(backref, "é😀xyy")
+            .unwrap()
+            .unwrap()
+            .expect("match");
         let first = heap.array_get(array, 0).unwrap().as_string().unwrap();
         assert_eq!(&**heap.string(first), "yy");
         let group = heap.array_get(array, 1).unwrap().as_string().unwrap();
@@ -536,26 +617,43 @@ mod tests {
         assert!(matches!(heap.regex_is_match(regex, &input), Some(Err(_))));
         assert!(matches!(heap.regex_exec(regex, &input), Some(Err(_))));
         assert!(matches!(heap.regex_search(regex, &input), Some(Err(_))));
-        assert!(matches!(heap.regex_split(regex, &input, None), Some(Err(_))));
-        assert!(matches!(heap.regex_replace_first(regex, &input, "x"), Some(Err(_))));
+        assert!(matches!(
+            heap.regex_split(regex, &input, None),
+            Some(Err(_))
+        ));
+        assert!(matches!(
+            heap.regex_replace_first(regex, &input, "x"),
+            Some(Err(_))
+        ));
     }
 
     #[test]
     fn managed_regex_exec_builds_group_array() {
         let mut heap = Heap::new();
-        let regex = heap.alloc_regex_with_flags(r"(a)(x)?(b)", "i").expect("valid regex");
-        let array = heap.regex_exec(regex, "zAB").unwrap().unwrap().expect("match");
+        let regex = heap
+            .alloc_regex_with_flags(r"(a)(x)?(b)", "i")
+            .expect("valid regex");
+        let array = heap
+            .regex_exec(regex, "zAB")
+            .unwrap()
+            .unwrap()
+            .expect("match");
         assert_eq!(heap.array_len(array), Some(4));
         let first = heap.array_get(array, 0).unwrap().as_string().unwrap();
         assert_eq!(&**heap.string(first), "AB");
-        assert_eq!(heap.array_get(array, 2).unwrap().tag(), zun_core::AnyTag::Void);
+        assert_eq!(
+            heap.array_get(array, 2).unwrap().tag(),
+            zun_core::AnyTag::Void
+        );
         assert!(heap.regex_exec(regex, "zzz").unwrap().unwrap().is_none());
     }
 
     #[test]
     fn exec_all_collects_every_match_with_groups() {
         let mut heap = Heap::new();
-        let regex = heap.alloc_regex_with_flags(r"(\d)(\d)", "g").expect("valid regex");
+        let regex = heap
+            .alloc_regex_with_flags(r"(\d)(\d)", "g")
+            .expect("valid regex");
         assert_eq!(heap.regex_flags(regex), Some("g"));
         let outer = heap.regex_exec_all(regex, "12 34 56").unwrap().unwrap();
         assert_eq!(heap.array_len(outer), Some(3));

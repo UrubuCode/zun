@@ -24,7 +24,7 @@ use zun_il::{encode, Instruction, JitKind, NumKind, Opcode, Operand};
 use zun_metadata::{MethodDef, StringIndex, TableKind, Token};
 use zun_module::{write_body, Module};
 
-use crate::ast::{ClassItem, is_line_terminator};
+use crate::ast::{is_line_terminator, ClassItem};
 use crate::compile::{compile, Inst, Prefilter, SetMember};
 use crate::flags::Flags;
 
@@ -48,7 +48,9 @@ pub struct CompiledLiteral {
 
 /// Characters with special meaning in a pattern; their presence means the
 /// pattern is not literal-only and is not compilable in this slice.
-const META: &[char] = &['\\', '^', '$', '.', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}'];
+const META: &[char] = &[
+    '\\', '^', '$', '.', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}',
+];
 
 /// The UTF-16 code units of a literal-only `pattern`, or `None` when the
 /// pattern uses any regex syntax (so the caller falls back to the interpreter).
@@ -93,7 +95,10 @@ pub fn compile_literal(pattern: &str, natives: StringNatives) -> Option<Compiled
             emit(Opcode::Conv, Operand::Imm32(u64_imm));
             emit(Opcode::AddI32, Operand::None);
         }
-        emit(Opcode::CallBuiltin, Operand::Imm32(natives.char_code_at as i32));
+        emit(
+            Opcode::CallBuiltin,
+            Operand::Imm32(natives.char_code_at as i32),
+        );
         emit(Opcode::ConstI32, Operand::Imm32(*unit as i32));
         emit(Opcode::Conv, Operand::Imm32(u32_imm));
         emit(Opcode::CmpNe, Operand::None);
@@ -235,7 +240,11 @@ struct Asm {
 
 impl Asm {
     fn new() -> Asm {
-        Asm { code: Vec::new(), labels: Vec::new(), patches: Vec::new() }
+        Asm {
+            code: Vec::new(),
+            labels: Vec::new(),
+            patches: Vec::new(),
+        }
     }
 
     fn label(&mut self) -> usize {
@@ -315,7 +324,10 @@ const NONE_CELL: u32 = 0xFFFF_FFFF;
 fn read_cell_off(a: &mut Asm, nat: MatcherNatives, emit_off: impl FnOnce(&mut Asm)) {
     a.load(L_BUF);
     emit_off(a);
-    a.emit(Opcode::CallBuiltin, Operand::Imm32(nat.buffer_read_u32 as i32));
+    a.emit(
+        Opcode::CallBuiltin,
+        Operand::Imm32(nat.buffer_read_u32 as i32),
+    );
 }
 
 /// Write `work[off] = value` (both emitted by the closures); discards the bool.
@@ -328,7 +340,10 @@ fn write_cell(
     a.load(L_BUF);
     emit_off(a);
     emit_val(a);
-    a.emit(Opcode::CallBuiltin, Operand::Imm32(nat.buffer_write_u32 as i32));
+    a.emit(
+        Opcode::CallBuiltin,
+        Operand::Imm32(nat.buffer_write_u32 as i32),
+    );
     a.emit(Opcode::Pop, Operand::None);
 }
 
@@ -470,7 +485,7 @@ pub fn compile_backtracking(
         return None; // too many groups to pack into the i64 result
     }
     let base = (cap_cells * 4) as u64; // stack region starts after the caps
-    // Resume targets: the distinct `second` arms of every Split.
+                                       // Resume targets: the distinct `second` arms of every Split.
     let mut seconds: Vec<usize> = insts
         .iter()
         .filter_map(|i| match i {
@@ -495,7 +510,12 @@ pub fn compile_backtracking(
     a.emit(Opcode::CallBuiltin, Operand::Imm32(nat.length as i32));
     a.store(L_N);
     for cell in 0..cap_cells {
-        write_cell(&mut a, nat, |a| a.const_u64((cell * 4) as u64), |a| a.const_u32(NONE_CELL));
+        write_cell(
+            &mut a,
+            nat,
+            |a| a.const_u64((cell * 4) as u64),
+            |a| a.const_u32(NONE_CELL),
+        );
     }
     a.const_u64(base);
     a.store(L_SP);
@@ -776,7 +796,15 @@ pub fn compile_backtracking(
         u64b, // PV
     ];
     debug_assert_eq!(local_kinds.len(), LOCAL_COUNT as usize);
-    let match_body = write_body(&mut module.code, 3, LOCAL_COUNT, true, i64b, &local_kinds, &code);
+    let match_body = write_body(
+        &mut module.code,
+        3,
+        LOCAL_COUNT,
+        true,
+        i64b,
+        &local_kinds,
+        &code,
+    );
     let _ = module.tables.add_method_def(MethodDef {
         name: match_name,
         signature: zun_metadata::BlobIndex(0),
@@ -949,8 +977,14 @@ pub fn compile_is_match(
     if flags.global || flags.sticky || flags.unicode || flags.has_indices {
         return None;
     }
-    let CompiledMatcher { mut module, method, buffer_bytes, group_count, prefilter, .. } =
-        compile_backtracking(pattern, flag_str, nat)?;
+    let CompiledMatcher {
+        mut module,
+        method,
+        buffer_bytes,
+        group_count,
+        prefilter,
+        ..
+    } = compile_backtracking(pattern, flag_str, nat)?;
 
     // Locals: 0 s:string, 1 n:u64, 2 pos:u64, 3 buf:object, 4 r:i64, then the
     // prefilter scratch (used only by the Set path): 5 c:u64, 6 cand:u64,
@@ -1108,14 +1142,27 @@ pub fn compile_is_match(
         u64b,                                 // item
         u64b,                                 // hit
     ];
-    let body = write_body(&mut module.code, 1, 9, true, JitKind::Bool.to_byte(), &local_kinds, &code);
+    let body = write_body(
+        &mut module.code,
+        1,
+        9,
+        true,
+        JitKind::Bool.to_byte(),
+        &local_kinds,
+        &code,
+    );
     let is_match_method = module.tables.add_method_def(MethodDef {
         name,
         signature: zun_metadata::BlobIndex(0),
         body_offset: body,
         is_static: true,
     });
-    Some(CompiledIsMatch { module, is_match_method, buffer_bytes, group_count })
+    Some(CompiledIsMatch {
+        module,
+        is_match_method,
+        buffer_bytes,
+        group_count,
+    })
 }
 
 /// The first required char of a `Byte` / `Literal` prefilter, if any.
@@ -1129,6 +1176,8 @@ fn literal_first(pf: &Prefilter) -> Option<char> {
 
 /// Inclusive ranges of JS line terminators (matching [`is_line_terminator`]).
 fn line_terminator_ranges() -> Vec<(u32, u32)> {
-    debug_assert!(['\n', '\r', '\u{2028}', '\u{2029}'].iter().all(|&c| is_line_terminator(c)));
+    debug_assert!(['\n', '\r', '\u{2028}', '\u{2029}']
+        .iter()
+        .all(|&c| is_line_terminator(c)));
     vec![(0x0a, 0x0a), (0x0d, 0x0d), (0x2028, 0x2029)]
 }

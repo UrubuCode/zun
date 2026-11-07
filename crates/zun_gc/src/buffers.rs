@@ -2,7 +2,9 @@ use super::{Heap, Obj};
 
 impl Heap {
     pub fn buffer_len(&self, object: Obj) -> Option<usize> {
-        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::len)
+        self.buffers
+            .get(&(object.addr() as usize))
+            .map(zun_core::ByteBuffer::len)
     }
 
     /// Allocates a resizable `ArrayBuffer` of `length` bytes growable to
@@ -16,24 +18,34 @@ impl Heap {
 
     /// `ArrayBuffer.prototype.maxByteLength`.
     pub fn buffer_max_byte_length(&self, object: Obj) -> Option<usize> {
-        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::max_byte_length)
+        self.buffers
+            .get(&(object.addr() as usize))
+            .map(zun_core::ByteBuffer::max_byte_length)
     }
 
     /// `ArrayBuffer.prototype.resizable`.
     pub fn buffer_resizable(&self, object: Obj) -> Option<bool> {
-        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::resizable)
+        self.buffers
+            .get(&(object.addr() as usize))
+            .map(zun_core::ByteBuffer::resizable)
     }
 
     /// `ArrayBuffer.prototype.resize(newLength)`. Outstanding typed-array and
     /// `DataView` windows are not walked: each re-resolves against the new
     /// length on its next access, so nothing here has to touch them.
     pub fn buffer_resize(&mut self, object: Obj, new_length: usize) -> Option<bool> {
-        Some(self.buffers.get_mut(&(object.addr() as usize))?.resize(new_length))
+        Some(
+            self.buffers
+                .get_mut(&(object.addr() as usize))?
+                .resize(new_length),
+        )
     }
 
     /// `ArrayBuffer.prototype.detached`.
     pub fn buffer_detached(&self, object: Obj) -> Option<bool> {
-        self.buffers.get(&(object.addr() as usize)).map(zun_core::ByteBuffer::detached)
+        self.buffers
+            .get(&(object.addr() as usize))
+            .map(zun_core::ByteBuffer::detached)
     }
 
     /// `ArrayBuffer.prototype.transfer(newLength?)` /
@@ -44,11 +56,13 @@ impl Heap {
     /// otherwise the destination keeps the source's resizability and growth
     /// cap. Returns `None` (a runtime error) when the source is already
     /// detached, is not a buffer, or the destination would exceed its cap.
-    pub fn buffer_transfer(&mut self, source: Obj, new_length: Option<usize>, fixed: bool) -> Option<Obj> {
-        let (old_bytes, old_max) = self
-            .buffers
-            .get_mut(&(source.addr() as usize))?
-            .detach()?;
+    pub fn buffer_transfer(
+        &mut self,
+        source: Obj,
+        new_length: Option<usize>,
+        fixed: bool,
+    ) -> Option<Obj> {
+        let (old_bytes, old_max) = self.buffers.get_mut(&(source.addr() as usize))?.detach()?;
         let target_len = new_length.unwrap_or(old_bytes.len());
         let max = if fixed { None } else { old_max };
         let mut buffer = zun_core::ByteBuffer::with_capacity(target_len, max)?;
@@ -68,23 +82,39 @@ impl Heap {
     }
 
     pub fn buffer_set(&mut self, object: Obj, index: usize, value: u8) -> Option<bool> {
-        Some(self.buffers.get_mut(&(object.addr() as usize))?.set(index, value))
+        Some(
+            self.buffers
+                .get_mut(&(object.addr() as usize))?
+                .set(index, value),
+        )
     }
 
     pub fn buffer_read_u32(&self, object: Obj, offset: usize) -> Option<u32> {
-        self.buffers.get(&(object.addr() as usize))?.read_u32(offset)
+        self.buffers
+            .get(&(object.addr() as usize))?
+            .read_u32(offset)
     }
 
     pub fn buffer_write_u32(&mut self, object: Obj, offset: usize, value: u32) -> Option<bool> {
-        Some(self.buffers.get_mut(&(object.addr() as usize))?.write_u32(offset, value))
+        Some(
+            self.buffers
+                .get_mut(&(object.addr() as usize))?
+                .write_u32(offset, value),
+        )
     }
 
     pub fn buffer_read_f64(&self, object: Obj, offset: usize) -> Option<f64> {
-        self.buffers.get(&(object.addr() as usize))?.read_f64(offset)
+        self.buffers
+            .get(&(object.addr() as usize))?
+            .read_f64(offset)
     }
 
     pub fn buffer_write_f64(&mut self, object: Obj, offset: usize, value: f64) -> Option<bool> {
-        Some(self.buffers.get_mut(&(object.addr() as usize))?.write_f64(offset, value))
+        Some(
+            self.buffers
+                .get_mut(&(object.addr() as usize))?
+                .write_f64(offset, value),
+        )
     }
 
     /// Copy `[begin, end)` of `object` into a freshly allocated buffer.
@@ -109,67 +139,203 @@ impl Heap {
         Some(copy)
     }
 
-    pub fn buffer_view(&self, object: Obj, offset: usize, length: usize) -> Option<zun_core::ByteView> {
+    pub fn buffer_view(
+        &self,
+        object: Obj,
+        offset: usize,
+        length: usize,
+    ) -> Option<zun_core::ByteView> {
         zun_core::ByteView::new(self.buffer_len(object)?, offset, length)
     }
 
-    pub fn data_view(&self, object: Obj, offset: usize, length: usize) -> Option<zun_core::DataView> {
+    pub fn data_view(
+        &self,
+        object: Obj,
+        offset: usize,
+        length: usize,
+    ) -> Option<zun_core::DataView> {
         zun_core::DataView::new(self.buffer_len(object)?, offset, length)
     }
 
-    pub fn data_view_read_u16(&self, object: Obj, view: zun_core::DataView, offset: usize, little_endian: bool) -> Option<u16> {
-        view.get_u16(self.buffers.get(&(object.addr() as usize))?, offset, little_endian)
+    pub fn data_view_read_u16(
+        &self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        little_endian: bool,
+    ) -> Option<u16> {
+        view.get_u16(
+            self.buffers.get(&(object.addr() as usize))?,
+            offset,
+            little_endian,
+        )
     }
 
-    pub fn data_view_write_u16(&mut self, object: Obj, view: zun_core::DataView, offset: usize, value: u16, little_endian: bool) -> Option<bool> {
-        Some(view.set_u16(self.buffers.get_mut(&(object.addr() as usize))?, offset, value, little_endian))
+    pub fn data_view_write_u16(
+        &mut self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        value: u16,
+        little_endian: bool,
+    ) -> Option<bool> {
+        Some(view.set_u16(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            offset,
+            value,
+            little_endian,
+        ))
     }
 
-    pub fn data_view_read_u32(&self, object: Obj, view: zun_core::DataView, offset: usize, little_endian: bool) -> Option<u32> {
-        view.get_u32(self.buffers.get(&(object.addr() as usize))?, offset, little_endian)
+    pub fn data_view_read_u32(
+        &self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        little_endian: bool,
+    ) -> Option<u32> {
+        view.get_u32(
+            self.buffers.get(&(object.addr() as usize))?,
+            offset,
+            little_endian,
+        )
     }
 
-    pub fn data_view_write_u32(&mut self, object: Obj, view: zun_core::DataView, offset: usize, value: u32, little_endian: bool) -> Option<bool> {
-        Some(view.set_u32(self.buffers.get_mut(&(object.addr() as usize))?, offset, value, little_endian))
+    pub fn data_view_write_u32(
+        &mut self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        value: u32,
+        little_endian: bool,
+    ) -> Option<bool> {
+        Some(view.set_u32(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            offset,
+            value,
+            little_endian,
+        ))
     }
 
-    pub fn data_view_read_f64(&self, object: Obj, view: zun_core::DataView, offset: usize, little_endian: bool) -> Option<f64> {
-        view.get_f64(self.buffers.get(&(object.addr() as usize))?, offset, little_endian)
+    pub fn data_view_read_f64(
+        &self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        little_endian: bool,
+    ) -> Option<f64> {
+        view.get_f64(
+            self.buffers.get(&(object.addr() as usize))?,
+            offset,
+            little_endian,
+        )
     }
 
-    pub fn data_view_write_f64(&mut self, object: Obj, view: zun_core::DataView, offset: usize, value: f64, little_endian: bool) -> Option<bool> {
-        Some(view.set_f64(self.buffers.get_mut(&(object.addr() as usize))?, offset, value, little_endian))
+    pub fn data_view_write_f64(
+        &mut self,
+        object: Obj,
+        view: zun_core::DataView,
+        offset: usize,
+        value: f64,
+        little_endian: bool,
+    ) -> Option<bool> {
+        Some(view.set_f64(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            offset,
+            value,
+            little_endian,
+        ))
     }
 
-    pub fn buffer_view_read_u32(&self, object: Obj, view: zun_core::ByteView, offset: usize) -> Option<u32> {
+    pub fn buffer_view_read_u32(
+        &self,
+        object: Obj,
+        view: zun_core::ByteView,
+        offset: usize,
+    ) -> Option<u32> {
         view.read_u32(self.buffers.get(&(object.addr() as usize))?, offset)
     }
 
-    pub fn buffer_view_write_u32(&mut self, object: Obj, view: zun_core::ByteView, offset: usize, value: u32) -> Option<bool> {
-        Some(view.write_u32(self.buffers.get_mut(&(object.addr() as usize))?, offset, value))
+    pub fn buffer_view_write_u32(
+        &mut self,
+        object: Obj,
+        view: zun_core::ByteView,
+        offset: usize,
+        value: u32,
+    ) -> Option<bool> {
+        Some(view.write_u32(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            offset,
+            value,
+        ))
     }
 
-    pub fn buffer_view_read_u8(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<u8> {
+    pub fn buffer_view_read_u8(
+        &self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+    ) -> Option<u8> {
         view.read_u8(self.buffers.get(&(object.addr() as usize))?, index)
     }
 
-    pub fn buffer_view_write_u8(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: u8) -> Option<bool> {
-        Some(view.write_u8(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    pub fn buffer_view_write_u8(
+        &mut self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+        value: u8,
+    ) -> Option<bool> {
+        Some(view.write_u8(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
-    pub fn buffer_view_read_u16(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<u16> {
+    pub fn buffer_view_read_u16(
+        &self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+    ) -> Option<u16> {
         view.read_u16(self.buffers.get(&(object.addr() as usize))?, index)
     }
 
-    pub fn buffer_view_write_u16(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: u16) -> Option<bool> {
-        Some(view.write_u16(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    pub fn buffer_view_write_u16(
+        &mut self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+        value: u16,
+    ) -> Option<bool> {
+        Some(view.write_u16(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 
-    pub fn buffer_view_read_f64(&self, object: Obj, view: zun_core::TypedArrayView, index: usize) -> Option<f64> {
+    pub fn buffer_view_read_f64(
+        &self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+    ) -> Option<f64> {
         view.read_f64(self.buffers.get(&(object.addr() as usize))?, index)
     }
 
-    pub fn buffer_view_write_f64(&mut self, object: Obj, view: zun_core::TypedArrayView, index: usize, value: f64) -> Option<bool> {
-        Some(view.write_f64(self.buffers.get_mut(&(object.addr() as usize))?, index, value))
+    pub fn buffer_view_write_f64(
+        &mut self,
+        object: Obj,
+        view: zun_core::TypedArrayView,
+        index: usize,
+        value: f64,
+    ) -> Option<bool> {
+        Some(view.write_f64(
+            self.buffers.get_mut(&(object.addr() as usize))?,
+            index,
+            value,
+        ))
     }
 }

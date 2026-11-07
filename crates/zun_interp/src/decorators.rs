@@ -17,13 +17,11 @@ fn number(value: &Value) -> Result<i64, RunError> {
     match value {
         Value::Int(value, _) => Ok(*value),
         Value::Float(value, _) => Ok(*value as i64),
-        Value::Any(any) => {
-            match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
-                Some(Value::Int(value, _)) => Ok(value),
-                Some(Value::Float(value, _)) => Ok(value as i64),
-                _ => Err(RunError::BadToken),
-            }
-        }
+        Value::Any(any) => match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
+            Some(Value::Int(value, _)) => Ok(value),
+            Some(Value::Float(value, _)) => Ok(value as i64),
+            _ => Err(RunError::BadToken),
+        },
         _ => Err(RunError::BadToken),
     }
 }
@@ -47,7 +45,9 @@ fn string(value: &Value) -> Result<String, RunError> {
 }
 
 fn rewrite_handle(handle: &mut FunctionHandle, relocation: &zun_gc::RelocationMap) -> usize {
-    let Some(old) = handle.environment() else { return 0 };
+    let Some(old) = handle.environment() else {
+        return 0;
+    };
     let new = relocation.relocate_address(old);
     if old == new {
         return 0;
@@ -107,7 +107,9 @@ impl Interp<'_> {
                 }
             });
         }
-        self.class_named_methods.get(&(decl, name.to_string())).copied()
+        self.class_named_methods
+            .get(&(decl, name.to_string()))
+            .copied()
     }
 
     /// Bind `this` as the leading argument of `target` (a bound-function record
@@ -118,7 +120,11 @@ impl Interp<'_> {
             heap.array_set(array, 0, zun_core::Any::object(this.addr() as usize));
             let record = heap.alloc_dynamic();
             heap.dynamic_set_function(record, "__target", target);
-            heap.dynamic_set(record, "__args", zun_core::Any::object(array.addr() as usize));
+            heap.dynamic_set(
+                record,
+                "__args",
+                zun_core::Any::object(array.addr() as usize),
+            );
             record
         });
         FunctionHandle::new_bound(record.addr() as usize)
@@ -148,8 +154,10 @@ impl Interp<'_> {
             .copied()
             .collect();
         for (_, slot, transform) in transforms {
-            let (field_start, count) =
-                self.type_field_range(zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, type_rid))?;
+            let (field_start, count) = self.type_field_range(zun_metadata::Token::new(
+                zun_metadata::TableKind::TypeDef,
+                type_rid,
+            ))?;
             if slot as usize >= count {
                 return Err(RunError::BadToken);
             }
@@ -266,8 +274,10 @@ impl Interp<'_> {
             return Ok(Self::function_box(Self::bind_this(method, target)));
         }
         let type_rid = target.type_rid();
-        let (field_start, count) = self
-            .type_field_range(zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, type_rid))?;
+        let (field_start, count) = self.type_field_range(zun_metadata::Token::new(
+            zun_metadata::TableKind::TypeDef,
+            type_rid,
+        ))?;
         if slot < 0 || slot as usize >= count {
             return Err(RunError::BadToken);
         }
@@ -289,8 +299,10 @@ impl Interp<'_> {
             other => other.clone(),
         };
         let type_rid = target.type_rid();
-        let (field_start, count) = self
-            .type_field_range(zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, type_rid))?;
+        let (field_start, count) = self.type_field_range(zun_metadata::Token::new(
+            zun_metadata::TableKind::TypeDef,
+            type_rid,
+        ))?;
         if slot < 0 || slot as usize >= count {
             return Err(RunError::BadToken);
         }

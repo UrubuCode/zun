@@ -181,7 +181,10 @@ mod tests {
         queues.wake(ContinuationId(0));
         queues.cancel(ContinuationId(0));
 
-        assert!(!queues.has_work(), "reporting busy with nothing to do is a spin");
+        assert!(
+            !queues.has_work(),
+            "reporting busy with nothing to do is a spin"
+        );
         assert_eq!(
             queues.queued_continuations(),
             1,

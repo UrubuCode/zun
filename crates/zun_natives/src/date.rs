@@ -148,8 +148,8 @@ fn from_utc(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
             _ => Err(NativeError("fromUTC: expected seven integers".into())),
         }
     };
-    let year = i32::try_from(at(0)?)
-        .map_err(|_| NativeError("fromUTC: year out of range".into()))?;
+    let year =
+        i32::try_from(at(0)?).map_err(|_| NativeError("fromUTC: year out of range".into()))?;
     let value = zun_core::DateValue::from_utc(year, at(1)?, at(2)?, at(3)?, at(4)?, at(5)?, at(6)?)
         .and_then(|date| date.millis())
         .ok_or_else(|| NativeError("fromUTC: date out of range".into()))?;
@@ -273,24 +273,114 @@ pub const MODULE: crate::Module = crate::Module {
             ret: I64,
             imp: from_utc,
         },
-        NativeFn { name: "dateToLocaleString", params: &[F64, Str], ret: Str, imp: to_locale_string },
-        NativeFn { name: "dateToLocaleDateString", params: &[F64, Str], ret: Str, imp: to_locale_date_string },
-        NativeFn { name: "dateToLocaleTimeString", params: &[F64, Str], ret: Str, imp: to_locale_time_string },
-        NativeFn { name: "intlDateTimeFormat", params: &[Str, F64], ret: Str, imp: intl_date_time_format },
-        NativeFn { name: "localOffsetMinutes", params: &[I64, Str], ret: I32, imp: local_offset_minutes },
-        NativeFn { name: "localToUtc", params: &[I64, Str], ret: I64, imp: local_to_utc },
-    NativeFn { name: "valid", params: &[F64], ret: Bool, imp: crate::date_f64::f_valid },
-    NativeFn { name: "clip", params: &[F64], ret: F64, imp: crate::date_f64::f_clip },
-    NativeFn { name: "field", params: &[F64, F64], ret: F64, imp: crate::date_f64::f_field },
-    NativeFn { name: "makeUtc", params: &[F64, F64, F64, F64, F64, F64, F64, Bool], ret: F64, imp: crate::date_f64::f_make_utc },
-    NativeFn { name: "setFields", params: &[F64, F64, F64, F64, F64, F64, F64], ret: F64, imp: crate::date_f64::f_set_fields },
-    NativeFn { name: "parseDate", params: &[Str], ret: F64, imp: crate::date_f64::f_parse_date },
-    NativeFn { name: "isoString", params: &[F64], ret: Str, imp: crate::date_f64::f_iso_string },
-    NativeFn { name: "utcString", params: &[F64], ret: Str, imp: crate::date_f64::f_utc_string },
-    NativeFn { name: "dateString", params: &[F64, F64], ret: Str, imp: crate::date_f64::f_date_string },
-    NativeFn { name: "localTime", params: &[F64], ret: F64, imp: crate::date_f64::f_local_time },
-    NativeFn { name: "utcFromLocal", params: &[F64], ret: F64, imp: crate::date_f64::f_utc_from_local },
-    NativeFn { name: "tzOffset", params: &[F64], ret: F64, imp: crate::date_f64::f_tz_offset },
+        NativeFn {
+            name: "dateToLocaleString",
+            params: &[F64, Str],
+            ret: Str,
+            imp: to_locale_string,
+        },
+        NativeFn {
+            name: "dateToLocaleDateString",
+            params: &[F64, Str],
+            ret: Str,
+            imp: to_locale_date_string,
+        },
+        NativeFn {
+            name: "dateToLocaleTimeString",
+            params: &[F64, Str],
+            ret: Str,
+            imp: to_locale_time_string,
+        },
+        NativeFn {
+            name: "intlDateTimeFormat",
+            params: &[Str, F64],
+            ret: Str,
+            imp: intl_date_time_format,
+        },
+        NativeFn {
+            name: "localOffsetMinutes",
+            params: &[I64, Str],
+            ret: I32,
+            imp: local_offset_minutes,
+        },
+        NativeFn {
+            name: "localToUtc",
+            params: &[I64, Str],
+            ret: I64,
+            imp: local_to_utc,
+        },
+        NativeFn {
+            name: "valid",
+            params: &[F64],
+            ret: Bool,
+            imp: crate::date_f64::f_valid,
+        },
+        NativeFn {
+            name: "clip",
+            params: &[F64],
+            ret: F64,
+            imp: crate::date_f64::f_clip,
+        },
+        NativeFn {
+            name: "field",
+            params: &[F64, F64],
+            ret: F64,
+            imp: crate::date_f64::f_field,
+        },
+        NativeFn {
+            name: "makeUtc",
+            params: &[F64, F64, F64, F64, F64, F64, F64, Bool],
+            ret: F64,
+            imp: crate::date_f64::f_make_utc,
+        },
+        NativeFn {
+            name: "setFields",
+            params: &[F64, F64, F64, F64, F64, F64, F64],
+            ret: F64,
+            imp: crate::date_f64::f_set_fields,
+        },
+        NativeFn {
+            name: "parseDate",
+            params: &[Str],
+            ret: F64,
+            imp: crate::date_f64::f_parse_date,
+        },
+        NativeFn {
+            name: "isoString",
+            params: &[F64],
+            ret: Str,
+            imp: crate::date_f64::f_iso_string,
+        },
+        NativeFn {
+            name: "utcString",
+            params: &[F64],
+            ret: Str,
+            imp: crate::date_f64::f_utc_string,
+        },
+        NativeFn {
+            name: "dateString",
+            params: &[F64, F64],
+            ret: Str,
+            imp: crate::date_f64::f_date_string,
+        },
+        NativeFn {
+            name: "localTime",
+            params: &[F64],
+            ret: F64,
+            imp: crate::date_f64::f_local_time,
+        },
+        NativeFn {
+            name: "utcFromLocal",
+            params: &[F64],
+            ret: F64,
+            imp: crate::date_f64::f_utc_from_local,
+        },
+        NativeFn {
+            name: "tzOffset",
+            params: &[F64],
+            ret: F64,
+            imp: crate::date_f64::f_tz_offset,
+        },
     ],
 };
 
@@ -302,7 +392,11 @@ enum LocaleKind {
     Time,
 }
 
-fn locale_format(args: &[NativeArg], name: &str, kind: LocaleKind) -> Result<NativeValue, NativeError> {
+fn locale_format(
+    args: &[NativeArg],
+    name: &str,
+    kind: LocaleKind,
+) -> Result<NativeValue, NativeError> {
     use icu::datetime::{fieldsets, DateTimeFormatter};
     let value = date(args, name)?;
     let invalid = || NativeError(format!("{name}: invalid date"));
@@ -319,7 +413,8 @@ fn locale_format(args: &[NativeArg], name: &str, kind: LocaleKind) -> Result<Nat
         _ => icu::locale::Locale::UNKNOWN,
     };
     let prefs = (&locale).into();
-    let no_data = |e: icu::datetime::DateTimeFormatterLoadError| NativeError(format!("{name}: {e}"));
+    let no_data =
+        |e: icu::datetime::DateTimeFormatterLoadError| NativeError(format!("{name}: {e}"));
     let text = match kind {
         LocaleKind::DateTime => DateTimeFormatter::try_new(prefs, fieldsets::YMDT::medium())
             .map_err(no_data)?
@@ -369,7 +464,9 @@ pub fn local_offset_minutes_at(utc_millis: i64, zone: &jiff::tz::TimeZone) -> i3
 
 fn local_offset_minutes(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let utc = millis(args, "localOffsetMinutes")?;
-    Ok(NativeValue::Int(local_offset_minutes_at(utc, &zone_of(args)) as i64))
+    Ok(NativeValue::Int(
+        local_offset_minutes_at(utc, &zone_of(args)) as i64,
+    ))
 }
 
 /// Interpret `local` (a wall-clock reading encoded as if UTC) in the zone and

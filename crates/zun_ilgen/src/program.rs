@@ -45,11 +45,25 @@ pub fn lower(program: &hir::Program) -> Module {
     let regex_plan = splice_regex_matchers(program, &mut module);
 
     for (index, f) in program.functions.iter().enumerate() {
-        let (code, handlers, points) =
-            lower_function(f, &layout, &mut module, program.functions.len() as u32, &regex_plan);
-        module.sequence_points.extend(points.into_iter().map(|(pc, span)| {
-            zun_module::SequencePoint { method_rid: index as u32 + 1, pc, source_start: span.start, source_end: span.end }
-        }));
+        let (code, handlers, points) = lower_function(
+            f,
+            &layout,
+            &mut module,
+            program.functions.len() as u32,
+            &regex_plan,
+        );
+        module
+            .sequence_points
+            .extend(
+                points
+                    .into_iter()
+                    .map(|(pc, span)| zun_module::SequencePoint {
+                        method_rid: index as u32 + 1,
+                        pc,
+                        source_start: span.start,
+                        source_end: span.end,
+                    }),
+            );
         let local_kinds: Vec<u8> = f.locals.iter().map(|t| jitkind_byte(*t)).collect();
         let offset = write_body_with_handlers(
             &mut module.code,
@@ -73,9 +87,18 @@ pub fn lower(program: &hir::Program) -> Module {
             index as u32,
             &regex_plan,
         );
-        module.sequence_points.extend(points.into_iter().map(|(pc, span)| {
-            zun_module::SequencePoint { method_rid: (closure_base + index) as u32 + 1, pc, source_start: span.start, source_end: span.end }
-        }));
+        module
+            .sequence_points
+            .extend(
+                points
+                    .into_iter()
+                    .map(|(pc, span)| zun_module::SequencePoint {
+                        method_rid: (closure_base + index) as u32 + 1,
+                        pc,
+                        source_start: span.start,
+                        source_end: span.end,
+                    }),
+            );
         let local_kinds: Vec<u8> = closure.locals.iter().map(|t| jitkind_byte(*t)).collect();
         let offset = write_body_with_handlers(
             &mut module.code,
@@ -100,7 +123,6 @@ pub fn lower(program: &hir::Program) -> Module {
         .map(|index| Token::new(TableKind::MethodDef, index + 1));
     module
 }
-
 
 /// Resolve the native ids the synthesized matcher calls. `None` only if the
 /// frozen string/buffer builtins are missing (then every regex falls back).
@@ -139,8 +161,8 @@ fn splice_regex_matchers(program: &hir::Program, module: &mut Module) -> Vec<Reg
     };
     let mut plans = Vec::with_capacity(program.regex_matchers.len());
     for cr in &program.regex_matchers {
-        let compiled = nat
-            .and_then(|nat| zun_regex::zil::compile_is_match(&cr.pattern, &cr.flags, nat));
+        let compiled =
+            nat.and_then(|nat| zun_regex::zil::compile_is_match(&cr.pattern, &cr.flags, nat));
         match compiled {
             Some(ci) => {
                 let base = splice_module(module, &ci.module);
@@ -182,7 +204,9 @@ fn splice_module(dst: &mut Module, src: &Module) -> u32 {
         // Names must be module-unique (the loader rejects duplicate exports),
         // so disambiguate every synthesized method with its splice base RID.
         // These methods are only ever reached by `Call <token>`, never by name.
-        let name = dst.strings.intern(&format!("{}${}", src.strings.get(md.name), base));
+        let name = dst
+            .strings
+            .intern(&format!("{}${}", src.strings.get(md.name), base));
         let offset = write_body(
             &mut dst.code,
             body.param_count,

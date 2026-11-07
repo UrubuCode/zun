@@ -39,34 +39,34 @@ pub use stack_maps::{
 };
 
 mod allocation;
+mod arrays;
+mod bigints;
+mod buffers;
 mod collection;
-mod object;
-mod records;
-mod value_ops;
-mod weak;
-mod strings;
-mod generators;
+mod dates;
 mod diagnostics;
 mod dynamic;
-mod arrays;
-mod maps;
-mod sets;
-mod hashing;
-mod typed_views;
-mod iterators;
 mod errors;
-mod dates;
-mod buffers;
-mod weak_state;
-mod regexes;
-mod bigints;
+mod generators;
+mod hashing;
+mod iterators;
+mod maps;
+mod object;
 mod proxies;
+mod records;
+mod regexes;
 mod relocation;
+mod sets;
+mod strings;
+mod typed_views;
+mod value_ops;
+mod weak;
+mod weak_state;
 
 pub use handles::{FinalizationId, WeakMapId, WeakRefId};
-pub use weak_state::FinalizationRecord;
 use records::Record;
 use value_ops::any_same_value_zero;
+pub use weak_state::FinalizationRecord;
 use weak_state::{Ephemeron, FinalizerEntry, WeakSlot};
 
 /// Slots per allocation chunk (objects are bump-allocated within a chunk).
@@ -280,7 +280,11 @@ impl Heap {
     /// Write a class-static field value, allocating the statics object on first use.
     pub fn static_set(&mut self, owner_type_rid: u32, field_rid: u32, value: zun_core::Any) {
         let object = self.statics_object();
-        self.dynamic_set(object, Self::static_slot_key(owner_type_rid, field_rid), value);
+        self.dynamic_set(
+            object,
+            Self::static_slot_key(owner_type_rid, field_rid),
+            value,
+        );
     }
 
     /// Read a class-static field holding a function value (closures do not box
@@ -460,11 +464,7 @@ impl Heap {
         native_frames: &[StoppedNativeFrame<'_>],
         mut on_relocation: Option<&mut dyn FnMut(&RelocationMap)>,
     ) -> CompactionResult {
-        fn allocate(
-            chunks: &mut Vec<Box<[u64]>>,
-            cursor: &mut usize,
-            slots: usize,
-        ) -> *mut u64 {
+        fn allocate(chunks: &mut Vec<Box<[u64]>>, cursor: &mut usize, slots: usize) -> *mut u64 {
             if chunks.is_empty() || *cursor + slots > CHUNK_SLOTS {
                 chunks.push(vec![0u64; CHUNK_SLOTS].into_boxed_slice());
                 *cursor = 0;
@@ -480,11 +480,15 @@ impl Heap {
         let mut relocation = RelocationMap::new();
         let mut moved_objects = 0;
         for record in self.records.iter_mut() {
-            if !record.alive { continue; }
+            if !record.alive {
+                continue;
+            }
             let slots = zun_core::OBJECT_HEADER_SLOTS + record.field_count;
             let old = record.addr;
             let new = allocate(&mut new_chunks, &mut new_cursor, slots);
-            unsafe { std::ptr::copy_nonoverlapping(old, new, slots); }
+            unsafe {
+                std::ptr::copy_nonoverlapping(old, new, slots);
+            }
             relocation.insert_addresses(old as usize, new as usize);
             record.addr = new;
             moved_objects += 1;
@@ -501,7 +505,9 @@ impl Heap {
         rewritten_references += unsafe { rewrite_native_roots(&relocation) };
         for frame in native_frames {
             rewritten_references += unsafe {
-                frame.registry.rewrite_slots_at(frame.pc, frame.sp, &relocation)
+                frame
+                    .registry
+                    .rewrite_slots_at(frame.pc, frame.sp, &relocation)
             };
         }
         if let Some(callback) = on_relocation.as_mut() {
@@ -513,7 +519,10 @@ impl Heap {
         self.free.clear();
         self.chunks = new_chunks;
         self.cursor = new_cursor;
-        CompactionResult { moved_objects, rewritten_references }
+        CompactionResult {
+            moved_objects,
+            rewritten_references,
+        }
     }
 
     /// Run a full collection and immediately compact its survivors.
@@ -550,9 +559,7 @@ impl Heap {
     ) -> CollectionCompactionResult {
         let mark_roots = roots.clone();
         let reclaimed_objects = unsafe { self.collect(&mark_roots, ref_slots) };
-        let compacted = unsafe {
-            self.compact_with_relocation(roots, ref_slots, on_relocation)
-        };
+        let compacted = unsafe { self.compact_with_relocation(roots, ref_slots, on_relocation) };
         CollectionCompactionResult {
             reclaimed_objects,
             moved_objects: compacted.moved_objects,
@@ -623,11 +630,7 @@ impl Heap {
         for record in self.records.iter().filter(|record| record.alive) {
             let object = Obj(record.addr);
             for field in ref_slots(object.type_rid()) {
-                let slot = unsafe {
-                    object
-                        .addr()
-                        .add(zun_core::OBJECT_HEADER_SLOTS + field)
-                };
+                let slot = unsafe { object.addr().add(zun_core::OBJECT_HEADER_SLOTS + field) };
                 if unsafe { relocation.rewrite_slot(slot) } {
                     rewritten += 1;
                 }
@@ -646,7 +649,9 @@ impl Heap {
         let mut mapped_arrays = HashMap::with_capacity(arrays.len());
         for (address, mut array) in arrays {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             rewritten += array.rewrite_object_references(map);
             mapped_arrays.insert(mapped, array);
         }
@@ -656,7 +661,9 @@ impl Heap {
         let mut mapped_any_fields = HashMap::with_capacity(any_fields.len());
         for (address, mut fields) in any_fields {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             for value in fields.values_mut() {
                 if let Some(old) = value.as_object() {
                     let new = map(old);
@@ -674,7 +681,9 @@ impl Heap {
         let mut mapped_objects = HashMap::with_capacity(objects.len());
         for (address, mut object) in objects {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             rewritten += object.rewrite_object_references(map);
             mapped_objects.insert(mapped, object);
         }
@@ -684,7 +693,9 @@ impl Heap {
         let mut mapped_maps = HashMap::with_capacity(maps.len());
         for (address, mut map_storage) in maps {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             rewritten += map_storage.rewrite_object_references(map);
             mapped_maps.insert(mapped, map_storage);
         }
@@ -694,7 +705,9 @@ impl Heap {
         let mut mapped_sets = HashMap::with_capacity(sets.len());
         for (address, mut set_storage) in sets {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             rewritten += set_storage.rewrite_object_references(map);
             mapped_sets.insert(mapped, set_storage);
         }
@@ -706,7 +719,9 @@ impl Heap {
     /// including their address-keyed indexes and object header fields.
     pub fn rewrite_iterator_references(&mut self, relocation: &RelocationMap) -> usize {
         fn relocated(relocation: &RelocationMap, object: Obj) -> Obj {
-            unsafe { Obj::from_addr(relocation.relocate_address(object.addr() as usize) as *mut u64) }
+            unsafe {
+                Obj::from_addr(relocation.relocate_address(object.addr() as usize) as *mut u64)
+            }
         }
 
         let mut rewritten = 0;
@@ -716,8 +731,12 @@ impl Heap {
             let iterator = unsafe { Obj::from_addr(address as *mut u64) };
             let new_iterator = relocated(relocation, iterator);
             let new_array = relocated(relocation, array);
-            if new_iterator.addr() != iterator.addr() { rewritten += 1; }
-            if new_array.addr() != array.addr() { rewritten += 1; }
+            if new_iterator.addr() != iterator.addr() {
+                rewritten += 1;
+            }
+            if new_array.addr() != array.addr() {
+                rewritten += 1;
+            }
             new_iterator.set_field(0, new_array.addr() as u64);
             new_arrays.insert(new_iterator.addr() as usize, (new_array, state));
         }
@@ -729,8 +748,12 @@ impl Heap {
             let iterator = unsafe { Obj::from_addr(address as *mut u64) };
             let new_iterator = relocated(relocation, iterator);
             let new_set = relocated(relocation, set);
-            if new_iterator.addr() != iterator.addr() { rewritten += 1; }
-            if new_set.addr() != set.addr() { rewritten += 1; }
+            if new_iterator.addr() != iterator.addr() {
+                rewritten += 1;
+            }
+            if new_set.addr() != set.addr() {
+                rewritten += 1;
+            }
             new_iterator.set_field(0, new_set.addr() as u64);
             new_sets.insert(new_iterator.addr() as usize, (new_set, state));
         }
@@ -742,8 +765,12 @@ impl Heap {
             let iterator = unsafe { Obj::from_addr(address as *mut u64) };
             let new_iterator = relocated(relocation, iterator);
             let new_map = relocated(relocation, map);
-            if new_iterator.addr() != iterator.addr() { rewritten += 1; }
-            if new_map.addr() != map.addr() { rewritten += 1; }
+            if new_iterator.addr() != iterator.addr() {
+                rewritten += 1;
+            }
+            if new_map.addr() != map.addr() {
+                rewritten += 1;
+            }
             new_iterator.set_field(0, new_map.addr() as u64);
             new_maps.insert(new_iterator.addr() as usize, (new_map, state));
         }
@@ -755,8 +782,12 @@ impl Heap {
             let object = unsafe { Obj::from_addr(address as *mut u64) };
             let new_object = relocated(relocation, object);
             let new_buffer = relocated(relocation, buffer);
-            if new_object.addr() != object.addr() { rewritten += 1; }
-            if new_buffer.addr() != buffer.addr() { rewritten += 1; }
+            if new_object.addr() != object.addr() {
+                rewritten += 1;
+            }
+            if new_buffer.addr() != buffer.addr() {
+                rewritten += 1;
+            }
             new_object.set_field(0, new_buffer.addr() as u64);
             new_views.insert(new_object.addr() as usize, (new_buffer, view));
         }
@@ -773,22 +804,33 @@ impl Heap {
         for weak in &mut self.weak_refs {
             if let Some(target) = weak.target {
                 let mapped = map(target);
-                if mapped != target { rewritten += 1; weak.target = Some(mapped); }
+                if mapped != target {
+                    rewritten += 1;
+                    weak.target = Some(mapped);
+                }
             }
         }
         for ephemeron in &mut self.weak_maps {
             for (key, value) in &mut ephemeron.entries {
                 let mapped_key = map(*key);
                 let mapped_value = map(*value);
-                if mapped_key != *key { rewritten += 1; *key = mapped_key; }
-                if mapped_value != *value { rewritten += 1; *value = mapped_value; }
+                if mapped_key != *key {
+                    rewritten += 1;
+                    *key = mapped_key;
+                }
+                if mapped_value != *value {
+                    rewritten += 1;
+                    *value = mapped_value;
+                }
             }
         }
         let owners = std::mem::take(&mut self.weak_map_objects);
         let mut mapped_owners = HashMap::with_capacity(owners.len());
         for (owner, id) in owners {
             let mapped = map(owner);
-            if mapped != owner { rewritten += 1; }
+            if mapped != owner {
+                rewritten += 1;
+            }
             mapped_owners.insert(mapped, id);
         }
         self.weak_map_objects = mapped_owners;
@@ -796,13 +838,18 @@ impl Heap {
         let mut mapped_ref_owners = HashMap::with_capacity(ref_owners.len());
         for (owner, id) in ref_owners {
             let mapped = map(owner);
-            if mapped != owner { rewritten += 1; }
+            if mapped != owner {
+                rewritten += 1;
+            }
             mapped_ref_owners.insert(mapped, id);
         }
         self.weak_ref_objects = mapped_ref_owners;
         for finalizer in &mut self.finalizers {
             let mapped = map(finalizer.target);
-            if mapped != finalizer.target { rewritten += 1; finalizer.target = mapped; }
+            if mapped != finalizer.target {
+                rewritten += 1;
+                finalizer.target = mapped;
+            }
             if let Some(address) = finalizer.held.as_object() {
                 let mapped_held = map(address);
                 if mapped_held != address {
@@ -823,7 +870,8 @@ impl Heap {
                     if mapped_environment != environment {
                         rewritten += 1;
                         finalizer.callback = Some(zun_core::FunctionHandle::new(
-                            callback.method_rid(), Some(mapped_environment),
+                            callback.method_rid(),
+                            Some(mapped_environment),
                         ));
                     }
                 }
@@ -843,7 +891,8 @@ impl Heap {
                     if mapped_environment != environment {
                         rewritten += 1;
                         record.callback = Some(zun_core::FunctionHandle::new(
-                            callback.method_rid(), Some(mapped_environment),
+                            callback.method_rid(),
+                            Some(mapped_environment),
                         ));
                     }
                 }
@@ -853,13 +902,16 @@ impl Heap {
         let mut mapped_registries = HashMap::with_capacity(registries.len());
         for (owner, mut cleanup) in registries {
             let mapped_owner = map(owner);
-            if mapped_owner != owner { rewritten += 1; }
+            if mapped_owner != owner {
+                rewritten += 1;
+            }
             if let Some(environment) = cleanup.environment() {
                 let mapped_environment = map(environment);
                 if mapped_environment != environment {
                     rewritten += 1;
                     cleanup = zun_core::FunctionHandle::new(
-                        cleanup.method_rid(), Some(mapped_environment),
+                        cleanup.method_rid(),
+                        Some(mapped_environment),
                     );
                 }
             }
@@ -879,7 +931,9 @@ impl Heap {
         let mut mapped_buffers = HashMap::with_capacity(buffers.len());
         for (address, buffer) in buffers {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             mapped_buffers.insert(mapped, buffer);
         }
         self.buffers = mapped_buffers;
@@ -888,7 +942,9 @@ impl Heap {
         let mut mapped_data_views = HashMap::with_capacity(data_views.len());
         for (address, view) in data_views {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             let object = unsafe { Obj::from_addr(mapped as *mut u64) };
             let old_buffer = object.field(0) as usize;
             let new_buffer = map(old_buffer);
@@ -904,7 +960,9 @@ impl Heap {
         let mut mapped_dates = HashMap::with_capacity(dates.len());
         for (address, value) in dates {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             mapped_dates.insert(mapped, value);
         }
         self.dates = mapped_dates;
@@ -913,7 +971,9 @@ impl Heap {
         let mut mapped_errors = HashMap::with_capacity(errors.len());
         for (address, value) in errors {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             mapped_errors.insert(mapped, value);
         }
         self.errors = mapped_errors;
@@ -922,7 +982,9 @@ impl Heap {
         let mut mapped_regexes = HashMap::with_capacity(regexes.len());
         for (address, value) in regexes {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             mapped_regexes.insert(mapped, value);
         }
         self.regexes = mapped_regexes;
@@ -931,7 +993,9 @@ impl Heap {
         let mut mapped_bigints = HashMap::with_capacity(bigints.len());
         for (address, value) in bigints {
             let mapped = map(address);
-            if mapped != address { rewritten += 1; }
+            if mapped != address {
+                rewritten += 1;
+            }
             mapped_bigints.insert(mapped, value);
         }
         self.bigints = mapped_bigints;
@@ -940,7 +1004,10 @@ impl Heap {
         for record in records.iter_mut().filter(|record| record.alive) {
             let address = record.addr as usize;
             let mapped = map(address);
-            if mapped != address { rewritten += 1; record.addr = mapped as *mut u64; }
+            if mapped != address {
+                rewritten += 1;
+                record.addr = mapped as *mut u64;
+            }
         }
         let by_addr = std::mem::take(&mut self.by_addr);
         let mut mapped_by_addr = HashMap::with_capacity(by_addr.len());
@@ -948,13 +1015,19 @@ impl Heap {
             mapped_by_addr.insert(map(address), index);
         }
         self.by_addr = mapped_by_addr;
-        self.remembered_set = self.remembered_set.iter().map(|&address| map(address)).collect();
+        self.remembered_set = self
+            .remembered_set
+            .iter()
+            .map(|&address| map(address))
+            .collect();
 
         let promises = std::mem::take(&mut self.promises);
         let mut mapped_promises = HashMap::with_capacity(promises.len());
         for (address, mut promise) in promises {
             let mapped_address = map(address);
-            if mapped_address != address { rewritten += 1; }
+            if mapped_address != address {
+                rewritten += 1;
+            }
             rewritten += promise.rewrite_object_references(map);
             mapped_promises.insert(mapped_address, promise);
         }
@@ -966,9 +1039,15 @@ impl Heap {
             let mapped_address = map(address);
             let target = unsafe { Obj::from_addr(map(proxy.target.addr() as usize) as *mut u64) };
             let handler = unsafe { Obj::from_addr(map(proxy.handler.addr() as usize) as *mut u64) };
-            if mapped_address != address { rewritten += 1; }
-            if target.addr() != proxy.target.addr() { rewritten += 1; }
-            if handler.addr() != proxy.handler.addr() { rewritten += 1; }
+            if mapped_address != address {
+                rewritten += 1;
+            }
+            if target.addr() != proxy.target.addr() {
+                rewritten += 1;
+            }
+            if handler.addr() != proxy.handler.addr() {
+                rewritten += 1;
+            }
             mapped_proxies.insert(mapped_address, proxies::ProxyRecord { target, handler });
         }
         self.proxies = mapped_proxies;
@@ -1000,7 +1079,8 @@ impl Heap {
                 rewritten += 1;
             }
         }
-        rewritten + self.rewrite_object_references(relocation, ref_slots)
+        rewritten
+            + self.rewrite_object_references(relocation, ref_slots)
             + self.rewrite_auxiliary_references(relocation)
             + self.rewrite_generator_frames(relocation)
             + self.rewrite_generator_states(relocation)
@@ -1011,13 +1091,13 @@ impl Heap {
 
     /// Return the number of live objects in each generation.
     pub fn generation_counts(&self) -> (usize, usize) {
-        self.records.iter().filter(|record| record.alive).fold(
-            (0, 0),
-            |(young, old), record| match record.generation {
+        self.records
+            .iter()
+            .filter(|record| record.alive)
+            .fold((0, 0), |(young, old), record| match record.generation {
                 records::Generation::Young => (young + 1, old),
                 records::Generation::Old => (young, old + 1),
-            },
-        )
+            })
     }
 
     /// Store a raw field and record an old-to-young reference when applicable.
@@ -1104,7 +1184,6 @@ impl Heap {
             little_endian,
         ))
     }
-
 }
 
 #[cfg(test)]

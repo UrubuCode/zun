@@ -9,7 +9,7 @@
 //! access to the frame stack and so returns an empty trace (the `Error` getter
 //! still renders its `name`/`message` header on top of it).
 
-use crate::{NativeArg, NativeError, NativeTy::*, NativeFn, NativeValue, Sink};
+use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
 
 /// Heap-free fallback (see the module note): no frame stack is reachable here,
 /// so the captured trace is empty.

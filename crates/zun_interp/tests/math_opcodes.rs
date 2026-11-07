@@ -149,11 +149,7 @@ fn min_and_max_propagate_nan() {
     for &op in &[Opcode::MinF64, Opcode::MaxF64] {
         assert!(binary(op, f64::NAN, 1.0).is_nan(), "{}", op.mnemonic());
         assert!(binary(op, 1.0, f64::NAN).is_nan(), "{}", op.mnemonic());
-        assert!(
-            binary(op, f64::NAN, f64::NAN).is_nan(),
-            "{}",
-            op.mnemonic()
-        );
+        assert!(binary(op, f64::NAN, f64::NAN).is_nan(), "{}", op.mnemonic());
     }
 }
 

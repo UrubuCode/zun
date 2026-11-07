@@ -40,12 +40,18 @@ impl<'a> Interp<'a> {
                 .collect::<Result<_, _>>()?;
             // Slots without a recorded default stay zeroed (0, false, null, undefined).
             let defaults: Vec<Option<Value>> = (0..field_count)
-                .map(|slot| self.class_field_defaults.get(&(token.rid(), slot as u32)).cloned())
+                .map(|slot| {
+                    self.class_field_defaults
+                        .get(&(token.rid(), slot as u32))
+                        .cloned()
+                })
                 .collect();
             let obj = zun_gc::with_current_heap_mut(|h| {
                 let obj = h.alloc(token.rid(), field_count);
                 for (i, value) in defaults.iter().enumerate() {
-                    if let Some(value) = value.as_ref().filter(|v| !matches!(v, Value::Void) || kinds[i] == crate::value::FIELD_ANY) {
+                    if let Some(value) = value.as_ref().filter(|v| {
+                        !matches!(v, Value::Void) || kinds[i] == crate::value::FIELD_ANY
+                    }) {
                         crate::value::store_field(kinds[i], obj, i, value, h);
                     }
                 }
@@ -200,7 +206,11 @@ impl<'a> Interp<'a> {
                 _ => Value::Str("[object Object]".into()),
             });
         }
-        let value = if args.is_empty() { Value::Void } else { args.remove(0) };
+        let value = if args.is_empty() {
+            Value::Void
+        } else {
+            args.remove(0)
+        };
         if mode == SETTLE_REJECT {
             match &value {
                 // An object/boxed reason is carried first-class; a plain string
@@ -238,7 +248,9 @@ impl<'a> Interp<'a> {
                 let target = heap
                     .dynamic_get_function(record, "__target")
                     .ok_or(RunError::BadToken)?;
-                let args_any = heap.dynamic_get(record, "__args").ok_or(RunError::BadToken)?;
+                let args_any = heap
+                    .dynamic_get(record, "__args")
+                    .ok_or(RunError::BadToken)?;
                 let array = args_any.as_object().ok_or(RunError::BadToken)?;
                 let array = unsafe { zun_gc::Obj::from_addr(array as *mut u64) };
                 let length = heap.array_len(array).ok_or(RunError::BadToken)?;
@@ -269,5 +281,4 @@ impl<'a> Interp<'a> {
         };
         Ok((handle.method_rid(), final_args))
     }
-
 }

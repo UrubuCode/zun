@@ -5,7 +5,8 @@ use zun_interp::CaptureOutput;
 
 fn run_source(src: &str) -> Vec<String> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -51,7 +52,10 @@ fn bitwise_and_shift_on_ident() {
 
 #[test]
 fn right_associative_chain() {
-    assert_eq!(main_body("let a = 1.0; let b = 2.0; a += b += 3.0; print(a); print(b);"), ["6", "5"]);
+    assert_eq!(
+        main_body("let a = 1.0; let b = 2.0; a += b += 3.0; print(a); print(b);"),
+        ["6", "5"]
+    );
 }
 
 #[test]
@@ -71,5 +75,8 @@ fn index_target() {
 
 #[test]
 fn bigint_pow() {
-    assert_eq!(main_body("let a = 2n; a **= 10n; print(a.toString());"), ["1024"]);
+    assert_eq!(
+        main_body("let a = 2n; a **= 10n; print(a.toString());"),
+        ["1024"]
+    );
 }

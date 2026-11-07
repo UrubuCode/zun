@@ -46,10 +46,10 @@ pub mod body;
 mod link;
 mod serial;
 
-pub use link::{LinkError, LinkedMethods};
 pub use body::{
     read_body, write_body, write_body_with_handlers, ExceptionHandler, HandlerKind, MethodBody,
 };
+pub use link::{LinkError, LinkedMethods};
 
 use zun_metadata::{BlobHeap, StringHeap, Tables, Token};
 

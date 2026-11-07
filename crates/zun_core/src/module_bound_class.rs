@@ -13,7 +13,10 @@ pub struct ModuleBoundClass {
 
 impl ModuleBoundClass {
     pub fn new(module: impl Into<String>, type_rid: u32) -> Self {
-        Self { module: module.into(), type_rid }
+        Self {
+            module: module.into(),
+            type_rid,
+        }
     }
 
     /// Loader identity of the defining module.

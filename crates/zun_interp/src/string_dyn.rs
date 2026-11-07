@@ -135,7 +135,9 @@ impl<'a> Interp<'a> {
 
     /// ECMAScript IsRegExp: a truthy `Symbol.match` property, else a real regexp.
     fn is_regexp(&mut self, value: &Value) -> Result<bool, RunError> {
-        let Ok(Value::Object(obj)) = unbox_arg(value) else { return Ok(false) };
+        let Ok(Value::Object(obj)) = unbox_arg(value) else {
+            return Ok(false);
+        };
         // A `Symbol.match` accessor is read exactly once.
         let getter = zun_gc::with_current_heap(|heap| {
             heap.dynamic_symbol_getter(obj, zun_core::WellKnownSymbol::Match.id())
@@ -261,7 +263,9 @@ impl<'a> Interp<'a> {
                 // Arrays count as their joined text (`[2]` is 2).
                 let count_number = match unbox_arg(&a0)? {
                     Value::Object(obj) if crate::collections::array_join_text(obj).is_some() => {
-                        js_string_to_number(&crate::collections::array_join_text(obj).unwrap_or_default())
+                        js_string_to_number(
+                            &crate::collections::array_join_text(obj).unwrap_or_default(),
+                        )
                     }
                     _ => self.dyn_to_number(&a0)?,
                 };
@@ -359,7 +363,11 @@ impl<'a> Interp<'a> {
             }
             "at" => {
                 let index = self.dyn_integer(&a0)?;
-                let resolved = if index < 0.0 { len as f64 + index } else { index };
+                let resolved = if index < 0.0 {
+                    len as f64 + index
+                } else {
+                    index
+                };
                 if resolved >= 0.0 && resolved < len as f64 {
                     text(&s[resolved as usize..resolved as usize + 1])
                 } else {
@@ -372,7 +380,13 @@ impl<'a> Interp<'a> {
                     usize::MAX
                 } else {
                     let n = self.dyn_to_number(&a1)?;
-                    if n.is_nan() || n <= 0.0 { 0 } else if n >= 4294967295.0 { usize::MAX } else { n as usize }
+                    if n.is_nan() || n <= 0.0 {
+                        0
+                    } else if n >= 4294967295.0 {
+                        usize::MAX
+                    } else {
+                        n as usize
+                    }
                 };
                 let pieces: Vec<String> = if Self::is_undefined(&a0) {
                     vec![recv.to_owned()]
@@ -403,7 +417,11 @@ impl<'a> Interp<'a> {
                 Value::Object(array)
             }
             "normalize" => {
-                let form = if Self::is_undefined(&a0) { "NFC".to_string() } else { self.dyn_to_string(&a0)? };
+                let form = if Self::is_undefined(&a0) {
+                    "NFC".to_string()
+                } else {
+                    self.dyn_to_string(&a0)?
+                };
                 let normalized = zun_natives::string_normalize_form(recv, &form).ok_or_else(|| {
                     RunError::Native("RangeError: The normalization form should be one of NFC, NFD, NFKC, NFKD.".into())
                 })?;
@@ -468,12 +486,17 @@ impl<'a> Interp<'a> {
         Ok(None)
     }
 
-    fn callable_or_nullish(&self, value: &Value) -> Result<Option<zun_core::FunctionHandle>, RunError> {
+    fn callable_or_nullish(
+        &self,
+        value: &Value,
+    ) -> Result<Option<zun_core::FunctionHandle>, RunError> {
         match unbox_arg(value)? {
             Value::Void | Value::Null => Ok(None),
             other => match self.as_callable(&other) {
                 Some(handle) => Ok(Some(handle)),
-                None => Err(RunError::Native("TypeError: value is not a function".into())),
+                None => Err(RunError::Native(
+                    "TypeError: value is not a function".into(),
+                )),
             },
         }
     }
@@ -484,7 +507,8 @@ impl<'a> Interp<'a> {
         match value {
             Value::Function(handle) => Some(*handle),
             Value::Object(object) => zun_gc::with_current_heap(|heap| {
-                heap.function_of_cell(*object).or_else(|| heap.dynamic_get_function(*object, "__boxedFn"))
+                heap.function_of_cell(*object)
+                    .or_else(|| heap.dynamic_get_function(*object, "__boxedFn"))
             }),
             _ => None,
         }
@@ -514,22 +538,31 @@ impl<'a> Interp<'a> {
             _ => return Err(RunError::BadToken),
         };
         let regex_obj = match &arg {
-            Value::Object(obj) if zun_gc::with_current_heap(|heap| heap.regex_source(*obj).is_some()) => Some(*obj),
+            Value::Object(obj)
+                if zun_gc::with_current_heap(|heap| heap.regex_source(*obj).is_some()) =>
+            {
+                Some(*obj)
+            }
             _ => None,
         };
         // matchAll / replaceAll refuse a regexp-like argument without `g`.
         if (kind == 4 || kind == 5) && (regex_obj.is_some() || self.is_regexp(&arg)?) {
             let flags = match (&arg, regex_obj) {
-                (_, Some(obj)) => zun_gc::with_current_heap(|heap| heap.regex_flags(obj).unwrap_or("").to_owned()),
-                (Value::Object(obj), None) => match zun_gc::with_current_heap(|heap| heap.dynamic_get(*obj, "flags")) {
-                    Some(any) => self.dyn_to_string(&Value::Any(any))?,
-                    None => String::new(),
-                },
+                (_, Some(obj)) => {
+                    zun_gc::with_current_heap(|heap| heap.regex_flags(obj).unwrap_or("").to_owned())
+                }
+                (Value::Object(obj), None) => {
+                    match zun_gc::with_current_heap(|heap| heap.dynamic_get(*obj, "flags")) {
+                        Some(any) => self.dyn_to_string(&Value::Any(any))?,
+                        None => String::new(),
+                    }
+                }
                 _ => String::new(),
             };
             if !flags.contains('g') {
                 return Err(RunError::Native(if kind == 4 {
-                    "TypeError: String.prototype.matchAll called with a non-global RegExp argument".into()
+                    "TypeError: String.prototype.matchAll called with a non-global RegExp argument"
+                        .into()
                 } else {
                     "TypeError: replaceAll must be called with a global RegExp".into()
                 }));
@@ -543,7 +576,10 @@ impl<'a> Interp<'a> {
             let mut call_args = vec![Value::Str(receiver)];
             let pass_extra = match kind {
                 1 | 5 => true,
-                3 => !matches!(&extra, Value::Float(n, _) if *n < 0.0) && !matches!(&extra, Value::Int(n, _) if *n < 0),
+                3 => {
+                    !matches!(&extra, Value::Float(n, _) if *n < 0.0)
+                        && !matches!(&extra, Value::Int(n, _) if *n < 0)
+                }
                 _ => false,
             };
             if pass_extra {
@@ -561,17 +597,33 @@ impl<'a> Interp<'a> {
                                 Value::Void => "(?:)".to_string(),
                                 other => {
                                     let text = self.dyn_to_string(other)?;
-                                    if text.is_empty() { "(?:)".to_string() } else { text }
+                                    if text.is_empty() {
+                                        "(?:)".to_string()
+                                    } else {
+                                        text
+                                    }
                                 }
                             };
                             let flags = if kind == 4 { "g" } else { "" };
-                            zun_gc::with_current_heap_mut(|heap| heap.alloc_regex_with_flags(source, flags))
-                                .map_err(|error| RunError::Native(format!("SyntaxError: Invalid regular expression: {error}")))?
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.alloc_regex_with_flags(source, flags)
+                            })
+                            .map_err(|error| {
+                                RunError::Native(format!(
+                                    "SyntaxError: Invalid regular expression: {error}"
+                                ))
+                            })?
                         }
                     };
                     match kind {
-                        0 => self.call_managed_collection("regexpMatch", &[Value::Object(regex), Value::Str(receiver)])?,
-                        2 => self.call_managed_collection("regexpSearch", &[Value::Object(regex), Value::Str(receiver)])?,
+                        0 => self.call_managed_collection(
+                            "regexpMatch",
+                            &[Value::Object(regex), Value::Str(receiver)],
+                        )?,
+                        2 => self.call_managed_collection(
+                            "regexpSearch",
+                            &[Value::Object(regex), Value::Str(receiver)],
+                        )?,
                         _ => self.match_all_iterator(regex, &receiver)?,
                     }
                 }
@@ -582,13 +634,22 @@ impl<'a> Interp<'a> {
                         match callable {
                             Some(callback) => self.call_managed_collection(
                                 "replaceFn",
-                                &[Value::Object(regex), Value::Str(receiver), Value::Function(callback), Value::Bool(all)],
+                                &[
+                                    Value::Object(regex),
+                                    Value::Str(receiver),
+                                    Value::Function(callback),
+                                    Value::Bool(all),
+                                ],
                             )?,
                             None => {
                                 let replacement = self.dyn_to_string(&extra)?;
                                 self.call_managed_collection(
                                     "regexpReplace",
-                                    &[Value::Object(regex), Value::Str(receiver), Value::Str(replacement.into())],
+                                    &[
+                                        Value::Object(regex),
+                                        Value::Str(receiver),
+                                        Value::Str(replacement.into()),
+                                    ],
                                 )?
                             }
                         }
@@ -597,13 +658,25 @@ impl<'a> Interp<'a> {
                         match callable {
                             Some(callback) => self.call_managed_collection(
                                 "replaceFn",
-                                &[Value::Str(needle.into()), Value::Str(receiver), Value::Function(callback), Value::Bool(all)],
+                                &[
+                                    Value::Str(needle.into()),
+                                    Value::Str(receiver),
+                                    Value::Function(callback),
+                                    Value::Bool(all),
+                                ],
                             )?,
                             None => {
                                 let replacement = self.dyn_to_string(&extra)?;
-                                let (id, _) = zun_natives::resolve("string", if all { "replaceAll" } else { "replace" })
-                                    .ok_or(RunError::BadToken)?;
-                                let values = [Value::Str(receiver), Value::Str(needle.into()), Value::Str(replacement.into())];
+                                let (id, _) = zun_natives::resolve(
+                                    "string",
+                                    if all { "replaceAll" } else { "replace" },
+                                )
+                                .ok_or(RunError::BadToken)?;
+                                let values = [
+                                    Value::Str(receiver),
+                                    Value::Str(needle.into()),
+                                    Value::Str(replacement.into()),
+                                ];
                                 let native_args: Vec<zun_natives::NativeArg> =
                                     values.iter().map(super::native::to_native_arg).collect();
                                 let out = zun_natives::dispatch(id, &native_args, self.output)
@@ -621,7 +694,11 @@ impl<'a> Interp<'a> {
                         Value::Void => None,
                         other => {
                             let n = self.dyn_to_number(other)?;
-                            Some(if n.is_finite() { n.trunc().rem_euclid(4294967296.0) as usize } else { 0 })
+                            Some(if n.is_finite() {
+                                n.trunc().rem_euclid(4294967296.0) as usize
+                            } else {
+                                0
+                            })
                         }
                     };
                     if let Some(regex) = regex_obj {
@@ -643,7 +720,10 @@ impl<'a> Interp<'a> {
                                         .map(|unit| zun_core::wtf16::from_units(&[unit]))
                                         .collect()
                                 } else {
-                                    receiver.split(separator.as_str()).map(str::to_string).collect()
+                                    receiver
+                                        .split(separator.as_str())
+                                        .map(str::to_string)
+                                        .collect()
                                 }
                             }
                         };
@@ -653,7 +733,9 @@ impl<'a> Interp<'a> {
                         let array = zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(pieces.len());
                             for (index, piece) in pieces.iter().enumerate() {
-                                let value = zun_core::Any::string(heap.intern_string(piece.as_str().into()));
+                                let value = zun_core::Any::string(
+                                    heap.intern_string(piece.as_str().into()),
+                                );
                                 heap.array_set(array, index, value);
                             }
                             array
@@ -663,14 +745,19 @@ impl<'a> Interp<'a> {
                 }
             }
         };
-        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap)).unwrap_or_else(zun_core::Any::void);
+        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+            .unwrap_or_else(zun_core::Any::void);
         Ok(Value::Any(boxed))
     }
 
     /// `String.prototype.matchAll` over a (cloned) global regexp: the matches
     /// are collected through `exec` on a clone seeded with the caller's
     /// `lastIndex`, then handed out by an iterator.
-    pub(super) fn match_all_iterator(&mut self, regex: zun_gc::Obj, input: &str) -> Result<Value, RunError> {
+    pub(super) fn match_all_iterator(
+        &mut self,
+        regex: zun_gc::Obj,
+        input: &str,
+    ) -> Result<Value, RunError> {
         let (source, flags, last_index) = zun_gc::with_current_heap(|heap| {
             (
                 heap.regex_source(regex).unwrap_or("").to_owned(),
@@ -689,9 +776,10 @@ impl<'a> Interp<'a> {
         .map_err(|error| RunError::Native(error.to_string()))?;
         let mut matches: Vec<zun_gc::Obj> = Vec::new();
         loop {
-            let found = zun_gc::with_current_heap_mut(|heap| heap.regex_exec_stateful(clone, input))
-                .ok_or(RunError::BadToken)?
-                .map_err(|error| RunError::Native(error.to_string()))?;
+            let found =
+                zun_gc::with_current_heap_mut(|heap| heap.regex_exec_stateful(clone, input))
+                    .ok_or(RunError::BadToken)?
+                    .map_err(|error| RunError::Native(error.to_string()))?;
             let Some(array) = found else { break };
             let empty = zun_gc::with_current_heap(|heap| {
                 heap.array_get(array, 0)
@@ -703,7 +791,12 @@ impl<'a> Interp<'a> {
                     let at = heap.regex_last_index(clone).unwrap_or(0.0).max(0.0) as usize;
                     let step = match (input_units.get(at), input_units.get(at + 1)) {
                         (Some(high), Some(low))
-                            if unicode && (0xD800..=0xDBFF).contains(high) && (0xDC00..=0xDFFF).contains(low) => 2,
+                            if unicode
+                                && (0xD800..=0xDBFF).contains(high)
+                                && (0xDC00..=0xDFFF).contains(low) =>
+                        {
+                            2
+                        }
                         _ => 1,
                     };
                     heap.regex_set_last_index(clone, (at + step) as f64);

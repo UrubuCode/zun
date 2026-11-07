@@ -10,7 +10,7 @@
 //! are ever dispatched outside that floor; they classify everything they can
 //! from the neutral value alone and treat every managed reference as `object`.
 
-use crate::{NativeArg, NativeError, NativeTy::*, NativeFn, NativeValue, Sink};
+use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
 
 /// Heap-free `typeof` classification (see the module note). A managed object
 /// reference cannot be refined to `bigint` here, so it reports `object`.

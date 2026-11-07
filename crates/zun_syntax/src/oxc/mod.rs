@@ -6,14 +6,14 @@
 //! arena-owned AST types.
 
 use oxc_allocator::Allocator;
+use oxc_ast::ast::Function as OxcFunction;
 use oxc_ast::ast::{
     Argument, ArrayExpressionElement, AssignmentOperator, AssignmentTarget, BinaryOperator,
-    BindingPattern, ChainElement, Decorator as OxcDecorator,
-    ClassElement, Declaration, ExportDefaultDeclarationKind, Expression, ForStatementInit,
-    ForStatementLeft, ImportDeclarationSpecifier, LogicalOperator, MethodDefinitionKind,
-    ModuleExportName, ObjectPropertyKind, PropertyKey, PropertyKind, Statement, UnaryOperator,
+    BindingPattern, ChainElement, ClassElement, Declaration, Decorator as OxcDecorator,
+    ExportDefaultDeclarationKind, Expression, ForStatementInit, ForStatementLeft,
+    ImportDeclarationSpecifier, LogicalOperator, MethodDefinitionKind, ModuleExportName,
+    ObjectPropertyKind, PropertyKey, PropertyKind, Statement, UnaryOperator,
 };
-use oxc_ast::ast::Function as OxcFunction;
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
 use zun_common::Span;

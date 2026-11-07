@@ -1,8 +1,8 @@
 //! Stack helper errors and operations for Tier 0 execution.
 
-use super::RunError;
-use super::value::Value;
 use super::value;
+use super::value::Value;
+use super::RunError;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Ordering {
@@ -30,7 +30,9 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
     // and compared by its dynamic value.
     let unbox = |v: Value| -> Value {
         match v {
-            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(v),
+            Value::Any(any) => {
+                zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(v)
+            }
             other => other,
         }
     };
@@ -38,7 +40,11 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
     let result = match (&a, &b) {
         (Value::Int(x, k), Value::Int(y, _)) => {
             let (_, signed) = k.int_parts().expect("int kind");
-            if signed { op.apply(*x, *y) } else { op.apply(*x as u64, *y as u64) }
+            if signed {
+                op.apply(*x, *y)
+            } else {
+                op.apply(*x as u64, *y as u64)
+            }
         }
         (Value::Float(x, _), Value::Float(y, _)) => op.apply(*x, *y),
         (Value::Int(x, _), Value::Float(y, _)) => op.apply(*x as f64, *y),
@@ -48,7 +54,11 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
             let ordering = zun_core::wtf16::encode(x).cmp(zun_core::wtf16::encode(y));
             op.apply(ordering, std::cmp::Ordering::Equal)
         }
-        _ => return Err(RunError::Malformed(format!("comparison of mismatched numeric kinds: {a:?} vs {b:?}"))),
+        _ => {
+            return Err(RunError::Malformed(format!(
+                "comparison of mismatched numeric kinds: {a:?} vs {b:?}"
+            )))
+        }
     };
     stack.push(Value::Bool(result));
     Ok(())
@@ -59,8 +69,9 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
 /// Opaque `Any` payloads (class descriptors, symbols) stay boxed.
 fn unbox_for_compare(value: Value) -> Value {
     match value {
-        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
-            .unwrap_or(Value::Any(any)),
+        Value::Any(any) => {
+            zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Any(any))
+        }
         other => other,
     }
 }
@@ -101,7 +112,8 @@ pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunErr
         match value {
             Value::Any(any) => any.as_class_descriptor(),
             Value::Object(obj) => zun_gc::with_current_heap(|heap| {
-                heap.dynamic_get(*obj, "__classDesc").and_then(|d| d.as_class_descriptor())
+                heap.dynamic_get(*obj, "__classDesc")
+                    .and_then(|d| d.as_class_descriptor())
             }),
             _ => None,
         }
@@ -338,7 +350,11 @@ pub(crate) fn bin_int_shift(stack: &mut Vec<Value>, op: ShiftOp) -> Result<(), R
     let (bits, signed) = kind.int_parts().expect("int kind");
     let bits = bits as u32;
     let amount = (b.as_int() as u64 & (bits as u64 - 1)) as u32;
-    let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+    let mask = if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
     let value = a.as_int();
     let result = match op {
         ShiftOp::Left => ((value as u64) << amount) as i64,
@@ -368,7 +384,11 @@ pub(crate) fn bin_int_pow(stack: &mut Vec<Value>) -> Result<(), RunError> {
     // value. Squaring is logarithmic in the exponent, so a huge unsigned
     // exponent still terminates. This matches the Tier 1 lowering.
     let mut exp: u64 = if signed {
-        if exp_raw < 0 { 0 } else { exp_raw as u64 }
+        if exp_raw < 0 {
+            0
+        } else {
+            exp_raw as u64
+        }
     } else {
         exp_raw as u64
     };
@@ -387,10 +407,7 @@ pub(crate) fn bin_int_pow(stack: &mut Vec<Value>) -> Result<(), RunError> {
     Ok(())
 }
 
-pub(crate) fn bin_int(
-    stack: &mut Vec<Value>,
-    f: impl Fn(i64, i64) -> i64,
-) -> Result<(), RunError> {
+pub(crate) fn bin_int(stack: &mut Vec<Value>, f: impl Fn(i64, i64) -> i64) -> Result<(), RunError> {
     let b = pop(stack)?;
     let a = pop(stack)?;
     let kind = a.int_kind();
@@ -402,10 +419,7 @@ pub(crate) fn bin_int(
 }
 
 /// Integer divide or remainder, choosing signed versus unsigned by kind.
-pub(crate) fn bin_int_signed_aware(
-    stack: &mut Vec<Value>,
-    is_div: bool,
-) -> Result<(), RunError> {
+pub(crate) fn bin_int_signed_aware(stack: &mut Vec<Value>, is_div: bool) -> Result<(), RunError> {
     let b = pop(stack)?;
     let a = pop(stack)?;
     let kind = a.int_kind();

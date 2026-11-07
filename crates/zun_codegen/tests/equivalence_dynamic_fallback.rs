@@ -37,7 +37,10 @@ fn managed_promise_intrinsics_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Promise intrinsics require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "Promise intrinsics require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(0, _)));
 }
 
@@ -48,7 +51,10 @@ fn managed_promise_class_methods_use_interpreter_fallback() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Promise methods require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "Promise methods require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(0, _)));
 }
 
@@ -59,7 +65,10 @@ fn async_function_without_await_returns_a_promise_through_tier0() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "managed Promise requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "managed Promise requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(0, _)));
 }
 
@@ -72,17 +81,14 @@ fn async_await_preserves_the_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Await requires Tier 0 state-machine execution");
+    assert!(
+        !jit.is_compiled(entry),
+        "Await requires Tier 0 state-machine execution"
+    );
     let mut output = CaptureOutput::default();
-    let mut session = zun_interp::ResumableSession::new(
-        &module,
-        entry,
-        Vec::new(),
-        &mut output,
-        None,
-        None,
-    )
-    .expect("create resumable session");
+    let mut session =
+        zun_interp::ResumableSession::new(&module, entry, Vec::new(), &mut output, None, None)
+            .expect("create resumable session");
     assert!(matches!(
         session.poll().expect("initial poll"),
         zun_interp::ResumeResult::Suspended
@@ -91,7 +97,10 @@ fn async_await_preserves_the_interpreter_fallback_boundary() {
     let boxed = Value::Int(1, zun_il::NumKind::I32)
         .box_any(session.heap_mut())
         .expect("box result");
-    assert_eq!(session.heap_mut().promise_resolve(promise, boxed), Some(true));
+    assert_eq!(
+        session.heap_mut().promise_resolve(promise, boxed),
+        Some(true)
+    );
     assert!(matches!(
         session.poll().expect("resumed poll"),
         zun_interp::ResumeResult::Complete(Value::Void)
@@ -230,7 +239,10 @@ fn finalization_registry_preserves_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "FinalizationRegistry requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "FinalizationRegistry requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -241,7 +253,10 @@ fn reflect_dynamic_keys_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "dynamic property keys require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "dynamic property keys require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Any(value) if value.as_float() == Some(41.0)));
 }
 
@@ -263,7 +278,10 @@ fn proxy_get_preserves_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Proxy get requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "Proxy get requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Any(value) if value.as_float() == Some(41.0)));
 }
 
@@ -274,7 +292,10 @@ fn proxy_set_preserves_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Proxy set requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "Proxy set requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Any(value) if value.as_float() == Some(41.0)));
 }
 
@@ -285,7 +306,10 @@ fn proxy_has_and_delete_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Proxy property traps require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "Proxy property traps require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -296,7 +320,10 @@ fn proxy_get_trap_preserves_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Proxy trap invocation requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "Proxy trap invocation requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Any(value) if value.as_float() == Some(99.0)));
 }
 
@@ -307,7 +334,10 @@ fn proxy_property_traps_preserve_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "Proxy property traps require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "Proxy property traps require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Bool(true)));
 }
 
@@ -449,7 +479,10 @@ fn optional_managed_method_uses_the_interpreter_fallback_boundary() {
     let module = compile("function main(): u64 { let value = new Map(); return value?.size(); }");
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "optional managed method requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "optional managed method requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(0, _)));
 }
 
@@ -474,7 +507,10 @@ fn rest_parameter_uses_the_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "rest calls require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "rest calls require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(3, _)));
 }
 
@@ -485,7 +521,10 @@ fn spread_array_uses_the_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "spread calls require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "spread calls require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(3, _)));
 }
 
@@ -496,7 +535,10 @@ fn fixed_spread_array_uses_the_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "fixed spread calls require Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "fixed spread calls require Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Int(3, _)));
 }
 
@@ -507,7 +549,10 @@ fn array_destructuring_uses_the_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "destructuring requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "destructuring requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(12.0, _)));
 }
 
@@ -518,7 +563,10 @@ fn object_destructuring_uses_the_interpreter_fallback_boundary() {
     );
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(entry), "object destructuring requires Tier 0 fallback");
+    assert!(
+        !jit.is_compiled(entry),
+        "object destructuring requires Tier 0 fallback"
+    );
     assert!(matches!(interp_entry(&module), Value::Float(41.0, _)));
 }
 
@@ -535,4 +583,3 @@ fn method_default_parameter_uses_the_interpreter_fallback_boundary() {
     );
     assert!(matches!(interp_entry(&module), Value::Float(3.0, _)));
 }
-

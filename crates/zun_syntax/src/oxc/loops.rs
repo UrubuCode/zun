@@ -29,12 +29,17 @@ pub(super) fn convert_for_statement(
                     Some(initializer) => convert_expression(source, initializer)?,
                     None => Expr::Unary {
                         op: crate::ast::UnaryOp::Void,
-                        operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+                        operand: Box::new(Expr::Number {
+                            value: 0.0,
+                            span: span(declarator.span),
+                        }),
                         span: span(declarator.span),
                     },
                 };
                 lowered.push(Stmt::Let {
-                    name: Name { span: span(identifier.span) },
+                    name: Name {
+                        span: span(identifier.span),
+                    },
                     ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
                     init,
                     span: span(declarator.span),
@@ -58,12 +63,17 @@ pub(super) fn convert_for_statement(
                     // `for (let i; ...)` — an uninitialized binding is `undefined`.
                     None => Expr::Unary {
                         op: crate::ast::UnaryOp::Void,
-                        operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+                        operand: Box::new(Expr::Number {
+                            value: 0.0,
+                            span: span(declarator.span),
+                        }),
                         span: span(declarator.span),
                     },
                 };
                 pre.push(Stmt::Let {
-                    name: Name { span: span(identifier.span) },
+                    name: Name {
+                        span: span(identifier.span),
+                    },
                     ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
                     init,
                     span: span(declarator.span),
@@ -81,12 +91,17 @@ pub(super) fn convert_for_statement(
                 // `for (let i; ...)` — an uninitialized binding is `undefined`.
                 None => Expr::Unary {
                     op: crate::ast::UnaryOp::Void,
-                    operand: Box::new(Expr::Number { value: 0.0, span: span(declarator.span) }),
+                    operand: Box::new(Expr::Number {
+                        value: 0.0,
+                        span: span(declarator.span),
+                    }),
                     span: span(declarator.span),
                 },
             };
             let binding = Stmt::Let {
-                name: Name { span: span(identifier.span) },
+                name: Name {
+                    span: span(identifier.span),
+                },
                 ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
                 init,
                 span: span(declarator.span),
@@ -106,22 +121,25 @@ pub(super) fn convert_for_statement(
                 .ok_or("OXC adapter does not support this for-loop initializer yet")?,
         )?))),
     };
-    Ok((pre, Stmt::For {
-        init,
-        extra_init,
-        cond: for_statement
-            .test
-            .as_ref()
-            .map(|expression| convert_expression(source, expression))
-            .transpose()?,
-        update: for_statement
-            .update
-            .as_ref()
-            .map(|expression| convert_effect_expression(source, expression))
-            .transpose()?,
-        body: convert_if_branch(source, &for_statement.body)?,
-        span: span(for_statement.span),
-    }))
+    Ok((
+        pre,
+        Stmt::For {
+            init,
+            extra_init,
+            cond: for_statement
+                .test
+                .as_ref()
+                .map(|expression| convert_expression(source, expression))
+                .transpose()?,
+            update: for_statement
+                .update
+                .as_ref()
+                .map(|expression| convert_effect_expression(source, expression))
+                .transpose()?,
+            body: convert_if_branch(source, &for_statement.body)?,
+            span: span(for_statement.span),
+        },
+    ))
 }
 
 /// Convert a `for (… in …)` statement to the `ForIn` node (lowered to key
@@ -140,7 +158,9 @@ pub(super) fn convert_for_in(
     let declarator = &declaration.declarations[0];
     let pattern = match &declarator.id {
         BindingPattern::BindingIdentifier(identifier) => crate::ast::Pattern::Ident {
-            name: Name { span: span(identifier.span) },
+            name: Name {
+                span: span(identifier.span),
+            },
             ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
         },
         other => convert_binding_pattern(source, other)?,
@@ -149,10 +169,14 @@ pub(super) fn convert_for_in(
     // assigned from a per-iteration temporary at the top of the body. The
     // declaration is emitted ahead of the loop as a separate statement.
     if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
-        if let (BindingPattern::BindingIdentifier(identifier), crate::ast::Pattern::Ident { ty, .. }) =
-            (&declarator.id, &pattern)
+        if let (
+            BindingPattern::BindingIdentifier(identifier),
+            crate::ast::Pattern::Ident { ty, .. },
+        ) = (&declarator.id, &pattern)
         {
-            let var_name = Name { span: span(identifier.span) };
+            let var_name = Name {
+                span: span(identifier.span),
+            };
             let temp = crate::ast::synthetic_ident("__for_in_var");
             let mut body = convert_if_branch(source, &for_in_statement.body)?;
             body.statements.insert(
@@ -168,13 +192,19 @@ pub(super) fn convert_for_in(
                 ty: ty.clone(),
                 init: Expr::Unary {
                     op: crate::ast::UnaryOp::Void,
-                    operand: Box::new(Expr::Number { value: 0.0, span: span(identifier.span) }),
+                    operand: Box::new(Expr::Number {
+                        value: 0.0,
+                        span: span(identifier.span),
+                    }),
                     span: span(identifier.span),
                 },
                 span: span(declarator.span),
             };
             let looped = Stmt::ForIn {
-                pattern: crate::ast::Pattern::Ident { name: temp, ty: None },
+                pattern: crate::ast::Pattern::Ident {
+                    name: temp,
+                    ty: None,
+                },
                 object: convert_expression(source, &for_in_statement.right)?,
                 body,
                 span: span(for_in_statement.span),
@@ -223,7 +253,9 @@ pub(super) fn convert_for_await(
     let declarator = &declaration.declarations[0];
     let pattern = match &declarator.id {
         BindingPattern::BindingIdentifier(identifier) => crate::ast::Pattern::Ident {
-            name: Name { span: span(identifier.span) },
+            name: Name {
+                span: span(identifier.span),
+            },
             ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
         },
         other => convert_binding_pattern(source, other)?,
@@ -237,7 +269,10 @@ pub(super) fn convert_for_await(
     let close = crate::ast::synthetic_ident(&format!("__fa_close{n}"));
     let field = |name: Name, key: &str| Expr::Index {
         object: Box::new(Expr::Ident(name)),
-        index: Box::new(Expr::String { value: key.to_owned(), span: sp }),
+        index: Box::new(Expr::String {
+            value: key.to_owned(),
+            span: sp,
+        }),
         span: sp,
     };
     let set_close = |value: bool| {
@@ -247,7 +282,10 @@ pub(super) fn convert_for_await(
             span: sp,
         })
     };
-    let awaited = |operand: Expr| Expr::Await { operand: Box::new(operand), span: sp };
+    let awaited = |operand: Expr| Expr::Await {
+        operand: Box::new(operand),
+        span: sp,
+    };
     let mut loop_body = vec![
         set_close(false),
         Stmt::Let {
@@ -262,17 +300,30 @@ pub(super) fn convert_for_await(
         },
         Stmt::If {
             cond: field(result, "done"),
-            then_block: Block { statements: vec![Stmt::Break { label: None, span: sp }], span: sp },
+            then_block: Block {
+                statements: vec![Stmt::Break {
+                    label: None,
+                    span: sp,
+                }],
+                span: sp,
+            },
             else_block: None,
             span: sp,
         },
         set_close(true),
     ];
     loop_body.push(match pattern {
-        crate::ast::Pattern::Ident { name, ty } => {
-            Stmt::Let { name, ty, init: field(result, "value"), span: sp }
-        }
-        other => Stmt::Destructure { pattern: other, init: field(result, "value"), span: sp },
+        crate::ast::Pattern::Ident { name, ty } => Stmt::Let {
+            name,
+            ty,
+            init: field(result, "value"),
+            span: sp,
+        },
+        other => Stmt::Destructure {
+            pattern: other,
+            init: field(result, "value"),
+            span: sp,
+        },
     });
     loop_body.extend(convert_if_branch(source, &for_of_statement.body)?.statements);
     Ok(vec![
@@ -286,12 +337,26 @@ pub(super) fn convert_for_await(
             },
             span: sp,
         },
-        Stmt::Let { name: close, ty: None, init: Expr::Bool { value: false, span: sp }, span: sp },
+        Stmt::Let {
+            name: close,
+            ty: None,
+            init: Expr::Bool {
+                value: false,
+                span: sp,
+            },
+            span: sp,
+        },
         Stmt::Try {
             body: Block {
                 statements: vec![Stmt::While {
-                    cond: Expr::Bool { value: true, span: sp },
-                    body: Block { statements: loop_body, span: sp },
+                    cond: Expr::Bool {
+                        value: true,
+                        span: sp,
+                    },
+                    body: Block {
+                        statements: loop_body,
+                        span: sp,
+                    },
                     span: sp,
                 }],
                 span: sp,
@@ -337,7 +402,8 @@ pub(super) fn convert_for_of(
         let temp = fresh_destructure_temp();
         let whole = span(for_of_statement.span);
         let store = match target {
-            AssignmentTarget::ArrayAssignmentTarget(_) | AssignmentTarget::ObjectAssignmentTarget(_) => {
+            AssignmentTarget::ArrayAssignmentTarget(_)
+            | AssignmentTarget::ObjectAssignmentTarget(_) => {
                 convert_destructuring_assignment(source, target, Expr::Ident(temp), whole)?
             }
             plain => store_into_target(source, plain, Expr::Ident(temp), whole)?,
@@ -345,7 +411,10 @@ pub(super) fn convert_for_of(
         let mut body = convert_if_branch(source, &for_of_statement.body)?;
         body.statements.insert(0, Stmt::Expr(store));
         return Ok(vec![Stmt::ForOf {
-            pattern: crate::ast::Pattern::Ident { name: temp, ty: None },
+            pattern: crate::ast::Pattern::Ident {
+                name: temp,
+                ty: None,
+            },
             iterable: convert_expression(source, &for_of_statement.right)?,
             body,
             span: whole,
@@ -357,7 +426,9 @@ pub(super) fn convert_for_of(
     let declarator = &declaration.declarations[0];
     let pattern = match &declarator.id {
         BindingPattern::BindingIdentifier(identifier) => crate::ast::Pattern::Ident {
-            name: Name { span: span(identifier.span) },
+            name: Name {
+                span: span(identifier.span),
+            },
             ty: convert_type_annotation(source, declarator.type_annotation.as_deref())?,
         },
         other => convert_binding_pattern(source, other)?,
@@ -366,10 +437,14 @@ pub(super) fn convert_for_of(
     // iteration — declared before the loop and assigned from a per-iteration
     // temporary at the top of the body.
     if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
-        if let (BindingPattern::BindingIdentifier(identifier), crate::ast::Pattern::Ident { ty, .. }) =
-            (&declarator.id, &pattern)
+        if let (
+            BindingPattern::BindingIdentifier(identifier),
+            crate::ast::Pattern::Ident { ty, .. },
+        ) = (&declarator.id, &pattern)
         {
-            let var_name = Name { span: span(identifier.span) };
+            let var_name = Name {
+                span: span(identifier.span),
+            };
             let temp = crate::ast::synthetic_ident("__for_of_var");
             let mut body = convert_if_branch(source, &for_of_statement.body)?;
             body.statements.insert(
@@ -386,13 +461,19 @@ pub(super) fn convert_for_of(
                     ty: ty.clone(),
                     init: Expr::Unary {
                         op: crate::ast::UnaryOp::Void,
-                        operand: Box::new(Expr::Number { value: 0.0, span: span(identifier.span) }),
+                        operand: Box::new(Expr::Number {
+                            value: 0.0,
+                            span: span(identifier.span),
+                        }),
                         span: span(identifier.span),
                     },
                     span: span(declarator.span),
                 },
                 Stmt::ForOf {
-                    pattern: crate::ast::Pattern::Ident { name: temp, ty: None },
+                    pattern: crate::ast::Pattern::Ident {
+                        name: temp,
+                        ty: None,
+                    },
                     iterable: convert_expression(source, &for_of_statement.right)?,
                     body,
                     span: span(for_of_statement.span),
@@ -418,13 +499,18 @@ pub(super) fn convert_for_of(
                 let mut body = convert_if_branch(source, &for_of_statement.body)?;
                 let mut lets = Vec::new();
                 for (position, name_span) in names.iter().enumerate() {
-                    let var_name = Name { span: span(*name_span) };
+                    let var_name = Name {
+                        span: span(*name_span),
+                    };
                     lets.push(Stmt::Let {
                         name: var_name,
                         ty: None,
                         init: Expr::Unary {
                             op: crate::ast::UnaryOp::Void,
-                            operand: Box::new(Expr::Number { value: 0.0, span: span(*name_span) }),
+                            operand: Box::new(Expr::Number {
+                                value: 0.0,
+                                span: span(*name_span),
+                            }),
                             span: span(*name_span),
                         },
                         span: span(declarator.span),
@@ -446,7 +532,10 @@ pub(super) fn convert_for_of(
                     );
                 }
                 lets.push(Stmt::ForOf {
-                    pattern: crate::ast::Pattern::Ident { name: temp, ty: None },
+                    pattern: crate::ast::Pattern::Ident {
+                        name: temp,
+                        ty: None,
+                    },
                     iterable: convert_expression(source, &for_of_statement.right)?,
                     body,
                     span: span(for_of_statement.span),

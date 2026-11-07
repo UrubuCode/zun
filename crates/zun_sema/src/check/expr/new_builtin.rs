@@ -109,8 +109,7 @@ impl Checker<'_> {
                         span,
                     },
                 };
-                let Some(discriminant) = crate::typed_arrays::element_index(view_kind)
-                else {
+                let Some(discriminant) = crate::typed_arrays::element_index(view_kind) else {
                     self.error(span, "typed array requires an element kind".to_string());
                     return Some(self.poison(span));
                 };
@@ -119,9 +118,11 @@ impl Checker<'_> {
                     ty: Ty::Int(IntKind::U32),
                     span,
                 };
-                let Some((id, _)) = zun_natives::resolve("buffer", "typedArrayTrackingNew")
-                else {
-                    self.error(span, "missing typed-array intrinsic `typedArrayTrackingNew`");
+                let Some((id, _)) = zun_natives::resolve("buffer", "typedArrayTrackingNew") else {
+                    self.error(
+                        span,
+                        "missing typed-array intrinsic `typedArrayTrackingNew`",
+                    );
                     return Some(self.poison(span));
                 };
                 return Some(hir::Expr {
@@ -185,11 +186,17 @@ impl Checker<'_> {
                 return Some(self.poison(span));
             };
             let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
-                self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                self.error(
+                    span,
+                    format!("missing collection intrinsic `{native_name}`"),
+                );
                 return Some(self.poison(span));
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![arg],
+                },
                 ty: Ty::BigInt,
                 span,
             });
@@ -212,14 +219,16 @@ impl Checker<'_> {
                 if zun_natives::resolve("collections", "realmDescriptor")
                     .map(|(rid, _)| rid) == Some(id))
             {
-                let Some((box_id, _)) = zun_natives::resolve("collections", "classBox")
-                else {
+                let Some((box_id, _)) = zun_natives::resolve("collections", "classBox") else {
                     self.error(span, "missing `classBox` intrinsic");
                     return Some(self.poison(span));
                 };
                 let target_span = target.span;
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id: box_id, args: vec![target] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: box_id,
+                        args: vec![target],
+                    },
                     ty: Ty::DynamicObject,
                     span: target_span,
                 }
@@ -227,14 +236,16 @@ impl Checker<'_> {
                 target
             };
             let (native_name, target) = if matches!(target.ty, Ty::Function(_)) {
-                let Some((box_id, _)) = zun_natives::resolve("collections", "functionBox")
-                else {
+                let Some((box_id, _)) = zun_natives::resolve("collections", "functionBox") else {
                     self.error(span, "missing `functionBox` intrinsic");
                     return Some(self.poison(span));
                 };
                 let target_span = target.span;
                 let boxed = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id: box_id, args: vec![target] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: box_id,
+                        args: vec![target],
+                    },
                     ty: Ty::Any,
                     span: target_span,
                 };
@@ -243,11 +254,17 @@ impl Checker<'_> {
                 ("proxyNew", target)
             };
             let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
-                self.error(span, format!("missing collection intrinsic `{native_name}`"));
+                self.error(
+                    span,
+                    format!("missing collection intrinsic `{native_name}`"),
+                );
                 return Some(self.poison(span));
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![target, handler] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![target, handler],
+                },
                 ty: Ty::Proxy,
                 span,
             });
@@ -271,10 +288,7 @@ impl Checker<'_> {
             "WeakSet" => Some(("weakSetNew", Ty::WeakSet)),
             "RegExp" => Some(("regexpNew", Ty::RegExp)),
             "BigInt" => Some(("bigIntNew", Ty::BigInt)),
-            "FinalizationRegistry" => Some((
-                "finalizationRegistryNew",
-                Ty::FinalizationRegistry,
-            )),
+            "FinalizationRegistry" => Some(("finalizationRegistryNew", Ty::FinalizationRegistry)),
             "Promise" => Some(("promiseNew", Ty::Promise)),
             _ => None,
         };
@@ -392,7 +406,10 @@ impl Checker<'_> {
                 }
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::New { class: wrapper, args: vec![value] },
+                kind: hir::ExprKind::New {
+                    class: wrapper,
+                    args: vec![value],
+                },
                 ty: Ty::Instance(wrapper),
                 span,
             });
@@ -435,7 +452,10 @@ impl Checker<'_> {
                 }
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::New { class: wrapper, args: vec![text] },
+                kind: hir::ExprKind::New {
+                    class: wrapper,
+                    args: vec![text],
+                },
                 ty: Ty::Instance(wrapper),
                 span,
             });
@@ -463,13 +483,15 @@ impl Checker<'_> {
                     if arg.ty == Ty::Boolean {
                         arg
                     } else {
-                        let Some((id, _)) = zun_natives::resolve("boolean", "booleanCoerce")
-                        else {
+                        let Some((id, _)) = zun_natives::resolve("boolean", "booleanCoerce") else {
                             self.error(span, "missing Boolean intrinsic `booleanCoerce`");
                             return Some(self.poison(span));
                         };
                         hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: vec![arg] },
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![arg],
+                            },
                             ty: Ty::Boolean,
                             span,
                         }
@@ -477,7 +499,10 @@ impl Checker<'_> {
                 }
             };
             return Some(hir::Expr {
-                kind: hir::ExprKind::New { class: wrapper, args: vec![flag] },
+                kind: hir::ExprKind::New {
+                    class: wrapper,
+                    args: vec![flag],
+                },
                 ty: Ty::Instance(wrapper),
                 span,
             });

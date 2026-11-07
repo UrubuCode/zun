@@ -21,7 +21,13 @@ impl Checker<'_> {
     ) -> Result<hir::Expr, hir::Expr> {
         if let Ty::Function(func) = receiver.ty {
             return Ok(self.lower_function_reflective_call(
-                cx, receiver, mname, func, args, span, method.span,
+                cx,
+                receiver,
+                mname,
+                func,
+                args,
+                span,
+                method.span,
             ));
         }
         // JS-conformant `toFixed` / `toExponential` / `toPrecision` /
@@ -64,7 +70,10 @@ impl Checker<'_> {
                 },
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, arg] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, arg],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -82,8 +91,7 @@ impl Checker<'_> {
                 Some(arg) => {
                     let mut radix = self.check_expr(cx, arg);
                     coerce_numeric_literal(&mut radix, Ty::Int(IntKind::I32));
-                    if !radix.ty.is_error()
-                        && !self.is_assignable(radix.ty, Ty::Int(IntKind::I32))
+                    if !radix.ty.is_error() && !self.is_assignable(radix.ty, Ty::Int(IntKind::I32))
                     {
                         self.error(radix.span, "`toString` radix must be an integer");
                     }
@@ -96,7 +104,10 @@ impl Checker<'_> {
                 },
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, radix] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, radix],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -137,13 +148,9 @@ impl Checker<'_> {
                 Some(arg) => {
                     let mut count = self.check_expr(cx, arg);
                     coerce_numeric_literal(&mut count, Ty::Int(IntKind::I32));
-                    if !count.ty.is_error()
-                        && !self.is_assignable(count.ty, Ty::Int(IntKind::I32))
+                    if !count.ty.is_error() && !self.is_assignable(count.ty, Ty::Int(IntKind::I32))
                     {
-                        self.error(
-                            count.span,
-                            format!("`{mname}` argument must be an integer"),
-                        );
+                        self.error(count.span, format!("`{mname}` argument must be an integer"));
                     }
                     count
                 }
@@ -154,7 +161,10 @@ impl Checker<'_> {
                 },
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, count] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, count],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -185,7 +195,10 @@ impl Checker<'_> {
                 },
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver, digits] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, digits],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -206,7 +219,10 @@ impl Checker<'_> {
         // `toLocale*` family. Hand-lowered because `managed_method` is
         // fixed-arity: an omitted locale is the sentinel `""` (root).
         if (receiver.ty == Ty::String
-            && matches!(mname, "localeCompare" | "toLocaleLowerCase" | "toLocaleUpperCase"))
+            && matches!(
+                mname,
+                "localeCompare" | "toLocaleLowerCase" | "toLocaleUpperCase"
+            ))
             || (receiver.ty == Ty::F64 && mname == "toLocaleString")
         {
             let (module, native, leading) = match (receiver.ty, mname) {
@@ -218,7 +234,11 @@ impl Checker<'_> {
             if args.len() < leading || args.len() > leading + 1 {
                 self.error(
                     span,
-                    format!("`{mname}` expects {leading} or {} argument(s), found {}", leading + 1, args.len()),
+                    format!(
+                        "`{mname}` expects {leading} or {} argument(s), found {}",
+                        leading + 1,
+                        args.len()
+                    ),
                 );
                 return Ok(self.poison(span));
             }
@@ -259,8 +279,16 @@ impl Checker<'_> {
                 all.extend(call_args);
                 all.push(locale);
             }
-            let ty = if native == "localeCompare" { Ty::Int(IntKind::I32) } else { Ty::String };
-            return Ok(hir::Expr { kind: hir::ExprKind::CallBuiltin { id, args: all }, ty, span });
+            let ty = if native == "localeCompare" {
+                Ty::Int(IntKind::I32)
+            } else {
+                Ty::String
+            };
+            return Ok(hir::Expr {
+                kind: hir::ExprKind::CallBuiltin { id, args: all },
+                ty,
+                span,
+            });
         }
         // `number.valueOf()` / `string.valueOf()` — identity, returning
         // the primitive itself. No native needed: the checked receiver
@@ -296,7 +324,10 @@ impl Checker<'_> {
                 return Ok(self.poison(span));
             };
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver],
+                },
                 ty: Ty::String,
                 span,
             });
@@ -336,7 +367,10 @@ impl Checker<'_> {
                     return Ok(self.poison(span));
                 };
                 return Ok(hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![receiver] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver],
+                    },
                     ty: Ty::Array,
                     span,
                 });
@@ -355,7 +389,10 @@ impl Checker<'_> {
             let max_args = if is_slice { 2 } else { 2 };
             let min_args = if is_slice { 0 } else { 1 };
             if args.len() < min_args || args.len() > max_args {
-                self.error(span, format!("`{mname}` called with a wrong number of arguments"));
+                self.error(
+                    span,
+                    format!("`{mname}` called with a wrong number of arguments"),
+                );
                 return Ok(self.poison(span));
             }
             let mut call_args = vec![receiver];
@@ -388,7 +425,10 @@ impl Checker<'_> {
                 call_args.push(value);
             }
             return Ok(hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
                 ty: native_ty(native.ret),
                 span,
             });
@@ -400,7 +440,9 @@ impl Checker<'_> {
                 let native_name = if group == "array" {
                     let mut chars = mname.chars();
                     match chars.next() {
-                        Some(first) => format!("array{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                        Some(first) => {
+                            format!("array{}{}", first.to_ascii_uppercase(), chars.as_str())
+                        }
                         None => mname.to_string(),
                     }
                 } else {
@@ -418,16 +460,16 @@ impl Checker<'_> {
                             call_args.push(value);
                         }
                         return Ok(hir::Expr {
-                            kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: call_args,
+                            },
                             ty: native_ty(native.ret),
                             span,
                         });
                     }
                 }
-                self.error(
-                    method.span,
-                    format!("no method `{mname}` on {class_name}"),
-                );
+                self.error(method.span, format!("no method `{mname}` on {class_name}"));
                 return Ok(self.poison(span));
             }
         }

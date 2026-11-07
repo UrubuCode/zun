@@ -283,12 +283,39 @@ fn exception_regions_jit_safe(
     throw_count >= 1 || call_in_try
 }
 
-
 fn string_builtin(instr: &zun_il::Instruction) -> bool {
-    let Operand::Imm32(id) = instr.operand else { return false; };
+    let Operand::Imm32(id) = instr.operand else {
+        return false;
+    };
     matches!(
         zun_natives::by_id(id as u32).map(|f| f.name),
-        Some("length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith" | "indexOf" | "lastIndexOf" | "count" | "compare" | "concat" | "substring" | "trim" | "trimStart" | "trimEnd" | "toLowerCase" | "toUpperCase" | "repeat" | "reverse" | "padStart" | "padEnd" | "replace" | "toInt" | "toFloat" | "toBoolean")
+        Some(
+            "length"
+                | "contains"
+                | "includes"
+                | "charCodeAt"
+                | "startsWith"
+                | "endsWith"
+                | "indexOf"
+                | "lastIndexOf"
+                | "count"
+                | "compare"
+                | "concat"
+                | "substring"
+                | "trim"
+                | "trimStart"
+                | "trimEnd"
+                | "toLowerCase"
+                | "toUpperCase"
+                | "repeat"
+                | "reverse"
+                | "padStart"
+                | "padEnd"
+                | "replace"
+                | "toInt"
+                | "toFloat"
+                | "toBoolean"
+        )
     )
 }
 
@@ -379,8 +406,13 @@ fn allocation_builtin(instr: &zun_il::Instruction) -> bool {
     if instr.opcode != Opcode::CallBuiltin {
         return false;
     }
-    let Operand::Imm32(id) = instr.operand else { return false; };
-    matches!(zun_natives::by_id(id as u32).map(|f| f.name), Some("mapNew" | "setNew"))
+    let Operand::Imm32(id) = instr.operand else {
+        return false;
+    };
+    matches!(
+        zun_natives::by_id(id as u32).map(|f| f.name),
+        Some("mapNew" | "setNew")
+    )
 }
 
 fn date_builtin(instr: &zun_il::Instruction) -> bool {
@@ -504,19 +536,39 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
         .method_defs
         .get(token.rid() as usize - 1)
         .is_some_and(|method| {
-            module
-                .tables
-                .type_defs
-                .iter()
-                .any(|ty| {
-                    token.rid() >= ty.method_start
-                        && token.rid() < ty.method_end
-                        && module.strings.get(ty.name) == "String"
-                        && matches!(
-                            module.strings.get(method.name),
-                            "length" | "contains" | "includes" | "charCodeAt" | "startsWith" | "endsWith" | "indexOf" | "lastIndexOf" | "count" | "compare" | "concat" | "substring" | "trim" | "trimStart" | "trimEnd" | "toLowerCase" | "toUpperCase" | "repeat" | "reverse" | "padStart" | "padEnd" | "replace" | "toInt" | "toFloat" | "toBoolean"
-                        )
-                })
+            module.tables.type_defs.iter().any(|ty| {
+                token.rid() >= ty.method_start
+                    && token.rid() < ty.method_end
+                    && module.strings.get(ty.name) == "String"
+                    && matches!(
+                        module.strings.get(method.name),
+                        "length"
+                            | "contains"
+                            | "includes"
+                            | "charCodeAt"
+                            | "startsWith"
+                            | "endsWith"
+                            | "indexOf"
+                            | "lastIndexOf"
+                            | "count"
+                            | "compare"
+                            | "concat"
+                            | "substring"
+                            | "trim"
+                            | "trimStart"
+                            | "trimEnd"
+                            | "toLowerCase"
+                            | "toUpperCase"
+                            | "repeat"
+                            | "reverse"
+                            | "padStart"
+                            | "padEnd"
+                            | "replace"
+                            | "toInt"
+                            | "toFloat"
+                            | "toBoolean"
+                    )
+            })
         })
     {
         // Primitive-backed String.length is lowered directly by the JIT and
@@ -535,12 +587,9 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
     let Ok(body) = read_body(&module.code, method.body_offset) else {
         return false;
     };
-    body.local_kinds.first().is_some_and(|&kind| {
-        matches!(
-            JitKind::from_byte(kind),
-            JitKind::Object | JitKind::String
-        )
-    })
+    body.local_kinds
+        .first()
+        .is_some_and(|&kind| matches!(JitKind::from_byte(kind), JitKind::Object | JitKind::String))
 }
 
 /// Whether a value-type code is one the typed JIT can represent.
@@ -551,7 +600,10 @@ fn kind_supported(byte: u8) -> bool {
 /// The current managed allocation lowering is safe for a non-escaping array
 /// whose only operation is a length query. Mutation, element access, or a
 /// returned reference still requires the interpreter's heap contract.
-fn scalar_array_length_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+fn scalar_array_length_only(
+    instrs: &[zun_il::Instruction],
+    body: &zun_module::MethodBody<'_>,
+) -> bool {
     body.returns_value
         && matches!(JitKind::from_byte(body.return_kind), JitKind::Num(kind) if kind.int_parts().is_some())
         && instrs.iter().all(|instruction| {
@@ -581,10 +633,7 @@ fn scalar_u64_array_access_only(
         && instrs.iter().any(|instruction| {
             matches!(
                 instruction.opcode,
-                Opcode::LoadArray
-                    | Opcode::StoreArray
-                    | Opcode::ArrayPop
-                    | Opcode::ArrayPush
+                Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush
             )
         })
         && instrs.iter().all(|instruction| {
@@ -618,18 +667,38 @@ fn scalar_i64_array_access_only(
 ) -> bool {
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::I64)
-        && instrs.iter().any(|instruction| matches!(
-            instruction.opcode,
-            Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush
-        ))
-        && instrs.iter().all(|instruction| matches!(
-            instruction.opcode,
-            Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::ConstF64 | Opcode::Conv
-                | Opcode::UnboxAny | Opcode::BoxAny | Opcode::AddI32 | Opcode::CmpLt
-                | Opcode::Branch | Opcode::BranchFalse | Opcode::Dup | Opcode::Pop | Opcode::LoadLocal
-                | Opcode::StoreLocal | Opcode::NewArray | Opcode::LoadArray
-                | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush | Opcode::Ret
-        ))
+        && instrs.iter().any(|instruction| {
+            matches!(
+                instruction.opcode,
+                Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush
+            )
+        })
+        && instrs.iter().all(|instruction| {
+            matches!(
+                instruction.opcode,
+                Opcode::Nop
+                    | Opcode::ConstI32
+                    | Opcode::ConstI64
+                    | Opcode::ConstF64
+                    | Opcode::Conv
+                    | Opcode::UnboxAny
+                    | Opcode::BoxAny
+                    | Opcode::AddI32
+                    | Opcode::CmpLt
+                    | Opcode::Branch
+                    | Opcode::BranchFalse
+                    | Opcode::Dup
+                    | Opcode::Pop
+                    | Opcode::LoadLocal
+                    | Opcode::StoreLocal
+                    | Opcode::NewArray
+                    | Opcode::LoadArray
+                    | Opcode::StoreArray
+                    | Opcode::ArrayPop
+                    | Opcode::ArrayPush
+                    | Opcode::Ret
+            )
+        })
 }
 
 fn scalar_i32_array_access_only(
@@ -639,15 +708,36 @@ fn scalar_i32_array_access_only(
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Num(zun_il::NumKind::I32)
         && instrs.iter().any(|instruction| {
-            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush)
+            matches!(
+                instruction.opcode,
+                Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush
+            )
         })
         && instrs.iter().all(|instruction| {
-            matches!(instruction.opcode,
-                Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::ConstF64 | Opcode::Conv
-                    | Opcode::UnboxAny | Opcode::BoxAny | Opcode::AddI32 | Opcode::CmpLt
-                    | Opcode::Branch | Opcode::BranchFalse
-                    | Opcode::Dup | Opcode::Pop | Opcode::LoadLocal | Opcode::StoreLocal
-                    | Opcode::NewArray | Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush | Opcode::Ret)
+            matches!(
+                instruction.opcode,
+                Opcode::Nop
+                    | Opcode::ConstI32
+                    | Opcode::ConstI64
+                    | Opcode::ConstF64
+                    | Opcode::Conv
+                    | Opcode::UnboxAny
+                    | Opcode::BoxAny
+                    | Opcode::AddI32
+                    | Opcode::CmpLt
+                    | Opcode::Branch
+                    | Opcode::BranchFalse
+                    | Opcode::Dup
+                    | Opcode::Pop
+                    | Opcode::LoadLocal
+                    | Opcode::StoreLocal
+                    | Opcode::NewArray
+                    | Opcode::LoadArray
+                    | Opcode::StoreArray
+                    | Opcode::ArrayPop
+                    | Opcode::ArrayPush
+                    | Opcode::Ret
+            )
         })
 }
 
@@ -658,18 +748,44 @@ fn scalar_narrow_array_access_only(
     body.returns_value
         && matches!(
             JitKind::from_byte(body.return_kind),
-            JitKind::Num(zun_il::NumKind::I8 | zun_il::NumKind::U8 | zun_il::NumKind::I16 | zun_il::NumKind::U16)
+            JitKind::Num(
+                zun_il::NumKind::I8
+                    | zun_il::NumKind::U8
+                    | zun_il::NumKind::I16
+                    | zun_il::NumKind::U16
+            )
         )
         && instrs.iter().any(|instruction| {
-            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush)
+            matches!(
+                instruction.opcode,
+                Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush
+            )
         })
         && instrs.iter().all(|instruction| {
-            matches!(instruction.opcode,
-                Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::ConstF64 | Opcode::Conv
-                    | Opcode::UnboxAny | Opcode::BoxAny | Opcode::AddI32 | Opcode::CmpLt
-                    | Opcode::Branch | Opcode::BranchFalse | Opcode::Dup | Opcode::Pop
-                    | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::NewArray
-                    | Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPop | Opcode::ArrayPush | Opcode::Ret)
+            matches!(
+                instruction.opcode,
+                Opcode::Nop
+                    | Opcode::ConstI32
+                    | Opcode::ConstI64
+                    | Opcode::ConstF64
+                    | Opcode::Conv
+                    | Opcode::UnboxAny
+                    | Opcode::BoxAny
+                    | Opcode::AddI32
+                    | Opcode::CmpLt
+                    | Opcode::Branch
+                    | Opcode::BranchFalse
+                    | Opcode::Dup
+                    | Opcode::Pop
+                    | Opcode::LoadLocal
+                    | Opcode::StoreLocal
+                    | Opcode::NewArray
+                    | Opcode::LoadArray
+                    | Opcode::StoreArray
+                    | Opcode::ArrayPop
+                    | Opcode::ArrayPush
+                    | Opcode::Ret
+            )
         })
 }
 
@@ -754,9 +870,9 @@ fn object_array_access_only(
             JitKind::from_byte(body.return_kind),
             JitKind::Object | JitKind::Array
         )
-        && instrs.iter().any(|instruction| {
-            matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray)
-        })
+        && instrs
+            .iter()
+            .any(|instruction| matches!(instruction.opcode, Opcode::LoadArray | Opcode::StoreArray))
         && instrs.iter().all(|instruction| {
             matches!(
                 instruction.opcode,
@@ -773,42 +889,79 @@ fn object_array_access_only(
         })
 }
 
-fn object_array_stack_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+fn object_array_stack_only(
+    instrs: &[zun_il::Instruction],
+    body: &zun_module::MethodBody<'_>,
+) -> bool {
     (body.returns_value
         && matches!(
             JitKind::from_byte(body.return_kind),
             JitKind::Object | JitKind::Array
         )
         && instrs.iter().any(|i| i.opcode == Opcode::ArrayPop)
-        && instrs.iter().all(|i| matches!(i.opcode,
-            Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPop | Opcode::Ret)))
-        || (body.returns_value && instrs.iter().any(|i| i.opcode == Opcode::ArrayPush)
-            && instrs.iter().all(|i| matches!(i.opcode,
-                Opcode::Nop | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::ArrayPush | Opcode::Ret)))
+        && instrs.iter().all(|i| {
+            matches!(
+                i.opcode,
+                Opcode::Nop
+                    | Opcode::LoadLocal
+                    | Opcode::StoreLocal
+                    | Opcode::ArrayPop
+                    | Opcode::Ret
+            )
+        }))
+        || (body.returns_value
+            && instrs.iter().any(|i| i.opcode == Opcode::ArrayPush)
+            && instrs.iter().all(|i| {
+                matches!(
+                    i.opcode,
+                    Opcode::Nop
+                        | Opcode::LoadLocal
+                        | Opcode::StoreLocal
+                        | Opcode::ArrayPush
+                        | Opcode::Ret
+                )
+            }))
 }
 
-fn any_array_return_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+fn any_array_return_only(
+    instrs: &[zun_il::Instruction],
+    body: &zun_module::MethodBody<'_>,
+) -> bool {
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Other
         && instrs.iter().any(|i| i.opcode == Opcode::LoadArray)
-        && instrs.iter().all(|i| matches!(
-            i.opcode,
-            Opcode::Nop | Opcode::ConstI32 | Opcode::ConstI64 | Opcode::LoadLocal
-                | Opcode::LoadArray | Opcode::Ret
-        ))
+        && instrs.iter().all(|i| {
+            matches!(
+                i.opcode,
+                Opcode::Nop
+                    | Opcode::ConstI32
+                    | Opcode::ConstI64
+                    | Opcode::LoadLocal
+                    | Opcode::LoadArray
+                    | Opcode::Ret
+            )
+        })
 }
 
-fn any_param_return_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+fn any_param_return_only(
+    instrs: &[zun_il::Instruction],
+    body: &zun_module::MethodBody<'_>,
+) -> bool {
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Other
         && body.param_count > 0
         && body.local_kinds[..body.param_count as usize]
             .iter()
             .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
-        && instrs.iter().all(|i| matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::Ret))
+        && instrs
+            .iter()
+            .all(|i| matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::Ret))
 }
 
-fn any_direct_call_return_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
+fn any_direct_call_return_only(
+    instrs: &[zun_il::Instruction],
+    body: &zun_module::MethodBody<'_>,
+) -> bool {
     body.returns_value
         && JitKind::from_byte(body.return_kind) == JitKind::Other
         && body.param_count > 0
@@ -820,7 +973,12 @@ fn any_direct_call_return_only(instrs: &[zun_il::Instruction], body: &zun_module
             .filter(|i| matches!(i.opcode, Opcode::Call | Opcode::CallVirt))
             .count()
             == 1
-        && instrs.iter().all(|i| matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::Call | Opcode::CallVirt | Opcode::Ret))
+        && instrs.iter().all(|i| {
+            matches!(
+                i.opcode,
+                Opcode::Nop | Opcode::LoadLocal | Opcode::Call | Opcode::CallVirt | Opcode::Ret
+            )
+        })
 }
 
 fn any_map_get_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
@@ -830,9 +988,16 @@ fn any_map_get_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBod
         && body.local_kinds[..body.param_count as usize]
             .iter()
             .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
-        && instrs.iter().filter(|i| i.opcode == Opcode::CallBuiltin).count() == 1
+        && instrs
+            .iter()
+            .filter(|i| i.opcode == Opcode::CallBuiltin)
+            .count()
+            == 1
         && instrs.iter().all(|i| {
-            matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::CallBuiltin | Opcode::Ret)
+            matches!(
+                i.opcode,
+                Opcode::Nop | Opcode::LoadLocal | Opcode::CallBuiltin | Opcode::Ret
+            )
         })
 }
 
@@ -849,7 +1014,10 @@ fn any_map_get_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBod
 pub(crate) fn methods_that_may_throw(module: &Module) -> HashSet<u32> {
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
-        methods_by_name.entry(method.name).or_default().push(index as u32 + 1);
+        methods_by_name
+            .entry(method.name)
+            .or_default()
+            .push(index as u32 + 1);
     }
     let count = module.tables.method_defs.len();
     let mut direct = vec![false; count + 1];
@@ -880,7 +1048,11 @@ pub(crate) fn methods_that_may_throw(module: &Module) -> HashSet<u32> {
                                 module.tables.method_defs.get(token.rid() as usize - 1)
                             {
                                 edges[rid as usize].extend(
-                                    methods_by_name.get(&method.name).into_iter().flatten().copied(),
+                                    methods_by_name
+                                        .get(&method.name)
+                                        .into_iter()
+                                        .flatten()
+                                        .copied(),
                                 );
                             }
                         } else {
@@ -892,7 +1064,9 @@ pub(crate) fn methods_that_may_throw(module: &Module) -> HashSet<u32> {
             }
         }
     }
-    let mut may_throw: HashSet<u32> = (1..=count as u32).filter(|&rid| direct[rid as usize]).collect();
+    let mut may_throw: HashSet<u32> = (1..=count as u32)
+        .filter(|&rid| direct[rid as usize])
+        .collect();
     loop {
         let before = may_throw.len();
         for rid in 1..=count as u32 {
@@ -1054,8 +1228,15 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
                 )
             }) && !instrs.iter().any(|i| i.opcode == Opcode::CallVirt);
             let direct_literal_callvirt = instrs.iter().all(|i| {
-                matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::CallVirt | Opcode::Ret)
-            }) && instrs.iter().filter(|i| i.opcode == Opcode::CallVirt).count() == 1;
+                matches!(
+                    i.opcode,
+                    Opcode::Nop | Opcode::ConstStr | Opcode::CallVirt | Opcode::Ret
+                )
+            }) && instrs
+                .iter()
+                .filter(|i| i.opcode == Opcode::CallVirt)
+                .count()
+                == 1;
             let relocatable_literal_only = instrs
                 .iter()
                 .all(|i| matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::Ret));
@@ -1065,7 +1246,10 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
                 continue;
             }
         }
-        if instrs.iter().any(|instruction| requires_exception_bridge(instruction.opcode)) {
+        if instrs
+            .iter()
+            .any(|instruction| requires_exception_bridge(instruction.opcode))
+        {
             continue;
         }
         if instrs.iter().any(allocation_builtin)

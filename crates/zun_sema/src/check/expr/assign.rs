@@ -1,9 +1,15 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_assign(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_assign(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::Assign { target, value, .. } = expr else { unreachable!() };
+        let ast::Expr::Assign { target, value, .. } = expr else {
+            unreachable!()
+        };
         let mut value = self.check_expr(cx, value);
         let text = self.text(target).to_string();
         match cx.lookup(&text) {
@@ -82,10 +88,7 @@ impl Checker<'_> {
                 if let Some(capture) = cx.captures.get(&text).cloned() {
                     cx.mutated.insert(capture.outer_slot);
                     if capture.mode == hir::CaptureMode::ByValue {
-                        self.error(
-                            target.span,
-                            "cannot assign to a read-only closure capture",
-                        );
+                        self.error(target.span, "cannot assign to a read-only closure capture");
                         return self.poison(span);
                     }
                     let store = hir::Expr {
@@ -117,7 +120,10 @@ impl Checker<'_> {
                         return hir::Expr {
                             kind: hir::ExprKind::Sequence {
                                 effect: Box::new(hir::Expr {
-                                    kind: hir::ExprKind::Sequence { effect: Box::new(store), value: Box::new(set) },
+                                    kind: hir::ExprKind::Sequence {
+                                        effect: Box::new(store),
+                                        value: Box::new(set),
+                                    },
                                     ty: capture.ty,
                                     span,
                                 }),
@@ -140,9 +146,21 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_index_assign(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_index_assign(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::IndexAssign { object, index, value, .. } = expr else { unreachable!() };
+        let ast::Expr::IndexAssign {
+            object,
+            index,
+            value,
+            ..
+        } = expr
+        else {
+            unreachable!()
+        };
         let object = self.check_expr(cx, object);
         // Computed property store on a dynamic receiver: a Symbol key
         // routes to the symbol-keyed slot, a string/number key to the
@@ -157,7 +175,9 @@ impl Checker<'_> {
             } else {
                 hir::Expr {
                     span: value.span,
-                    kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                    kind: hir::ExprKind::BoxAny {
+                        value: Box::new(value),
+                    },
                     ty: Ty::Any,
                 }
             };
@@ -198,7 +218,9 @@ impl Checker<'_> {
                 if elem_ty.is_int() && value.ty == Ty::F64 {
                     let value_span = value.span;
                     value = hir::Expr {
-                        kind: hir::ExprKind::Convert { value: Box::new(value) },
+                        kind: hir::ExprKind::Convert {
+                            value: Box::new(value),
+                        },
                         ty: elem_ty,
                         span: value_span,
                     };
@@ -214,7 +236,11 @@ impl Checker<'_> {
                             id,
                             args: vec![object, index, value],
                         },
-                        ty: if value_ty.is_error() { elem_ty } else { value_ty },
+                        ty: if value_ty.is_error() {
+                            elem_ty
+                        } else {
+                            value_ty
+                        },
                         span,
                     };
                 }
@@ -254,21 +280,56 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_field_assign(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_field_assign(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::FieldAssign { object, field, value, .. } = expr else { unreachable!() };
-        if let ast::Expr::PrivateField { object: private_object, field, .. } = object.as_ref() {
+        let ast::Expr::FieldAssign {
+            object,
+            field,
+            value,
+            ..
+        } = expr
+        else {
+            unreachable!()
+        };
+        if let ast::Expr::PrivateField {
+            object: private_object,
+            field,
+            ..
+        } = object.as_ref()
+        {
             if let ast::Expr::Ident(class_name) = private_object.as_ref() {
                 if cx.lookup(self.text(class_name)).is_none() {
                     if let Some(&class_index) = self.classes_by_name.get(self.text(class_name)) {
                         let internal = format!("#{}#{}", self.text(class_name), self.text(field));
-                        if let Some((field_slot, ty)) = self.static_field_of(class_index, &internal) {
+                        if let Some((field_slot, ty)) = self.static_field_of(class_index, &internal)
+                        {
                             let mut value = self.check_expr(cx, value);
                             coerce_numeric_literal(&mut value, ty);
-                            if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
-                                self.error(value.span, format!("cannot assign {:?} to private static field of type {ty:?}", value.ty));
+                            if !ty.is_error()
+                                && !value.ty.is_error()
+                                && !self.is_assignable(value.ty, ty)
+                            {
+                                self.error(
+                                    value.span,
+                                    format!(
+                                        "cannot assign {:?} to private static field of type {ty:?}",
+                                        value.ty
+                                    ),
+                                );
                             }
-                            return hir::Expr { kind: hir::ExprKind::StaticFieldSet { class: class_index, field_slot, value: Box::new(value) }, ty, span };
+                            return hir::Expr {
+                                kind: hir::ExprKind::StaticFieldSet {
+                                    class: class_index,
+                                    field_slot,
+                                    value: Box::new(value),
+                                },
+                                ty,
+                                span,
+                            };
                         }
                     }
                 }
@@ -279,12 +340,18 @@ impl Checker<'_> {
             let private_name = self.text(field).to_string();
             let checked_object = self.assume_private_receiver(cx, checked_object, &private_name);
             let name = self.text(field).to_string();
-            let Some(class) = (match checked_object.ty { Ty::Instance(class) => Some(class), _ => None }) else {
+            let Some(class) = (match checked_object.ty {
+                Ty::Instance(class) => Some(class),
+                _ => None,
+            }) else {
                 self.error(span, "private fields require an instance receiver");
                 return self.poison(span);
             };
             if cx.this_class != Some(class) {
-                self.error(field.span, "private field is only accessible inside its declaring class");
+                self.error(
+                    field.span,
+                    "private field is only accessible inside its declaring class",
+                );
                 return self.poison(span);
             }
             let Some((field_slot, ty)) = self.private_field_of(class, &name) else {
@@ -310,9 +377,24 @@ impl Checker<'_> {
             let mut value = self.check_expr(cx, value);
             coerce_numeric_literal(&mut value, ty);
             if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
-                self.error(value.span, format!("cannot assign {:?} to private field of type {ty:?}", value.ty));
+                self.error(
+                    value.span,
+                    format!(
+                        "cannot assign {:?} to private field of type {ty:?}",
+                        value.ty
+                    ),
+                );
             }
-            return hir::Expr { kind: hir::ExprKind::FieldSet { object: Box::new(checked_object), class, field_slot, value: Box::new(value) }, ty, span };
+            return hir::Expr {
+                kind: hir::ExprKind::FieldSet {
+                    object: Box::new(checked_object),
+                    class,
+                    field_slot,
+                    value: Box::new(value),
+                },
+                ty,
+                span,
+            };
         }
         let fname = self.text(field).to_string();
         if let ast::Expr::Ident(class_name) = object.as_ref() {
@@ -321,9 +403,23 @@ impl Checker<'_> {
                     let mut value = self.check_expr(cx, value);
                     coerce_numeric_literal(&mut value, ty);
                     if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
-                        self.error(value.span, format!("cannot assign {:?} to static field of type {ty:?}", value.ty));
+                        self.error(
+                            value.span,
+                            format!(
+                                "cannot assign {:?} to static field of type {ty:?}",
+                                value.ty
+                            ),
+                        );
                     }
-                    return hir::Expr { kind: hir::ExprKind::StaticFieldSet { class: self.static_field_owner(class_index, &fname), field_slot, value: Box::new(value) }, ty, span };
+                    return hir::Expr {
+                        kind: hir::ExprKind::StaticFieldSet {
+                            class: self.static_field_owner(class_index, &fname),
+                            field_slot,
+                            value: Box::new(value),
+                        },
+                        ty,
+                        span,
+                    };
                 }
             }
         }
@@ -335,10 +431,7 @@ impl Checker<'_> {
             Ty::Instance(class) => match self.field_of(class, &fname) {
                 Some((slot, ty)) => {
                     coerce_numeric_literal(&mut value, ty);
-                    if !ty.is_error()
-                        && !value.ty.is_error()
-                        && !self.is_assignable(value.ty, ty)
-                    {
+                    if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
                         self.error(
                             value.span,
                             format!("cannot assign {:?} to field of type {ty:?}", value.ty),
@@ -358,20 +451,39 @@ impl Checker<'_> {
                 None => {
                     let setter = format!("set_{fname}");
                     let Some(func) = self.method_of(class, &setter) else {
-                        self.error(field.span, format!("no field or setter `{fname}` on this type"));
+                        self.error(
+                            field.span,
+                            format!("no field or setter `{fname}` on this type"),
+                        );
                         return self.poison(span);
                     };
                     let (param_count, expected, return_ty) = {
                         let sig = &self.signatures[func as usize];
-                        (sig.params.len(), sig.params.get(1).copied().unwrap_or(Ty::Error), sig.return_ty)
+                        (
+                            sig.params.len(),
+                            sig.params.get(1).copied().unwrap_or(Ty::Error),
+                            sig.return_ty,
+                        )
                     };
                     if param_count != 2 {
-                        self.error(field.span, format!("setter `{setter}` must take one argument"));
+                        self.error(
+                            field.span,
+                            format!("setter `{setter}` must take one argument"),
+                        );
                         return self.poison(span);
                     }
                     coerce_numeric_literal(&mut value, expected);
-                    if !expected.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, expected) {
-                        self.error(value.span, format!("cannot assign {:?} to setter argument of type {expected:?}", value.ty));
+                    if !expected.is_error()
+                        && !value.ty.is_error()
+                        && !self.is_assignable(value.ty, expected)
+                    {
+                        self.error(
+                            value.span,
+                            format!(
+                                "cannot assign {:?} to setter argument of type {expected:?}",
+                                value.ty
+                            ),
+                        );
                     }
                     if return_ty == Ty::Void && !value.ty.is_error() && value.ty != Ty::Void {
                         // An assignment expression evaluates to the
@@ -379,26 +491,39 @@ impl Checker<'_> {
                         let value_ty = value.ty;
                         let temp = cx.declare(&self.fresh_temp_name(cx), value_ty);
                         let store = hir::Expr {
-                            kind: hir::ExprKind::Assign { slot: temp, value: Box::new(value) },
+                            kind: hir::ExprKind::Assign {
+                                slot: temp,
+                                value: Box::new(value),
+                            },
                             ty: value_ty,
                             span,
                         };
                         let call = hir::Expr {
-                            kind: hir::ExprKind::MethodCall { func, args: vec![object, store] },
+                            kind: hir::ExprKind::MethodCall {
+                                func,
+                                args: vec![object, store],
+                            },
                             ty: Ty::Void,
                             span,
                         };
                         return hir::Expr {
                             kind: hir::ExprKind::Sequence {
                                 effect: Box::new(call),
-                                value: Box::new(hir::Expr { kind: hir::ExprKind::Local(temp), ty: value_ty, span }),
+                                value: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::Local(temp),
+                                    ty: value_ty,
+                                    span,
+                                }),
                             },
                             ty: value_ty,
                             span,
                         };
                     }
                     hir::Expr {
-                        kind: hir::ExprKind::MethodCall { func, args: vec![object, value] },
+                        kind: hir::ExprKind::MethodCall {
+                            func,
+                            args: vec![object, value],
+                        },
                         ty: return_ty,
                         span,
                     }
@@ -435,7 +560,9 @@ impl Checker<'_> {
                 } else {
                     hir::Expr {
                         span: value.span,
-                        kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(value),
+                        },
                         ty: Ty::Any,
                     }
                 };
@@ -451,13 +578,17 @@ impl Checker<'_> {
             }
             // `re.lastIndex = v`: the regex's own writable data slot.
             Ty::RegExp if fname == "lastIndex" => {
-                let Some((id, _)) = zun_natives::resolve("collections", "regexpSetLastIndex") else {
+                let Some((id, _)) = zun_natives::resolve("collections", "regexpSetLastIndex")
+                else {
                     self.error(span, "missing RegExp intrinsic");
                     return self.poison(span);
                 };
                 let held = Self::box_to_any(value);
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![object, held] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![object, held],
+                    },
                     ty: Ty::Any,
                     span,
                 }
@@ -478,7 +609,9 @@ impl Checker<'_> {
                 } else {
                     hir::Expr {
                         span: value.span,
-                        kind: hir::ExprKind::BoxAny { value: Box::new(value) },
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(value),
+                        },
                         ty: Ty::Any,
                     }
                 };

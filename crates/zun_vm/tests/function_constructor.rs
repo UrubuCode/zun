@@ -4,7 +4,8 @@ use zun_interp::CaptureOutput;
 
 fn module_bytes(src: &str) -> Vec<u8> {
     let mut diags = Vec::new();
-    let ast = zun_syntax::oxc::parse_subset(src, true).unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
+    let ast = zun_syntax::oxc::parse_subset(src, true)
+        .unwrap_or_else(|errors| panic!("parse errors: {errors:?}"));
     assert!(diags.is_empty(), "parse errors: {diags:?}");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema errors: {diags:?}");
@@ -72,9 +73,7 @@ fn constructed_function_runs_a_loop_and_coexists_with_jitted_code() {
 
 #[test]
 fn invalid_source_throws_instead_of_linking() {
-    let bytes = module_bytes(
-        "function main() { let f = new Function(\"return (\"); print(1.0); }",
-    );
+    let bytes = module_bytes("function main() { let f = new Function(\"return (\"); print(1.0); }");
     let mut out = CaptureOutput::default();
     let error = zun_vm::execute_with(&bytes, &mut out).expect_err("syntax error must throw");
     assert!(error.to_string().contains("SyntaxError"), "{error}");
@@ -83,15 +82,16 @@ fn invalid_source_throws_instead_of_linking() {
 
 #[test]
 fn no_host_throws_code_generation_disallowed() {
-    let bytes = module_bytes(
-        "function main() { let f = new Function(\"return 1.0;\"); print(2.0); }",
-    );
+    let bytes =
+        module_bytes("function main() { let f = new Function(\"return 1.0;\"); print(2.0); }");
     // AOT runtime path: never injects a host.
     let mut out = CaptureOutput::default();
-    let error = zun_vm::execute_with_eval_host(&bytes, &mut out, None)
-        .expect_err("no host must throw");
+    let error =
+        zun_vm::execute_with_eval_host(&bytes, &mut out, None).expect_err("no host must throw");
     assert!(
-        error.to_string().contains("code generation from strings disallowed"),
+        error
+            .to_string()
+            .contains("code generation from strings disallowed"),
         "{error}"
     );
     assert!(out.lines.is_empty());

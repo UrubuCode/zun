@@ -11,7 +11,11 @@ pub const CARRIER_ALIGN_SHIFT: u8 = 3;
 /// Number of machine words occupied by one logical JIT argument.
 #[inline]
 pub const fn abi_word_count(kind: JitKind) -> usize {
-    if matches!(kind, JitKind::Other) { 2 } else { 1 }
+    if matches!(kind, JitKind::Other) {
+        2
+    } else {
+        1
+    }
 }
 
 /// C-ABI representation of [`zun_core::Any`].
@@ -43,7 +47,10 @@ impl JitAnyAbi {
     /// Encode a runtime `Any` value for a native call boundary.
     pub const fn from_any(value: zun_core::Any) -> Self {
         let (tag, payload) = value.raw_parts();
-        Self { tag: tag as u64, payload }
+        Self {
+            tag: tag as u64,
+            payload,
+        }
     }
 
     /// Validate and decode a carrier returned by native/JIT code.
@@ -76,7 +83,9 @@ impl JitAnyAbi {
 
 #[cfg(test)]
 mod tests {
-    use super::{abi_word_count, JitAnyAbi, CARRIER_ALIGN_SHIFT, CARRIER_SIZE, PAYLOAD_OFFSET, TAG_OFFSET};
+    use super::{
+        abi_word_count, JitAnyAbi, CARRIER_ALIGN_SHIFT, CARRIER_SIZE, PAYLOAD_OFFSET, TAG_OFFSET,
+    };
     use zun_il::{JitKind, NumKind};
 
     #[test]
@@ -96,7 +105,14 @@ mod tests {
         assert_eq!(carrier.into_any(), Some(value));
         assert_eq!(core::mem::size_of::<JitAnyAbi>(), 16);
         assert_eq!(core::mem::align_of::<JitAnyAbi>(), 8);
-        assert_eq!(JitAnyAbi { tag: 255, payload: 0 }.into_any(), None);
+        assert_eq!(
+            JitAnyAbi {
+                tag: 255,
+                payload: 0
+            }
+            .into_any(),
+            None
+        );
         let words = carrier.raw_words();
         assert_eq!(JitAnyAbi::from_raw_words(words.0, words.1), carrier);
     }

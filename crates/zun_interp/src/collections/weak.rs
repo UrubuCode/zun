@@ -45,12 +45,11 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Void);
                 };
                 Ok(zun_gc::with_current_heap(|heap| {
-                    heap.weak_map_get_value_object(map_object, key).map(|value| {
-                        match heap.dynamic_get(value, "__wmv") {
+                    heap.weak_map_get_value_object(map_object, key)
+                        .map(|value| match heap.dynamic_get(value, "__wmv") {
                             Some(inner) => Value::Any(inner),
                             None => Value::Any(zun_core::Any::object(value.addr() as usize)),
-                        }
-                    })
+                        })
                 })
                 .unwrap_or(Value::Void))
             }
@@ -120,9 +119,11 @@ impl<'a> Interp<'a> {
             "weakRefDeref" => {
                 let ref_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                Ok(zun_gc::with_current_heap(|heap| heap.weak_ref_get_object(ref_object))
-                    .map(|target| Value::Any(zun_core::Any::object(target.addr() as usize)))
-                    .unwrap_or(Value::Void))
+                Ok(
+                    zun_gc::with_current_heap(|heap| heap.weak_ref_get_object(ref_object))
+                        .map(|target| Value::Any(zun_core::Any::object(target.addr() as usize)))
+                        .unwrap_or(Value::Void),
+                )
             }
             "finalizationRegistryNew" => {
                 let cleanup = match args.first().ok_or(RunError::BadToken)? {
@@ -137,10 +138,10 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(object))
             }
             "finalizationRegister" => {
-                let registry = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
-                let target = object(args.get(1).ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let registry =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let target =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // The held value is an arbitrary immediate `Any` carrier; box a
                 // non-`any` operand into one so an object held value is traced.
                 let held = zun_gc::with_current_heap_mut(|heap| {
@@ -160,19 +161,14 @@ impl<'a> Interp<'a> {
                     let cleanup = heap
                         .finalization_registry_cleanup(registry)
                         .ok_or(RunError::BadToken)?;
-                    heap.finalization_register_with_held(
-                        target,
-                        held,
-                        cleanup,
-                        unregister_token,
-                    );
+                    heap.finalization_register_with_held(target, held, cleanup, unregister_token);
                     Ok::<(), RunError>(())
                 })?;
                 Ok(Value::Void)
             }
             "finalizationUnregister" => {
-                let _registry = object(args.first().ok_or(RunError::BadToken)?)
-                    .ok_or(RunError::BadToken)?;
+                let _registry =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let unregister_token = args
                     .get(1)
                     .and_then(|value| object(value))

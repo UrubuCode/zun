@@ -43,13 +43,15 @@ fn is_finite_strict(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue,
 }
 
 fn is_integer_strict(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Ok(NativeValue::Bool(
-        strict_number(args.first())
-            .is_some_and(|value| value.is_finite() && value.fract() == 0.0),
-    ))
+    Ok(NativeValue::Bool(strict_number(args.first()).is_some_and(
+        |value| value.is_finite() && value.fract() == 0.0,
+    )))
 }
 
-fn is_safe_integer_strict(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+fn is_safe_integer_strict(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     Ok(NativeValue::Bool(strict_number(args.first()).is_some_and(
         |value| {
             value.is_finite()
@@ -378,7 +380,10 @@ fn to_precision(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Nat
 }
 
 /// `Number.prototype.toLocaleString()` — root-locale digit grouping via baked ICU4X.
-fn number_to_locale_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
+fn number_to_locale_string(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Float(v)) => *v,
         Some(NativeArg::Int(v)) => *v as f64,
@@ -410,18 +415,26 @@ fn number_to_locale_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<Nativ
 /// formatting (same digit policy as `toLocaleString`).
 fn intl_number_format(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let (Some(NativeArg::Str(locale)), Some(n)) = (args.first(), args.get(1)) else {
-        return Err(NativeError("Intl.NumberFormat.format: expected (string, number)".to_string()));
+        return Err(NativeError(
+            "Intl.NumberFormat.format: expected (string, number)".to_string(),
+        ));
     };
     let value = match n {
         NativeArg::Float(v) => *v,
         NativeArg::Int(v) => *v as f64,
-        _ => return Err(NativeError("Intl.NumberFormat.format: expected a number".to_string())),
+        _ => {
+            return Err(NativeError(
+                "Intl.NumberFormat.format: expected a number".to_string(),
+            ))
+        }
     };
     if value.is_nan() {
         return Ok(NativeValue::Str("NaN".to_string()));
     }
     if value.is_infinite() {
-        return Ok(NativeValue::Str(if value < 0.0 { "-∞" } else { "∞" }.to_string()));
+        return Ok(NativeValue::Str(
+            if value < 0.0 { "-∞" } else { "∞" }.to_string(),
+        ));
     }
     let mut decimal: icu::decimal::input::Decimal = format!("{value:.3}")
         .parse()
@@ -555,7 +568,11 @@ pub fn js_to_fixed(x: f64, fd: f64) -> Result<String, String> {
     let split = n.len() - f;
     let integer = String::from_utf8_lossy(&n[..split]).into_owned();
     let fraction = String::from_utf8_lossy(&n[split..]).into_owned();
-    let body = if f > 0 { format!("{integer}.{fraction}") } else { integer };
+    let body = if f > 0 {
+        format!("{integer}.{fraction}")
+    } else {
+        integer
+    };
     Ok(if negative { format!("-{body}") } else { body })
 }
 
@@ -570,7 +587,7 @@ pub fn js_to_exponential(x: f64, fd: Option<f64>) -> Result<String, String> {
     if let Some(f) = f {
         if !f.is_finite() || !(0.0..=100.0).contains(&f) {
             return Err(
-                "RangeError: toExponential() argument must be between 0 and 100".to_string()
+                "RangeError: toExponential() argument must be between 0 and 100".to_string(),
             );
         }
     }
@@ -598,7 +615,11 @@ pub fn js_to_exponential(x: f64, fd: Option<f64>) -> Result<String, String> {
             }
         }
     };
-    Ok(format!("{sign}{}{}", mantissa_text(&digits), exponent_suffix(exponent)))
+    Ok(format!(
+        "{sign}{}{}",
+        mantissa_text(&digits),
+        exponent_suffix(exponent)
+    ))
 }
 
 /// `Number.prototype.toPrecision`; `precision` is `None` for `undefined`.
@@ -616,7 +637,11 @@ pub fn js_to_precision(x: f64, precision: Option<f64>) -> Result<String, String>
     let p = p as usize;
     let sign = if x < 0.0 { "-" } else { "" };
     if x == 0.0 {
-        let zeros = if p > 1 { format!(".{}", "0".repeat(p - 1)) } else { String::new() };
+        let zeros = if p > 1 {
+            format!(".{}", "0".repeat(p - 1))
+        } else {
+            String::new()
+        };
         return Ok(format!("0{zeros}"));
     }
     let (digits, exponent) = exact_decimal(x);
@@ -651,7 +676,9 @@ pub fn js_to_radix_string(x: f64, radix: Option<f64>) -> Result<String, String> 
 }
 
 fn managed_only(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Err(NativeError("managed number intrinsic requires the interpreter".to_string()))
+    Err(NativeError(
+        "managed number intrinsic requires the interpreter".to_string(),
+    ))
 }
 
 pub const MODULE: crate::Module = crate::Module {
@@ -767,12 +794,37 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Str,
             imp: number_to_locale_string,
         },
-        NativeFn { name: "intlNumberFormat", params: &[Str, F64], ret: Str, imp: intl_number_format },
+        NativeFn {
+            name: "intlNumberFormat",
+            params: &[Str, F64],
+            ret: Str,
+            imp: intl_number_format,
+        },
         // JS-conformant formatters: the second argument is the raw (`any`)
         // argument, coerced and range-checked on the interpreter floor.
-        NativeFn { name: "numberToFixedJs", params: &[F64, Opaque], ret: Str, imp: managed_only },
-        NativeFn { name: "numberToExponentialJs", params: &[F64, Opaque], ret: Str, imp: managed_only },
-        NativeFn { name: "numberToPrecisionJs", params: &[F64, Opaque], ret: Str, imp: managed_only },
-        NativeFn { name: "numberToStringRadixJs", params: &[F64, Opaque], ret: Str, imp: managed_only },
+        NativeFn {
+            name: "numberToFixedJs",
+            params: &[F64, Opaque],
+            ret: Str,
+            imp: managed_only,
+        },
+        NativeFn {
+            name: "numberToExponentialJs",
+            params: &[F64, Opaque],
+            ret: Str,
+            imp: managed_only,
+        },
+        NativeFn {
+            name: "numberToPrecisionJs",
+            params: &[F64, Opaque],
+            ret: Str,
+            imp: managed_only,
+        },
+        NativeFn {
+            name: "numberToStringRadixJs",
+            params: &[F64, Opaque],
+            ret: Str,
+            imp: managed_only,
+        },
     ],
 };

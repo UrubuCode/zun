@@ -33,7 +33,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Rest call with fixed arguments plus a prebuilt rest array.
-    pub(super) fn lower_call_rest_array_fixed(&mut self, func: &hir::FuncIndex, fixed_args: &[hir::Expr], args: &hir::Expr) {
+    pub(super) fn lower_call_rest_array_fixed(
+        &mut self,
+        func: &hir::FuncIndex,
+        fixed_args: &[hir::Expr],
+        args: &hir::Expr,
+    ) {
         for arg in fixed_args {
             self.expr(arg);
         }
@@ -46,40 +51,76 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Create a generator by packing arguments into an array.
-    pub(super) fn lower_generator_call(&mut self, func: &hir::FuncIndex, args: &[hir::Expr], native_id: &u32) {
-        self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(*func as i32 + 1)));
-        self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(args.len() as i32)));
+    pub(super) fn lower_generator_call(
+        &mut self,
+        func: &hir::FuncIndex,
+        args: &[hir::Expr],
+        native_id: &u32,
+    ) {
+        self.emit(Instruction::new(
+            Opcode::ConstI32,
+            Operand::Imm32(*func as i32 + 1),
+        ));
+        self.emit(Instruction::new(
+            Opcode::ConstI32,
+            Operand::Imm32(args.len() as i32),
+        ));
         self.emit(Instruction::simple(Opcode::NewArray));
         for (index, arg) in args.iter().enumerate() {
             self.emit(Instruction::simple(Opcode::Dup));
-            self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(index as i32)));
+            self.emit(Instruction::new(
+                Opcode::ConstI32,
+                Operand::Imm32(index as i32),
+            ));
             self.expr(arg);
             self.emit(Instruction::simple(Opcode::StoreArray));
             self.emit(Instruction::simple(Opcode::Pop));
         }
-        self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(*native_id as i32)));
+        self.emit(Instruction::new(
+            Opcode::CallBuiltin,
+            Operand::Imm32(*native_id as i32),
+        ));
     }
 
     /// `fn.bind(...)` through the `functionBind` builtin.
-    pub(super) fn lower_function_bind(&mut self, callee: &hir::Expr, args: &[hir::Expr], native_id: &u32) {
+    pub(super) fn lower_function_bind(
+        &mut self,
+        callee: &hir::Expr,
+        args: &[hir::Expr],
+        native_id: &u32,
+    ) {
         // Push the target function, then build the managed array of
         // prepended arguments, then invoke the `functionBind` builtin
         // (params `[Function, Array]`).
         self.expr(callee);
-        self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(args.len() as i32)));
+        self.emit(Instruction::new(
+            Opcode::ConstI32,
+            Operand::Imm32(args.len() as i32),
+        ));
         self.emit(Instruction::simple(Opcode::NewArray));
         for (index, arg) in args.iter().enumerate() {
             self.emit(Instruction::simple(Opcode::Dup));
-            self.emit(Instruction::new(Opcode::ConstI32, Operand::Imm32(index as i32)));
+            self.emit(Instruction::new(
+                Opcode::ConstI32,
+                Operand::Imm32(index as i32),
+            ));
             self.expr(arg);
             self.emit(Instruction::simple(Opcode::StoreArray));
             self.emit(Instruction::simple(Opcode::Pop));
         }
-        self.emit(Instruction::new(Opcode::CallBuiltin, Operand::Imm32(*native_id as i32)));
+        self.emit(Instruction::new(
+            Opcode::CallBuiltin,
+            Operand::Imm32(*native_id as i32),
+        ));
     }
 
     /// Call through a function value.
-    pub(super) fn lower_indirect_call(&mut self, callee: &hir::Expr, args: &[hir::Expr], func: &hir::FuncIndex) {
+    pub(super) fn lower_indirect_call(
+        &mut self,
+        callee: &hir::Expr,
+        args: &[hir::Expr],
+        func: &hir::FuncIndex,
+    ) {
         self.expr(callee);
         for a in args {
             self.expr(a);
@@ -107,7 +148,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Rest call through a function value.
-    pub(super) fn lower_indirect_call_rest(&mut self, callee: &hir::Expr, args: &[hir::Expr], func: &hir::FuncIndex) {
+    pub(super) fn lower_indirect_call_rest(
+        &mut self,
+        callee: &hir::Expr,
+        args: &[hir::Expr],
+        func: &hir::FuncIndex,
+    ) {
         self.expr(callee);
         for arg in args {
             self.expr(arg);
@@ -120,7 +166,12 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Optional call through a function value (`f?.()`).
-    pub(super) fn lower_optional_indirect_call(&mut self, callee: &hir::Expr, args: &[hir::Expr], func: &hir::FuncIndex) {
+    pub(super) fn lower_optional_indirect_call(
+        &mut self,
+        callee: &hir::Expr,
+        args: &[hir::Expr],
+        func: &hir::FuncIndex,
+    ) {
         self.expr(callee);
         self.emit(Instruction::simple(Opcode::Dup));
         self.emit(Instruction::simple(Opcode::ConstNull));
@@ -130,16 +181,26 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         self.emit(Instruction::simple(Opcode::ConstUndef));
         self.emit(Instruction::simple(Opcode::CmpEq));
         let use_undef = self.emit_branch(Opcode::BranchTrue);
-        for arg in args { self.expr(arg); }
+        for arg in args {
+            self.expr(arg);
+        }
         if *func == hir::DYNAMIC_FUNCTION && args.len() != 1 {
-            self.emit(Instruction::new(Opcode::CallIndirectN, Operand::Imm32(args.len() as i32)));
+            self.emit(Instruction::new(
+                Opcode::CallIndirectN,
+                Operand::Imm32(args.len() as i32),
+            ));
         } else {
             let token = if *func == hir::DYNAMIC_FUNCTION || *func == hir::DYNAMIC_PREDICATE {
                 Token::null(TableKind::MethodDef)
             } else if *func == hir::DYNAMIC_REDUCER {
                 Token::null(TableKind::MemberRef)
-            } else { Token::new(TableKind::MethodDef, *func + 1) };
-            self.emit(Instruction::new(Opcode::CallIndirect, Operand::Token(token)));
+            } else {
+                Token::new(TableKind::MethodDef, *func + 1)
+            };
+            self.emit(Instruction::new(
+                Opcode::CallIndirect,
+                Operand::Token(token),
+            ));
         }
         let end = self.emit_branch(Opcode::Branch);
         self.patch_to_here(use_null);
@@ -167,7 +228,13 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Call through a module/member reference with typed FFI signature bytes.
-    pub(super) fn lower_external_call(&mut self, module: &str, name: &str, args: &[hir::Expr], e: &hir::Expr) {
+    pub(super) fn lower_external_call(
+        &mut self,
+        module: &str,
+        name: &str,
+        args: &[hir::Expr],
+        e: &hir::Expr,
+    ) {
         for a in args {
             self.expr(a);
         }
@@ -228,15 +295,29 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     }
 
     /// Virtual rest call with a prebuilt rest array.
-    pub(super) fn lower_method_call_rest_array(&mut self, func: &hir::FuncIndex, receiver: &hir::Expr, args: &hir::Expr) {
+    pub(super) fn lower_method_call_rest_array(
+        &mut self,
+        func: &hir::FuncIndex,
+        receiver: &hir::Expr,
+        args: &hir::Expr,
+    ) {
         self.expr(receiver);
         self.expr(args);
         let token = Token::new(TableKind::MethodDef, *func + 1);
-        self.emit(Instruction::new(Opcode::CallVirtRestArray, Operand::Token(token)));
+        self.emit(Instruction::new(
+            Opcode::CallVirtRestArray,
+            Operand::Token(token),
+        ));
     }
 
     /// Virtual rest call with fixed arguments plus a prebuilt rest array.
-    pub(super) fn lower_method_call_rest_array_fixed(&mut self, func: &hir::FuncIndex, receiver: &hir::Expr, fixed_args: &[hir::Expr], args: &hir::Expr) {
+    pub(super) fn lower_method_call_rest_array_fixed(
+        &mut self,
+        func: &hir::FuncIndex,
+        receiver: &hir::Expr,
+        fixed_args: &[hir::Expr],
+        args: &hir::Expr,
+    ) {
         self.expr(receiver);
         for fixed in fixed_args {
             self.expr(fixed);

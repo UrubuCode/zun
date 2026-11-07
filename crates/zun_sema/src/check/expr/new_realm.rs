@@ -26,12 +26,42 @@ impl Checker<'_> {
                 Some(self.new_ctor_intrinsic0(cx, name, args, span, module, native, ty))
             }
             CtorLowering::Promise => Some(self.new_ctor_promise(cx, args, span)),
-            CtorLowering::CollectionFrom { module, empty, from, from_iterable, ty } => {
-                Some(self.new_ctor_collection_from(cx, name, args, span, module, empty, from, from_iterable, ty))
-            }
-            CtorLowering::IntrinsicN { module, native, ty, min_args, max_args, pad_empty_flags } => {
-                Some(self.new_ctor_intrinsic_n(cx, name, args, span, module, native, ty, min_args, max_args, pad_empty_flags))
-            }
+            CtorLowering::CollectionFrom {
+                module,
+                empty,
+                from,
+                from_iterable,
+                ty,
+            } => Some(self.new_ctor_collection_from(
+                cx,
+                name,
+                args,
+                span,
+                module,
+                empty,
+                from,
+                from_iterable,
+                ty,
+            )),
+            CtorLowering::IntrinsicN {
+                module,
+                native,
+                ty,
+                min_args,
+                max_args,
+                pad_empty_flags,
+            } => Some(self.new_ctor_intrinsic_n(
+                cx,
+                name,
+                args,
+                span,
+                module,
+                native,
+                ty,
+                min_args,
+                max_args,
+                pad_empty_flags,
+            )),
             CtorLowering::ArrayNew => Some(self.new_ctor_array_new(cx, args, span)),
             CtorLowering::ArrayBuffer => Some(self.check_array_buffer_new(cx, args, span)),
             CtorLowering::BufferView { native, kind } => {
@@ -57,11 +87,18 @@ impl Checker<'_> {
     ) -> hir::Expr {
         // `new WeakSet(iterable)` / `new WeakMap(iterable)`.
         if args.len() == 1 && matches!(name, "WeakSet" | "WeakMap") {
-            let helper = if name == "WeakSet" { "__zunWeakSetFrom" } else { "__zunWeakMapFrom" };
+            let helper = if name == "WeakSet" {
+                "__zunWeakSetFrom"
+            } else {
+                "__zunWeakMapFrom"
+            };
             if let Some(&func) = self.by_name.get(helper) {
                 let argument = self.check_expr(cx, &args[0]);
                 return hir::Expr {
-                    kind: hir::ExprKind::Call { func, args: vec![Self::box_to_any(argument)] },
+                    kind: hir::ExprKind::Call {
+                        func,
+                        args: vec![Self::box_to_any(argument)],
+                    },
                     ty,
                     span,
                 };
@@ -76,7 +113,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: Vec::new(),
+            },
             ty,
             span,
         }
@@ -100,7 +140,10 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: Vec::new(),
+                    },
                     ty: Ty::Promise,
                     span,
                 }
@@ -120,10 +163,7 @@ impl Checker<'_> {
                 let executor = self.check_expr(cx, &args[0]);
                 self.closure_param_hint = None;
                 if !executor.ty.is_error()
-                    && !self.is_assignable(
-                        executor.ty,
-                        Ty::Function(hir::DYNAMIC_FUNCTION),
-                    )
+                    && !self.is_assignable(executor.ty, Ty::Function(hir::DYNAMIC_FUNCTION))
                 {
                     // A non-callable executor (reachable through an
                     // `as any` cast) throws a TypeError at runtime.
@@ -142,7 +182,10 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![executor] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![executor],
+                    },
                     ty: Ty::Promise,
                     span,
                 }
@@ -186,7 +229,10 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: Vec::new() },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: Vec::new(),
+                    },
                     ty,
                     span,
                 }
@@ -196,7 +242,8 @@ impl Checker<'_> {
                 // An array keeps the dedicated fast path; a
                 // known built-in iterable or an `any` value
                 // routes to the general native.
-                let native = if argument.ty != Ty::Any && self.is_assignable(argument.ty, Ty::Array) {
+                let native = if argument.ty != Ty::Any && self.is_assignable(argument.ty, Ty::Array)
+                {
                     from
                 } else if Self::is_iterable_ty(argument.ty) {
                     from_iterable
@@ -218,7 +265,10 @@ impl Checker<'_> {
                     return self.poison(span);
                 };
                 hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin { id, args: vec![argument] },
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![argument],
+                    },
                     ty,
                     span,
                 }
@@ -226,7 +276,10 @@ impl Checker<'_> {
             _ => {
                 self.error(
                     span,
-                    format!("`{name}` expects at most one constructor argument, found {}", args.len()),
+                    format!(
+                        "`{name}` expects at most one constructor argument, found {}",
+                        args.len()
+                    ),
                 );
                 self.poison(span)
             }
@@ -250,7 +303,10 @@ impl Checker<'_> {
         if args.len() < min_args || args.len() > max_args {
             self.error(
                 span,
-                format!("`{name}` expects {min_args} to {max_args} constructor argument(s), found {}", args.len()),
+                format!(
+                    "`{name}` expects {min_args} to {max_args} constructor argument(s), found {}",
+                    args.len()
+                ),
             );
             return self.poison(span);
         }
@@ -258,8 +314,7 @@ impl Checker<'_> {
             self.error(span, format!("missing intrinsic `{native}`"));
             return self.poison(span);
         };
-        let mut checked: Vec<hir::Expr> =
-            args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+        let mut checked: Vec<hir::Expr> = args.iter().map(|arg| self.check_expr(cx, arg)).collect();
         if pad_empty_flags && checked.len() == 1 {
             checked.push(hir::Expr {
                 kind: hir::ExprKind::String(String::new()),
@@ -289,7 +344,9 @@ impl Checker<'_> {
             self.error(length.span, "array length must be an integer");
         }
         hir::Expr {
-            kind: hir::ExprKind::ArrayNew { length: Box::new(length) },
+            kind: hir::ExprKind::ArrayNew {
+                length: Box::new(length),
+            },
             ty: Ty::Array,
             span,
         }
@@ -308,9 +365,7 @@ impl Checker<'_> {
         // offset)` with no explicit length is
         // length-tracking (ES2024): its `byteLength`
         // follows the buffer's current length.
-        if matches!(kind, hir::BufferViewKind::DataView)
-            && (args.len() == 1 || args.len() == 2)
-        {
+        if matches!(kind, hir::BufferViewKind::DataView) && (args.len() == 1 || args.len() == 2) {
             let buffer = self.check_expr(cx, &args[0]);
             let offset = match args.get(1) {
                 Some(arg) => {
@@ -324,14 +379,15 @@ impl Checker<'_> {
                     span,
                 },
             };
-            let Some((id, _)) =
-                zun_natives::resolve("buffer", "dataViewTrackingNew")
-            else {
+            let Some((id, _)) = zun_natives::resolve("buffer", "dataViewTrackingNew") else {
                 self.error(span, "missing DataView intrinsic `dataViewTrackingNew`");
                 return self.poison(span);
             };
             return hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id, args: vec![buffer, offset] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![buffer, offset],
+                },
                 ty: Ty::BufferView(kind),
                 span,
             };
@@ -379,10 +435,11 @@ impl Checker<'_> {
                 ty: Ty::Int(IntKind::U32),
                 span,
             };
-            let Some((id, _)) =
-                zun_natives::resolve("buffer", "typedArrayTrackingNew")
-            else {
-                self.error(span, "missing typed-array intrinsic `typedArrayTrackingNew`");
+            let Some((id, _)) = zun_natives::resolve("buffer", "typedArrayTrackingNew") else {
+                self.error(
+                    span,
+                    "missing typed-array intrinsic `typedArrayTrackingNew`",
+                );
                 return self.poison(span);
             };
             return hir::Expr {
@@ -408,7 +465,10 @@ impl Checker<'_> {
             return self.poison(span);
         };
         hir::Expr {
-            kind: hir::ExprKind::CallBuiltin { id, args: call_args },
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: call_args,
+            },
             ty: Ty::BufferView(kind),
             span,
         }
@@ -473,7 +533,10 @@ impl Checker<'_> {
                 return Some(self.poison(span));
             };
             let buffer = hir::Expr {
-                kind: hir::ExprKind::CallBuiltin { id: buf_id, args: vec![byte_len] },
+                kind: hir::ExprKind::CallBuiltin {
+                    id: buf_id,
+                    args: vec![byte_len],
+                },
                 ty: Ty::Buffer,
                 span,
             };
@@ -484,15 +547,16 @@ impl Checker<'_> {
             };
             let kind_lit = hir::Expr {
                 kind: hir::ExprKind::Number(
-                    crate::typed_arrays::element_index(kind).unwrap_or(0) as f64,
+                    crate::typed_arrays::element_index(kind).unwrap_or(0) as f64
                 ),
                 ty: Ty::Int(IntKind::U32),
                 span,
             };
-            let Some((id, _)) =
-                zun_natives::resolve("buffer", "typedArrayTrackingNew")
-            else {
-                self.error(span, "missing typed-array intrinsic `typedArrayTrackingNew`");
+            let Some((id, _)) = zun_natives::resolve("buffer", "typedArrayTrackingNew") else {
+                self.error(
+                    span,
+                    "missing typed-array intrinsic `typedArrayTrackingNew`",
+                );
                 return Some(self.poison(span));
             };
             return Some(hir::Expr {

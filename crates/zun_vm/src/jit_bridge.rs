@@ -92,7 +92,10 @@ pub(crate) fn bridge_call(
                 Some(kind) => pack_value(&result, kind, unsafe { &mut *heap }),
                 None => 0,
             };
-            Ok(BridgeOutcome { packed, status: STATUS_RETURNED })
+            Ok(BridgeOutcome {
+                packed,
+                status: STATUS_RETURNED,
+            })
         }
         // A catchable throw becomes a status the JIT frame can route; the thrown
         // object is packed as its handle.
@@ -101,7 +104,10 @@ pub(crate) fn bridge_call(
                 Value::Object(object) => object.addr() as u64,
                 _ => 0,
             };
-            Ok(BridgeOutcome { packed, status: STATUS_THREW })
+            Ok(BridgeOutcome {
+                packed,
+                status: STATUS_THREW,
+            })
         }
         Err(other) => Err(other),
     }
@@ -164,14 +170,20 @@ pub(crate) fn bridge_call_indirect(
                 Some(kind) => pack_value(&result, kind, unsafe { &mut *heap }),
                 None => 0,
             };
-            Ok(BridgeOutcome { packed, status: STATUS_RETURNED })
+            Ok(BridgeOutcome {
+                packed,
+                status: STATUS_RETURNED,
+            })
         }
         Err(RunError::Thrown(value)) => {
             let packed = match value {
                 Value::Object(object) => object.addr() as u64,
                 _ => 0,
             };
-            Ok(BridgeOutcome { packed, status: STATUS_THREW })
+            Ok(BridgeOutcome {
+                packed,
+                status: STATUS_THREW,
+            })
         }
         Err(other) => Err(other),
     }
@@ -413,7 +425,8 @@ mod tests {
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
         let mut output = CaptureOutput::default();
         // pack(19), pack(23) as i32 values.
-        let outcome = bridge_call(scope.module(), Some(&loader), &mut output, rid, &[19, 23]).unwrap();
+        let outcome =
+            bridge_call(scope.module(), Some(&loader), &mut output, rid, &[19, 23]).unwrap();
         assert_eq!(outcome.status, STATUS_RETURNED);
         assert_eq!(outcome.packed as i64, 42);
     }
@@ -449,7 +462,14 @@ mod tests {
         let ok = bridge_call(scope.module(), Some(&loader), &mut output, rid, &[7]).unwrap();
         assert_eq!((ok.status, ok.packed as i64), (STATUS_RETURNED, 7));
 
-        let thrown = bridge_call(scope.module(), Some(&loader), &mut output, rid, &[(-1i64) as u64]).unwrap();
+        let thrown = bridge_call(
+            scope.module(),
+            Some(&loader),
+            &mut output,
+            rid,
+            &[(-1i64) as u64],
+        )
+        .unwrap();
         assert_eq!(thrown.status, STATUS_THREW);
     }
 
@@ -482,10 +502,8 @@ mod tests {
         };
         let (helper_rid, caller_rid) = (find("helper"), find("caller"));
 
-        let jit = unsafe {
-            zun_codegen::Jit::compile_with_bridge(scope.module(), bridge_config())
-        }
-        .expect("jit compiles with bridge");
+        let jit = unsafe { zun_codegen::Jit::compile_with_bridge(scope.module(), bridge_config()) }
+            .expect("jit compiles with bridge");
         assert!(
             !jit.is_compiled(helper_rid),
             "the dynamic helper must stay on the interpreter"
@@ -534,9 +552,8 @@ mod tests {
             .expect("choose method") as u32
             + 1;
 
-        let jit =
-            unsafe { zun_codegen::Jit::compile_with_bridge(scope.module(), bridge_config()) }
-                .expect("jit compiles with bridge");
+        let jit = unsafe { zun_codegen::Jit::compile_with_bridge(scope.module(), bridge_config()) }
+            .expect("jit compiles with bridge");
         assert!(
             jit.is_compiled(choose_rid),
             "a concrete stored-function method must be JIT-compiled under the bridge"
@@ -640,11 +657,17 @@ mod tests {
 
         let up = zun_compiler::compile(&src.replace("MAIN_UP", "true")).expect("compile");
         let r_up = crate::execute_with(&up.write(), &mut output).expect("run");
-        assert!(matches!(r_up, Value::Int(11, _)), "choose(true,10)=inc(10)=11, got {r_up:?}");
+        assert!(
+            matches!(r_up, Value::Int(11, _)),
+            "choose(true,10)=inc(10)=11, got {r_up:?}"
+        );
 
         let dn = zun_compiler::compile(&src.replace("MAIN_UP", "false")).expect("compile");
         let r_dn = crate::execute_with(&dn.write(), &mut output).expect("run");
-        assert!(matches!(r_dn, Value::Int(9, _)), "choose(false,10)=dec(10)=9, got {r_dn:?}");
+        assert!(
+            matches!(r_dn, Value::Int(9, _)),
+            "choose(false,10)=dec(10)=9, got {r_dn:?}"
+        );
     }
 
     /// The handle-reconstructing indirect bridge reproduces the plain rid bridge
@@ -676,9 +699,14 @@ mod tests {
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
         let mut output = CaptureOutput::default();
         let handle = zun_core::FunctionHandle::new(rid, None);
-        let outcome =
-            bridge_call_indirect(scope.module(), Some(&loader), &mut output, handle, &[19, 23])
-                .unwrap();
+        let outcome = bridge_call_indirect(
+            scope.module(),
+            Some(&loader),
+            &mut output,
+            handle,
+            &[19, 23],
+        )
+        .unwrap();
         assert_eq!(outcome.status, STATUS_RETURNED);
         assert_eq!(outcome.packed as i64, 42);
     }

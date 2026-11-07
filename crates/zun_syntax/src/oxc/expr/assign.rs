@@ -62,7 +62,12 @@ fn convert_compound_fast_path(
             }
         } else {
             store.build(
-                Expr::Binary { op, lhs: Box::new(read), rhs: Box::new(rhs), span: whole },
+                Expr::Binary {
+                    op,
+                    lhs: Box::new(read),
+                    rhs: Box::new(rhs),
+                    span: whole,
+                },
                 whole,
             )
         };
@@ -70,12 +75,18 @@ fn convert_compound_fast_path(
     }
     if logical {
         if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
-            let name = Name { span: span(identifier.span) };
+            let name = Name {
+                span: span(identifier.span),
+            };
             let rhs = convert_expression(source, &assignment.right)?;
             return Ok(Some(Expr::Binary {
                 op,
                 lhs: Box::new(Expr::Ident(name)),
-                rhs: Box::new(Expr::Assign { target: name, value: Box::new(rhs), span: whole }),
+                rhs: Box::new(Expr::Assign {
+                    target: name,
+                    value: Box::new(rhs),
+                    span: whole,
+                }),
                 span: whole,
             }));
         }
@@ -86,15 +97,20 @@ fn convert_compound_fast_path(
 /// The read half of `a OP= b`: the target read back as an expression.
 /// Known v1 limitation: a target with side-effecting sub-expressions is
 /// evaluated twice.
-fn compound_read(source: &str, assignment: &oxc_ast::ast::AssignmentExpression<'_>) -> Result<Expr, String> {
+fn compound_read(
+    source: &str,
+    assignment: &oxc_ast::ast::AssignmentExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     Ok(match &assignment.left {
-        AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
-            Expr::Ident(Name { span: span(identifier.span) })
-        }
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => Expr::Ident(Name {
+            span: span(identifier.span),
+        }),
         AssignmentTarget::StaticMemberExpression(member) => Expr::Field {
             object: Box::new(convert_expression(source, &member.object)?),
-            field: Name { span: span(member.property.span) },
+            field: Name {
+                span: span(member.property.span),
+            },
             span: span(member.span),
         },
         AssignmentTarget::ComputedMemberExpression(member) => Expr::Index {
@@ -104,19 +120,23 @@ fn compound_read(source: &str, assignment: &oxc_ast::ast::AssignmentExpression<'
         },
         AssignmentTarget::PrivateFieldExpression(member) => Expr::PrivateField {
             object: Box::new(convert_expression(source, &member.object)?),
-            field: Name { span: span(member.field.span) },
+            field: Name {
+                span: span(member.field.span),
+            },
             span: span(member.span),
         },
         _ => {
             return Err(
-                "OXC adapter supports identifier, field, and index assignments only"
-                    .into(),
+                "OXC adapter supports identifier, field, and index assignments only".into(),
             );
         }
     })
 }
 
-pub(super) fn convert_assignment(source: &str, assignment: &oxc_ast::ast::AssignmentExpression<'_>) -> Result<Expr, String> {
+pub(super) fn convert_assignment(
+    source: &str,
+    assignment: &oxc_ast::ast::AssignmentExpression<'_>,
+) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let compound = compound_binary_op(assignment.operator)?;
     if let Some(op) = compound {
@@ -172,10 +192,14 @@ fn store_assignment_value(
                     && (text.span.end - text.span.start) as usize
                         == text.value.as_str().map_or(0, str::len) + 2) =>
         {
-            let Expression::StringLiteral(text) = &member.expression else { unreachable!() };
+            let Expression::StringLiteral(text) = &member.expression else {
+                unreachable!()
+            };
             Ok(Expr::FieldAssign {
                 object: Box::new(convert_expression(source, &member.object)?),
-                field: Name { span: Span::new(text.span.start + 1, text.span.end - 1) },
+                field: Name {
+                    span: Span::new(text.span.start + 1, text.span.end - 1),
+                },
                 value,
                 span: span(assignment.span),
             })
@@ -207,27 +231,32 @@ fn store_assignment_value(
         AssignmentTarget::TSAsExpression(cast)
             if matches!(peel_parens(&cast.expression), Expression::Identifier(_)) =>
         {
-            let Expression::Identifier(identifier) = peel_parens(&cast.expression) else { unreachable!() };
+            let Expression::Identifier(identifier) = peel_parens(&cast.expression) else {
+                unreachable!()
+            };
             if is_immutable_self_name(identifier.name.as_str()) {
                 return Ok(throw_const_assignment(*value, span(assignment.span)));
             }
             Ok(Expr::Assign {
-                target: Name { span: span(identifier.span) },
+                target: Name {
+                    span: span(identifier.span),
+                },
                 value,
                 span: span(assignment.span),
             })
         }
-        _ => {
-            Err("OXC adapter supports identifier, field, and index assignments only".into())
-        }
+        _ => Err("OXC adapter supports identifier, field, and index assignments only".into()),
     }
 }
 
 /// Whether this is a plain `=` whose target is an array/object pattern.
-pub(super) fn is_destructuring_assignment(assignment: &oxc_ast::ast::AssignmentExpression<'_>) -> bool {
+pub(super) fn is_destructuring_assignment(
+    assignment: &oxc_ast::ast::AssignmentExpression<'_>,
+) -> bool {
     assignment.operator == AssignmentOperator::Assign
         && matches!(
             &assignment.left,
-            AssignmentTarget::ArrayAssignmentTarget(_) | AssignmentTarget::ObjectAssignmentTarget(_)
+            AssignmentTarget::ArrayAssignmentTarget(_)
+                | AssignmentTarget::ObjectAssignmentTarget(_)
         )
 }

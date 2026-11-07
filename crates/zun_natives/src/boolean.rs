@@ -1,7 +1,7 @@
 //! `zun:boolean` — the `Boolean` wrapper surface: JS truthiness coercion and
 //! the primitive `boolean.toString()` rendering.
 
-use crate::{NativeArg, NativeError, NativeTy::*, NativeFn, NativeValue, Sink};
+use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
 
 /// ECMAScript truthiness of a single argument, mirroring the interpreter's
 /// `is_truthy` (used for `if`/`&&` on dynamic callback results): `false`,
@@ -46,7 +46,9 @@ fn truthy(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
 /// `true.toString()` / `false.toString()` → `"true"` / `"false"`.
 fn to_string(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let flag = matches!(args.first(), Some(NativeArg::Bool(true)));
-    Ok(NativeValue::Str(if flag { "true" } else { "false" }.to_string()))
+    Ok(NativeValue::Str(
+        if flag { "true" } else { "false" }.to_string(),
+    ))
 }
 
 /// The `Boolean` wrapper surface.

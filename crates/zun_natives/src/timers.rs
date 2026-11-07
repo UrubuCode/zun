@@ -29,18 +29,58 @@ pub const MODULE: crate::Module = crate::Module {
     functions: &[
         // `setTimeout(cb, ms)` → numeric handle. The optional `ms` is defaulted
         // to `0` by the checker when omitted.
-        NativeFn { name: "setTimeout", params: &[Opaque, F64], ret: F64, imp: unavailable },
+        NativeFn {
+            name: "setTimeout",
+            params: &[Opaque, F64],
+            ret: F64,
+            imp: unavailable,
+        },
         // `setInterval(cb, ms)` → numeric handle (repeats).
-        NativeFn { name: "setInterval", params: &[Opaque, F64], ret: F64, imp: unavailable },
-        NativeFn { name: "clearTimeout", params: &[F64], ret: Void, imp: unavailable },
-        NativeFn { name: "clearInterval", params: &[F64], ret: Void, imp: unavailable },
+        NativeFn {
+            name: "setInterval",
+            params: &[Opaque, F64],
+            ret: F64,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "clearTimeout",
+            params: &[F64],
+            ret: Void,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "clearInterval",
+            params: &[F64],
+            ret: Void,
+            imp: unavailable,
+        },
         // `queueMicrotask(cb)` → enqueue a microtask directly.
-        NativeFn { name: "queueMicrotask", params: &[Opaque], ret: Void, imp: unavailable },
+        NativeFn {
+            name: "queueMicrotask",
+            params: &[Opaque],
+            ret: Void,
+            imp: unavailable,
+        },
         // `setImmediate(cb)` → a 0-delay macrotask; returns a numeric handle.
-        NativeFn { name: "setImmediate", params: &[Opaque], ret: F64, imp: unavailable },
+        NativeFn {
+            name: "setImmediate",
+            params: &[Opaque],
+            ret: F64,
+            imp: unavailable,
+        },
         // `setTimeout(cb, ms, ...args)` / `setInterval(cb, ms, ...args)`: the extra
         // arguments (an array) are passed to the callback when the timer fires.
-        NativeFn { name: "setTimeoutArgs", params: &[Opaque, F64, Array], ret: F64, imp: unavailable },
-        NativeFn { name: "setIntervalArgs", params: &[Opaque, F64, Array], ret: F64, imp: unavailable },
+        NativeFn {
+            name: "setTimeoutArgs",
+            params: &[Opaque, F64, Array],
+            ret: F64,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "setIntervalArgs",
+            params: &[Opaque, F64, Array],
+            ret: F64,
+            imp: unavailable,
+        },
     ],
 };

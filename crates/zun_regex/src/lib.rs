@@ -273,7 +273,10 @@ impl Regex {
                     .chunks(2)
                     .map(|c| (c[0] != NONE && c[1] != NONE).then_some((c[0], c[1])))
                     .collect();
-                Ok(Some(Match { groups, names: self.names.clone() }))
+                Ok(Some(Match {
+                    groups,
+                    names: self.names.clone(),
+                }))
             }
         }
     }

@@ -1,9 +1,15 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    pub(in crate::check) fn check_chain_root(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_chain_root(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::ChainRoot { depth, .. } = expr else { unreachable!() };
+        let ast::Expr::ChainRoot { depth, .. } = expr else {
+            unreachable!()
+        };
         let len = self.chain_roots.len();
         let Some(root) = len
             .checked_sub(1 + *depth as usize)
@@ -16,9 +22,15 @@ impl Checker<'_> {
         self.check_expr(cx, &ast::Expr::Ident(root))
     }
 
-    pub(in crate::check) fn check_temp_bind(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_temp_bind(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::TempBind { value, body, .. } = expr else { unreachable!() };
+        let ast::Expr::TempBind { value, body, .. } = expr else {
+            unreachable!()
+        };
         let bound = self.check_expr(cx, value);
         if bound.ty.is_error() {
             return self.poison(span);
@@ -31,7 +43,10 @@ impl Checker<'_> {
         hir::Expr {
             kind: hir::ExprKind::Sequence {
                 effect: Box::new(hir::Expr {
-                    kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                    kind: hir::ExprKind::Assign {
+                        slot,
+                        value: Box::new(bound),
+                    },
                     ty: Ty::Any,
                     span,
                 }),
@@ -42,9 +57,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_optional_chain(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_optional_chain(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::OptionalChain { object, body, .. } = expr else { unreachable!() };
+        let ast::Expr::OptionalChain { object, body, .. } = expr else {
+            unreachable!()
+        };
         let guard = self.check_expr(cx, object);
         if matches!(guard.ty, Ty::Any | Ty::DynamicObject) {
             let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
@@ -70,7 +91,10 @@ impl Checker<'_> {
         hir::Expr {
             kind: hir::ExprKind::Sequence {
                 effect: Box::new(hir::Expr {
-                    kind: hir::ExprKind::Assign { slot, value: Box::new(guard) },
+                    kind: hir::ExprKind::Assign {
+                        slot,
+                        value: Box::new(guard),
+                    },
                     ty: Ty::Any,
                     span,
                 }),
@@ -81,9 +105,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_optional_field(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_optional_field(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::OptionalField { object, field, .. } = expr else { unreachable!() };
+        let ast::Expr::OptionalField { object, field, .. } = expr else {
+            unreachable!()
+        };
         let object_ast: &ast::Expr = object;
         let object = self.check_expr(cx, object);
         if !matches!(object.ty, Ty::Any | Ty::DynamicObject | Ty::Error) {
@@ -111,9 +141,15 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_optional_index(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_optional_index(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::OptionalIndex { object, index, .. } = expr else { unreachable!() };
+        let ast::Expr::OptionalIndex { object, index, .. } = expr else {
+            unreachable!()
+        };
         let object_ast: &ast::Expr = object;
         let object = self.check_expr(cx, object);
         if !matches!(object.ty, Ty::Any | Ty::DynamicObject | Ty::Error) {
@@ -135,13 +171,24 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_optional_call(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_optional_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::OptionalCall { callee, args, .. } = expr else { unreachable!() };
+        let ast::Expr::OptionalCall { callee, args, .. } = expr else {
+            unreachable!()
+        };
         // `recv.m?.(args)` on a dynamic receiver: bind the receiver
         // once, then `tmp.m == null ? undefined : tmp.m(args)` (keeps
         // the `this` binding).
-        if let ast::Expr::Field { object: recv, field, .. } = callee.as_ref() {
+        if let ast::Expr::Field {
+            object: recv,
+            field,
+            ..
+        } = callee.as_ref()
+        {
             let recv_hir = self.check_expr(cx, recv);
             if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
                 let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
@@ -189,7 +236,12 @@ impl Checker<'_> {
                 );
             }
         }
-        if let ast::Expr::Index { object: recv, index: key, .. } = callee.as_ref() {
+        if let ast::Expr::Index {
+            object: recv,
+            index: key,
+            ..
+        } = callee.as_ref()
+        {
             let recv_hir = self.check_expr(cx, recv);
             if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
                 let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
@@ -204,10 +256,22 @@ impl Checker<'_> {
                     args: args.clone(),
                     span,
                 };
-                return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), test, call, span);
+                return self.optional_guarded(
+                    cx,
+                    slot,
+                    Self::box_to_any(recv_hir),
+                    test,
+                    call,
+                    span,
+                );
             }
         }
-        if let ast::Expr::OptionalIndex { object: recv, index: key, .. } = callee.as_ref() {
+        if let ast::Expr::OptionalIndex {
+            object: recv,
+            index: key,
+            ..
+        } = callee.as_ref()
+        {
             let recv_hir = self.check_expr(cx, recv);
             if matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject) {
                 let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
@@ -221,10 +285,22 @@ impl Checker<'_> {
                     args: args.clone(),
                     span,
                 };
-                return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), tmp_expr, call, span);
+                return self.optional_guarded(
+                    cx,
+                    slot,
+                    Self::box_to_any(recv_hir),
+                    tmp_expr,
+                    call,
+                    span,
+                );
             }
         }
-        if let ast::Expr::OptionalField { object: recv, field, .. } = callee.as_ref() {
+        if let ast::Expr::OptionalField {
+            object: recv,
+            field,
+            ..
+        } = callee.as_ref()
+        {
             // `(recv?.m)?.()` keeps `this = recv`; a nullish `recv`
             // short-circuits to undefined.
             let recv_hir = self.check_expr(cx, recv);
@@ -240,7 +316,14 @@ impl Checker<'_> {
                     args: args.clone(),
                     span,
                 };
-                return self.optional_guarded(cx, slot, Self::box_to_any(recv_hir), tmp_expr, call, span);
+                return self.optional_guarded(
+                    cx,
+                    slot,
+                    Self::box_to_any(recv_hir),
+                    tmp_expr,
+                    call,
+                    span,
+                );
             }
         }
         let callee_hir = self.check_expr(cx, callee);
@@ -252,7 +335,14 @@ impl Checker<'_> {
                 args: args.clone(),
                 span,
             };
-            return self.optional_guarded(cx, slot, Self::box_to_any(callee_hir), tmp_expr, call, span);
+            return self.optional_guarded(
+                cx,
+                slot,
+                Self::box_to_any(callee_hir),
+                tmp_expr,
+                call,
+                span,
+            );
         }
         let callee = callee_hir;
         let func = match callee.ty {
@@ -283,15 +373,33 @@ impl Checker<'_> {
         }
     }
 
-    pub(in crate::check) fn check_optional_method_call(&mut self, cx: &mut FunctionCx, expr: &ast::Expr) -> hir::Expr {
+    pub(in crate::check) fn check_optional_method_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        expr: &ast::Expr,
+    ) -> hir::Expr {
         let span = expr.span();
-        let ast::Expr::OptionalMethodCall { object, method, args, .. } = expr else { unreachable!() };
+        let ast::Expr::OptionalMethodCall {
+            object,
+            method,
+            args,
+            ..
+        } = expr
+        else {
+            unreachable!()
+        };
         let object_ast: &ast::Expr = object;
         let object = self.check_expr(cx, object);
         let managed = matches!(
             object.ty,
-            Ty::Map | Ty::Set | Ty::WeakMap | Ty::WeakSet | Ty::WeakRef
-                | Ty::RegExp | Ty::Promise | Ty::Error
+            Ty::Map
+                | Ty::Set
+                | Ty::WeakMap
+                | Ty::WeakSet
+                | Ty::WeakRef
+                | Ty::RegExp
+                | Ty::Promise
+                | Ty::Error
         );
         if !managed {
             if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
@@ -326,7 +434,10 @@ impl Checker<'_> {
                 return hir::Expr {
                     kind: hir::ExprKind::Sequence {
                         effect: Box::new(hir::Expr {
-                            kind: hir::ExprKind::Assign { slot, value: Box::new(bound) },
+                            kind: hir::ExprKind::Assign {
+                                slot,
+                                value: Box::new(bound),
+                            },
                             ty: Ty::Any,
                             span,
                         }),
@@ -358,14 +469,10 @@ impl Checker<'_> {
             (Ty::Set, "size") => ("setSize", Ty::Int(IntKind::U64), vec![]),
             (Ty::Set, "delete") => ("setDelete", Ty::Boolean, vec![Ty::Any]),
             (Ty::Set, "clear") => ("setClear", Ty::Void, vec![]),
-            (Ty::WeakMap, "set") => {
-                ("weakMapSet", Ty::WeakMap, vec![Ty::Any, Ty::Any])
-            }
+            (Ty::WeakMap, "set") => ("weakMapSet", Ty::WeakMap, vec![Ty::Any, Ty::Any]),
             (Ty::WeakMap, "get") => ("weakMapGet", Ty::Any, vec![Ty::Any]),
             (Ty::WeakMap, "has") => ("weakMapHas", Ty::Boolean, vec![Ty::Any]),
-            (Ty::WeakMap, "delete") => {
-                ("weakMapDelete", Ty::Boolean, vec![Ty::Any])
-            }
+            (Ty::WeakMap, "delete") => ("weakMapDelete", Ty::Boolean, vec![Ty::Any]),
             (Ty::WeakSet, "add") => ("weakSetAdd", Ty::WeakSet, vec![Ty::Any]),
             (Ty::WeakSet, "has") => ("weakSetHas", Ty::Boolean, vec![Ty::Any]),
             (Ty::WeakSet, "delete") => ("weakSetDelete", Ty::Boolean, vec![Ty::Any]),
@@ -391,7 +498,11 @@ impl Checker<'_> {
         if args.len() != expected.len() {
             self.error(
                 span,
-                format!("`{name}` expects {} argument(s), found {}", expected.len(), args.len()),
+                format!(
+                    "`{name}` expects {} argument(s), found {}",
+                    expected.len(),
+                    args.len()
+                ),
             );
             return self.poison(span);
         }
@@ -401,7 +512,10 @@ impl Checker<'_> {
             "collections"
         };
         let Some((id, _)) = zun_natives::resolve(module, native_name) else {
-            self.error(span, format!("missing collection intrinsic `{native_name}`"));
+            self.error(
+                span,
+                format!("missing collection intrinsic `{native_name}`"),
+            );
             return self.poison(span);
         };
         let mut call_args = vec![object];
@@ -411,13 +525,19 @@ impl Checker<'_> {
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
                 self.error(
                     value.span,
-                    format!("argument type {:?} does not match {expected_ty:?}", value.ty),
+                    format!(
+                        "argument type {:?} does not match {expected_ty:?}",
+                        value.ty
+                    ),
                 );
             }
             call_args.push(value);
         }
         hir::Expr {
-            kind: hir::ExprKind::OptionalCallBuiltin { id, args: call_args },
+            kind: hir::ExprKind::OptionalCallBuiltin {
+                id,
+                args: call_args,
+            },
             ty: return_ty,
             span,
         }
