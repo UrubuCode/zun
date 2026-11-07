@@ -8,6 +8,11 @@
 //! across these in the original order; each helper returns `Some` when it
 //! handles the call.
 
+// The `.to_owned()` calls here copy strings out of `&self` before the
+// subsequent `&mut self` dispatch; removing them is a borrow-check error, so
+// clippy's "unnecessary" verdict is a false positive in this module.
+#![allow(clippy::unnecessary_to_owned)]
+
 use crate::check::*;
 
 impl Checker<'_> {

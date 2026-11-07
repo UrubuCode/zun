@@ -149,6 +149,7 @@ impl Checker<'_> {
     /// Lower a call to a statically typed function value: handle the generic
     /// `Function`/`Predicate`/`Reducer` arities, then a concrete signature's
     /// rest-parameter or fixed-parameter argument checking.
+    #[allow(clippy::needless_range_loop)] // index couples argument and parameter lists
     fn call_function_value(
         &mut self,
         callee_proto: hir::ExprKind,

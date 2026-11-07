@@ -519,7 +519,7 @@ impl Checker<'_> {
             return self.poison(span);
         };
         let mut call_args = vec![object];
-        for (arg, expected_ty) in args.into_iter().zip(expected) {
+        for (arg, expected_ty) in args.iter().zip(expected) {
             let mut value = self.check_expr(cx, arg);
             coerce_numeric_literal(&mut value, expected_ty);
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {

@@ -78,6 +78,7 @@ impl Checker<'_> {
     /// rest-parameter, or fixed) and build the final method-call expression,
     /// applying any routed-method rewrite.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::unnecessary_unwrap)] // guarded unwrap reads clearer than if-let here
     fn mcall_instance_invoke(
         &mut self,
         cx: &mut FunctionCx,

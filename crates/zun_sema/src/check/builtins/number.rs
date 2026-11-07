@@ -1,3 +1,7 @@
+// The `to_*` helpers here lower expressions on the Checker; the `to_`/`from_`
+// naming describes the coercion they emit, not a conversion of `self`.
+#![allow(clippy::wrong_self_convention)]
+
 use crate::check::*;
 
 impl Checker<'_> {

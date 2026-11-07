@@ -75,6 +75,7 @@ impl Checker<'_> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // mirrors the realm intrinsic constructor context
     fn new_ctor_intrinsic0(
         &mut self,
         cx: &mut FunctionCx,
@@ -352,6 +353,7 @@ impl Checker<'_> {
         }
     }
 
+    #[allow(clippy::unnecessary_unwrap)] // guarded unwrap reads clearer than if-let here
     fn new_ctor_buffer_view(
         &mut self,
         cx: &mut FunctionCx,

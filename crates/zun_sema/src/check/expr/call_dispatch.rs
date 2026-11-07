@@ -12,6 +12,7 @@ impl Checker<'_> {
     /// arity and argument types against its signature (rest-parameter or
     /// fixed), and threading the real argument count to callees that read
     /// `arguments`.
+    #[allow(clippy::needless_range_loop)] // index couples argument and parameter lists
     pub(in crate::check) fn call_named_dispatch(
         &mut self,
         cx: &mut FunctionCx,

@@ -63,6 +63,7 @@ impl Checker<'_> {
     /// `Object.prototype.hasOwnProperty.call(obj, key)` folded to
     /// `Object.hasOwn(obj, key)` (with compile-time answers for built-in and
     /// user-class prototypes).
+    #[allow(clippy::redundant_locals)] // rebind for a mutable binding
     pub(in crate::check) fn try_mcall_object_hasown(
         &mut self,
         cx: &mut FunctionCx,

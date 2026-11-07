@@ -335,6 +335,7 @@ impl Checker<'_> {
         Err(receiver)
     }
 
+    #[allow(clippy::if_same_then_else, clippy::needless_range_loop)] // branch bodies and index loops mirror the spec cases
     pub(in crate::check) fn mcall_primitive_tail(
         &mut self,
         cx: &mut FunctionCx,

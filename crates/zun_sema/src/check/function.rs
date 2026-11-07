@@ -27,8 +27,8 @@ impl Checker<'_> {
         let return_ty = sig.return_ty;
         let param_tys = sig.params.clone();
         let name = sig.name.clone();
-        if f.is_async && !f.is_generator {
-            if return_ty != Ty::Promise {
+        if f.is_async && !f.is_generator
+            && return_ty != Ty::Promise {
                 self.error(
                     f.name.span,
                     "async functions must declare a Promise return type",
@@ -38,7 +38,6 @@ impl Checker<'_> {
             // execute synchronously and return the already-created Promise.
             // Bodies containing await remain gated until state-machine IL is
             // available, so the front end never emits an invalid suspension.
-        }
         // An async body is checked (and lowered) as a coroutine returning `any`;
         // the Promise typing lives only on the signature that callers see.
         let return_ty = if f.is_async { Ty::Any } else { return_ty };

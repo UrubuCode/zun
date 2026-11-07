@@ -44,6 +44,7 @@ impl Checker<'_> {
     /// Shared lowering for `for-of`/`for-in`: given the iterable (or key array)
     /// and the iterator-protocol intrinsic names, drive the iterator and bind
     /// each value to the loop pattern.
+    #[allow(clippy::too_many_arguments)] // mirrors the for-iteration lowering live state
     pub(in crate::check) fn lower_for_iteration(
         &mut self,
         cx: &mut FunctionCx,

@@ -74,7 +74,7 @@ impl Checker<'_> {
             {
                 let fallback = ast::Expr::Field {
                     object: ast_object,
-                    field: field.clone(),
+                    field: *field,
                     span,
                 };
                 return self.check_expr(cx, &fallback);

@@ -368,7 +368,7 @@ impl Checker<'_> {
                 // ordinary member path under the `#`-prefixed name.
                 let fallback = ast::Expr::FieldAssign {
                     object: private_object.clone(),
-                    field: field.clone(),
+                    field: *field,
                     value: value.clone(),
                     span,
                 };

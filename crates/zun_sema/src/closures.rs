@@ -209,7 +209,7 @@ impl Checker<'_> {
                         c.name.starts_with(&format!("<closure@{}", span.start))
                             && c.name[("<closure@".len())..]
                                 .trim_start_matches(|ch: char| ch.is_ascii_digit())
-                                .starts_with(|ch: char| ch == '@' || ch == '>' || ch == '#')
+                                .starts_with(['@', '>', '#'])
                     })
                     .count();
                 let unique = if copies == 0 {

@@ -224,14 +224,13 @@ impl Checker<'_> {
             (None, expected) if !expected.is_error() => {
                 self.error(*span, format!("expected a {expected:?} return value"));
             }
-            (Some(v), expected) => {
-                if !expected.is_error() && !v.ty.is_error() && !self.is_assignable(v.ty, expected) {
+            (Some(v), expected)
+                if !expected.is_error() && !v.ty.is_error() && !self.is_assignable(v.ty, expected) => {
                     self.error(
                         v.span,
                         format!("return type {:?} does not match {expected:?}", v.ty),
                     );
                 }
-            }
             _ => {}
         }
         // Inside a `try` with a `finally`, the return value is computed

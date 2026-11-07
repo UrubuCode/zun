@@ -90,14 +90,14 @@ impl Checker<'_> {
             self.error(span, "missing `proxyConstruct` intrinsic");
             return self.poison(span);
         };
-        return hir::Expr {
+        hir::Expr {
             kind: hir::ExprKind::CallBuiltin {
                 id,
                 args: vec![callee, args_array],
             },
             ty: Ty::Any,
             span,
-        };
+        }
     }
 
     pub(in crate::check) fn check_new(

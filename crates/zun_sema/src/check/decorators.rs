@@ -375,6 +375,7 @@ impl Checker<'_> {
     /// dec(args), value, context)`. Returns `None` when the decorator is inert
     /// (callee is not a resolvable top-level function, or a factory with
     /// non-literal arguments or a non-function return).
+    #[allow(clippy::too_many_arguments)] // mirrors the decorator call lowering context
     pub(in crate::check) fn runtime_decorator_call(
         &self,
         decorator: &ast::Decorator,

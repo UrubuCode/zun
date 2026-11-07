@@ -59,6 +59,7 @@ impl<'a> Checker<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // mirrors the method-call lowering context
     pub(super) fn lower_function_reflective_call(
         &mut self,
         cx: &mut FunctionCx,

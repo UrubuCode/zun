@@ -499,7 +499,7 @@ impl Checker<'_> {
         let receiver_is_regexp = receiver.ty == Ty::RegExp;
         let mut call_args = vec![receiver];
         let callback_receiver = call_args[0].ty == Ty::Array;
-        for (arg, expected_ty) in args.into_iter().zip(expected) {
+        for (arg, expected_ty) in args.iter().zip(expected) {
             // A JS callback `(value, index, collection)` has dynamic
             // parameters, so hint unannotated callback params to
             // `any` (whether the receiver is an Array, Map, or Set).
