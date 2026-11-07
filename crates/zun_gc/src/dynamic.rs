@@ -334,6 +334,7 @@ impl Heap {
             .and_then(|properties| properties.get_symbol_function(symbol))
     }
     /// Own function-slot entries (string-keyed methods, then symbol-keyed ones).
+    #[allow(clippy::type_complexity)] // returns the named and symbol-keyed entry lists
     pub fn dynamic_function_entries(
         &self,
         object: Obj,

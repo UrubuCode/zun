@@ -582,7 +582,7 @@ impl Heap {
             }
         }
         for entry in &mut self.finalizers {
-            if entry.target != 0 && !entry.queued && self.by_addr.get(&entry.target).is_none() {
+            if entry.target != 0 && !entry.queued && !self.by_addr.contains_key(&entry.target) {
                 entry.queued = true;
                 self.finalization_queue.push(super::FinalizationRecord {
                     held: entry.held,

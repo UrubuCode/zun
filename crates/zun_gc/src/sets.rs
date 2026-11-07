@@ -8,6 +8,7 @@ impl Heap {
         object
     }
 
+    #[allow(clippy::redundant_guards)] // guard normalizes -0.0 via == ; a float pattern cannot
     pub fn set_add(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
         let value = match value.as_float() {
             Some(f) if f == 0.0 => zun_core::Any::float(0.0),

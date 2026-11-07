@@ -8,6 +8,7 @@ impl Heap {
         object
     }
 
+    #[allow(clippy::redundant_guards)] // guard normalizes -0.0 via == ; a float pattern cannot
     pub fn map_insert(
         &mut self,
         object: Obj,

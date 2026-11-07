@@ -22,6 +22,11 @@
 //! collection boundary; callers crossing a moving collection must use the
 //! registered root and stack-map contracts so references can be rewritten.
 
+// The crate-level module docs (see `# Safety` above) and the per-contract
+// comments on the unsafe root/stack-map APIs document the shared invariants;
+// individual `# Safety` sections would only restate them.
+#![allow(clippy::missing_safety_doc)]
+
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -530,6 +535,7 @@ impl Heap {
     /// This is opt-in until the runtime has a stop-the-world coordinator for
     /// every native/JIT frame. Native roots must be rewritten separately while
     /// stopped; `roots` contains the interpreter roots owned by this call.
+    #[allow(clippy::ptr_arg)] // `roots` is the fixed VM<->GC boundary buffer
     pub unsafe fn collect_and_compact(
         &mut self,
         roots: &mut Vec<Obj>,
@@ -551,6 +557,7 @@ impl Heap {
     /// # Safety
     /// The caller must stop managed execution and rewrite every external
     /// managed reference from the callback before it returns.
+    #[allow(clippy::ptr_arg)] // `roots` is the fixed VM<->GC boundary buffer
     pub unsafe fn collect_and_compact_with_relocation(
         &mut self,
         roots: &mut Vec<Obj>,
@@ -597,6 +604,7 @@ impl Heap {
     /// # Safety
     /// Every frame must remain stopped and valid, with a live registry and a
     /// stack pointer covered by its stack map, until this method returns.
+    #[allow(clippy::ptr_arg)] // `roots` is the fixed VM<->GC boundary buffer
     pub unsafe fn collect_and_compact_with_native_frames(
         &mut self,
         roots: &mut Vec<Obj>,
