@@ -16,7 +16,7 @@ fn parse(src: &str) -> (ast::Program, Vec<Diagnostic>) {
     (program, diagnostics)
 }
 
-fn class<'a>(program: &'a ast::Program, name_index: usize) -> &'a ast::Class {
+fn class(program: &ast::Program, name_index: usize) -> &ast::Class {
     &program.classes[name_index]
 }
 

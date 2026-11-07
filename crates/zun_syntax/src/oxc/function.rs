@@ -163,6 +163,7 @@ pub(super) fn convert_oxc_function(
         &body.statements,
         &param_names(&function.params),
     )?);
+    #[allow(clippy::redundant_locals)] // rebind to obtain a mutable binding for injection
     let mut params = params;
     inject_arguments_object(source, span(function.span), &mut params, &mut statements);
     Ok(Expr::Function(FunctionExpr {

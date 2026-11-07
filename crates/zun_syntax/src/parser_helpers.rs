@@ -329,6 +329,7 @@ pub(crate) fn parse_template_parts(
 /// substitution, between each pair, and after the last. `raw` chunks keep the
 /// source text as written (no escape decoding); `cooked` chunks are decoded.
 #[allow(clippy::type_complexity)]
+#[allow(clippy::vec_box)] // Vec<Box<Expr>> matches the AST node's owned-expression shape
 pub(crate) fn parse_tagged_template_parts(
     raw: &str,
     span: Span,
@@ -511,7 +512,7 @@ impl Parser<'_> {
         match t.kind {
             TokenKind::Number => {
                 self.bump();
-                let value = self.text(t).parse::<f64>().unwrap_or_else(|_| f64::NAN);
+                let value = self.text(t).parse::<f64>().unwrap_or(f64::NAN);
                 Expr::Number {
                     value,
                     span: t.span,
@@ -536,7 +537,7 @@ impl Parser<'_> {
                 self.bump();
                 let raw = self.text(t).to_string();
                 Expr::Template {
-                    parts: parse_template_parts(&raw, t.span, &mut self.diagnostics),
+                    parts: parse_template_parts(&raw, t.span, self.diagnostics),
                     span: t.span,
                 }
             }
@@ -1026,7 +1027,7 @@ impl Parser<'_> {
                     let t = self.bump();
                     let raw = self.text(t).to_string();
                     let (cooked, raw_chunks, exprs) =
-                        parse_tagged_template_parts(&raw, t.span, &mut self.diagnostics);
+                        parse_tagged_template_parts(&raw, t.span, self.diagnostics);
                     expr = Expr::TaggedTemplate {
                         span: expr.span().to(t.span),
                         tag: Box::new(expr),
@@ -1102,6 +1103,7 @@ impl Parser<'_> {
 
     pub(crate) fn binary(&mut self, min_level: u8) -> Expr {
         let mut lhs = self.unary();
+        #[allow(clippy::while_let_loop)] // the loop has several distinct break conditions
         loop {
             let Some((op, level)) = binary_op(self.peek().kind) else {
                 break;

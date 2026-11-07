@@ -277,6 +277,7 @@ thread_local! {
     /// Lexical stack of the classes being converted: each entry carries the
     /// class name span and the `#private` names it declares (name, is_static),
     /// so `#x in obj` can resolve to the declaring class.
+    #[allow(clippy::type_complexity)] // describes the private-name scope stack inline
     static PRIVATE_SCOPES: std::cell::RefCell<Vec<(Span, Vec<(String, bool)>)>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }

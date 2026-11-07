@@ -138,7 +138,7 @@ pub(super) fn convert_class_declaration_inner(
     if base.is_none() {
         infer_constructor_fields(source, class_declaration, &mut fields, &methods);
     }
-    return Ok(crate::ast::Class {
+    Ok(crate::ast::Class {
         name: Name {
             span: Span::new(id_span.start, id_span.end),
         },
@@ -155,7 +155,7 @@ pub(super) fn convert_class_declaration_inner(
         methods,
         symbol_methods,
         span: Span::new(class_declaration.span.start, class_declaration.span.end),
-    });
+    })
 }
 
 /// A field with a run-time computed key. The key is evaluated once, when the
