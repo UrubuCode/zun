@@ -175,27 +175,16 @@ impl Checker<'_> {
         {
             return Ok(self.check_data_view_method(cx, receiver, mname, args, span));
         }
-        // ES2025 Set methods lower to the prelude `__zunSetOp*` helpers,
-        // which follow the set-like protocol on the argument.
-        if receiver.ty == Ty::Set
-            && args.len() == 1
-            && matches!(
-                mname,
-                "union"
-                    | "intersection"
-                    | "difference"
-                    | "symmetricDifference"
-                    | "isSubsetOf"
-                    | "isSupersetOf"
-                    | "isDisjointFrom"
-            )
+        // ES2025 Set operations lower to the prelude `__zunSetOp*` helpers,
+        // which follow the set-like protocol on the argument. The seven member
+        // names and their helper selection come from the one authoritative
+        // `zun_natives` Set-operation table shared with the dynamic path.
+        if let Some(set_op) = (receiver.ty == Ty::Set && args.len() == 1)
+            .then(|| zun_natives::set_operation(mname))
+            .flatten()
         {
-            let predicate = mname.starts_with("is");
-            let helper = if predicate {
-                "__zunSetOpBool"
-            } else {
-                "__zunSetOpSet"
-            };
+            let predicate = set_op.predicate;
+            let helper = set_op.helper();
             if let Some(&func) = self.by_name.get(helper) {
                 let argument = self.check_expr(cx, &args[0]);
                 let op = hir::Expr {

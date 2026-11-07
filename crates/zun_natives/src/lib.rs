@@ -20,6 +20,11 @@ mod array_methods;
 pub use array_methods::{array_method, ArrayHandling, ArrayMethod};
 mod boolean;
 mod buffer;
+mod collection_methods;
+pub use collection_methods::{
+    map_method, set_method, set_operation, CollectionHandling, CollectionMethod, SetOp,
+    SET_OP_BOOL_HELPER, SET_OP_SET_HELPER,
+};
 mod collections;
 mod node_buffer;
 pub use collections::USER_CLASS_FLAG;

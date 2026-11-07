@@ -85,34 +85,16 @@ impl Checker<'_> {
                 return Some(descriptor);
             }
         }
+        // Standard `Map`/`Set` methods routed to natives: the native name comes
+        // from the one authoritative `zun_natives` collection-method table
+        // shared with the dynamic `any`-receiver path; only the sema-side return
+        // and argument types stay here.
+        if matches!(receiver_ty, Ty::Map | Ty::Set) {
+            if let Some(descriptor) = Self::collection_method_descriptor(receiver_ty, mname) {
+                return Some(descriptor);
+            }
+        }
         match (receiver_ty, mname) {
-            (Ty::Map, "set") => Some(("mapSetChain", Ty::Map, vec![Ty::Any, Ty::Any])),
-            (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),
-            (Ty::Map, "has") => Some(("mapHas", Ty::Boolean, vec![Ty::Any])),
-            (Ty::Map, "size") => Some(("mapSize", Ty::Int(IntKind::U64), vec![])),
-            (Ty::Map, "delete") => Some(("mapDelete", Ty::Boolean, vec![Ty::Any])),
-            (Ty::Map, "clear") => Some(("mapClear", Ty::Void, vec![])),
-            (Ty::Map, "values") => Some(("mapValues", Ty::Any, vec![])),
-            (Ty::Map, "keys") => Some(("mapKeys", Ty::Any, vec![])),
-            (Ty::Map, "entries") => Some(("mapEntries", Ty::Any, vec![])),
-            (Ty::Map, "forEach") => Some((
-                "mapForEach",
-                Ty::Void,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Set, "add") => Some(("setAddChain", Ty::Set, vec![Ty::Any])),
-            (Ty::Set, "has") => Some(("setHas", Ty::Boolean, vec![Ty::Any])),
-            (Ty::Set, "size") => Some(("setSize", Ty::Int(IntKind::U64), vec![])),
-            (Ty::Set, "delete") => Some(("setDelete", Ty::Boolean, vec![Ty::Any])),
-            (Ty::Set, "clear") => Some(("setClear", Ty::Void, vec![])),
-            (Ty::Set, "values") => Some(("setValues", Ty::Any, vec![])),
-            (Ty::Set, "keys") => Some(("setValues", Ty::Any, vec![])),
-            (Ty::Set, "entries") => Some(("setEntries", Ty::Any, vec![])),
-            (Ty::Set, "forEach") => Some((
-                "setForEach",
-                Ty::Void,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
             (Ty::WeakMap, "set") => Some(("weakMapSet", Ty::WeakMap, vec![Ty::Any, Ty::Any])),
             (Ty::WeakMap, "get") => Some(("weakMapGet", Ty::Any, vec![Ty::Any])),
             (Ty::WeakMap, "has") => Some(("weakMapHas", Ty::Boolean, vec![Ty::Any])),
@@ -365,6 +347,58 @@ impl Checker<'_> {
         };
         let native = zun_natives::array_method(mname)?.native;
         Some((native, return_ty, expected))
+    }
+
+    /// The sema-side return and argument types for a standard `Map`/`Set`
+    /// method, paired with its native name read from the single authoritative
+    /// `zun_natives` collection-method table shared with the dynamic
+    /// `any`-receiver path. `size` is a property-style accessor (no shared
+    /// method-call native), so it stays here directly. The ES2025 Set
+    /// operations are lowered in `mcall_buffer_set` to the prelude helpers, not
+    /// routed through this native table. Returns `None` for any other member.
+    fn collection_method_descriptor(
+        receiver_ty: Ty,
+        mname: &str,
+    ) -> Option<(&'static str, Ty, Vec<Ty>)> {
+        let dynamic_fn = Ty::Function(hir::DYNAMIC_FUNCTION);
+        match receiver_ty {
+            Ty::Map => {
+                if mname == "size" {
+                    return Some(("mapSize", Ty::Int(IntKind::U64), vec![]));
+                }
+                let (return_ty, expected): (Ty, Vec<Ty>) = match mname {
+                    "set" => (Ty::Map, vec![Ty::Any, Ty::Any]),
+                    "get" => (Ty::Any, vec![Ty::Any]),
+                    "has" => (Ty::Boolean, vec![Ty::Any]),
+                    "delete" => (Ty::Boolean, vec![Ty::Any]),
+                    "clear" => (Ty::Void, vec![]),
+                    "values" => (Ty::Any, vec![]),
+                    "keys" => (Ty::Any, vec![]),
+                    "entries" => (Ty::Any, vec![]),
+                    "forEach" => (Ty::Void, vec![dynamic_fn]),
+                    _ => return None,
+                };
+                Some((zun_natives::map_method(mname)?.native, return_ty, expected))
+            }
+            Ty::Set => {
+                if mname == "size" {
+                    return Some(("setSize", Ty::Int(IntKind::U64), vec![]));
+                }
+                let (return_ty, expected): (Ty, Vec<Ty>) = match mname {
+                    "add" => (Ty::Set, vec![Ty::Any]),
+                    "has" => (Ty::Boolean, vec![Ty::Any]),
+                    "delete" => (Ty::Boolean, vec![Ty::Any]),
+                    "clear" => (Ty::Void, vec![]),
+                    "values" => (Ty::Any, vec![]),
+                    "keys" => (Ty::Any, vec![]),
+                    "entries" => (Ty::Any, vec![]),
+                    "forEach" => (Ty::Void, vec![dynamic_fn]),
+                    _ => return None,
+                };
+                Some((zun_natives::set_method(mname)?.native, return_ty, expected))
+            }
+            _ => None,
+        }
     }
 
     /// The native module a managed/typed-array intrinsic resolves against,

@@ -596,26 +596,16 @@ impl<'a> Interp<'a> {
                             heap.set_len(namespace).is_some(),
                         )
                     });
-                    // ES2025 Set methods run the prelude helper that follows the
-                    // set-like protocol on the argument.
-                    if is_set
-                        && matches!(
-                            member.as_ref(),
-                            "union"
-                                | "intersection"
-                                | "difference"
-                                | "symmetricDifference"
-                                | "isSubsetOf"
-                                | "isSupersetOf"
-                                | "isDisjointFrom"
-                        )
+                    // ES2025 Set operations run the prelude helper that follows
+                    // the set-like protocol on the argument. The seven member
+                    // names and their helper selection come from the one
+                    // authoritative `zun_natives` Set-operation table shared
+                    // with the typed sema path.
+                    if let Some(set_op) = is_set
+                        .then(|| zun_natives::set_operation(member.as_ref()))
+                        .flatten()
                     {
-                        let helper = if member.starts_with("is") {
-                            "__zunSetOpBool"
-                        } else {
-                            "__zunSetOpSet"
-                        };
-                        if let Some(rid) = self.free_function_rid(helper) {
+                        if let Some(rid) = self.free_function_rid(set_op.helper()) {
                             let other = call_args
                                 .first()
                                 .and_then(|value| {
@@ -660,41 +650,25 @@ impl<'a> Interp<'a> {
                             return Ok(Value::Any(boxed));
                         }
                     }
-                    let native = if is_map {
-                        match member.as_ref() {
-                            "set" => Some("mapSetChain"),
-                            "get" => Some("mapGet"),
-                            "has" => Some("mapHas"),
-                            "delete" => Some("mapDelete"),
-                            "clear" => Some("mapClear"),
-                            "keys" => Some("mapKeys"),
-                            "values" => Some("mapValues"),
-                            "entries" => Some("mapEntries"),
-                            "forEach" => Some("mapForEach"),
-                            _ => None,
-                        }
+                    // The member → native mapping (and the `mapSetChain`
+                    // argument reshaping) comes from the one authoritative
+                    // `zun_natives` collection-method table shared with the
+                    // typed sema path.
+                    let spec = if is_map {
+                        zun_natives::map_method(member.as_ref())
                     } else if is_set {
-                        match member.as_ref() {
-                            "add" => Some("setAddChain"),
-                            "has" => Some("setHas"),
-                            "delete" => Some("setDelete"),
-                            "clear" => Some("setClear"),
-                            "keys" | "values" => Some("setValues"),
-                            "entries" => Some("setEntries"),
-                            "forEach" => Some("setForEach"),
-                            _ => None,
-                        }
+                        zun_natives::set_method(member.as_ref())
                     } else {
                         None
                     };
-                    if let Some(native) = native {
+                    if let Some(spec) = spec {
                         let mut native_args = Vec::with_capacity(call_args.len() + 1);
                         native_args.push(Value::Object(namespace));
                         native_args.extend(call_args.iter().cloned());
-                        if native == "mapSetChain" {
+                        if spec.handling == zun_natives::CollectionHandling::SetChain {
                             native_args.resize(3, Value::Void);
                         }
-                        let result = self.call_managed_collection(native, &native_args)?;
+                        let result = self.call_managed_collection(spec.native, &native_args)?;
                         let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                             .unwrap_or_else(zun_core::Any::void);
                         return Ok(Value::Any(boxed));
