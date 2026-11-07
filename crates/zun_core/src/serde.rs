@@ -150,6 +150,7 @@ pub fn write_uvarint(out: &mut Vec<u8>, mut value: u64) {
 /// A forward-only reader over a serialized byte stream. Every method returns
 /// `None` on a truncated/invalid stream so the caller can raise one clean
 /// error rather than panic.
+#[derive(Debug)]
 pub struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,

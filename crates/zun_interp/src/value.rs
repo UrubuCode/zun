@@ -50,7 +50,7 @@ impl Value {
                 }
             }
             Value::Any(any) if any.as_object().is_some() => {
-                let old = any.as_object().expect("object Any payload") as usize;
+                let old = any.as_object().expect("object Any payload");
                 let new = relocation.relocate_address(old);
                 if old == new {
                     false

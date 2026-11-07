@@ -25,6 +25,9 @@ impl<'a> Interp<'a> {
                 }
                 return;
             }
+            // `state` is consumed only by the intentionally-unreachable match
+            // below; silence the dead-code unused_variables warning.
+            #[allow(unused_variables)]
             if let Some(state) = zun_gc::with_current_heap(|heap| heap.promise_state(obj)) {
                 // ECMAScript NewPromiseResolveThenableJob: adopting a native
                 // Promise costs a job (which attaches the pass-through reaction)
@@ -272,7 +275,7 @@ impl<'a> Interp<'a> {
             .get((method_rid as usize).wrapping_sub(1))
             .and_then(|method| read_body(&self.module.code, method.body_offset).ok())
             .map(|body| {
-                matches!(decode_one(&body.code), Ok((first, _)) if first.opcode == Opcode::AsyncGenStart)
+                matches!(decode_one(body.code), Ok((first, _)) if first.opcode == Opcode::AsyncGenStart)
             })
             .unwrap_or(false);
         if !is_async_gen {

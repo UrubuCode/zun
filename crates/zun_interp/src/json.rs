@@ -190,7 +190,7 @@ impl Interp<'_> {
         &mut self,
         handle: zun_core::FunctionHandle,
         this: Value,
-        mut call_args: Vec<Value>,
+        call_args: Vec<Value>,
     ) -> Result<Value, RunError> {
         // Callback parameters are dynamic: hand them over boxed.
         let call_args: Vec<Value> = call_args
@@ -385,7 +385,7 @@ impl Interp<'_> {
                 ctx.slot_set(slot, next);
             }
         }
-        if let Some(_) = as_obj(&value) {
+        if as_obj(&value).is_some() {
             value = Value::Object(ctx.slot_get(slot));
         }
         // 3. unwrap primitive wrapper objects

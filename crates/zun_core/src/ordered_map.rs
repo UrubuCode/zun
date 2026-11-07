@@ -222,14 +222,12 @@ impl OrderedMap {
         let mask = self.buckets.len() - 1;
         let mut slot = hash as usize & mask;
         for _ in 0..self.buckets.len() {
-            match self.buckets[slot] {
-                None => return None,
-                Some(index) => {
-                    if self.entries[index]
-                        .is_some_and(|(key, _, entry_hash)| entry_hash == hash && equal(key))
-                    {
-                        return Some(index);
-                    }
+            {
+                let index = self.buckets[slot]?;
+                if self.entries[index]
+                    .is_some_and(|(key, _, entry_hash)| entry_hash == hash && equal(key))
+                {
+                    return Some(index);
                 }
             }
             slot = (slot + 1) & mask;

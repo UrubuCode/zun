@@ -22,7 +22,7 @@ impl<'a> Interp<'a> {
                     Value::Object(obj) => obj,
                     other => {
                         let count = match &other {
-                            Value::Str(text) => zun_core::wtf16::len16(&text),
+                            Value::Str(text) => zun_core::wtf16::len16(text),
                             _ => 0,
                         };
                         let array = zun_gc::with_current_heap_mut(|heap| {

@@ -12,8 +12,8 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_call_rest(
         &mut self,
-        mut stack: &mut Vec<Value>,
-        mut pc: &mut usize,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
         locals: &mut Vec<Value>,
         body: &zun_module::MethodBody<'_>,
         instr: Instruction,
@@ -43,7 +43,7 @@ impl Interp<'_> {
         if argument_count < rest_index as usize {
             return Err(RunError::BadToken);
         }
-        let values = pop_n(&mut stack, argument_count)?;
+        let values = pop_n(stack, argument_count)?;
         let rest_values = &values[rest_index as usize..];
         let rest_array = zun_gc::with_current_heap_mut(|heap| -> Result<_, RunError> {
             let array = heap.alloc_array(rest_values.len());
@@ -63,7 +63,7 @@ impl Interp<'_> {
         let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
             ExecutionOutcome::Complete(value) => value,
             ExecutionOutcome::Thrown(exception) => {
-                if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                if self.route_exception(body, stack, pc, next - size, &exception) {
                     return Ok(ArmFlow::Continue);
                 }
                 return Err(RunError::Thrown(exception));
@@ -72,7 +72,7 @@ impl Interp<'_> {
             ExecutionOutcome::Suspended(frame) => {
                 return Err(self.propagate_suspended(
                     frame,
-                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                    ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                 ));
             }
         };
@@ -84,8 +84,8 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_call_rest_array(
         &mut self,
-        mut stack: &mut Vec<Value>,
-        mut pc: &mut usize,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
         locals: &mut Vec<Value>,
         body: &zun_module::MethodBody<'_>,
         instr: Instruction,
@@ -110,7 +110,7 @@ impl Interp<'_> {
         if callee_body.param_count != 1 {
             return Err(RunError::BadToken);
         }
-        let array = pop(&mut stack)?.as_object();
+        let array = pop(stack)?.as_object();
         let args = vec![Value::Object(array)];
         let link = RootLink {
             stack: std::ptr::from_mut(stack.as_mut_slice()),
@@ -120,7 +120,7 @@ impl Interp<'_> {
         let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
             ExecutionOutcome::Complete(value) => value,
             ExecutionOutcome::Thrown(exception) => {
-                if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                if self.route_exception(body, stack, pc, next - size, &exception) {
                     return Ok(ArmFlow::Continue);
                 }
                 return Err(RunError::Thrown(exception));
@@ -129,7 +129,7 @@ impl Interp<'_> {
             ExecutionOutcome::Suspended(frame) => {
                 return Err(self.propagate_suspended(
                     frame,
-                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                    ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                 ));
             }
         };
@@ -141,8 +141,8 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_call_rest_array_fixed(
         &mut self,
-        mut stack: &mut Vec<Value>,
-        mut pc: &mut usize,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
         locals: &mut Vec<Value>,
         body: &zun_module::MethodBody<'_>,
         instr: Instruction,
@@ -168,7 +168,7 @@ impl Interp<'_> {
         if callee_body.param_count != fixed_count as u16 + 1 {
             return Err(RunError::BadToken);
         }
-        let mut args = pop_n(&mut stack, fixed_count + 1)?;
+        let mut args = pop_n(stack, fixed_count + 1)?;
         let array = args.pop().ok_or(RunError::BadToken)?.as_object();
         args.push(Value::Object(array));
         let link = RootLink {
@@ -179,7 +179,7 @@ impl Interp<'_> {
         let result = match self.dispatch_outcome(callee_rid, args, Some(&link)) {
             ExecutionOutcome::Complete(value) => value,
             ExecutionOutcome::Thrown(exception) => {
-                if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                if self.route_exception(body, stack, pc, next - size, &exception) {
                     return Ok(ArmFlow::Continue);
                 }
                 return Err(RunError::Thrown(exception));
@@ -188,7 +188,7 @@ impl Interp<'_> {
             ExecutionOutcome::Suspended(frame) => {
                 return Err(self.propagate_suspended(
                     frame,
-                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                    ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                 ));
             }
         };
@@ -200,8 +200,8 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_call_indirect_rest(
         &mut self,
-        mut stack: &mut Vec<Value>,
-        mut pc: &mut usize,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
         locals: &mut Vec<Value>,
         body: &zun_module::MethodBody<'_>,
         instr: Instruction,
@@ -215,8 +215,8 @@ impl Interp<'_> {
             return Err(RunError::BadToken);
         }
         let argument_count = argument_count as usize;
-        let values = pop_n(&mut stack, argument_count)?;
-        let function = pop(&mut stack)?;
+        let values = pop_n(stack, argument_count)?;
+        let function = pop(stack)?;
         let Value::Function(handle) = function else {
             return Err(RunError::BadToken);
         };
@@ -265,7 +265,7 @@ impl Interp<'_> {
         let result = match self.dispatch_outcome(handle.method_rid(), call_args, Some(&link)) {
             ExecutionOutcome::Complete(value) => value,
             ExecutionOutcome::Thrown(exception) => {
-                if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                if self.route_exception(body, stack, pc, next - size, &exception) {
                     return Ok(ArmFlow::Continue);
                 }
                 return Err(RunError::Thrown(exception));
@@ -274,7 +274,7 @@ impl Interp<'_> {
             ExecutionOutcome::Suspended(frame) => {
                 return Err(self.propagate_suspended(
                     frame,
-                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                    ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                 ));
             }
         };
@@ -286,8 +286,8 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_call_virt_rest(
         &mut self,
-        mut stack: &mut Vec<Value>,
-        mut pc: &mut usize,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
         locals: &mut Vec<Value>,
         body: &zun_module::MethodBody<'_>,
         instr: Instruction,
@@ -316,7 +316,7 @@ impl Interp<'_> {
         if argument_count < rest_index {
             return Err(RunError::BadToken);
         }
-        let values = pop_n(&mut stack, argument_count)?;
+        let values = pop_n(stack, argument_count)?;
         let primitive_receiver = matches!(values.first(), Some(Value::Str(_) | Value::Float(_, _)))
             || matches!(
                 values.first(),
@@ -354,7 +354,7 @@ impl Interp<'_> {
         let result = match self.dispatch_outcome(target, args, Some(&link)) {
             ExecutionOutcome::Complete(value) => value,
             ExecutionOutcome::Thrown(exception) => {
-                if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                if self.route_exception(body, stack, pc, next - size, &exception) {
                     return Ok(ArmFlow::Continue);
                 }
                 return Err(RunError::Thrown(exception));
@@ -363,7 +363,7 @@ impl Interp<'_> {
             ExecutionOutcome::Suspended(frame) => {
                 return Err(self.propagate_suspended(
                     frame,
-                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                    ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                 ));
             }
         };

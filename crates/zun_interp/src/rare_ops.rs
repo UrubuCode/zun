@@ -10,12 +10,12 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_throw(
         &mut self,
-        mut stack: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
         pc: &mut usize,
         body: &zun_module::MethodBody<'_>,
         size: usize,
     ) -> Result<ArmFlow, RunError> {
-        let exception = pop(&mut stack)?;
+        let exception = pop(stack)?;
         let throw_pc = *pc - size;
         let handler = body
             .handlers
@@ -47,14 +47,14 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_rethrow(
         &mut self,
-        mut stack: &mut Vec<Value>,
-        mut pc: &mut usize,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
         body: &zun_module::MethodBody<'_>,
         next: usize,
         size: usize,
     ) -> Result<ArmFlow, RunError> {
-        let exception = pop(&mut stack)?;
-        if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+        let exception = pop(stack)?;
+        if self.route_exception(body, stack, pc, next - size, &exception) {
             return Ok(ArmFlow::Continue);
         }
         Err(RunError::Thrown(exception))
@@ -76,7 +76,7 @@ impl Interp<'_> {
             }
             _ => return Err(RunError::BadToken),
         };
-        let value = pop(&mut stack)?;
+        let value = pop(stack)?;
         let value = if let Value::Any(any) = value {
             zun_gc::with_current_heap(|heap| value::Value::unbox_any(any, heap))
                 .ok_or(RunError::BadToken)?
@@ -100,9 +100,9 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_import_dynamic(
         &mut self,
-        mut stack: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
     ) -> Result<ArmFlow, RunError> {
-        let specifier = match pop(&mut stack)? {
+        let specifier = match pop(stack)? {
             Value::Str(specifier) => specifier,
             _ => return Err(RunError::BadToken),
         };

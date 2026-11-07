@@ -47,6 +47,7 @@ impl ByteView {
     pub fn offset(self) -> usize {
         self.offset
     }
+    #[allow(clippy::len_without_is_empty)] // fixed-size view; emptiness is not a meaningful query
     pub fn len(self) -> usize {
         self.length
     }
@@ -127,6 +128,7 @@ impl DataView {
         self.view.offset()
     }
 
+    #[allow(clippy::len_without_is_empty)] // fixed-size view; emptiness is not a meaningful query
     pub fn len(self) -> usize {
         self.view.len()
     }
@@ -411,7 +413,7 @@ impl TypedArrayView {
     ) -> Option<Self> {
         let byte_length = length.checked_mul(element.size())?;
         let view = ByteView::new(buffer_length, offset, byte_length)?;
-        (offset % element.size() == 0).then_some(Self {
+        offset.is_multiple_of(element.size()).then_some(Self {
             view,
             element,
             track: false,
@@ -428,7 +430,7 @@ impl TypedArrayView {
         offset: usize,
         element: TypedElement,
     ) -> Option<Self> {
-        if offset % element.size() != 0 || offset > buffer_length {
+        if !offset.is_multiple_of(element.size()) || offset > buffer_length {
             return None;
         }
         let length = ((buffer_length - offset) / element.size()) * element.size();
@@ -465,6 +467,7 @@ impl TypedArrayView {
         })
     }
 
+    #[allow(clippy::len_without_is_empty)] // fixed-size view; emptiness is not a meaningful query
     pub fn len(self) -> usize {
         self.view.len() / self.element.size()
     }

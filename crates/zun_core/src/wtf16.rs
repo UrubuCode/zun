@@ -93,22 +93,6 @@ pub fn to_utf8_lossy(text: &str) -> Cow<'_, str> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lone_surrogates_round_trip() {
-        let s = from_units(&[0x61, 0xD800, 0x62, 0xDE00, 0xD83D, 0xDE00]);
-        assert_eq!(len16(&s), 6);
-        assert_eq!(
-            encode(&s).collect::<Vec<_>>(),
-            vec![0x61, 0xD800, 0x62, 0xDE00, 0xD83D, 0xDE00]
-        );
-        assert_eq!(to_utf8_lossy(&s), "a\u{FFFD}b\u{FFFD}\u{1F600}");
-    }
-}
-
 /// Concatenate two strings, merging a trailing lone high surrogate on the left
 /// with a leading lone low surrogate on the right into one astral scalar.
 pub fn concat(left: &str, right: &str) -> String {
@@ -184,4 +168,20 @@ pub fn normalize(text: String) -> String {
     }
     let units: Vec<u16> = encode(&text).collect();
     from_units(&units)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lone_surrogates_round_trip() {
+        let s = from_units(&[0x61, 0xD800, 0x62, 0xDE00, 0xD83D, 0xDE00]);
+        assert_eq!(len16(&s), 6);
+        assert_eq!(
+            encode(&s).collect::<Vec<_>>(),
+            vec![0x61, 0xD800, 0x62, 0xDE00, 0xD83D, 0xDE00]
+        );
+        assert_eq!(to_utf8_lossy(&s), "a\u{FFFD}b\u{FFFD}\u{1F600}");
+    }
 }

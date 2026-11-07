@@ -453,6 +453,9 @@ impl RegexValue {
                 }
             }
         }
+        // The compiled regex is shared within the single-threaded runtime; the
+        // Arc is for cheap cloning, not cross-thread sharing.
+        #[allow(clippy::arc_with_non_send_sync)]
         let backtrack = |source: &str, flags: &str| -> Result<Engine, zun_regex::RegexParseError> {
             // The backtracking engine knows `u` but not `v` (a superset of it).
             let engine_flags = if flags.contains('v') {
@@ -967,7 +970,6 @@ impl RegexValue {
         let matches = self
             .match_spans16(input, global)?
             .into_iter()
-            .map(|(start, end, groups)| (start, end, groups))
             .collect::<Vec<_>>();
         Ok(self.expand_matches(input, &matches, replacement))
     }

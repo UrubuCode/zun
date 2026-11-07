@@ -36,7 +36,7 @@ impl<'a> Interp<'a> {
                         }));
                     }
                     call_args.push(Value::Object(target));
-                    call_args.push(Value::Str(key.into()));
+                    call_args.push(Value::Str(key));
                     self.call(callback.method_rid(), call_args, None)?
                 } else {
                     zun_gc::with_current_heap(|heap| {
@@ -69,7 +69,7 @@ impl<'a> Interp<'a> {
                         }));
                     }
                     call_args.push(Value::Object(target));
-                    call_args.push(Value::Str(key.into()));
+                    call_args.push(Value::Str(key));
                     call_args.push(Value::Any(value));
                     let result = self.call(callback.method_rid(), call_args, None)?;
                     return Ok(Value::Bool(matches!(result, Value::Bool(true))));
@@ -105,7 +105,7 @@ impl<'a> Interp<'a> {
                         }));
                     }
                     call_args.push(Value::Object(target));
-                    call_args.push(Value::Str(key.into()));
+                    call_args.push(Value::Str(key));
                     let result = self.call(callback.method_rid(), call_args, None)?;
                     return Ok(Value::Bool(matches!(result, Value::Bool(true))));
                 }

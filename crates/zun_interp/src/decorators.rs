@@ -205,7 +205,7 @@ impl Interp<'_> {
         })
     }
 
-    fn arg<'v>(args: &'v [Value], index: usize) -> Result<&'v Value, RunError> {
+    fn arg(args: &[Value], index: usize) -> Result<&Value, RunError> {
         args.get(index).ok_or(RunError::BadToken)
     }
 

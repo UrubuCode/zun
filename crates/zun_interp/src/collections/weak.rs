@@ -154,7 +154,7 @@ impl<'a> Interp<'a> {
                 // the registration permanently un-unregisterable, per spec.
                 let unregister_token = args
                     .get(3)
-                    .and_then(|value| object(value))
+                    .and_then(object)
                     .map(|token| token.addr() as usize)
                     .unwrap_or(0);
                 zun_gc::with_current_heap_mut(|heap| {
@@ -171,7 +171,7 @@ impl<'a> Interp<'a> {
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let unregister_token = args
                     .get(1)
-                    .and_then(|value| object(value))
+                    .and_then(object)
                     .map(|token| token.addr() as usize)
                     .unwrap_or(0);
                 Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {

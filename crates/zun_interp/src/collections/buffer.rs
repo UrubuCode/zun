@@ -538,7 +538,7 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 let value = match args.get(2).ok_or(RunError::BadToken)? {
-                    Value::Int(value, _) => *value as i64,
+                    Value::Int(value, _) => *value,
                     _ => return Err(RunError::BadToken),
                 };
                 let little_endian = match args.get(3).ok_or(RunError::BadToken)? {

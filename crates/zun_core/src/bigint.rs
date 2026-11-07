@@ -239,6 +239,7 @@ impl BigInt {
         Some((quotient.normalized(), remainder.normalized()))
     }
 
+    #[allow(clippy::should_implement_trait)] // inherent cmp mirrors the JS BigInt comparison API
     pub fn cmp(&self, other: &Self) -> Ordering {
         match (self.negative, other.negative) {
             (true, false) => Ordering::Less,
@@ -487,6 +488,7 @@ fn add_abs(left: &[u32], right: &[u32]) -> Vec<u32> {
     result
 }
 
+#[allow(clippy::needless_range_loop)] // index `i` indexes both `left` and `right` in lockstep
 fn sub_abs(left: &[u32], right: &[u32]) -> Vec<u32> {
     let mut result = Vec::with_capacity(left.len());
     let mut borrow = 0i64;

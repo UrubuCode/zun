@@ -12,15 +12,15 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_load_dynamic(
         &mut self,
-        mut stack: &mut Vec<Value>,
-        mut pc: &mut usize,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
         body: &zun_module::MethodBody<'_>,
         instr: Instruction,
         next: usize,
         size: usize,
     ) -> Result<ArmFlow, RunError> {
         let name = self.dynamic_name(&instr.operand)?.to_owned();
-        let popped = pop(&mut stack)?;
+        let popped = pop(stack)?;
         if name == "length" || name == "name" {
             let callee = match &popped {
                 Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
@@ -57,7 +57,7 @@ impl Interp<'_> {
             match self.new_error_object("TypeError", &message) {
                 Some(error) => {
                     let exception = Value::Object(error);
-                    if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
                         return Ok(ArmFlow::Continue);
                     }
                     return Err(RunError::Thrown(exception));
@@ -74,7 +74,7 @@ impl Interp<'_> {
                         return Ok(ArmFlow::Continue);
                     }
                     Err(RunError::Thrown(exception)) => {
-                        if self.route_exception(body, &mut stack, &mut pc, next - size, &exception)
+                        if self.route_exception(body, stack, pc, next - size, &exception)
                         {
                             return Ok(ArmFlow::Continue);
                         }
@@ -163,7 +163,7 @@ impl Interp<'_> {
             match &concrete {
                 Value::Str(text) => {
                     stack.push(Value::Float(
-                        zun_core::wtf16::len16(&text) as f64,
+                        zun_core::wtf16::len16(text) as f64,
                         zun_il::NumKind::F64,
                     ));
                     return Ok(ArmFlow::Continue);
@@ -247,8 +247,8 @@ impl Interp<'_> {
                         Err(RunError::Thrown(exception)) => {
                             if self.route_exception(
                                 body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -297,7 +297,7 @@ impl Interp<'_> {
             {
                 Ok(v) => v,
                 Err(RunError::Thrown(exception)) => {
-                    if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
                         return Ok(ArmFlow::Continue);
                     }
                     return Err(RunError::Thrown(exception));
@@ -308,7 +308,7 @@ impl Interp<'_> {
             match self.invoke_function_value(getter, vec![Value::Object(object)]) {
                 Ok(v) => v,
                 Err(RunError::Thrown(exception)) => {
-                    if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
                         return Ok(ArmFlow::Continue);
                     }
                     return Err(RunError::Thrown(exception));
@@ -404,7 +404,7 @@ impl Interp<'_> {
         size: usize,
     ) -> Result<ArmFlow, RunError> {
         let name = self.dynamic_name(&instr.operand)?.to_owned();
-        let value = pop(&mut stack)?;
+        let value = pop(stack)?;
         // A class value: the write lands on its static field.
         if let Some(Value::Any(descriptor)) = stack.last() {
             let descriptor = *descriptor;
@@ -437,7 +437,7 @@ impl Interp<'_> {
                         return Ok(ArmFlow::Continue);
                     }
                     Err(RunError::Thrown(exception)) => {
-                        if self.route_exception(body, &mut stack, &mut pc, next - size, &exception)
+                        if self.route_exception(body, stack, pc, next - size, &exception)
                         {
                             return Ok(ArmFlow::Continue);
                         }
@@ -453,7 +453,7 @@ impl Interp<'_> {
             // DynamicObject); `LoadDynamic`'s function-slot fallback
             // reads them back as `Value::Function`. Capture names are
             // never accessors, so no accessor lookup happens here.
-            let object = expando_receiver(pop(&mut stack)?).as_object();
+            let object = expando_receiver(pop(stack)?).as_object();
             // An array gets an expando table on first named store.
             zun_gc::with_current_heap_mut(|heap| {
                 if heap.array_len(object).is_some() {
@@ -473,7 +473,7 @@ impl Interp<'_> {
             // here unboxed, e.g. `o.k = 5.0` or `o.k = null`).
             let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .ok_or(RunError::BadToken)?;
-            let object = expando_receiver(pop(&mut stack)?).as_object();
+            let object = expando_receiver(pop(stack)?).as_object();
             // `arr.length = n` on an array reached through `any`.
             if name == "length" {
                 let level_len = zun_gc::with_current_heap(|heap| {
@@ -550,8 +550,8 @@ impl Interp<'_> {
                         Err(RunError::Thrown(exception)) => {
                             if self.route_exception(
                                 body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -588,8 +588,8 @@ impl Interp<'_> {
                             Err(RunError::Thrown(exception)) => {
                                 if self.route_exception(
                                     body,
-                                    &mut stack,
-                                    &mut pc,
+                                    stack,
+                                    pc,
                                     next - size,
                                     &exception,
                                 ) {
@@ -623,15 +623,15 @@ impl Interp<'_> {
     #[inline(always)]
     pub(super) fn op_load_dynamic_value(
         &mut self,
-        mut stack: &mut Vec<Value>,
-        mut pc: &mut usize,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
         body: &zun_module::MethodBody<'_>,
         next: usize,
         size: usize,
     ) -> Result<ArmFlow, RunError> {
         // A Symbol key reads the symbol-keyed slot; a string key the
         // ordinary dynamic property.
-        let key = pop(&mut stack)?;
+        let key = pop(stack)?;
         let key = match key {
             Value::Any(any) if any.as_symbol().is_none() => {
                 zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void)
@@ -647,7 +647,7 @@ impl Interp<'_> {
             match self.dyn_to_string(&key) {
                 Ok(text) => Value::Str(text.into()),
                 Err(RunError::Thrown(exception)) => {
-                    if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
                         return Ok(ArmFlow::Continue);
                     }
                     return Err(RunError::Thrown(exception));
@@ -657,7 +657,7 @@ impl Interp<'_> {
         } else {
             key
         };
-        let object_raw = expando_receiver(pop(&mut stack)?);
+        let object_raw = expando_receiver(pop(stack)?);
         {
             let concrete = match &object_raw {
                 Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
@@ -674,7 +674,7 @@ impl Interp<'_> {
                 match self.new_error_object("TypeError", &message) {
                     Some(error) => {
                         let exception = Value::Object(error);
-                        if self.route_exception(body, &mut stack, &mut pc, next - size, &exception)
+                        if self.route_exception(body, stack, pc, next - size, &exception)
                         {
                             return Ok(ArmFlow::Continue);
                         }
@@ -699,7 +699,7 @@ impl Interp<'_> {
                             other => other.as_number(),
                         };
                         if at >= 0.0 && at.fract() == 0.0 {
-                            zun_core::wtf16::encode(&text)
+                            zun_core::wtf16::encode(text)
                                 .nth(at as usize)
                                 .map(|u| Value::Str(zun_core::wtf16::from_units(&[u]).into()))
                         } else {
@@ -707,13 +707,13 @@ impl Interp<'_> {
                         }
                     }
                     Value::Str(name) if &**name == "length" => Some(Value::Float(
-                        zun_core::wtf16::len16(&text) as f64,
+                        zun_core::wtf16::len16(text) as f64,
                         zun_il::NumKind::F64,
                     )),
                     Value::Str(name) => name
                         .parse::<usize>()
                         .ok()
-                        .and_then(|at| zun_core::wtf16::encode(&text).nth(at))
+                        .and_then(|at| zun_core::wtf16::encode(text).nth(at))
                         .map(|u| Value::Str(zun_core::wtf16::from_units(&[u]).into())),
                     _ => None,
                 };
@@ -774,8 +774,8 @@ impl Interp<'_> {
                         Err(RunError::Thrown(exception)) => {
                             if self.route_exception(
                                 body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -837,8 +837,8 @@ impl Interp<'_> {
                         Err(RunError::Thrown(exception)) => {
                             if self.route_exception(
                                 body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -1004,7 +1004,7 @@ impl Interp<'_> {
                 }
                 Ok(v) => v,
                 Err(RunError::Thrown(exception)) => {
-                    if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
                         return Ok(ArmFlow::Continue);
                     }
                     return Err(RunError::Thrown(exception));
@@ -1050,7 +1050,7 @@ impl Interp<'_> {
         next: usize,
         size: usize,
     ) -> Result<ArmFlow, RunError> {
-        let value = pop(&mut stack)?;
+        let value = pop(stack)?;
         // Box any non-function value for the slot (a primitive or
         // `null` assigned through a computed key, e.g. `o[k] = v`
         // where `v: any = 5.0`, reaches here unboxed).
@@ -1063,7 +1063,7 @@ impl Interp<'_> {
         } else {
             zun_gc::with_current_heap_mut(|heap| value.box_any(heap)).ok_or(RunError::BadToken)?
         };
-        let key = pop(&mut stack)?;
+        let key = pop(stack)?;
         let key = match key {
             Value::Any(any) if any.as_symbol().is_none() => {
                 zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void)
@@ -1079,7 +1079,7 @@ impl Interp<'_> {
             match self.dyn_to_string(&key) {
                 Ok(text) => Value::Str(text.into()),
                 Err(RunError::Thrown(exception)) => {
-                    if self.route_exception(body, &mut stack, &mut pc, next - size, &exception) {
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
                         return Ok(ArmFlow::Continue);
                     }
                     return Err(RunError::Thrown(exception));
@@ -1089,7 +1089,7 @@ impl Interp<'_> {
         } else {
             key
         };
-        let object = expando_receiver(pop(&mut stack)?).as_object();
+        let object = expando_receiver(pop(stack)?).as_object();
         {
             let key_name: Option<String> = match &key {
                 Value::Str(text) => Some(text.to_string()),

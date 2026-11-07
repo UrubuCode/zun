@@ -514,7 +514,7 @@ impl Interp<'_> {
                     }
                 }
             }
-            if matches!(decode_one(&body.code), Ok((first, _)) if first.opcode == Opcode::AsyncStart)
+            if matches!(decode_one(body.code), Ok((first, _)) if first.opcode == Opcode::AsyncStart)
                 && !unwind::ASYNC_BYPASS.with(|flag| flag.replace(false))
             {
                 return self.async_start(method_rid, args);
@@ -581,7 +581,7 @@ impl Interp<'_> {
                 }
                 Opcode::StoreStatic => {
                     let (owner, field) = self.static_field_key(operand_token(&instr.operand))?;
-                    let value = pop(&mut stack)?;
+                    let value = pop(stack)?;
                     zun_gc::with_current_heap_mut(|heap| {
                         if let Value::Function(handle) = value {
                             heap.static_set_function(owner, field, handle);
@@ -649,7 +649,7 @@ impl Interp<'_> {
                     {
                         return Err(RunError::BadToken);
                     }
-                    let environment = pop(&mut stack)?;
+                    let environment = pop(stack)?;
                     let Value::Object(environment) = environment else {
                         return Err(RunError::BadToken);
                     };
@@ -659,7 +659,7 @@ impl Interp<'_> {
                     )));
                 }
                 Opcode::BoxAny => {
-                    let value = pop(&mut stack)?;
+                    let value = pop(stack)?;
                     // A callable has no `Any` representation; it stays a raw
                     // function value (a null-sentinel default check, for one,
                     // only needs to see that it is not null).
@@ -672,7 +672,7 @@ impl Interp<'_> {
                     }
                 }
                 Opcode::UnboxAny => {
-                    let value = pop(&mut stack)?;
+                    let value = pop(stack)?;
                     if let Value::Any(any) = value {
                         let value =
                             zun_gc::with_current_heap(|heap| value::Value::unbox_any(any, heap))
@@ -724,7 +724,7 @@ impl Interp<'_> {
                     }
                 }
                 Opcode::NewArray => {
-                    let length = pop(&mut stack)?.as_int();
+                    let length = pop(stack)?.as_int();
                     if length < 0 {
                         return Err(RunError::Malformed("negative array length".into()));
                     }
@@ -733,8 +733,8 @@ impl Interp<'_> {
                     stack.push(Value::Object(array));
                 }
                 Opcode::LoadArray => {
-                    let index = pop(&mut stack)?.as_int();
-                    let array = pop(&mut stack)?.as_object();
+                    let index = pop(stack)?.as_int();
+                    let array = pop(stack)?.as_object();
                     if index < 0 {
                         return Err(RunError::Malformed("negative array index".into()));
                     }
@@ -755,9 +755,9 @@ impl Interp<'_> {
                     stack.push(value);
                 }
                 Opcode::StoreArray => {
-                    let value = pop(&mut stack)?;
-                    let index = pop(&mut stack)?.as_int();
-                    let array = pop(&mut stack)?.as_object();
+                    let value = pop(stack)?;
+                    let index = pop(stack)?.as_int();
+                    let array = pop(stack)?.as_object();
                     if index < 0 {
                         return Err(RunError::Malformed("negative array index".into()));
                     }
@@ -795,13 +795,13 @@ impl Interp<'_> {
                     stack.push(value);
                 }
                 Opcode::ArrayLength => {
-                    let array = pop(&mut stack)?.as_object();
+                    let array = pop(stack)?.as_object();
                     let length = zun_gc::with_current_heap(|heap| heap.array_len(array))
                         .ok_or(RunError::BadToken)?;
                     stack.push(Value::Int(length as i64, zun_il::NumKind::U64));
                 }
                 Opcode::ArrayPop => {
-                    let array = pop(&mut stack)?.as_object();
+                    let array = pop(stack)?.as_object();
                     // `pop()` on an empty array answers `undefined`.
                     if zun_gc::with_current_heap(|heap| heap.array_len(array)) == Some(0) {
                         stack.push(Value::Void);
@@ -822,8 +822,8 @@ impl Interp<'_> {
                     stack.push(value);
                 }
                 Opcode::ArrayPush => {
-                    let value = pop(&mut stack)?;
-                    let array = pop(&mut stack)?.as_object();
+                    let value = pop(stack)?;
+                    let array = pop(stack)?.as_object();
                     if let Err(RunError::Native(message)) =
                         self.guard_array(array, integrity::ArrayOp::Add)
                     {
@@ -844,49 +844,49 @@ impl Interp<'_> {
                 }
                 Opcode::LoadLocal => stack.push(locals[operand_local(&instr.operand)].clone()),
                 Opcode::StoreLocal => {
-                    let v = pop(&mut stack)?;
+                    let v = pop(stack)?;
                     locals[operand_local(&instr.operand)] = v;
                 }
                 Opcode::Pop => {
-                    pop(&mut stack)?;
+                    pop(stack)?;
                 }
                 Opcode::Dup => {
                     let top = stack.last().cloned().ok_or_else(underflow)?;
                     stack.push(top);
                 }
-                Opcode::AddF64 => bin_float(&mut stack, |a, b| a + b)?,
-                Opcode::SubF64 => bin_float(&mut stack, |a, b| a - b)?,
-                Opcode::MulF64 => bin_float(&mut stack, |a, b| a * b)?,
-                Opcode::DivF64 => bin_float(&mut stack, |a, b| a / b)?,
-                Opcode::RemF64 => bin_float(&mut stack, |a, b| a % b)?,
+                Opcode::AddF64 => bin_float(stack, |a, b| a + b)?,
+                Opcode::SubF64 => bin_float(stack, |a, b| a - b)?,
+                Opcode::MulF64 => bin_float(stack, |a, b| a * b)?,
+                Opcode::DivF64 => bin_float(stack, |a, b| a / b)?,
+                Opcode::RemF64 => bin_float(stack, |a, b| a % b)?,
                 // Float math machine ops. Tier 1 lowers each of these to the
                 // matching Cranelift instruction; these are the reference
                 // results that equivalence testing holds it to.
-                Opcode::SqrtF64 => un_float(&mut stack, f64::sqrt)?,
-                Opcode::AbsF64 => un_float(&mut stack, f64::abs)?,
-                Opcode::NegF64 => un_float(&mut stack, |a| -a)?,
-                Opcode::FloorF64 => un_float(&mut stack, f64::floor)?,
-                Opcode::CeilF64 => un_float(&mut stack, f64::ceil)?,
-                Opcode::TruncF64 => un_float(&mut stack, f64::trunc)?,
-                Opcode::MinF64 => bin_float(&mut stack, js_min)?,
-                Opcode::MaxF64 => bin_float(&mut stack, js_max)?,
+                Opcode::SqrtF64 => un_float(stack, f64::sqrt)?,
+                Opcode::AbsF64 => un_float(stack, f64::abs)?,
+                Opcode::NegF64 => un_float(stack, |a| -a)?,
+                Opcode::FloorF64 => un_float(stack, f64::floor)?,
+                Opcode::CeilF64 => un_float(stack, f64::ceil)?,
+                Opcode::TruncF64 => un_float(stack, f64::trunc)?,
+                Opcode::MinF64 => bin_float(stack, js_min)?,
+                Opcode::MaxF64 => bin_float(stack, js_max)?,
                 // Integer machine ops. Widths come from the operand kind, so
                 // the bit counts are relative to that width, not to i64.
-                Opcode::RoundF64 => un_float(&mut stack, js_round)?,
-                Opcode::SignF64 => un_float(&mut stack, js_sign)?,
-                Opcode::MinI32 => bin_int_minmax(&mut stack, true)?,
-                Opcode::MaxI32 => bin_int_minmax(&mut stack, false)?,
-                Opcode::ClzI32 => un_int_bits(&mut stack, |value, bits| {
+                Opcode::RoundF64 => un_float(stack, js_round)?,
+                Opcode::SignF64 => un_float(stack, js_sign)?,
+                Opcode::MinI32 => bin_int_minmax(stack, true)?,
+                Opcode::MaxI32 => bin_int_minmax(stack, false)?,
+                Opcode::ClzI32 => un_int_bits(stack, |value, bits| {
                     (value.leading_zeros() - (64 - bits)) as u64
                 })?,
-                Opcode::CtzI32 => un_int_bits(&mut stack, |value, bits| {
+                Opcode::CtzI32 => un_int_bits(stack, |value, bits| {
                     if value == 0 {
                         bits as u64
                     } else {
                         value.trailing_zeros() as u64
                     }
                 })?,
-                Opcode::PopcntI32 => un_int_bits(&mut stack, |value, _| value.count_ones() as u64)?,
+                Opcode::PopcntI32 => un_int_bits(stack, |value, _| value.count_ones() as u64)?,
                 // Integer arithmetic is width-generic here: the result kind
                 // comes from the operands (which sema guarantees match) and the
                 // value wraps to that width. A future typed-stack JIT will
@@ -899,40 +899,40 @@ impl Interp<'_> {
                     operand_i64(&instr.operand),
                     zun_il::NumKind::I64,
                 )),
-                Opcode::AddI32 => bin_int(&mut stack, |a, b| a.wrapping_add(b))?,
-                Opcode::SubI32 => bin_int(&mut stack, |a, b| a.wrapping_sub(b))?,
-                Opcode::MulI32 => bin_int(&mut stack, |a, b| a.wrapping_mul(b))?,
-                Opcode::DivI32 => bin_int_signed_aware(&mut stack, true)?,
-                Opcode::RemI32 => bin_int_signed_aware(&mut stack, false)?,
+                Opcode::AddI32 => bin_int(stack, |a, b| a.wrapping_add(b))?,
+                Opcode::SubI32 => bin_int(stack, |a, b| a.wrapping_sub(b))?,
+                Opcode::MulI32 => bin_int(stack, |a, b| a.wrapping_mul(b))?,
+                Opcode::DivI32 => bin_int_signed_aware(stack, true)?,
+                Opcode::RemI32 => bin_int_signed_aware(stack, false)?,
                 Opcode::NegI32 => {
-                    let v = pop(&mut stack)?;
+                    let v = pop(stack)?;
                     let k = v.int_kind();
                     stack.push(Value::Int(value::wrap_int(v.as_int().wrapping_neg(), k), k));
                 }
                 // Integer bitwise, shift, and exponent machine ops, width- and
                 // signedness-generic from the operand kind.
-                Opcode::AndI32 => bin_int(&mut stack, |a, b| a & b)?,
-                Opcode::OrI32 => bin_int(&mut stack, |a, b| a | b)?,
-                Opcode::XorI32 => bin_int(&mut stack, |a, b| a ^ b)?,
+                Opcode::AndI32 => bin_int(stack, |a, b| a & b)?,
+                Opcode::OrI32 => bin_int(stack, |a, b| a | b)?,
+                Opcode::XorI32 => bin_int(stack, |a, b| a ^ b)?,
                 Opcode::NotI32 => {
-                    let v = pop(&mut stack)?;
+                    let v = pop(stack)?;
                     let k = v.int_kind();
                     stack.push(Value::Int(value::wrap_int(!v.as_int(), k), k));
                 }
-                Opcode::ShlI32 => bin_int_shift(&mut stack, ShiftOp::Left)?,
-                Opcode::ShrI32 => bin_int_shift(&mut stack, ShiftOp::Right)?,
-                Opcode::UShrI32 => bin_int_shift(&mut stack, ShiftOp::UnsignedRight)?,
-                Opcode::PowI32 => bin_int_pow(&mut stack)?,
+                Opcode::ShlI32 => bin_int_shift(stack, ShiftOp::Left)?,
+                Opcode::ShrI32 => bin_int_shift(stack, ShiftOp::Right)?,
+                Opcode::UShrI32 => bin_int_shift(stack, ShiftOp::UnsignedRight)?,
+                Opcode::PowI32 => bin_int_pow(stack)?,
                 Opcode::ConstUndef => stack.push(Value::Void),
                 Opcode::Conv => {
                     let target = zun_il::NumKind::from_imm(operand_i32(&instr.operand))
                         .ok_or_else(|| RunError::Malformed("bad conv kind".into()))?;
-                    let v = pop(&mut stack)?;
+                    let v = pop(stack)?;
                     stack.push(convert(&v, target)?);
                 }
                 Opcode::Concat => {
-                    let b = pop(&mut stack)?;
-                    let a = pop(&mut stack)?;
+                    let b = pop(stack)?;
+                    let a = pop(stack)?;
                     // A string carried through `any` is unboxed before joining.
                     let unbox = |value: Value| match value {
                         Value::Any(any) => {
@@ -946,18 +946,18 @@ impl Interp<'_> {
                         zun_core::wtf16::concat(a.as_str(), b.as_str()).into(),
                     ));
                 }
-                Opcode::CmpEq => cmp(&mut stack, true)?,
-                Opcode::CmpNe => cmp(&mut stack, false)?,
+                Opcode::CmpEq => cmp(stack, true)?,
+                Opcode::CmpNe => cmp(stack, false)?,
                 Opcode::CmpLt | Opcode::CmpLe | Opcode::CmpGt | Opcode::CmpGe => {
                     // Objects run ToPrimitive(number) and a string meeting a non-string
                     // compares numerically, before the primitive comparison.
-                    match self.coerce_relational_operands(&mut stack) {
+                    match self.coerce_relational_operands(stack) {
                         Ok(()) => {}
                         Err(RunError::Thrown(exception)) => {
                             if self.route_exception(
                                 &body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -976,44 +976,44 @@ impl Interp<'_> {
                         Opcode::CmpGt => Ordering::Gt,
                         _ => Ordering::Ge,
                     };
-                    compare(&mut stack, ordering)?
+                    compare(stack, ordering)?
                 }
                 Opcode::Branch => {
                     let target = branch_target(next, &instr.operand);
                     if target < *pc {
                         if let Some(hook) = self.hook {
-                            hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
+                            hook.on_backedge_state(method_rid, target, *pc, stack, locals);
                         }
-                        self.poll_gc(&mut stack, locals, parent);
+                        self.poll_gc(stack, locals, parent);
                     }
                     *pc = target;
                 }
                 Opcode::BranchTrue => {
-                    let condition = pop(&mut stack)?;
+                    let condition = pop(stack)?;
                     if zun_gc::with_current_heap(|heap| {
                         crate::collections::is_truthy(&condition, heap)
                     }) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
-                                hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
+                                hook.on_backedge_state(method_rid, target, *pc, stack, locals);
                             }
-                            self.poll_gc(&mut stack, locals, parent);
+                            self.poll_gc(stack, locals, parent);
                         }
                         *pc = target;
                     }
                 }
                 Opcode::BranchFalse => {
-                    let condition = pop(&mut stack)?;
+                    let condition = pop(stack)?;
                     if !zun_gc::with_current_heap(|heap| {
                         crate::collections::is_truthy(&condition, heap)
                     }) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
                             if let Some(hook) = self.hook {
-                                hook.on_backedge_state(method_rid, target, *pc, &stack, &locals);
+                                hook.on_backedge_state(method_rid, target, *pc, stack, locals);
                             }
-                            self.poll_gc(&mut stack, locals, parent);
+                            self.poll_gc(stack, locals, parent);
                         }
                         *pc = target;
                     }
@@ -1077,7 +1077,7 @@ impl Interp<'_> {
                                 .body_offset,
                         )
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
-                        let args = pop_n(&mut stack, body.param_count as usize)?;
+                        let args = pop_n(stack, body.param_count as usize)?;
                         if args.iter().any(|arg| matches!(arg, Value::Object(_))) {
                             return Err(RunError::BadToken);
                         }
@@ -1092,8 +1092,8 @@ impl Interp<'_> {
                             Err(RunError::Thrown(exception)) => {
                                 if self.route_exception(
                                     &body,
-                                    &mut stack,
-                                    &mut pc,
+                                    stack,
+                                    pc,
                                     next - size,
                                     &exception,
                                 ) {
@@ -1121,7 +1121,7 @@ impl Interp<'_> {
                     }
                     let callee_body = read_body(&self.module.code, callee.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
-                    let args = pop_n(&mut stack, callee_body.param_count as usize)?;
+                    let args = pop_n(stack, callee_body.param_count as usize)?;
                     let link = RootLink {
                         stack: std::ptr::from_mut(stack.as_mut_slice()),
                         locals: std::ptr::from_mut(locals.as_mut_slice()),
@@ -1132,8 +1132,8 @@ impl Interp<'_> {
                         ExecutionOutcome::Thrown(exception) => {
                             if self.route_exception(
                                 &body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -1145,7 +1145,7 @@ impl Interp<'_> {
                         ExecutionOutcome::Suspended(frame) => {
                             return Err(self.propagate_suspended(
                                 frame,
-                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                                ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                             ));
                         }
                     };
@@ -1215,8 +1215,8 @@ impl Interp<'_> {
                             .map_err(|e| RunError::Malformed(e.to_string()))?
                             .param_count as usize
                     };
-                    let args = pop_n(&mut stack, expected_params)?;
-                    let function = pop(&mut stack)?;
+                    let args = pop_n(stack, expected_params)?;
+                    let function = pop(stack)?;
                     // A function value carried through `any` is unboxed first.
                     let function = match function {
                         Value::Any(any) => {
@@ -1255,8 +1255,8 @@ impl Interp<'_> {
                                 let exception = Value::Object(error);
                                 if self.route_exception(
                                     &body,
-                                    &mut stack,
-                                    &mut pc,
+                                    stack,
+                                    pc,
                                     next - size,
                                     &exception,
                                 ) {
@@ -1295,8 +1295,8 @@ impl Interp<'_> {
                             ExecutionOutcome::Thrown(exception) => {
                                 if self.route_exception(
                                     &body,
-                                    &mut stack,
-                                    &mut pc,
+                                    stack,
+                                    pc,
                                     next - size,
                                     &exception,
                                 ) {
@@ -1308,7 +1308,7 @@ impl Interp<'_> {
                             ExecutionOutcome::Suspended(frame) => {
                                 return Err(self.propagate_suspended(
                                     frame,
-                                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                                    ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                                 ));
                             }
                         };
@@ -1329,7 +1329,7 @@ impl Interp<'_> {
                         .method_defs
                         .get(handle.method_rid() as usize - 1)
                         .ok_or(RunError::BadToken)?;
-                    let target_body = read_body(&self.module.code, target.body_offset)
+                    let _target_body = read_body(&self.module.code, target.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
                     let hidden_environment = environment.is_some();
                     // A dynamic call adapts surplus/missing arguments to the
@@ -1362,8 +1362,8 @@ impl Interp<'_> {
                             ExecutionOutcome::Thrown(exception) => {
                                 if self.route_exception(
                                     &body,
-                                    &mut stack,
-                                    &mut pc,
+                                    stack,
+                                    pc,
                                     next - size,
                                     &exception,
                                 ) {
@@ -1375,7 +1375,7 @@ impl Interp<'_> {
                             ExecutionOutcome::Suspended(frame) => {
                                 return Err(self.propagate_suspended(
                                     frame,
-                                    ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                                    ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                                 ));
                             }
                         };
@@ -1391,7 +1391,7 @@ impl Interp<'_> {
                 }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
-                    match builtins::call_builtin(self, id, &mut stack) {
+                    match builtins::call_builtin(self, id, stack) {
                         Ok(()) => {}
                         Err(RunError::Native(message)) => {
                             // A native failure naming a prelude error class
@@ -1403,8 +1403,8 @@ impl Interp<'_> {
                             };
                             if self.route_exception(
                                 &body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -1416,8 +1416,8 @@ impl Interp<'_> {
                             // A user callback invoked by the native threw.
                             if self.route_exception(
                                 &body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -1434,10 +1434,10 @@ impl Interp<'_> {
                     // the current frame plus the ancestor root chain (no JIT
                     // frame is executing at this point).
                     self.allocs += 1;
-                    self.poll_gc(&mut stack, locals, parent);
+                    self.poll_gc(stack, locals, parent);
                     let token = operand_token(&instr.operand);
                     let (field_start, field_count) = self.type_field_range(token)?;
-                    let args = pop_n(&mut stack, field_count)?;
+                    let args = pop_n(stack, field_count)?;
                     let kinds: Vec<u8> = (0..field_count as u32)
                         .map(|i| self.field_kind_at(field_start + i))
                         .collect::<Result<_, _>>()?;
@@ -1458,7 +1458,7 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     let slot = field.slot;
                     let kind = field.kind;
-                    let obj = pop(&mut stack)?.as_object();
+                    let obj = pop(stack)?.as_object();
                     // A dynamic object never carries a class's fixed fields
                     // (a private-brand mismatch): TypeError, not a bad read.
                     let loaded = zun_gc::with_current_heap(|h| {
@@ -1481,8 +1481,8 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     let slot = field.slot;
                     let kind = field.kind;
-                    let value = pop(&mut stack)?;
-                    let obj = pop(&mut stack)?.as_object();
+                    let value = pop(stack)?;
+                    let obj = pop(stack)?.as_object();
                     zun_gc::with_current_heap_mut(|h| {
                         value::store_field(kind, obj, slot, &value, h);
                     });
@@ -1502,7 +1502,7 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     let static_body = read_body(&self.module.code, static_method.body_offset)
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
-                    let args = pop_n(&mut stack, static_body.param_count as usize)?;
+                    let args = pop_n(stack, static_body.param_count as usize)?;
                     // Primitive-backed classes use static method binding: the
                     // receiver is still passed as `this`, but has no heap type
                     // to consult for virtual dispatch.
@@ -1528,8 +1528,8 @@ impl Interp<'_> {
                         ExecutionOutcome::Thrown(exception) => {
                             if self.route_exception(
                                 &body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -1541,7 +1541,7 @@ impl Interp<'_> {
                         ExecutionOutcome::Suspended(frame) => {
                             return Err(self.propagate_suspended(
                                 frame,
-                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                                ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                             ));
                         }
                     };
@@ -1579,7 +1579,7 @@ impl Interp<'_> {
                     if static_body.param_count != fixed_count as u16 + 2 {
                         return Err(RunError::BadToken);
                     }
-                    let mut values = pop_n(&mut stack, fixed_count + 2)?;
+                    let mut values = pop_n(stack, fixed_count + 2)?;
                     let rest_array = values.pop().ok_or(RunError::BadToken)?.as_object();
                     let receiver = values.first().ok_or(RunError::BadToken)?;
                     let primitive_receiver = matches!(receiver, Value::Str(_) | Value::Float(_, _))
@@ -1603,8 +1603,8 @@ impl Interp<'_> {
                         ExecutionOutcome::Thrown(exception) => {
                             if self.route_exception(
                                 &body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -1616,14 +1616,14 @@ impl Interp<'_> {
                         ExecutionOutcome::Suspended(frame) => {
                             return Err(self.propagate_suspended(
                                 frame,
-                                ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals),
+                                ExecutionFrame::snapshot(method_rid, *pc, stack, locals),
                             ));
                         }
                     };
                     stack.push(result);
                 }
                 Opcode::Await => {
-                    let promise = pop(&mut stack)?.as_object();
+                    let promise = pop(stack)?.as_object();
                     // Awaiting a promise handles it — clear any
                     // unhandled-rejection tracking even on the synchronous
                     // already-settled fast path below.
@@ -1647,8 +1647,8 @@ impl Interp<'_> {
                         Err(RunError::Thrown(exception)) => {
                             if self.route_exception(
                                 &body,
-                                &mut stack,
-                                &mut pc,
+                                stack,
+                                pc,
                                 next - size,
                                 &exception,
                             ) {
@@ -1660,10 +1660,10 @@ impl Interp<'_> {
                     }
                 }
                 Opcode::Yield => {
-                    let value = pop(&mut stack)?;
+                    let value = pop(stack)?;
                     self.yielded = Some(value);
                     self.suspended =
-                        Some(ExecutionFrame::snapshot(method_rid, *pc, &stack, &locals));
+                        Some(ExecutionFrame::snapshot(method_rid, *pc, stack, locals));
                     return Err(RunError::Suspended);
                 }
                 Opcode::ImportDynamic => match self.op_import_dynamic(stack)? {

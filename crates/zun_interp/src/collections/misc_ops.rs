@@ -98,7 +98,7 @@ impl<'a> Interp<'a> {
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let iterator = match value {
                     Value::Str(_) => {
-                        self.call_managed_collection("stringIteratorNew", &[value.clone()])?
+                        self.call_managed_collection("stringIteratorNew", std::slice::from_ref(&value))?
                     }
                     other => match as_object_ref(&other) {
                         Some(source) => Value::Object(self.resolve_iterator(source)?),
@@ -181,7 +181,7 @@ impl<'a> Interp<'a> {
                                 || heap.dynamic_accessor_getter(current, &key).is_some()
                                 || heap
                                     .dynamic_keys(current)
-                                    .is_some_and(|keys| keys.iter().any(|k| *k == key));
+                                    .is_some_and(|keys| keys.contains(&key));
                         }
                         (array_len.is_some(), dynamic, found)
                     });

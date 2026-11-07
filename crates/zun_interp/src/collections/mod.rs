@@ -488,7 +488,7 @@ impl<'a> Interp<'a> {
                     if let Some(Value::Any(any)) = args.get(index) {
                         if any.tag() == zun_core::AnyTag::Symbol {
                             let other_is_string = matches!(
-                                args.get(1 - index).map(|v| unbox_arg(v)),
+                                args.get(1 - index).map(unbox_arg),
                                 Some(Ok(Value::Str(_)))
                             );
                             let kind = if other_is_string { "string" } else { "number" };

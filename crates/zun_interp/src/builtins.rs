@@ -108,7 +108,7 @@ impl Interp<'_> {
 }
 
 pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
-    for name in [
+    [
         "bufferNew",
         "bufferLength",
         "bufferSlice",
@@ -365,23 +365,17 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "numberCoerceStrict",
         "mathApply",
         "bigIntUshr",
-    ] {
-        if zun_natives::resolve("collections", name)
+    ].into_iter().find(|&name| zun_natives::resolve("collections", name)
             .or_else(|| zun_natives::resolve("promise", name))
             .or_else(|| zun_natives::resolve("serde", name))
             .map(|(candidate, _)| candidate)
-            == Some(id)
-        {
-            return Some(name);
-        }
-    }
-    None
+            == Some(id)).map(|v| v as _)
 }
 
 /// Recognize the Node `Buffer` intrinsics (the `nodeBuffer` namespace),
 /// serviced on the interpreter's managed byte-view floor.
 pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in [
+    [
         "nodeBufferFromString",
         "nodeBufferFromArray",
         "nodeBufferFromArrayBuffer",
@@ -447,18 +441,13 @@ pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
         "nodeBufferIndexOf",
         "nodeBufferLastIndexOf",
         "nodeBufferIncludes",
-    ] {
-        if zun_natives::resolve("nodeBuffer", name).map(|(candidate, _)| candidate) == Some(id) {
-            return Some(name);
-        }
-    }
-    None
+    ].into_iter().find(|&name| zun_natives::resolve("nodeBuffer", name).map(|(candidate, _)| candidate) == Some(id)).map(|v| v as _)
 }
 
 /// Recognize the `timers` macrotask intrinsics (ASYNC slice 4), serviced on the
 /// interpreter floor because each needs the scheduler, timer heap and heap.
 pub(crate) fn managed_timers_builtin(id: u32) -> Option<&'static str> {
-    for name in [
+    [
         "setTimeout",
         "setInterval",
         "clearTimeout",
@@ -467,36 +456,26 @@ pub(crate) fn managed_timers_builtin(id: u32) -> Option<&'static str> {
         "setImmediate",
         "setTimeoutArgs",
         "setIntervalArgs",
-    ] {
-        if zun_natives::resolve("timers", name).map(|(candidate, _)| candidate) == Some(id) {
-            return Some(name);
-        }
-    }
-    None
+    ].into_iter().find(|&name| zun_natives::resolve("timers", name).map(|(candidate, _)| candidate) == Some(id)).map(|v| v as _)
 }
 
 /// Recognize the `Number.prototype` formatters whose argument needs ToNumber
 /// coercion (which can run user `valueOf` hooks) and whose range errors must
 /// be thrown as managed `RangeError` instances.
 pub(crate) fn managed_number_builtin(id: u32) -> Option<&'static str> {
-    for name in [
+    [
         "numberToFixedJs",
         "numberToExponentialJs",
         "numberToPrecisionJs",
         "numberToStringRadixJs",
-    ] {
-        if zun_natives::resolve("number", name).map(|(candidate, _)| candidate) == Some(id) {
-            return Some(name);
-        }
-    }
-    None
+    ].into_iter().find(|&name| zun_natives::resolve("number", name).map(|(candidate, _)| candidate) == Some(id)).map(|v| v as _)
 }
 
 /// Recognize the extended Array surface (NUCLEUS #7), serviced on the
 /// interpreter floor because each re-enters the interpreter or touches the
 /// managed heap.
 pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
-    for name in [
+    [
         "arrayAt",
         "arrayFindLast",
         "arrayFindLastIndex",
@@ -544,42 +523,27 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
         "arrayLastIndexOf",
         "arrayIncludes",
         "arrayReverse",
-    ] {
-        if zun_natives::resolve("array", name).map(|(candidate, _)| candidate) == Some(id) {
-            return Some(name);
-        }
-    }
-    None
+    ].into_iter().find(|&name| zun_natives::resolve("array", name).map(|(candidate, _)| candidate) == Some(id)).map(|v| v as _)
 }
 
 pub(crate) fn managed_typeinfo_builtin(id: u32) -> Option<&'static str> {
-    for name in [
+    [
         "typeofAny",
         "objectToStringTag",
         "instanceofClass",
         "instanceofDynamic",
         "instanceofBuiltin",
-    ] {
-        if zun_natives::resolve("typeinfo", name).map(|(candidate, _)| candidate) == Some(id) {
-            return Some(name);
-        }
-    }
-    None
+    ].into_iter().find(|&name| zun_natives::resolve("typeinfo", name).map(|(candidate, _)| candidate) == Some(id)).map(|v| v as _)
 }
 
 /// Recognize the `zun:error` intrinsics the interpreter services directly on
 /// its managed floor (the live frame-stack capture behind `Error.stack`).
 pub(crate) fn managed_error_builtin(id: u32) -> Option<&'static str> {
-    for name in ["captureStackTrace"] {
-        if zun_natives::resolve("error", name).map(|(candidate, _)| candidate) == Some(id) {
-            return Some(name);
-        }
-    }
-    None
+    ["captureStackTrace"].into_iter().find(|&name| zun_natives::resolve("error", name).map(|(candidate, _)| candidate) == Some(id)).map(|v| v as _)
 }
 
 pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
-    for name in [
+    [
         "bufferNew",
         "bufferLength",
         "bufferSlice",
@@ -668,11 +632,5 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
     .into_iter()
     // The typed-array intrinsics come from the master table, so a kind
     // cannot be callable from compiled code but unknown here.
-    .chain(crate::typed_arrays::NATIVES.iter().copied())
-    {
-        if zun_natives::resolve("buffer", name).map(|(candidate, _)| candidate) == Some(id) {
-            return Some(name);
-        }
-    }
-    None
+    .chain(crate::typed_arrays::NATIVES.iter().copied()).find(|&name| zun_natives::resolve("buffer", name).map(|(candidate, _)| candidate) == Some(id)).map(|v| v as _)
 }
