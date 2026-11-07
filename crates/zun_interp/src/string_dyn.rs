@@ -320,7 +320,7 @@ impl<'a> Interp<'a> {
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(pieces.len());
                     for (index, piece) in pieces.iter().enumerate() {
-                        let id = heap.intern_string(piece.as_str().into());
+                        let id = heap.intern_string(piece.as_str());
                         heap.array_set(array, index, zun_core::Any::string(id));
                     }
                     array
@@ -644,9 +644,8 @@ impl<'a> Interp<'a> {
                         let array = zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(pieces.len());
                             for (index, piece) in pieces.iter().enumerate() {
-                                let value = zun_core::Any::string(
-                                    heap.intern_string(piece.as_str().into()),
-                                );
+                                let value =
+                                    zun_core::Any::string(heap.intern_string(piece.as_str()));
                                 heap.array_set(array, index, value);
                             }
                             array
@@ -725,7 +724,7 @@ impl<'a> Interp<'a> {
             }
             let iterator = heap.alloc_array_iterator(outer)?;
             heap.ensure_dynamic_entry(iterator);
-            let tag = zun_core::Any::string(heap.intern_string("RegExp String Iterator".into()));
+            let tag = zun_core::Any::string(heap.intern_string("RegExp String Iterator"));
             heap.dynamic_set_symbol(iterator, zun_core::WellKnownSymbol::ToStringTag.id(), tag);
             Some(iterator)
         })

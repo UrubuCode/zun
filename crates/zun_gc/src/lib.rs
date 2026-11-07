@@ -28,7 +28,6 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 
 mod handles;
 mod heap_context;
@@ -159,7 +158,7 @@ pub struct Heap {
     /// Allocation budget that requests a minor collection at a safepoint.
     nursery_budget: usize,
     /// Interned strings, referenced from field slots by index.
-    strings: Vec<Rc<str>>,
+    strings: Vec<zun_core::ZStr>,
     /// Symbols belong to this heap/isolate and never share identity globally.
     symbols: zun_core::SymbolRegistry,
     /// Weak references are cleared after marking and never keep targets alive.

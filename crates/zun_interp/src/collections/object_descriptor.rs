@@ -420,7 +420,7 @@ impl<'a> Interp<'a> {
                             let out = heap.alloc_dynamic();
                             let mut entries: Vec<(String, zun_core::Any, bool)> = Vec::new();
                             for (index, unit) in units.iter().enumerate() {
-                                let id = heap.intern_string(unit.as_str().into());
+                                let id = heap.intern_string(unit.as_str());
                                 entries.push((index.to_string(), zun_core::Any::string(id), true));
                             }
                             entries.push((

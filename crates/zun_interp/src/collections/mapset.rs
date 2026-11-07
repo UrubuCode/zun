@@ -413,7 +413,7 @@ impl<'a> Interp<'a> {
                     let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                     for point in points {
                         zun_gc::with_current_heap_mut(|heap| {
-                            let id = heap.intern_string(point.as_str().into());
+                            let id = heap.intern_string(point.as_str());
                             heap.set_add(roots[0], zun_core::Any::string(id));
                         });
                     }

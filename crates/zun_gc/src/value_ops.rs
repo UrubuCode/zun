@@ -1,12 +1,14 @@
-use std::rc::Rc;
-
 pub(super) fn hash_bytes(bytes: &[u8]) -> u64 {
     bytes.iter().fold(1469598103934665603, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(1099511628211)
     })
 }
 
-pub(super) fn any_same_value_zero(a: zun_core::Any, b: zun_core::Any, strings: &[Rc<str>]) -> bool {
+pub(super) fn any_same_value_zero(
+    a: zun_core::Any,
+    b: zun_core::Any,
+    strings: &[zun_core::ZStr],
+) -> bool {
     if a.tag() != b.tag() {
         return false;
     }

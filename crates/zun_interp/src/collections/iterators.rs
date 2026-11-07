@@ -50,8 +50,7 @@ impl<'a> Interp<'a> {
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(pieces.len());
                     for (index, piece) in pieces.iter().enumerate() {
-                        let value =
-                            zun_core::Any::string(heap.intern_string(piece.as_str().into()));
+                        let value = zun_core::Any::string(heap.intern_string(piece.as_str()));
                         heap.array_set(array, index, value);
                     }
                     array
@@ -68,8 +67,7 @@ impl<'a> Interp<'a> {
                 let iterator = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(points.len());
                     for (index, point) in points.iter().enumerate() {
-                        let value =
-                            zun_core::Any::string(heap.intern_string(point.as_str().into()));
+                        let value = zun_core::Any::string(heap.intern_string(point.as_str()));
                         heap.array_set(array, index, value);
                     }
                     heap.alloc_array_iterator(array)

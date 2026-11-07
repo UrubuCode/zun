@@ -136,7 +136,7 @@ fn settled_await_value(promise: zun_gc::Obj) -> Result<Option<Value>, RunError> 
                         return Err(RunError::Thrown(value));
                     }
                 }
-                Err(RunError::Thrown(Value::Str(Rc::from(
+                Err(RunError::Thrown(Value::Str(zun_core::ZStr::from(
                     heap.promise_error(promise)
                         .unwrap_or_else(|| "Promise rejected".into()),
                 ))))
@@ -145,7 +145,6 @@ fn settled_await_value(promise: zun_gc::Obj) -> Result<Option<Value>, RunError> 
         }
     })
 }
-use std::rc::Rc;
 use value::Value;
 use zun_il::{decode_one, Opcode, Operand};
 use zun_metadata::TableKind;
@@ -599,7 +598,7 @@ impl Interp<'_> {
                 )),
                 Opcode::ConstStr => {
                     let idx = operand_strref(&instr.operand);
-                    let s: Rc<str> = self
+                    let s: zun_core::ZStr = self
                         .module
                         .strings
                         .get(zun_metadata::StringIndex(idx))

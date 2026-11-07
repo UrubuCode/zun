@@ -106,9 +106,7 @@ impl<'a> Interp<'a> {
                             heap.dynamic_set_prototype(object, Some(zun_core::Any::null()));
                             for (name, value) in named_groups {
                                 let any = match value {
-                                    Some(text) => {
-                                        zun_core::Any::string(heap.intern_string(text.into()))
-                                    }
+                                    Some(text) => zun_core::Any::string(heap.intern_string(text)),
                                     None => zun_core::Any::void(),
                                 };
                                 heap.dynamic_set(object, name, any);

@@ -5,8 +5,6 @@
 //! This is the interpreter's own representation; the eventual object model and
 //! GC heap (`zun_gc`) are separate concerns.
 
-use std::rc::Rc;
-
 /// A runtime value.
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -19,8 +17,8 @@ pub enum Value {
     Float(f64, zun_il::NumKind),
     /// A boolean.
     Bool(bool),
-    /// An immutable string. `Rc` keeps cloning a value cheap.
-    Str(Rc<str>),
+    /// An immutable string. `ZStr` keeps cloning a value cheap.
+    Str(zun_core::ZStr),
     /// A reference to an object in the runtime [`Heap`](zun_gc::Heap). Reference
     /// semantics (shared, mutable) come from the shared raw pointer.
     Object(zun_gc::Obj),

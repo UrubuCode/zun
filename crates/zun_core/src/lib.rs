@@ -26,6 +26,7 @@ mod typed_elements;
 #[path = "views.rs"]
 mod views;
 pub mod wtf16;
+mod zstr;
 
 pub use any_value::{Any, AnyTag};
 pub use arrays::{ArrayIterator, ArrayStorage};
@@ -50,6 +51,7 @@ pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedArrayView;
 pub use views::TypedElement;
+pub use zstr::ZStr;
 
 /// Size of one raw object slot in bytes.
 pub const SLOT_SIZE: usize = 8;

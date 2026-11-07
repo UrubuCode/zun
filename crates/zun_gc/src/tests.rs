@@ -46,7 +46,7 @@ fn promise_result_keeps_managed_object_alive() {
 fn map_uses_same_value_zero_and_preserves_entries() {
     let mut heap = Heap::new();
     let map = heap.alloc_map();
-    let one = heap.intern_string(Rc::from("one"));
+    let one = heap.intern_string("one");
     assert_eq!(
         heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::string(one)),
         None
@@ -84,7 +84,7 @@ fn map_uses_same_value_zero_and_preserves_entries() {
     assert_eq!(heap.map_clear(map), Some(()));
     assert_eq!(heap.map_len(map), Some(0));
     assert_eq!(heap.map_has(map, zun_core::Any::int(1)), Some(false));
-    let one = heap.intern_string(Rc::from("one-again"));
+    let one = heap.intern_string("one-again");
     heap.map_insert(map, zun_core::Any::int(1), zun_core::Any::string(one));
     assert_eq!(
         heap.map_remove(map, zun_core::Any::int(1))
@@ -1527,7 +1527,7 @@ fn transitively_reachable_objects_survive() {
 #[test]
 fn string_table_roundtrip() {
     let mut heap = Heap::new();
-    let h = heap.intern_string("hello".into());
+    let h = heap.intern_string("hello");
     assert_eq!(&**heap.string(h), "hello");
 }
 

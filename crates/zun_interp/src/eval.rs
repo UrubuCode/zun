@@ -10,7 +10,6 @@
 //! error, exactly like V8 under a CSP.
 
 use super::{Interp, RunError, Value};
-use std::rc::Rc;
 use zun_module::Module;
 
 /// A failure reported by an [`EvalHost`].
@@ -51,7 +50,9 @@ impl Interp<'_> {
     /// comma-separated list, as in ECMAScript).
     pub(super) fn function_construct(&mut self, args: &[Value]) -> Result<Value, RunError> {
         let Some(host) = self.eval_host else {
-            return Err(RunError::Thrown(Value::Str(Rc::from(CODEGEN_DISALLOWED))));
+            return Err(RunError::Thrown(Value::Str(zun_core::ZStr::from(
+                CODEGEN_DISALLOWED,
+            ))));
         };
         let array = match args.first() {
             Some(Value::Object(array)) => *array,
@@ -77,7 +78,8 @@ impl Interp<'_> {
             return Ok(Value::Function(*handle));
         }
 
-        let thrown = |message: String| RunError::Thrown(Value::Str(Rc::from(message.as_str())));
+        let thrown =
+            |message: String| RunError::Thrown(Value::Str(zun_core::ZStr::from(message.as_str())));
         let (ephemeral, entry) = host
             .compile_function(&params, &body)
             .map_err(|e| thrown(format!("SyntaxError: {e}")))?;

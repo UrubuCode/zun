@@ -2952,7 +2952,7 @@ fn executes_string_unquote_source_method() {
         .expect("compile String unquote");
     let mut output = CaptureOutput::default();
     let result = run(&module, &mut output).expect("run String unquote");
-    assert!(matches!(result, Value::Str(value) if value == "zun".into()));
+    assert!(matches!(result, Value::Str(value) if value == "zun"));
 }
 
 #[test]
@@ -2974,7 +2974,7 @@ fn executes_string_quote_source_method() {
         .expect("compile String quote");
     let mut output = CaptureOutput::default();
     let result = run(&module, &mut output).expect("run String quote");
-    assert!(matches!(result, Value::Str(value) if value == "\"zun\"".into()));
+    assert!(matches!(result, Value::Str(value) if value == "\"zun\""));
 }
 
 #[test]

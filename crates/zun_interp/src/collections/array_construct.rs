@@ -328,8 +328,7 @@ impl<'a> Interp<'a> {
                     let array = zun_gc::with_current_heap_mut(|heap| {
                         let array = heap.alloc_array(units.len());
                         for (index, unit) in units.iter().enumerate() {
-                            let value =
-                                zun_core::Any::string(heap.intern_string(unit.as_str().into()));
+                            let value = zun_core::Any::string(heap.intern_string(unit.as_str()));
                             heap.array_set(array, index, value);
                         }
                         array
@@ -479,9 +478,8 @@ impl<'a> Interp<'a> {
                         zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(points.len());
                             for (index, point) in points.iter().enumerate() {
-                                let value = zun_core::Any::string(
-                                    heap.intern_string(point.as_str().into()),
-                                );
+                                let value =
+                                    zun_core::Any::string(heap.intern_string(point.as_str()));
                                 heap.array_set(array, index, value);
                             }
                             array
@@ -489,7 +487,7 @@ impl<'a> Interp<'a> {
                     }
                     _ => {
                         let Some(source) = object(&concrete) else {
-                            return Err(RunError::Thrown(Value::Str(std::rc::Rc::from(
+                            return Err(RunError::Thrown(Value::Str(zun_core::ZStr::from(
                                 "Array.from: value is not array-like",
                             ))));
                         };
@@ -640,7 +638,7 @@ impl<'a> Interp<'a> {
                                         Some(array)
                                     });
                                     built.ok_or_else(|| {
-                                        RunError::Thrown(Value::Str(std::rc::Rc::from(
+                                        RunError::Thrown(Value::Str(zun_core::ZStr::from(
                                             "Array.from: value is not array-like",
                                         )))
                                     })?
@@ -721,7 +719,7 @@ impl<'a> Interp<'a> {
                         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                         for point in points {
                             zun_gc::with_current_heap_mut(|heap| {
-                                let id = heap.intern_string(point.as_str().into());
+                                let id = heap.intern_string(point.as_str());
                                 heap.array_push(roots[0], zun_core::Any::string(id));
                             });
                         }

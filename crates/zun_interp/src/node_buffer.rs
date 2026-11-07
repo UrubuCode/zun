@@ -51,7 +51,7 @@ fn relative(index: i64, len: usize) -> usize {
     }
 }
 
-fn as_string(value: Option<&Value>) -> Option<std::rc::Rc<str>> {
+fn as_string(value: Option<&Value>) -> Option<zun_core::ZStr> {
     match value? {
         Value::Str(text) => Some(text.clone()),
         _ => None,
@@ -459,7 +459,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             } else {
                 &[][..]
             };
-            Ok(Value::Str(std::rc::Rc::from(
+            Ok(Value::Str(zun_core::ZStr::from(
                 decode(slice, &encoding).as_str(),
             )))
         })()),

@@ -161,9 +161,9 @@ pub extern "C" fn zun_jit_string_compare(left: i64, right: i64) -> i32 {
         let Some(right) = heap.try_string(right as u32) else {
             return 0;
         };
-        if left < right {
+        if left.as_str() < right.as_str() {
             -1
-        } else if left > right {
+        } else if left.as_str() > right.as_str() {
             1
         } else {
             0

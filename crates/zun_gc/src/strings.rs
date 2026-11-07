@@ -1,19 +1,17 @@
-use std::rc::Rc;
-
 use super::Heap;
 
 impl Heap {
-    pub fn intern_string(&mut self, s: Rc<str>) -> u32 {
+    pub fn intern_string(&mut self, s: impl Into<zun_core::ZStr>) -> u32 {
         let handle = self.strings.len() as u32;
-        self.strings.push(s);
+        self.strings.push(s.into());
         handle
     }
 
-    pub fn string(&self, handle: u32) -> &Rc<str> {
+    pub fn string(&self, handle: u32) -> &zun_core::ZStr {
         &self.strings[handle as usize]
     }
 
-    pub fn try_string(&self, handle: u32) -> Option<&Rc<str>> {
+    pub fn try_string(&self, handle: u32) -> Option<&zun_core::ZStr> {
         self.strings.get(handle as usize)
     }
 

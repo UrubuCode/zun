@@ -468,11 +468,11 @@ impl<'a> Interp<'a> {
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         zun_gc::with_current_heap_mut(|heap| {
             let object = heap.alloc_dynamic();
-            let name = Value::Str(std::rc::Rc::from("AggregateError"))
+            let name = Value::Str(zun_core::ZStr::from("AggregateError"))
                 .box_any(heap)
                 .unwrap_or_else(zun_core::Any::null);
             heap.dynamic_set(object, "name", name);
-            let message = Value::Str(std::rc::Rc::from(message))
+            let message = Value::Str(zun_core::ZStr::from(message))
                 .box_any(heap)
                 .unwrap_or_else(zun_core::Any::null);
             heap.dynamic_set(object, "message", message);
@@ -540,7 +540,7 @@ impl<'a> Interp<'a> {
                 let descriptor = match settlement {
                     PromiseSettlement::Resolved(value) => zun_gc::with_current_heap_mut(|heap| {
                         let object = heap.alloc_dynamic();
-                        let status = Value::Str(std::rc::Rc::from("fulfilled"))
+                        let status = Value::Str(zun_core::ZStr::from("fulfilled"))
                             .box_any(heap)
                             .unwrap_or_else(zun_core::Any::null);
                         heap.dynamic_set(object, "status", status);
@@ -550,14 +550,14 @@ impl<'a> Interp<'a> {
                     PromiseSettlement::Rejected(error, reason) => {
                         zun_gc::with_current_heap_mut(|heap| {
                             let object = heap.alloc_dynamic();
-                            let status = Value::Str(std::rc::Rc::from("rejected"))
+                            let status = Value::Str(zun_core::ZStr::from("rejected"))
                                 .box_any(heap)
                                 .unwrap_or_else(zun_core::Any::null);
                             heap.dynamic_set(object, "status", status);
                             // Carry the first-class reason when present, else the
                             // string message.
                             let reason = reason.unwrap_or_else(|| {
-                                Value::Str(std::rc::Rc::from(error.as_str()))
+                                Value::Str(zun_core::ZStr::from(error.as_str()))
                                     .box_any(heap)
                                     .unwrap_or_else(zun_core::Any::null)
                             });
@@ -618,7 +618,7 @@ impl<'a> Interp<'a> {
                         as_object_ref(&self.async_state.aggregates[aggregate].holder).unwrap();
                     let reason = reason.unwrap_or_else(|| {
                         zun_gc::with_current_heap_mut(|heap| {
-                            Value::Str(std::rc::Rc::from(error.as_str()))
+                            Value::Str(zun_core::ZStr::from(error.as_str()))
                                 .box_any(heap)
                                 .unwrap_or_else(zun_core::Any::null)
                         })

@@ -167,7 +167,7 @@ impl<'a> Interp<'a> {
                 }
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let name: std::rc::Rc<str> = match args.get(1).ok_or(RunError::BadToken)? {
+                let name: zun_core::ZStr = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     other => match crate::property_ops::prop_key(other) {
                         Some(crate::property_ops::PropKey::Str(text)) => text.as_str().into(),

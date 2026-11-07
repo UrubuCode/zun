@@ -145,7 +145,7 @@ fn string_unquote_keeps_interpreter_fallback() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
     assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Str(value) if value == "zun".into()));
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value == "zun"));
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn string_quote_keeps_interpreter_fallback() {
     let entry = module.entry_point.expect("entry point").rid();
     let jit = zun_codegen::Jit::compile(&module).expect("jit builds with String fallback");
     assert!(!jit.is_compiled(entry), "String methods must remain Tier 0");
-    assert!(matches!(interp_entry(&module), Value::Str(value) if value == "\"zun\"".into()));
+    assert!(matches!(interp_entry(&module), Value::Str(value) if value == "\"zun\""));
 }
 
 #[test]

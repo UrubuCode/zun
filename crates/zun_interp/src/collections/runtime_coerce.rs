@@ -555,7 +555,7 @@ impl<'a> Interp<'a> {
             });
         if let Some(handle) = handle {
             let hint_value = zun_gc::with_current_heap_mut(|heap| {
-                Value::Any(zun_core::Any::string(heap.intern_string(hint.into())))
+                Value::Any(zun_core::Any::string(heap.intern_string(hint)))
             });
             let call_args = self.with_this_arg(handle, obj, vec![hint_value]);
             let result = self.invoke_function_value(handle, call_args)?;

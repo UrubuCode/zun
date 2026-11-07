@@ -76,7 +76,7 @@ impl Heap {
         let mut named: Vec<(String, zun_core::Any)> = Vec::new();
         for (index, group) in groups.into_iter().enumerate() {
             let value = match group {
-                Some(text) => zun_core::Any::string(self.intern_string(text.into())),
+                Some(text) => zun_core::Any::string(self.intern_string(text)),
                 None => zun_core::Any::void(),
             };
             if let Some(Some(name)) = names.get(index) {
@@ -90,7 +90,7 @@ impl Heap {
             "index".to_owned(),
             zun_core::Any::float(start16 as f64),
         );
-        let input_any = zun_core::Any::string(self.intern_string(input.into()));
+        let input_any = zun_core::Any::string(self.intern_string(input));
         self.dynamic_set(array, "input".to_owned(), input_any);
         let groups_any = if named.is_empty() {
             zun_core::Any::void()
@@ -445,7 +445,7 @@ impl Heap {
         let array = self.alloc_array(pieces.len());
         for (index, piece) in pieces.into_iter().enumerate() {
             let value = match piece {
-                Some(text) => zun_core::Any::string(self.intern_string(text.into())),
+                Some(text) => zun_core::Any::string(self.intern_string(text)),
                 None => zun_core::Any::void(),
             };
             self.array_set(array, index, value);
@@ -522,7 +522,7 @@ impl Heap {
         }
         let array = self.alloc_array(spans.len());
         for (index, (start, end, _)) in spans.into_iter().enumerate() {
-            let value = zun_core::Any::string(self.intern_string(input[start..end].into()));
+            let value = zun_core::Any::string(self.intern_string(&input[start..end]));
             self.array_set(array, index, value);
         }
         Some(Ok(Some(array)))

@@ -223,7 +223,7 @@ impl NativeCallHook {
             .map_err(|error| RunError::Native(error.to_string()))?;
             let string =
                 String::from_utf8(bytes).map_err(|error| RunError::Native(error.to_string()))?;
-            return Ok(Value::Str(std::rc::Rc::from(string)));
+            return Ok(Value::Str(zun_core::ZStr::from(string)));
         }
         Err(RunError::Native("unsupported native call signature".into()))
     }
@@ -359,7 +359,7 @@ mod tests {
                 "missing",
                 "echo",
                 &[1, 4, 4],
-                &[Value::Str(std::rc::Rc::from("input"))],
+                &[Value::Str(zun_core::ZStr::from("input"))],
             )
             .expect("registered string export must be intercepted")
             .expect_err("the missing library should fail after metadata validation");

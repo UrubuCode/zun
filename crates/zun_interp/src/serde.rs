@@ -23,7 +23,6 @@
 use super::value::{self, Value};
 use super::{Interp, RunError};
 use std::collections::HashMap;
-use std::rc::Rc;
 use zun_core::serde::{write_uvarint, Reader, Tag, SERDE_VERSION};
 use zun_core::Any;
 use zun_gc::Obj;
@@ -430,7 +429,7 @@ impl Interp<'_> {
                 let bits = reader.read_u32().ok_or_else(bad)?;
                 Ok(Value::Float(f64::from(f32::from_bits(bits)), NumKind::F32))
             }
-            Tag::Str => Ok(Value::Str(Rc::from(
+            Tag::Str => Ok(Value::Str(zun_core::ZStr::from(
                 reader.read_str().ok_or_else(bad)?.as_str(),
             ))),
             Tag::Ref => {

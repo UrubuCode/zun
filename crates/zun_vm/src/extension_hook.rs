@@ -15,7 +15,6 @@
 //! call surfaces as a catchable exception rather than a hard fault.
 
 use std::ffi::{CStr, CString};
-use std::rc::Rc;
 
 use zun_abi::{OwnedFunction, OwnedRegistry, ZunTy, ZunTyRepr, ZunValue};
 use zun_il::NumKind;
@@ -138,12 +137,12 @@ impl<L: ExtensionLookup> ExtensionCallHook<L> {
         let ty = ret.0;
         if ty == ZunTy::Str as u32 {
             if out.payload == 0 {
-                return Value::Str(Rc::from(""));
+                return Value::Str(zun_core::ZStr::from(""));
             }
             let text = unsafe { CStr::from_ptr(out.payload as *const std::ffi::c_char) }
                 .to_string_lossy()
                 .into_owned();
-            Value::Str(Rc::from(text.as_str()))
+            Value::Str(zun_core::ZStr::from(text.as_str()))
         } else if ty == ZunTy::Bool as u32 {
             Value::Bool(out.payload != 0)
         } else if ty == ZunTy::F64 as u32 {
@@ -200,7 +199,7 @@ impl<L: ExtensionLookup> ExtensionCallHook<L> {
             // A Node-style failure becomes a catchable thrown value carrying the
             // extension's message (a proper Error object with `.code` is a
             // follow-up once a host error-constructor is available here).
-            Err(status) => Err(RunError::Thrown(Value::Str(Rc::from(
+            Err(status) => Err(RunError::Thrown(Value::Str(zun_core::ZStr::from(
                 self.error_message(module, status).as_str(),
             )))),
         }
@@ -322,7 +321,11 @@ mod tests {
     fn dispatches_a_string_argument_and_marshals_the_scalar_result() {
         let hook = ExtensionCallHook::new(registry());
         let result = hook
-            .try_call_external("demo", "echoLen", &[Value::Str(Rc::from("zun"))])
+            .try_call_external(
+                "demo",
+                "echoLen",
+                &[Value::Str(zun_core::ZStr::from("zun"))],
+            )
             .expect("resolved")
             .expect("ok");
         assert!(matches!(result, Value::Int(3, NumKind::I64)));
