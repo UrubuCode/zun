@@ -223,6 +223,7 @@ impl Interp<'_> {
     }
 
     /// Read an own enumerable property of an object (running a getter).
+    #[allow(clippy::unnecessary_unwrap)] // guarded unwrap reads clearer than if-let here
     fn json_get(&mut self, obj: zun_gc::Obj, key: &str) -> Result<Option<Value>, RunError> {
         // Elements of an array-like (an `arguments` object, a typed array).
         if let Some(index) = key.parse::<usize>().ok().filter(|i| i.to_string() == key) {

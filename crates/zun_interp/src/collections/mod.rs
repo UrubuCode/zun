@@ -116,6 +116,7 @@ pub(super) fn callback_arg(value: Option<&Value>) -> Option<zun_core::FunctionHa
 impl<'a> Interp<'a> {
     /// Run `callback` over a Map / Set with a live cursor: entries appended
     /// while iterating are visited, deleted entries are skipped.
+    #[allow(clippy::while_let_loop)] // cursor loop has several distinct break conditions
     pub(super) fn collection_for_each(
         &mut self,
         object: zun_gc::Obj,

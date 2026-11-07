@@ -470,6 +470,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let len = view_len(view).ok_or(RunError::BadToken)?;
             let writable = bytes.len().min(len.saturating_sub(offset));
             zun_gc::with_current_heap_mut(|heap| {
+                #[allow(clippy::needless_range_loop)] // index couples the view offset and source bytes
                 for i in 0..writable {
                     heap.u8_array_set(view, offset + i, bytes[i]);
                 }

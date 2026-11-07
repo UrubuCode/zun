@@ -235,6 +235,7 @@ impl<'a> Interp<'a> {
     }
 
     /// Rewrite owned suspended frames after a moving collection.
+    #[allow(dead_code)] // JIT<->interp bridge scaffolding
     pub(super) fn rewrite_suspended_frames(&mut self, relocation: &zun_gc::RelocationMap) -> usize {
         let mut rewritten = 0;
         if let Some(frame) = self.suspended.as_mut() {
@@ -529,6 +530,7 @@ impl<'a> Interp<'a> {
     /// The caller must ensure no managed execution is active while this
     /// operation runs. The current interpreter is single-threaded, so this is
     /// an explicit opt-in boundary rather than an automatic GC policy.
+    #[allow(dead_code)] // JIT<->interp bridge scaffolding
     pub(super) unsafe fn compact_suspended_frames(&mut self) -> Option<zun_gc::CompactionResult> {
         let mut roots = Vec::new();
         if let Some(frame) = self.suspended.as_ref() {
@@ -638,6 +640,7 @@ impl ExecutionOutcome {
         }
     }
 
+    #[allow(dead_code)] // JIT<->interp bridge scaffolding
     pub(super) fn into_result(self) -> Result<Value, super::RunError> {
         match self {
             Self::Complete(value) => Ok(value),
@@ -677,6 +680,7 @@ impl ExecutionFrame {
         self.state = FrameState::Suspended { promise, resume_pc };
     }
 
+    #[allow(dead_code)] // JIT<->interp bridge scaffolding
     pub(super) fn resume(&mut self) -> Option<Obj> {
         let FrameState::Suspended { promise, resume_pc } = self.state else {
             return None;

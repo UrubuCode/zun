@@ -7,6 +7,7 @@ use super::*;
 
 impl<'a> Interp<'a> {
     #[inline]
+    #[allow(clippy::neg_cmp_op_on_partial_ord)] // !(x > 0.0) preserves JS sort NaN semantics
     pub(super) fn col_array_mutate(
         &mut self,
         name: &str,

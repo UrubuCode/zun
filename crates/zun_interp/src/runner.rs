@@ -251,6 +251,7 @@ impl<'a> GeneratorSession<'a> {
     }
 
     /// Advance the generator once.
+    #[allow(clippy::should_implement_trait)] // generator step, deliberately not Iterator::next
     pub fn next(&mut self) -> Result<GeneratorResult, RunError> {
         if self.done {
             return Ok(GeneratorResult::Complete(

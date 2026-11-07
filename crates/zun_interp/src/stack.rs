@@ -67,6 +67,7 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
 /// Project a boxed `Any` operand onto the primitive it carries, so a dynamic
 /// value read from an object compares against an unboxed literal (`o.v === true`).
 /// Opaque `Any` payloads (class descriptors, symbols) stay boxed.
+#[allow(dead_code)] // JIT<->interp bridge scaffolding (see MEMORY: cross-frame exceptions)
 fn unbox_for_compare(value: Value) -> Value {
     match value {
         Value::Any(any) => {

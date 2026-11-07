@@ -6,6 +6,7 @@
 use super::*;
 
 impl<'a> Interp<'a> {
+    #[allow(clippy::redundant_guards)] // guard reads clearer than the equivalent pattern
     pub(super) fn col_object_descriptor(
         &mut self,
         name: &str,

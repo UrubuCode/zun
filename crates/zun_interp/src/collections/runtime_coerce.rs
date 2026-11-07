@@ -2,6 +2,10 @@
 //!
 //! Methods moved verbatim out of the collection dispatch module.
 
+// The `to_number_value` / `to_primitive_default` helpers coerce an operand
+// value; the `to_` name describes the coercion they perform, not `self`.
+#![allow(clippy::wrong_self_convention)]
+
 use super::*;
 
 impl<'a> Interp<'a> {
@@ -404,6 +408,7 @@ impl<'a> Interp<'a> {
         Ok(Some(parts.join(separator)))
     }
 
+    #[allow(clippy::ptr_arg)] // operates on the interpreter operand-stack buffer
     pub(crate) fn coerce_relational_operands(
         &mut self,
         stack: &mut Vec<Value>,
