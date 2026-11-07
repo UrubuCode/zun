@@ -29,12 +29,21 @@
 //!   one specialization and the diagnostics are rolled back);
 //! - re-checking must not introduce any new closure, regex matcher, or codegen
 //!   site (so a body that builds a closure stays generic);
-//! - the specialized return type must be `void` or a concrete (non-`any`) type.
-//!   An `any` return is intentionally excluded in this pass: a direct call does
-//!   not box its return value, so an `any`-returning generic and its typed
-//!   specialization could hand the caller different runtime representations
-//!   (raw vs boxed). A concrete or `void` return has one representation, so
-//!   routing is observably identical.
+//! - a `void` or concrete (non-`any`) return specializes directly: a direct
+//!   call does not box the callee's result, and a single-representation return
+//!   is byte-identical between the generic and its typed specialization.
+//! - an `any` return is admitted too, made representation-safe by re-boxing
+//!   (implementation (A) of the Phase 3 widening). The generic (all-`any`
+//!   params) hands the caller a boxed `Any` at each return; the typed
+//!   specialization computes a raw concrete value, so each such return is
+//!   wrapped in `BoxAny` before `ret`, producing the exact `Any` the generic
+//!   would. The emitted `ret` therefore pushes the same boxed `Any`, and the
+//!   routed call site is left unchanged (the caller still receives `Any`). The
+//!   re-box is applied per return site, in lockstep with the generic body: a
+//!   return whose generic representation is already raw is left alone (it
+//!   matched the generic), and any site whose box is not provably the identical
+//!   `Any` (a non-`f64` number, a bare function value, a Symbol) — or whose
+//!   structure diverged from the generic — aborts the specialization.
 //!
 //! A call site is routed only when its fixed argument arity and every argument
 //! type match the specialization's concrete parameters exactly; every other
@@ -91,20 +100,29 @@ impl Checker<'_> {
                 continue;
             }
 
-            // Representation gate: a direct call does not box its return value,
-            // so only `void` or a concrete (non-`any`) return is observably
-            // identical between the generic and its typed specialization.
+            // A poisoned return type never specializes.
             let return_ty = program.functions[index].return_ty;
-            if return_ty == Ty::Any || return_ty == Ty::Error {
+            if return_ty == Ty::Error {
                 continue;
             }
 
-            if let Some(spec) = self.try_specialize(ast_program, func, concrete) {
-                program.functions.push(spec);
+            if let Some(mut spec) = self.try_specialize(ast_program, func, concrete) {
+                // Representation gate for an `any` return: a direct call does
+                // not box the callee's result, so the specialization must hand
+                // the caller the byte-identical `Any` the generic would. Re-box
+                // each return site that the generic boxed; abort (stay generic)
+                // on any site whose box is not provably identical or whose
+                // structure diverged from the generic body.
+                if return_ty == Ty::Any
+                    && !reconcile_any_returns(&program.functions[index], &mut spec.body)
+                {
+                    continue;
+                }
                 routes.entry(func).or_default().push(Specialization {
                     concrete_params: concrete.clone(),
-                    spec_index: (program.functions.len() - 1) as FuncIndex,
+                    spec_index: program.functions.len() as FuncIndex,
                 });
+                program.functions.push(spec);
             }
         }
 
@@ -193,6 +211,221 @@ fn mangled_name(name: &str, concrete: &[Ty]) -> String {
         .collect::<Vec<_>>()
         .join("_");
     format!("{name}$mono${types}")
+}
+
+/// Re-box an `any`-returning specialization's return sites so each hands the
+/// caller the byte-identical `Any` the generic would. Walks the generic body
+/// and the freshly-checked specialization body in lockstep (identical source,
+/// so identical return-site order) and, per site, reconciles the two
+/// representations. Returns `false` — abort this specialization, stay generic —
+/// if any site cannot be made provably identical or the two structures diverged.
+///
+/// The subtlety: a static `any` type does **not** imply a boxed runtime value.
+/// An `any`-typed `IndirectCall`/`Call` result, for one, is the callee's *raw*
+/// return passed straight through (the generic `function apply(f, v) { return
+/// f(v); }` hands back a raw `f64`, not a boxed `Any`). Re-boxing such a site
+/// would diverge from the generic. So a site is re-boxed only when the generic
+/// value is a *genuine* `Any` box — an explicit `BoxAny`, or a load of an
+/// `any`-typed parameter/local (boxed at the call boundary). A site whose
+/// generic and specialization representations already agree is left untouched;
+/// everything else aborts the specialization.
+fn reconcile_any_returns(generic: &hir::Function, spec: &mut [Stmt]) -> bool {
+    let mut generic_values: Vec<&Option<Expr>> = Vec::new();
+    collect_return_exprs(&generic.body, &mut generic_values);
+
+    let mut spec_values: Vec<&mut Option<Expr>> = Vec::new();
+    collect_return_values(spec, &mut spec_values);
+
+    // A different number of return sites means the typed re-check lowered the
+    // body to a different shape than the generic; refuse rather than guess.
+    if generic_values.len() != spec_values.len() {
+        return false;
+    }
+
+    for (generic_value, value) in generic_values.into_iter().zip(spec_values) {
+        match (generic_value.as_ref(), value.as_ref()) {
+            // A bare `return;` on both sides: identical, nothing to reconcile.
+            (None, None) => {}
+            (Some(generic_expr), Some(spec_expr)) => {
+                if generic_expr.ty == spec_expr.ty {
+                    // The generic produced this same representation already
+                    // (e.g. both raw, or both `Any`): leave the return as-is.
+                    continue;
+                }
+                // The generic boxed here while the typed body produced a raw
+                // concrete value. Re-box to the identical `Any`, but only when
+                // the generic value is a genuine `Any` box and the concrete box
+                // is provably the same tag/payload.
+                if generic_expr.ty == Ty::Any
+                    && generic_is_boxed_any(generic_expr, &generic.locals)
+                    && any_box_is_identical(spec_expr.ty)
+                {
+                    let raw = value.take().expect("return value present");
+                    *value = Some(box_to_any_expr(raw));
+                } else {
+                    return false;
+                }
+            }
+            // One side returns a value and the other does not: diverged.
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Whether an `any`-typed generic return value is a *genuine* heap `Any` box
+/// (so a raw concrete specialization result must be re-boxed to match it),
+/// rather than a raw value flowing through an `any`-typed slot.
+fn generic_is_boxed_any(expr: &Expr, locals: &[Ty]) -> bool {
+    match &expr.kind {
+        // An explicit box.
+        ExprKind::BoxAny { .. } => true,
+        // A load of an `any`-typed parameter or local: such slots hold a boxed
+        // `Any` (parameters are boxed at the call boundary, `any` locals store
+        // boxed values).
+        ExprKind::Local(slot) => locals.get(*slot as usize) == Some(&Ty::Any),
+        // Everything else (calls, dynamic member reads, builtins, ...) may be a
+        // raw pass-through; refuse to assume it is boxed.
+        _ => false,
+    }
+}
+
+/// Whether boxing a value of `ty` to `Any` yields the byte-identical `Any` the
+/// generic's all-`any` body would have produced for the same logical value.
+///
+/// Numbers in the dynamic path are always `f64` (`Any::float`), so a typed
+/// `f64`, `boolean`, `string`, or any heap-reference type (boxed as the same
+/// interned handle / object pointer) round-trips identically. An integer or
+/// non-`f64` float would box to a different numeric tag/width, a bare function
+/// value has no `Any` box at all, and a Symbol is already an immediate `Any`;
+/// those are refused so the candidate stays generic.
+fn any_box_is_identical(ty: Ty) -> bool {
+    matches!(
+        ty,
+        Ty::F64
+            | Ty::Boolean
+            | Ty::String
+            | Ty::Array
+            | Ty::Buffer
+            | Ty::Map
+            | Ty::Set
+            | Ty::WeakMap
+            | Ty::WeakSet
+            | Ty::WeakRef
+            | Ty::RegExp
+            | Ty::BigInt
+            | Ty::FinalizationRegistry
+            | Ty::Proxy
+            | Ty::Promise
+            | Ty::BufferView(_)
+            | Ty::DynamicObject
+            | Ty::Instance(_)
+    )
+}
+
+/// Wrap `value` in an `Any` box (the HIR node `zun_ilgen` lowers to `BoxAny`).
+fn box_to_any_expr(value: Expr) -> Expr {
+    if value.ty == Ty::Any || value.ty.is_error() {
+        return value;
+    }
+    let span = value.span;
+    Expr {
+        kind: ExprKind::BoxAny {
+            value: Box::new(value),
+        },
+        ty: Ty::Any,
+        span,
+    }
+}
+
+/// Collect a reference to each return site's value (in source order) over a
+/// statement list and its nested blocks.
+fn collect_return_exprs<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a Option<Expr>>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Return(value) => out.push(value),
+            Stmt::Group(stmts) => collect_return_exprs(stmts, out),
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_return_exprs(then_body, out);
+                collect_return_exprs(else_body, out);
+            }
+            Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+                collect_return_exprs(body, out)
+            }
+            Stmt::For { body, .. } | Stmt::ForOf { body, .. } => collect_return_exprs(body, out),
+            Stmt::Labeled { body, .. } => {
+                collect_return_exprs(std::slice::from_ref(&**body), out)
+            }
+            Stmt::Try {
+                body,
+                catches,
+                finally_body,
+            } => {
+                collect_return_exprs(body, out);
+                for catch in catches {
+                    collect_return_exprs(&catch.body, out);
+                }
+                if let Some(finally_body) = finally_body {
+                    collect_return_exprs(finally_body, out);
+                }
+            }
+            Stmt::Let { .. }
+            | Stmt::BoxedLet { .. }
+            | Stmt::Expr(_)
+            | Stmt::Break(_)
+            | Stmt::Continue(_)
+            | Stmt::Throw(_) => {}
+        }
+    }
+}
+
+/// Collect a mutable handle to each return site's value (in the same source
+/// order as [`collect_return_tys`]) so the re-box can rewrite it in place.
+fn collect_return_values<'a>(stmts: &'a mut [Stmt], out: &mut Vec<&'a mut Option<Expr>>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Return(value) => out.push(value),
+            Stmt::Group(stmts) => collect_return_values(stmts, out),
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_return_values(then_body, out);
+                collect_return_values(else_body, out);
+            }
+            Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+                collect_return_values(body, out)
+            }
+            Stmt::For { body, .. } | Stmt::ForOf { body, .. } => collect_return_values(body, out),
+            Stmt::Labeled { body, .. } => {
+                collect_return_values(std::slice::from_mut(&mut **body), out)
+            }
+            Stmt::Try {
+                body,
+                catches,
+                finally_body,
+            } => {
+                collect_return_values(body, out);
+                for catch in catches {
+                    collect_return_values(&mut catch.body, out);
+                }
+                if let Some(finally_body) = finally_body {
+                    collect_return_values(finally_body, out);
+                }
+            }
+            Stmt::Let { .. }
+            | Stmt::BoxedLet { .. }
+            | Stmt::Expr(_)
+            | Stmt::Break(_)
+            | Stmt::Continue(_)
+            | Stmt::Throw(_) => {}
+        }
+    }
 }
 
 /// Rewrite a matching direct [`ExprKind::Call`] to target the specialization.

@@ -854,6 +854,54 @@ fn emits_and_routes_a_monomorphic_specialization() {
 }
 
 #[test]
+fn emits_an_any_return_specialization_with_a_reboxed_return() {
+    // `id` has an `any` parameter and an inferred `any` return, and is only ever
+    // called with a `number`. Phase 3 widening must emit a typed `id$mono$number`
+    // whose parameter is `number` but whose return keeps the generic's `any`
+    // ABI. The generic (an `any` parameter) hands the caller a boxed `Any`; the
+    // typed specialization computes a raw `f64`, so the re-box wraps the return
+    // in `BoxAny`, reproducing the byte-identical `Any` the generic returns.
+    //
+    // (An arithmetic body such as `x * 2` does *not* exercise the re-box: a
+    // dynamic multiply already yields a raw `f64` in both the generic and the
+    // specialization, so the representations match without boxing. Returning the
+    // dynamic parameter itself is the case that genuinely differs.)
+    let hir = check_specialized_ok(
+        "function id(x) { return x; } \
+         function main(): void { print(id(3)); }",
+    );
+
+    let spec = hir
+        .functions
+        .iter()
+        .find(|f| f.name == "id$mono$number")
+        .expect("any-return specialization emitted");
+    assert_eq!(spec.locals[0], Ty::F64, "specialized param is number");
+    assert_eq!(
+        spec.return_ty,
+        Ty::Any,
+        "specialization keeps the generic's `any` return ABI",
+    );
+
+    // The single return must hand back a boxed `Any` (an f64 wrapped in
+    // `BoxAny`), exactly the representation the generic's dynamic body produces.
+    let hir::Stmt::Return(Some(value)) = spec
+        .body
+        .iter()
+        .rev()
+        .find(|s| matches!(s, hir::Stmt::Return(_)))
+        .expect("specialization returns a value")
+    else {
+        unreachable!()
+    };
+    assert_eq!(value.ty, Ty::Any, "the returned value is boxed to `Any`");
+    let hir::ExprKind::BoxAny { value: inner } = &value.kind else {
+        panic!("expected the return to be re-boxed via BoxAny, got {:?}", value.kind);
+    };
+    assert_eq!(inner.ty, Ty::F64, "the boxed concrete result is an f64");
+}
+
+#[test]
 fn does_not_specialize_a_polymorphic_function() {
     // Disagreeing call sites keep the function generic: no specialization.
     let hir = check_specialized_ok(
