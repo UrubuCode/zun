@@ -195,6 +195,7 @@ pub extern "C" fn zun_jit_map_get_f64_or(address: i64, key: f64, fallback: f64) 
 
 /// Read a generic Map value into the stable two-word Any carrier.
 #[inline]
+#[allow(clippy::missing_safety_doc)] // JIT thunk ABI; safety is the module-wide JIT calling contract
 pub unsafe extern "C" fn zun_jit_map_get_any(
     address: i64,
     key_tag: u64,

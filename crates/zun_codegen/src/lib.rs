@@ -651,7 +651,7 @@ impl Jit {
         let mut storage_index = 0usize;
         while string_offset < zm.strings.as_bytes().len() {
             literal_ptrs[string_offset] = literal_storage[storage_index].as_ptr() as u64;
-            let value = zm
+            let _value = zm
                 .strings
                 .get(zun_metadata::StringIndex(string_offset as u32));
             string_offset = zm.strings.next_offset(string_offset);
@@ -997,9 +997,7 @@ impl Jit {
             return Err(JitError::Ineligible(method_rid));
         }
         if signature
-            .param_kinds
-            .iter()
-            .any(|&kind| kind == JitKind::Other)
+            .param_kinds.contains(&JitKind::Other)
         {
             return Err(JitError::Ineligible(method_rid));
         }
@@ -1013,10 +1011,7 @@ impl Jit {
         let native_roots: Vec<zun_gc::Obj> = args
             .iter()
             .zip(param_kinds)
-            .filter_map(|(&arg, kind)| {
-                (kind == JitKind::Object)
-                    .then(|| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
-            })
+            .filter(|&(&_arg, kind)| kind == JitKind::Object).map(|(&arg, _kind)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
             .collect();
         // Keep managed arguments visible for the complete native call. The VM
         // hook also registers its Value-level roots; this scope protects direct
@@ -1385,11 +1380,9 @@ pub fn compile_object_for_target(
             detail: e.to_string(),
         })?;
         let sig = body_signature(&module, &body);
-        let linkage = zm
+        let linkage = if zm
             .entry_point
-            .is_some_and(|token| token.rid() == rid)
-            .then_some(Linkage::Export)
-            .unwrap_or(Linkage::Local);
+            .is_some_and(|token| token.rid() == rid) { Linkage::Export } else { Linkage::Local };
         let fid = module
             .declare_function(&format!("m{rid}"), linkage, &sig)
             .map_err(|e| JitError::Module(e.to_string()))?;
@@ -1510,6 +1503,7 @@ pub fn compile_metadata_object_for_target(
 /// # Safety
 /// `ptr` must be a finalized nullary function returning an integer of the given
 /// width and signedness.
+#[allow(clippy::missing_transmute_annotations)] // the ptr source type is `*const u8` in every arm
 unsafe fn read_int(ptr: *const u8, bits: u8, signed: bool) -> i64 {
     unsafe {
         match bits {

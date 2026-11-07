@@ -1,7 +1,6 @@
 mod common;
 use common::*;
 
-use zun_codegen::RetVal;
 use zun_interp::value::Value;
 
 #[test]

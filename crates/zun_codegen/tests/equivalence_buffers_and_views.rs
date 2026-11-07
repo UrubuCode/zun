@@ -1,8 +1,6 @@
 mod common;
 use common::*;
 
-use zun_codegen::RetVal;
-use zun_interp::value::Value;
 
 #[test]
 fn array_buffer_length_uses_the_managed_object_abi() {

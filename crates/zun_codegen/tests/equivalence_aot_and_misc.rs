@@ -244,7 +244,7 @@ fn interned_string_field_constructor_is_jit_equivalent() {
     let result = jit
         .call_packed_with_heap(read_rid, &[object.addr() as u64], &mut heap)
         .expect("jit string-field read after construction");
-    assert_eq!(result, handle as u64);
+    assert_eq!(result, handle);
     assert!(matches!(interp_entry(&module), Value::Int(1, _)));
 }
 
@@ -617,7 +617,7 @@ fn static_float_field_round_trips_through_the_jit_store() {
     let bits = jit
         .call_packed_with_heap(rid, &[], &mut heap)
         .expect("float static call");
-    assert_eq!(f64::from_bits(bits as u64), 3.5);
+    assert_eq!(f64::from_bits(bits), 3.5);
 }
 
 #[test]

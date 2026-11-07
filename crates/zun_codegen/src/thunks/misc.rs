@@ -78,7 +78,7 @@ pub extern "C" fn zun_jit_array_load_u64(address: i64, index: i64) -> i64 {
     zun_gc::with_current_heap(|heap| {
         heap.array_get(object, index as usize)
             .and_then(|value| value.as_int())
-            .unwrap_or(0) as i64
+            .unwrap_or(0)
     })
 }
 
@@ -311,6 +311,7 @@ pub extern "C" fn zun_jit_array_push_object(address: i64, value: i64) -> i64 {
 /// or collect, so the caller may safely keep the array reference live across
 /// the call.
 #[inline]
+#[allow(clippy::missing_safety_doc)] // JIT thunk ABI; safety is the module-wide JIT calling contract
 pub unsafe extern "C" fn zun_jit_array_load_any(
     address: i64,
     index: i64,

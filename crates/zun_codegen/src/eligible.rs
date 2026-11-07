@@ -1169,11 +1169,10 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
             continue;
         };
         // Return and every local must be a representable JIT type.
-        if !kind_supported(body.return_kind) && body.returns_value {
-            if JitKind::from_byte(body.return_kind) != JitKind::Other {
+        if !kind_supported(body.return_kind) && body.returns_value
+            && JitKind::from_byte(body.return_kind) != JitKind::Other {
                 continue;
             }
-        }
         let Ok(instrs) = decode_all(body.code) else {
             continue;
         };
@@ -1272,7 +1271,7 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
         // signature — a dynamic rid-0 indirect call stays on Tier 0. All of this
         // needs the bridge for dispatch.
         let function_byte = JitKind::Function.to_byte();
-        let uses_function_value = body.local_kinds.iter().any(|&b| b == function_byte)
+        let uses_function_value = body.local_kinds.contains(&function_byte)
             || instrs
                 .iter()
                 .any(|i| matches!(i.opcode, Opcode::LoadFunction | Opcode::CallIndirect));
@@ -1280,9 +1279,7 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
             continue;
         }
         if uses_function_value
-            && body.local_kinds[..body.param_count as usize]
-                .iter()
-                .any(|&b| b == function_byte)
+            && body.local_kinds[..body.param_count as usize].contains(&function_byte)
         {
             continue;
         }

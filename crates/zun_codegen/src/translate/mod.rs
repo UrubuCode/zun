@@ -71,6 +71,7 @@ pub(crate) fn is_float(kind: JitKind) -> bool {
 
 /// Translate `body` into `ctx.func`. `zm` provides callee frames (arity and
 /// return kind); `func_ids` maps method RIDs to declared Cranelift functions.
+#[allow(clippy::too_many_arguments)] // mirrors the codegen translation live state
 pub fn translate_body(
     module: &mut dyn ClifModule,
     zm: &ZmModule,
@@ -240,13 +241,12 @@ fn find_leaders(
                     leaders.insert(i + 1);
                 }
             }
-            Opcode::Ret | Opcode::Throw => {
+            Opcode::Ret | Opcode::Throw
                 // `throw` lowers to a branch to the catch block, so it ends its
                 // block like `ret`: the next instruction begins a new one.
-                if i + 1 < instrs.len() {
+                if i + 1 < instrs.len() => {
                     leaders.insert(i + 1);
                 }
-            }
             _ => {}
         }
     }
@@ -299,14 +299,14 @@ impl Translator<'_> {
         target: Block,
         stack: &[Slot],
     ) -> Vec<BlockArg> {
-        if !block_sigs.contains_key(&target) {
+        if let std::collections::hash_map::Entry::Vacant(e) = block_sigs.entry(target) {
             for &(_, kind) in stack {
                 let param = self.builder.append_block_param(target, clif_ty(kind));
                 if matches!(kind, JitKind::Object | JitKind::Array | JitKind::String) {
                     self.builder.declare_value_needs_stack_map(param);
                 }
             }
-            block_sigs.insert(target, stack.iter().map(|&(_, k)| k).collect());
+            e.insert(stack.iter().map(|&(_, k)| k).collect());
         }
         stack.iter().map(|&(v, _)| BlockArg::from(v)).collect()
     }

@@ -9,6 +9,7 @@ use super::builtins_table::builtin_desc;
 use super::*;
 
 impl Translator<'_> {
+    #[allow(clippy::if_same_then_else)] // branches are kept distinct per builtin for clarity
     pub(crate) fn op_call_builtin(
         &mut self,
         instr: &zun_il::Instruction,
