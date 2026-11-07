@@ -180,3 +180,13 @@ Run with the machine idle (it only freezes under concurrent load):
   (~442 fixes, many via `clippy --fix`), which is out of scope for a
   behavior-preserving reorganization.
 - `cargo fmt --all -- --check`: CLEAN (commit 124232b1).
+
+## crates/zun_natives string typed floor (found during phase 4 slice A)
+
+- **OPEN (latent, likely non-spec)** — the TYPED `zun:string` floor errors
+  ("index N is out of bounds") for `charCodeAt`/`codePointAt` with an
+  out-of-range index, while JS/Node returns `NaN` / `undefined` (the dynamic
+  `any` surface already returns NaN/undefined correctly). Only reachable on a
+  statically-typed string receiver. Preserved as-is by the surface convergence
+  (Slice A); needs a spec-correctness decision + fix (make the typed floor
+  return NaN/undefined) with a regression test.
