@@ -383,6 +383,36 @@ inlining is the C work, bundled with D2/D5.
   (`cargo build -p zun_runtime`) — the same stale-artifact ordering quirk as
   `zun_vm.lib`/aot, not a regression. No `.zm` change.
 
+## S6 — heap.strings is append-only and never frees strings (2026-11-07)
+
+**OPEN (do not fix now, recorded per decision).** `Heap::intern_string`
+(`crates/zun_gc/src/strings.rs:6-10`) pushes into a `Vec` indexed by a stable
+handle and never removes entries; GC compaction does not touch the strings table
+(`compact_impl` leaves it alone). So every distinct string interned during a run
+is retained for the life of the heap — an unbounded leak that grows with program
+runtime (dynamic string creation, `box_any` of strings, etc.). Handles never
+reindex, which is what makes the ZStr handle path GC-safe, but the flip side is
+no reclamation. Deferred: a future string-table GC (or the WTF-16/handle string
+model, option 3) is where this gets addressed.
+
+## C / ZStr string header — plan (3 PRs, approved) (2026-11-07)
+
+Approved layout change behind an opaque `ZStr` so future moves (GC-handle string,
+WTF-16) stay internal to it. Sequence: (a) mechanical `Value::Str(ZStr)` +
+`heap.strings: Vec<ZStr>`, ZStr wrapping `Rc<str>` with no header, no behavior
+change; (b) header `{ascii, len16}` computed once at creation + O(1) interp fast
+paths for `length`/`charCodeAt`/`charAt`/`s[i]`; (c) Cranelift inline reading the
+header, behind a flag, target `hotcc2m` « 0.1 s. `ZStr` is opaque (private
+fields; access only via `From<&str>`/`From<String>`/`ZStr::from` and
+`Deref<Target=str>`). JIT (PR c) never offsets into the `RcBox`: it takes
+`Rc::as_ptr` and reads a `#[repr(C)]` `StrHeader` at fixed offsets (DST built with
+documented unsafe; `triomphe::ThinArc` considered as the thin-pointer
+alternative — chosen and documented in PR b/c). `len16` counts each lone
+surrogate as one UTF-16 unit (matching `wtf16::len16`); a size past `u32` fails
+or takes the slow path, never a silent truncation. `ascii = true` only when
+`is_ascii()` proved. Gates per PR: equivalence, conformance, OOB/NaN, the
+eligible⟺lowering invariant, and a 100k-linear bench (interp and, for c, JIT).
+
 ## D5 — eligible-but-untranslatable methods recompile on every backedge (2026-11-07)
 
 **Latent, pre-existing JIT tiering defect** (found while wiring D3; independent
