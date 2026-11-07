@@ -105,6 +105,9 @@ impl<'a> Vm<'a> {
 
     /// Runs from `pc`/`pos` until `Match` / `LookEnd`; returns the end position.
     /// On failure all state changes are rolled back.
+    // The capture loops index `caps` and the offset `self.snap` window in
+    // lockstep, so the range-loop / memcpy forms do not apply cleanly.
+    #[allow(clippy::needless_range_loop, clippy::manual_memcpy)]
     pub fn run(
         &mut self,
         mut pc: usize,

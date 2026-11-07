@@ -212,16 +212,14 @@ fn memfind_char(input: &[char], from: usize, c: char) -> Option<usize> {
     let bytes = unsafe { std::slice::from_raw_parts(input.as_ptr() as *const u8, len * 4) };
     let mut i = from;
     while i < len {
-        match memchr::memchr(b, &bytes[i * 4..]) {
-            None => return None,
-            Some(off) => {
-                let abs = i * 4 + off;
-                let idx = abs / 4;
-                if abs % 4 == 0 && input[idx] == c {
-                    return Some(idx);
-                }
-                i = idx + 1;
+        {
+            let off = memchr::memchr(b, &bytes[i * 4..])?;
+            let abs = i * 4 + off;
+            let idx = abs / 4;
+            if abs.is_multiple_of(4) && input[idx] == c {
+                return Some(idx);
             }
+            i = idx + 1;
         }
     }
     None
@@ -257,16 +255,14 @@ impl Prefilter {
                 let finder = memchr::memmem::Finder::new(&needle);
                 let mut i = from;
                 while i <= len.saturating_sub(lit.len()) {
-                    match finder.find(&bytes[i * 4..]) {
-                        None => return None,
-                        Some(off) => {
-                            let abs = i * 4 + off;
-                            let idx = abs / 4;
-                            if abs % 4 == 0 {
-                                return Some(idx);
-                            }
-                            i = idx + 1;
+                    {
+                        let off = finder.find(&bytes[i * 4..])?;
+                        let abs = i * 4 + off;
+                        let idx = abs / 4;
+                        if abs.is_multiple_of(4) {
+                            return Some(idx);
                         }
+                        i = idx + 1;
                     }
                 }
                 None

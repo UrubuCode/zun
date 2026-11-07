@@ -95,6 +95,7 @@ pub fn write_body(
 }
 
 /// Append a method body with protected regions to `code_section`.
+#[allow(clippy::too_many_arguments)] // mirrors the on-disk method-body header fields
 pub fn write_body_with_handlers(
     code_section: &mut Vec<u8>,
     param_count: u16,
@@ -166,7 +167,7 @@ pub fn read_body(code_section: &[u8], offset: u32) -> Result<MethodBody<'_>, Rea
         .get(handlers_start..handlers_start + handlers_bytes)
         .ok_or(ReadError::Truncated)?;
     let mut handlers = Vec::with_capacity(handler_count);
-    for record in handlers_slice.chunks_exact(HANDLER_RECORD_LEN) {
+    for record in handlers_slice.as_chunks::<HANDLER_RECORD_LEN>().0 {
         let try_start = u32::from_le_bytes(record[0..4].try_into().unwrap());
         let try_end = u32::from_le_bytes(record[4..8].try_into().unwrap());
         let handler_start = u32::from_le_bytes(record[8..12].try_into().unwrap());
