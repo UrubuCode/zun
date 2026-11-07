@@ -142,6 +142,22 @@ struct Facts {
 /// source order). Only those functions are classified; call sites are collected
 /// from the whole program so agreement reflects every internal caller.
 pub fn prove_program(program: &Program, user_top_level: usize) -> ProveReport {
+    prove_program_with(program, user_top_level, false)
+}
+
+/// Like [`prove_program`], but `partial` enables **partial specialization**
+/// candidacy. Under the default (`partial == false`) a parameter that is `any`
+/// at even one intra-module call site bails the whole function
+/// ([`BailReason::AnyArgument`]). Under `partial == true` that parameter is
+/// instead classified over its *non-`any`* call sites alone: if they all agree
+/// on one concrete type it becomes concrete, and only the statically-concrete
+/// sites are later routed to the typed twin while the `any` sites keep calling
+/// the generic fallback. This is sound without a guard because routing is purely
+/// static per call site (see `check::specialize::route_call`): an `any` argument
+/// never matches a concrete parameter, so it is never routed. The flip stays off
+/// by default (gated by `ZUN_PARTIAL_SPEC` on the compile path) until the phase-3
+/// gates pass.
+pub fn prove_program_with(program: &Program, user_top_level: usize, partial: bool) -> ProveReport {
     let analyzed = user_top_level.min(program.functions.len());
 
     // Collect call sites and value-read facts across every function body, every
@@ -193,7 +209,7 @@ pub fn prove_program(program: &Program, user_top_level: usize) -> ProveReport {
         let declared_params = function.locals[..function.param_count as usize].to_vec();
 
         let inferred_return = infer_return(program, func, &recursive, &facts);
-        let verdict = classify(program, func, &declared_params, &facts);
+        let verdict = classify(program, func, &declared_params, &facts, partial);
 
         let inferred_params = match &verdict {
             Verdict::Monomorphic(params) => params.clone(),
@@ -228,7 +244,13 @@ pub fn prove_program(program: &Program, user_top_level: usize) -> ProveReport {
 
 /// Classify one function, applying structural bails first and then the
 /// call-site agreement analysis.
-fn classify(program: &Program, func: FuncIndex, declared_params: &[Ty], facts: &Facts) -> Verdict {
+fn classify(
+    program: &Program,
+    func: FuncIndex,
+    declared_params: &[Ty],
+    facts: &Facts,
+    partial: bool,
+) -> Verdict {
     let function = &program.functions[func as usize];
 
     // Structural bails, in a fixed, deterministic order.
@@ -287,7 +309,12 @@ fn classify(program: &Program, func: FuncIndex, declared_params: &[Ty], facts: &
                 Some(_) => polymorphic = true,
             }
         }
-        if saw_any {
+        // Under the default policy, a single `any` call site bails the whole
+        // function. Under partial specialization the `any` sites are simply not
+        // routed (they stay on the generic), so the parameter is classified over
+        // its concrete sites alone and only truly disagreeing concrete sites
+        // bail.
+        if saw_any && !partial {
             return Verdict::Generic(BailReason::AnyArgument);
         }
         if polymorphic {

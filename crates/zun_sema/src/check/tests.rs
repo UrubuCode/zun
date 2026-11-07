@@ -928,3 +928,175 @@ fn does_not_specialize_a_polymorphic_function() {
         "a polymorphic function must not be specialized",
     );
 }
+
+// ----------------------------------------------------------------------------
+// Phase 3 partial specialization (ZUN_PARTIAL_SPEC / check_specialized_partial)
+// ----------------------------------------------------------------------------
+
+/// Check with partial specialization forced on (deterministic, env-independent).
+fn check_specialized_partial_ok(src: &str) -> hir::Program {
+    let mut diags = Vec::new();
+    let ast = parse_subset(src, true).expect("oxc parse");
+    let hir = crate::check::check_specialized_partial(src, &ast, &mut diags);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    hir
+}
+
+/// Whether any function in the program is a `$mono$` specialization of `name`.
+fn has_specialization_of(hir: &hir::Program, name: &str) -> bool {
+    let prefix = format!("{name}$mono$");
+    hir.functions.iter().any(|f| f.name.starts_with(&prefix))
+}
+
+#[test]
+fn partial_off_by_default_keeps_a_mixed_any_function_generic() {
+    // `g` is called once with a concrete `number` and once with an `any`. With
+    // partial specialization OFF (the default compile path), the single `any`
+    // site bails the whole function (BailReason::AnyArgument): no twin.
+    let hir = check_specialized_ok(
+        "function g(x: any): number { return x + 1; } \
+         function main(): void { const a = 2; print(g(a)); const d: any = a; print(g(d)); }",
+    );
+    assert!(
+        !has_specialization_of(&hir, "g"),
+        "with the flag off, a mixed any/concrete function must stay generic",
+    );
+}
+
+#[test]
+fn partial_specializes_a_mixed_any_function_and_routes_only_concrete_sites() {
+    // Same source, partial ON: `g` is specialized at `number`, the concrete
+    // site `g(a)` routes to the typed twin, and the `any` site `g(d)` keeps
+    // calling the generic fallback. This is the core of "any becomes the
+    // expensive exception": the dynamic caller pays, the typed caller does not.
+    let hir = check_specialized_partial_ok(
+        "function g(x: any): number { return x + 1; } \
+         function main(): void { const a = 2; print(g(a)); const d: any = a; print(g(d)); }",
+    );
+
+    let generic = hir
+        .functions
+        .iter()
+        .position(|f| f.name == "g")
+        .expect("generic g present");
+    assert_eq!(
+        hir.functions[generic].locals[0],
+        Ty::Any,
+        "generic stays `any`",
+    );
+
+    let spec = hir
+        .functions
+        .iter()
+        .position(|f| f.name == "g$mono$number")
+        .expect("partial specialization emitted");
+    assert_eq!(
+        hir.functions[spec].locals[0],
+        Ty::F64,
+        "typed twin is number"
+    );
+
+    let main = hir.main.expect("main present") as usize;
+    let mut targets = Vec::new();
+    call_targets(&hir.functions[main].body, &mut targets);
+    assert!(
+        targets.contains(&(spec as hir::FuncIndex)),
+        "the concrete site routes to the twin: {targets:?}",
+    );
+    assert!(
+        targets.contains(&(generic as hir::FuncIndex)),
+        "the `any` site keeps calling the generic fallback: {targets:?}",
+    );
+}
+
+// Negative soundness gates: even with partial ON, a function that is unsafe to
+// specialize statically must stay generic (no `$mono$` twin). Each mixes a
+// concrete site with an `any` site so that, absent the soundness bail, partial
+// would otherwise specialize it.
+
+#[test]
+fn partial_does_not_specialize_a_function_read_as_a_value() {
+    let hir = check_specialized_partial_ok(
+        "function f(x: any): number { return x + 1; } \
+         function sink(cb: any): void { } \
+         function main(): void { const a = 2; sink(f); print(f(a)); const d: any = a; print(f(d)); }",
+    );
+    assert!(
+        !has_specialization_of(&hir, "f"),
+        "a function whose value is read must stay generic (dynamic callee possible)",
+    );
+}
+
+#[test]
+fn partial_does_not_specialize_a_function_captured_by_a_closure() {
+    let hir = check_specialized_partial_ok(
+        "function f(x: any): number { return x + 1; } \
+         function main(): void { const a = 2; const grab = () => f; print(f(a)); const d: any = a; print(f(d)); }",
+    );
+    assert!(
+        !has_specialization_of(&hir, "f"),
+        "a function captured by a closure must stay generic",
+    );
+}
+
+#[test]
+fn partial_cannot_reach_a_reassigned_function_declaration() {
+    // Reassignment hazard, discharged at the root: a top-level `function`
+    // declaration is not an assignable binding in this subset, so reassigning it
+    // is a hard compile error. The dynamic-callee hazard therefore cannot arise
+    // for a specialization candidate (only `function` declarations are ever
+    // candidates). We assert the reassignment is rejected.
+    let (_, diags) = check_src(
+        "function f(x: any): number { return x + 1; } \
+         function other(x: any): number { return x; } \
+         function reset(): void { f = other; } \
+         function main(): void { const a = 2; print(f(a)); reset(); }",
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("`f`") || d.message.contains("assign")),
+        "reassigning a function declaration must be a compile error: {diags:?}",
+    );
+}
+
+#[test]
+fn partial_does_not_specialize_a_function_that_uses_eval() {
+    // `new Function(...)` is runtime code generation. Re-checking the body under
+    // the concrete signature re-introduces a codegen site, which the emission
+    // gate (try_specialize) detects and rolls back: the function stays generic.
+    let hir = check_specialized_partial_ok(
+        "function f(x: any): number { const g = new Function(\"return 1\"); return x + 1; } \
+         function main(): void { const a = 2; print(f(a)); const d: any = a; print(f(d)); }",
+    );
+    assert!(
+        !has_specialization_of(&hir, "f"),
+        "a function using eval/new Function must stay generic",
+    );
+}
+
+#[test]
+fn partial_does_not_specialize_a_function_that_dynamically_imports() {
+    // A dynamic `import()` in the body is a DynamicCodegen bail at analysis time,
+    // so the function is never even a candidate.
+    let hir = check_specialized_partial_ok(
+        "function f(x: any): number { import(\"m\"); return x + 1; } \
+         function main(): void { const a = 2; print(f(a)); const d: any = a; print(f(d)); }",
+    );
+    assert!(
+        !has_specialization_of(&hir, "f"),
+        "a function performing a dynamic import must stay generic",
+    );
+}
+
+#[test]
+fn partial_does_not_specialize_a_function_with_a_default_parameter() {
+    let hir = check_specialized_partial_ok(
+        "function f(x: any = 5): number { return x + 1; } \
+         function main(): void { const a = 2; print(f(a)); const d: any = a; print(f(d)); }",
+    );
+    assert!(
+        !has_specialization_of(&hir, "f"),
+        "a function with a default/spread/rest parameter must stay generic",
+    );
+}

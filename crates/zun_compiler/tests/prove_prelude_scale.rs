@@ -20,7 +20,7 @@ fn prelude_scale_metric_is_well_formed() {
     let report = zun_sema::prove_program(&hir, total);
 
     eprintln!(
-        "PRELUDE-SCALE: total={} candidates={} generic={} any_call_sites={}",
+        "PRELUDE-SCALE (partial OFF): total={} candidates={} generic={} any_call_sites={}",
         report.functions.len(),
         report.candidate_count,
         report.generic_count,
@@ -29,6 +29,25 @@ fn prelude_scale_metric_is_well_formed() {
     for (reason, count) in &report.bail_histogram {
         eprintln!("  bail {:>4} {}", count, reason.label());
     }
+
+    // Partial specialization before/after: the same corpus analyzed with the
+    // flag on must never lose a candidate, and converts some `AnyArgument` bails
+    // into candidates (the dynamic sites stay on the generic).
+    let partial = zun_sema::prove_program_with(&hir, total, true);
+    eprintln!(
+        "PRELUDE-SCALE (partial ON):  total={} candidates={} generic={} any_call_sites={}",
+        partial.functions.len(),
+        partial.candidate_count,
+        partial.generic_count,
+        partial.any_call_sites
+    );
+    for (reason, count) in &partial.bail_histogram {
+        eprintln!("  bail {:>4} {}", count, reason.label());
+    }
+    assert!(
+        partial.candidate_count >= report.candidate_count,
+        "partial specialization must never reduce the candidate count",
+    );
 
     // Structural invariants (stable across std growth):
     assert_eq!(

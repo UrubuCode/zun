@@ -80,7 +80,17 @@ pub fn check(
     program: &ast::Program,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> hir::Program {
-    check_impl(source, program, diagnostics, &[], false, true, false)
+    check_impl(source, program, diagnostics, &[], false, true, false, false)
+}
+
+/// Whether partial specialization is enabled on the compile path. Off by
+/// default; turned on by the `ZUN_PARTIAL_SPEC` environment variable (any
+/// non-empty value other than `0`). Mirrors the `ZUN_FEEDBACK` gate style. This
+/// is the phase-3 "behind a flag, off by default until the gates pass" control.
+fn partial_specialization_enabled() -> bool {
+    std::env::var_os("ZUN_PARTIAL_SPEC")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
 }
 
 /// A source-level function signature imported from another module.
@@ -111,6 +121,7 @@ pub fn check_with_externals(
         true,
         true,
         true,
+        partial_specialization_enabled(),
     )
 }
 
@@ -124,7 +135,29 @@ pub fn check_specialized(
     program: &ast::Program,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> hir::Program {
-    check_impl(source, program, diagnostics, &[], false, true, true)
+    check_impl(
+        source,
+        program,
+        diagnostics,
+        &[],
+        false,
+        true,
+        true,
+        partial_specialization_enabled(),
+    )
+}
+
+/// Like [`check_specialized`] but forces partial specialization on, regardless
+/// of the `ZUN_PARTIAL_SPEC` environment flag. Used by the phase-3 gate suite
+/// (negative soundness tests, `zun prove --partial`, before/after measurement)
+/// so the flip is exercised deterministically without mutating process-global
+/// environment state.
+pub fn check_specialized_partial(
+    source: &str,
+    program: &ast::Program,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> hir::Program {
+    check_impl(source, program, diagnostics, &[], false, true, true, true)
 }
 
 /// Check a program with the `zun:core` native surface **gated**: when
@@ -148,6 +181,7 @@ pub fn check_with_externals_core_gated(
         true,
         allow_core,
         true,
+        partial_specialization_enabled(),
     )
 }
 
@@ -160,6 +194,7 @@ fn check_impl(
     allow_external_modules: bool,
     allow_core: bool,
     specialize: bool,
+    partial: bool,
 ) -> hir::Program {
     let hoisted = field_init_hoist::hoist(source, program);
     let program = hoisted.as_ref().unwrap_or(program);
@@ -353,7 +388,7 @@ fn check_impl(
     // verifier. The report is computed over the final HIR (specialization reuses
     // the exact same analysis that drives `zun prove`).
     if specialize {
-        let report = crate::prove::prove_program(&hir_program, top_level_count);
+        let report = crate::prove::prove_program_with(&hir_program, top_level_count, partial);
         checker.emit_specializations(program, &mut hir_program, &report, top_level_count);
     }
     hir_program
