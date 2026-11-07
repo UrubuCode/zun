@@ -541,6 +541,17 @@ pub fn prove_with_oxc(
     source: &str,
     typescript: bool,
 ) -> Result<zun_sema::ProveReport, Vec<Diagnostic>> {
+    prove_with_oxc_opts(source, typescript, false)
+}
+
+/// Like [`prove_with_oxc`], but `partial` enables the phase-3 partial
+/// specialization policy in the report (the `zun prove --partial` surface), so
+/// the before/after candidate and bail counts can be compared directly.
+pub fn prove_with_oxc_opts(
+    source: &str,
+    typescript: bool,
+    partial: bool,
+) -> Result<zun_sema::ProveReport, Vec<Diagnostic>> {
     let combined = zun_prelude::with_prelude(source);
     let _ = typescript;
     let ast = zun_syntax::oxc::parse_subset(&combined, true).map_err(|errors| {
@@ -566,7 +577,7 @@ pub fn prove_with_oxc(
     if diagnostics.iter().any(is_error) {
         return Err(diagnostics);
     }
-    Ok(zun_sema::prove_program(&hir, user_top_level))
+    Ok(zun_sema::prove_program_with(&hir, user_top_level, partial))
 }
 
 /// Compile one named source into a loadable module scope.

@@ -179,7 +179,8 @@ fn run() -> ExitCode {
         }
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
         [cmd, flag, file] if cmd == "prove" && flag == "--runtime" => prove_runtime(file),
-        [cmd, file] if cmd == "prove" => prove(file),
+        [cmd, flag, file] if cmd == "prove" && flag == "--partial" => prove_partial(file, true),
+        [cmd, file] if cmd == "prove" => prove_partial(file, false),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::FAILURE
@@ -192,7 +193,7 @@ usage: zun <command> <file.ts>
   run      compile and execute the program
   build    compile to a .zm module (use --trim, --aot, --preserve-roots <path>, or --prelude-cache <path>)
   disasm   compile and print the ZIL disassembly
-  prove    compile and print the static monomorphization analysis (--runtime: run and print observed dynamic any-site tags)";
+  prove    compile and print the static monomorphization analysis (--runtime: run and print observed dynamic any-site tags; --partial: use the phase-3 partial specialization policy)";
 
 #[derive(Clone)]
 enum Action {
@@ -696,7 +697,7 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
 /// `zun prove <file.ts>`: compile through the normal OXC front-end path, run
 /// the static monomorphization analysis, and print a deterministic report.
 /// Purely additive — no module is emitted and the compile output is unchanged.
-fn prove(file: &str) -> ExitCode {
+fn prove_partial(file: &str, partial: bool) -> ExitCode {
     let path = Path::new(file);
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
@@ -709,7 +710,7 @@ fn prove(file: &str) -> ExitCode {
         path.extension().and_then(|extension| extension.to_str()),
         Some("ts") | Some("mts") | Some("tsx")
     );
-    match zun_compiler::prove_with_oxc(&source, typescript) {
+    match zun_compiler::prove_with_oxc_opts(&source, typescript, partial) {
         Ok(report) => {
             print!("{}", report.render());
             ExitCode::SUCCESS
