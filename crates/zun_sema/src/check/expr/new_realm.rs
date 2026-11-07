@@ -400,9 +400,14 @@ impl Checker<'_> {
         // length-tracking view over it (not a view onto an
         // existing buffer). A non-numeric single argument
         // (a buffer) falls through to the view path below.
+        let mut prechecked_arg0: Option<hir::Expr> = None;
         if !matches!(kind, hir::BufferViewKind::DataView) && args.len() == 1 {
-            if let Some(expr) = self.new_typed_single_arg(cx, args, span, kind) {
-                return expr;
+            match self.new_typed_single_arg(cx, args, span, kind) {
+                Ok(expr) => return expr,
+                // The single argument was neither numeric nor an array (a
+                // buffer): it is already checked, so reuse it below instead of
+                // checking `args[0]` a second time.
+                Err(checked) => prechecked_arg0 = Some(checked),
             }
         }
         // A typed array (not `DataView`) created with the
@@ -419,7 +424,10 @@ impl Checker<'_> {
                 self.error(span, format!("`{name}` expects at least a buffer"));
                 return self.poison(span);
             }
-            let buffer = self.check_expr(cx, &args[0]);
+            let buffer = match prechecked_arg0.take() {
+                Some(expr) => expr,
+                None => self.check_expr(cx, &args[0]),
+            };
             let offset = match args.get(1) {
                 Some(arg) => {
                     let mut offset = self.check_expr(cx, arg);
@@ -478,15 +486,16 @@ impl Checker<'_> {
 
     /// `new <Kind>Array(x)` with a single argument: an element count (numeric)
     /// allocates and zero-fills a tracking view; an array/typed-array copies
-    /// like `<Kind>Array.from`. `None` when the argument is neither (a buffer),
-    /// so the caller falls through to the view path.
+    /// like `<Kind>Array.from`. Returns `Err(checked_arg)` when the argument is
+    /// neither (a buffer), handing back the already-checked argument so the
+    /// caller falls through to the view path without re-checking it.
     fn new_typed_single_arg(
         &mut self,
         cx: &mut FunctionCx,
         args: &[ast::Expr],
         span: Span,
         kind: hir::BufferViewKind,
-    ) -> Option<hir::Expr> {
+    ) -> Result<hir::Expr, hir::Expr> {
         let mut length = self.check_expr(cx, &args[0]);
         // `new Float64Array([1, 2, 3])` copies an array (or
         // another typed array) like `<Kind>Array.from`.
@@ -500,7 +509,7 @@ impl Checker<'_> {
                     ty: Ty::Int(IntKind::U32),
                     span,
                 };
-                return Some(hir::Expr {
+                return Ok(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
                         id,
                         args: vec![length, kind_lit],
@@ -532,7 +541,7 @@ impl Checker<'_> {
             };
             let Some((buf_id, _)) = zun_natives::resolve("buffer", "bufferNew") else {
                 self.error(span, "missing buffer intrinsic `bufferNew`");
-                return Some(self.poison(span));
+                return Ok(self.poison(span));
             };
             let buffer = hir::Expr {
                 kind: hir::ExprKind::CallBuiltin {
@@ -559,9 +568,9 @@ impl Checker<'_> {
                     span,
                     "missing typed-array intrinsic `typedArrayTrackingNew`",
                 );
-                return Some(self.poison(span));
+                return Ok(self.poison(span));
             };
-            return Some(hir::Expr {
+            return Ok(hir::Expr {
                 kind: hir::ExprKind::CallBuiltin {
                     id,
                     args: vec![buffer, zero, kind_lit],
@@ -570,6 +579,6 @@ impl Checker<'_> {
                 span,
             });
         }
-        None
+        Err(length)
     }
 }

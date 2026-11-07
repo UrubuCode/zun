@@ -741,3 +741,24 @@ fn extern_method_requires_an_explicit_intrinsic_binding() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn typed_array_single_any_arg_is_checked_once() {
+    // Regression: `new <TypedArray>(x)` with a single non-numeric, non-array
+    // (`any`-typed) argument must check that argument exactly once. The
+    // single-arg numeric/array probe falls through for such an argument, and
+    // the arg must NOT be re-checked by the tracking-view path. `take()` with a
+    // missing argument emits one arg-count diagnostic per check, so a second
+    // check would double it.
+    let src = "function take(flag: int): any { return flag; } \
+               function main(): void { let v: any = new Uint8Array(take()); }";
+    let (_, diags) = check_src(src);
+    let arg_count_errors = diags
+        .iter()
+        .filter(|d| d.message.contains("expects 1 to 1 argument"))
+        .count();
+    assert_eq!(
+        arg_count_errors, 1,
+        "the single argument must be checked exactly once: {diags:?}"
+    );
+}

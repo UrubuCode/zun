@@ -62,13 +62,18 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
 
 ## crates/zun_sema (checker)
 
-- **OPEN (latent, pre-existing)** — in `check_new`'s realm BufferView path
-  (now `check/expr/new_realm.rs::new_ctor_buffer_view` / `new_typed_single_arg`),
-  `new <TypedArray>(x)` with a single `any`-typed argument checks that argument
+- **FIXED (commit `PENDING2`)** — in `check_new`'s realm BufferView path
+  (`check/expr/new_realm.rs::new_ctor_buffer_view` / `new_typed_single_arg`),
+  `new <TypedArray>(x)` with a single `any`-typed argument checked that argument
   with `self.check_expr` TWICE: once in the numeric/array single-arg probe (which
   falls through when the arg is neither), then again in the tracking-view path.
-  Can double-emit diagnostics / double-run arg side-effects. Preserved verbatim
-  by the refactor; needs its own fix.
+  FIX: `new_typed_single_arg` now returns `Result<Expr, Expr>`, handing back the
+  already-checked argument as `Err(checked)` on fall-through; the caller reuses
+  it instead of re-checking `args[0]`. Regression test
+  `typed_array_single_any_arg_is_checked_once` (`check/tests.rs`) checks
+  `new Uint8Array(take())` where `take()` is `any`-typed and emits one arg-count
+  diagnostic per check, asserting the diagnostic is emitted exactly once. Fails
+  before the fix (emitted twice).
 
 ## Pre-existing clippy/rustc baseline warnings (not introduced by the refactor)
 
