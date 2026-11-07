@@ -277,3 +277,22 @@ pub fn managed_method(receiver: ManagedTy, member: &str) -> Option<&'static Mana
         .iter()
         .find(|row| row.receiver == receiver && row.member == member)
 }
+
+#[cfg(test)]
+mod key_uniqueness {
+    use super::MANAGED_METHODS;
+
+    #[test]
+    fn managed_method_keys_are_unique() {
+        for (i, a) in MANAGED_METHODS.iter().enumerate() {
+            for b in &MANAGED_METHODS[i + 1..] {
+                assert!(
+                    !(a.receiver == b.receiver && a.member == b.member),
+                    "duplicate MANAGED_METHODS key ({:?}, `{}`)",
+                    a.receiver,
+                    a.member
+                );
+            }
+        }
+    }
+}

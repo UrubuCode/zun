@@ -133,3 +133,21 @@ const fn row(member: &'static str, native: &'static str, handling: ArrayHandling
 pub fn array_method(member: &str) -> Option<&'static ArrayMethod> {
     ARRAY_METHODS.iter().find(|row| row.member == member)
 }
+
+#[cfg(test)]
+mod key_uniqueness {
+    use super::ARRAY_METHODS;
+
+    #[test]
+    fn array_method_keys_are_unique() {
+        for (i, a) in ARRAY_METHODS.iter().enumerate() {
+            for b in &ARRAY_METHODS[i + 1..] {
+                assert_ne!(
+                    a.member, b.member,
+                    "duplicate ARRAY_METHODS key `{}`",
+                    a.member
+                );
+            }
+        }
+    }
+}

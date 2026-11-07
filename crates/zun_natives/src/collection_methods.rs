@@ -148,3 +148,32 @@ static SET_OPS: &[SetOp] = &[
 pub fn set_operation(member: &str) -> Option<&'static SetOp> {
     SET_OPS.iter().find(|row| row.member == member)
 }
+
+#[cfg(test)]
+mod key_uniqueness {
+    use super::{MAP_METHODS, SET_METHODS, SET_OPS};
+
+    fn assert_unique(table: &[&'static str], name: &str) {
+        for (i, a) in table.iter().enumerate() {
+            for b in &table[i + 1..] {
+                assert_ne!(a, b, "duplicate {name} key `{a}`");
+            }
+        }
+    }
+
+    #[test]
+    fn collection_method_keys_are_unique() {
+        assert_unique(
+            &MAP_METHODS.iter().map(|m| m.member).collect::<Vec<_>>(),
+            "MAP_METHODS",
+        );
+        assert_unique(
+            &SET_METHODS.iter().map(|m| m.member).collect::<Vec<_>>(),
+            "SET_METHODS",
+        );
+        assert_unique(
+            &SET_OPS.iter().map(|m| m.member).collect::<Vec<_>>(),
+            "SET_OPS",
+        );
+    }
+}
