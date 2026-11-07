@@ -239,6 +239,111 @@ U64 intrinsic is never used for an f64 index, so even "typed under JIT" is ~1 µ
 4. Int narrowing (proposal B).
 5. Phase 6 only after the above.
 
+## Typed-floor / JIT defects — enumerated, with two measurements (2026-11-07)
+
+### The four defects (file:line + numbers)
+- **D1 — OSR interp→JIT is not applied in the run path (only in tests).** The
+  interpreter raises back-edges (`zun_interp/src/lib.rs:976-1015`
+  `on_backedge_state`), `JitHook` counts them (`zun_vm/src/jit_hook.rs:23`
+  `DEFAULT_THRESHOLD=2`, `:50-52` request/snapshot buffers) and GC can rewrite
+  the snapshot roots (`:148` `take_valid_osr_snapshots`), but the only callers of
+  `take_osr_*` outside `#[cfg(test)]` are tests. Result: the entry `main` and any
+  method that starts interpreted never tier up mid-loop. Same arith loop: ~6.4
+  ns/iter in a called function vs ~438 ns/iter (eligible) / ~304 ns/iter in
+  `main` (~48-68×).
+- **D2 — a non-eligible `CallBuiltin` disqualifies the whole method.**
+  `zun_codegen/src/eligible.rs:115` admits `CallBuiltin` only for string/
+  collection/math/date/allocation builtins; everything else (print, the
+  dynamic-`any` core ops, class setup) makes the method JIT-ineligible.
+- **D3 — `charCodeAt` (and the char-access family) with an f64 index falls into
+  the dynamic `stringMethod` builtin (354).** `zun_sema/src/check/expr/
+  mcall_string.rs:135` gates the typed native on `is_int()`; loop counters and
+  arithmetic are f64, and even `i & 15` is `conv`-ed to f64, so char-access on a
+  statically-typed string takes the same dynamic path as `any` (~1 µs/call).
+- **D4 — the interpreter re-runs `decode_one` per instruction, no pre-decode.**
+  `zun_interp/src/lib.rs:554-562`: each executed instruction re-parses its bytes
+  and writes two frame-bookkeeping fields before the match. Base cost ≈ 20-23
+  ns/opcode on a box/alloc-free arith loop.
+
+### Measurement A — why builtin 354 (`stringMethod`) costs ~1 µs even under JIT
+Path: JIT does not inline it — it is an out-of-line native call. Inside
+(`zun_interp/src/collections/string_num.rs:140-155` →
+`zun_interp/src/string_dyn.rs:124`): per call it unboxes the receiver `Any`,
+**clones the member-name string** (`name.clone()`), **dispatches by string-name
+`match`** over all String methods, clones the args, builds a fresh `Value::Str`,
+and **boxes the result into the GC heap** (`box_any`, an allocation); the caller
+then `unbox.any` + `conv`s. A typed intrinsic (direct charCodeAt on a known
+string, f64 index, raw f64 result) would be a few ns inline with none of this.
+
+### Measurement B — JIT eligibility census (bridged) over the corpus
+105 fixtures compiled; 45,924 methods-with-body (inflated: the prelude links into
+every module — read the ratios, not the absolute counts):
+- eligible 4,825 (**10.5%**); rejected 41,099 (89.5%).
+- rejected carrying a `CallBuiltin`: 27,141 (66%); throw/rethrow 3,231; castclass
+  654; callindirect 419.
+- rejected with a `CallBuiltin` and **no** throw/cast/indirect (D2 upper bound):
+  **23,390 (~57% of rejected)**.
+- top blocking builtins in rejected methods: `addAny`, `globalSet`,
+  `dynamicCall0/1`, `classSetFieldDefault`, `realmDescriptor`, `typeofAny`,
+  `looseEquals`, `numberCoerce`, `stringCoerce`, `classSetMethod` — the
+  dynamic-`any` core ops and class setup. So D2 is the single largest eligibility
+  lever. (Measurement: `zun_codegen/tests/zz_eligibility_census.rs`, ignored.)
+
+### Design proposals (NOT implemented — one PR each, flag-gated for JIT/GC)
+- **D2 (priority 1) — bridge unsupported builtins instead of disqualifying.**
+  Lower a nonlisted `CallBuiltin` to a slow call into a `zun_jit_call_builtin`
+  thunk that runs the interpreter's native dispatch, with a stack map at the call
+  (precise GC roots) and the result marshaled back — the exact analogue of the
+  existing direct-`Call` bridge (`eligible_methods_bridged`). Files:
+  `zun_codegen/src/eligible.rs` (stop hard-disqualifying when a builtin-bridge is
+  available), `translate/mod.rs` (lowering), `thunks/` (new thunk),
+  `zun_codegen/src/lib.rs` (symbol), `zun_vm/src/jit_bridge.rs` (wire to interp
+  dispatch). Risk: medium-high — GC safepoint/roots across the call and
+  exception propagation back to Tier0 (non-throwing builtins first; throwing
+  ones need the exceptional-return channel). Tests: interp==JIT equivalence on
+  methods using print/typeofAny/looseEquals/coerce; GC stress with a safepoint at
+  the bridged call; a builtin that throws caught in Tier0. Gain: up to ~57% of
+  rejected methods become JIT-candidates; unblocks the dynamic-`any` hot methods.
+- **D1 — get the JIT into loops; two options.**
+  (a) **Enter eligible methods (incl. the entry `main`) natively** instead of
+  always interpreting the entry. Files: `zun_vm/src/lib.rs` entry invocation,
+  `jit_hook.rs`. Risk: low-medium (entry ABI). Gain: fixes top-level hot loops
+  ~48-68× — but only once the method is eligible, so it is paired with D2 (main
+  is usually ineligible via `print`).
+  (b) **Wire the existing OSR into the run path**: drain `take_osr_requests`/
+  snapshots at threshold, rewrite roots, transfer the live frame into a native
+  OSR entry. Files: `zun_vm/src/lib.rs`+`jit_hook.rs`, `zun_codegen` OSR entries,
+  GC root rewrite (`rewrite_osr_snapshot_roots` exists). Risk: high (mid-method
+  frame/root transfer, stack-map correctness). Gain: rescues any loop that heats
+  up mid-method regardless of entry.
+  **Recommendation: do (a) first** (low risk; with D2 it fixes the measured
+  main-loop case with no mid-frame transfer), and keep (b) OSR for a later PR to
+  cover loops that only get hot deep inside an already-running method.
+- **D3 (proposal A) — typed char-access for an f64 index.** Relax
+  `mcall_string.rs:135` to accept `Ty::F64` and route `charCodeAt`/`charAt`/
+  `codePointAt`/`at` to a typed native that does ToInteger + bounds-check and
+  returns the JS out-of-range result (NaN / undefined / "") as a typed value,
+  JIT-lowerable (ideally inline). Files: `zun_sema/src/check/expr/
+  mcall_string.rs`, `zun_natives/src/string.rs`+`managed_methods.rs`,
+  `zun_codegen` (inline lowering), `zun_interp`. Risk: medium (exact JS semantics
+  for fractional/negative/NaN/OOB indices and wtf16/lone-surrogate), no JIT-ABI/
+  GC. Tests: conformance char-access fixtures byte-identical to Node;
+  interp==JIT; closes the open typed-OOB finding. Gain: the ~99% residual-`any`
+  char-access (311,980 calls) leaves the ~1 µs dynamic path.
+- **D4 — interpreter body pre-decode cache.** Decode each method body once into
+  an indexed `Vec<Instruction>` with precomputed branch targets
+  (`decode_all_with_offsets` already gives the offset↔index map), cached per
+  method; trim per-instruction frame bookkeeping to call/throw/safepoint sites.
+  Files: `zun_interp/src/lib.rs` (run loop + per-method cache), maybe `zun_il`
+  (decoded form). Risk: medium (exact semantics, branch-target mapping, cache
+  memory). Tests: interp==JIT + conformance unchanged; **mandatory bench** — the
+  arith-loop ns/opcode before/after. Gain: removes the per-instruction re-decode
+  (the dominant Tier0 base cost); helps everything that stays on Tier0.
+
+Rules (user): one PR per item; flag-gated when touching JIT or GC; interp==JIT
+and conformance no regression; bench before/after; phase 6 and Option B remain
+suspended; approval item by item.
+
 ## Conformance baseline correction: 83/167, not 84 (2026-11-07)
 
 Measured with the current `target/debug/zun.exe` via `scripts/tests_check.sh`
