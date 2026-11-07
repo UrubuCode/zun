@@ -1240,6 +1240,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // 3.14 is literal test data, not an approximation of PI
     fn number_parse_statics_follow_js_semantics() {
         let mut sink = TestSink;
         let (parse_float, _) = resolve("number", "parseFloatPrefix").unwrap();

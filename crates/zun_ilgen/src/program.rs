@@ -17,7 +17,7 @@ pub fn lower(program: &hir::Program) -> Module {
         // only records that the last parameter is a rest parameter, so a
         // dynamic (`any`-receiver) call can pack the trailing arguments.
         let signature = if f.rest_param.is_some() {
-            module.blobs.intern(&[b'R'])
+            module.blobs.intern(b"R")
         } else {
             BlobIndex(0)
         };

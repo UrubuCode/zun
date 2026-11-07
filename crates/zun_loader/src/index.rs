@@ -11,6 +11,12 @@ pub struct ModuleIndex {
     pub entries: Vec<(String, ContentId)>,
 }
 
+impl Default for ModuleIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModuleIndex {
     const MAGIC: &'static [u8; 5] = b"ZINDX";
     const VERSION: u16 = 1;

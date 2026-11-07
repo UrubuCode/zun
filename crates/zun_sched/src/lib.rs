@@ -155,6 +155,7 @@ impl Scheduler {
     }
 
     /// Takes the next thing to run, or `None` when nothing is runnable.
+    #[allow(clippy::should_implement_trait)] // scheduler step, deliberately not Iterator::next
     pub fn next(&mut self) -> Option<Ran> {
         self.queues.next()
     }

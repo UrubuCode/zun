@@ -33,6 +33,12 @@ pub struct ModuleLock {
     pub capabilities: Vec<(String, Vec<String>)>,
 }
 
+impl Default for ModuleLock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModuleLock {
     const MAGIC: &'static [u8; 5] = b"ZLOCK";
     const VERSION: u16 = 3;

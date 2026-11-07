@@ -219,6 +219,7 @@ fn substring(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     )))
 }
 
+#[allow(clippy::redundant_guards)] // guard reads clearer than an empty-string pattern here
 fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,
@@ -257,6 +258,7 @@ fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
     Ok(NativeValue::Str(result))
 }
 
+#[allow(clippy::redundant_guards)] // guard reads clearer than an empty-string pattern here
 fn pad_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let value = match args.first() {
         Some(NativeArg::Str(value)) => value,

@@ -132,6 +132,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
     /// Register a handler over `[start, end)`, minus the inlined `finally`
     /// copies (holes) owned by this try or by a try nested inside it: an
     /// exception thrown while a cleanup runs must not re-enter that cleanup.
+    #[allow(clippy::too_many_arguments)] // mirrors the protected-region descriptor fields
     pub(super) fn push_protected(
         &mut self,
         entry_depth: usize,

@@ -101,6 +101,7 @@ impl Queues {
     ///
     /// This is the whole ordering rule, in one place, so that it can be read and
     /// argued with rather than inferred from several call sites.
+    #[allow(clippy::should_implement_trait)] // scheduler ordering rule, deliberately not Iterator::next
     pub fn next(&mut self) -> Option<Ran> {
         while let Some(continuation) = self.continuations.pop_front() {
             if !self.is_cancelled(continuation) {
