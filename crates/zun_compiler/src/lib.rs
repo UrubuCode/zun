@@ -527,6 +527,46 @@ pub fn compile_with_oxc_and_externals(
     compile_program_with_externals(&combined, ast, Vec::new(), external_functions)
 }
 
+/// Run the static monomorphization analysis (Phase 3a `zun prove`) over a
+/// source program through the normal OXC front-end path.
+///
+/// This is purely additive and read-only: it compiles through parse → check
+/// exactly as [`compile_with_oxc`] does (the standard prelude is concatenated
+/// and the combined program is parsed as TypeScript), then runs
+/// [`zun_sema::prove_program`] over the checked HIR without emitting any IL.
+/// Only the module's own top-level functions are classified; the prelude is
+/// concatenated after the user source, so the user's functions occupy the
+/// leading function indices.
+pub fn prove_with_oxc(
+    source: &str,
+    typescript: bool,
+) -> Result<zun_sema::ProveReport, Vec<Diagnostic>> {
+    let combined = zun_prelude::with_prelude(source);
+    let _ = typescript;
+    let ast = zun_syntax::oxc::parse_subset(&combined, true).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(Diagnostic::error)
+            .collect::<Vec<_>>()
+    })?;
+    // The user source is concatenated first (see `zun_prelude::with_prelude`),
+    // so a top-level function whose name starts before the user source length
+    // is one of the module's own functions. The checker lays these out in the
+    // leading function indices, in source order.
+    let user_len = source.len() as u32;
+    let user_top_level = ast
+        .functions
+        .iter()
+        .filter(|function| function.name.span.start < user_len)
+        .count();
+    let mut diagnostics = Vec::new();
+    let hir = zun_sema::check_with_externals(&combined, &ast, &mut diagnostics, &[]);
+    if diagnostics.iter().any(is_error) {
+        return Err(diagnostics);
+    }
+    Ok(zun_sema::prove_program(&hir, user_top_level))
+}
+
 /// Compile one named source into a loadable module scope.
 pub fn compile_scope(
     name: impl Into<String>,
