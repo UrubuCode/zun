@@ -1065,13 +1065,13 @@ impl Interp<'_> {
                             .resolve_member_ref_in_module(self.module, token)
                             .map_err(|_| RunError::BadToken)?;
                         let callee = resolved.scope.module();
-                        let body = read_body(
+                        let callee_body = read_body(
                             &callee.code,
                             callee.tables.method_defs[resolved.token.rid() as usize - 1]
                                 .body_offset,
                         )
                         .map_err(|e| RunError::Malformed(e.to_string()))?;
-                        let args = pop_n(stack, body.param_count as usize)?;
+                        let args = pop_n(stack, callee_body.param_count as usize)?;
                         if args.iter().any(|arg| matches!(arg, Value::Object(_))) {
                             return Err(RunError::BadToken);
                         }

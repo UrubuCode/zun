@@ -963,6 +963,31 @@ fn callee_finally_rethrows_to_a_caller_catch() {
 }
 
 #[test]
+fn cross_module_member_call_throw_routes_to_caller_catch() {
+    // Regression: a thrown exception from a cross-module `MemberRef` call must
+    // be routed against the CURRENT method's handler table, not the callee
+    // module's body. `app.main` has a try/catch; `core.boom` throws.
+    let loader = zun_compiler::compile_linked_modules([
+        (
+            "core",
+            "function boom(): int { throw new Error(\"cross-module boom\"); }",
+        ),
+        (
+            "app",
+            "import { boom } from \"core\"; function main(): int { try { return boom(); } catch (error: Error) { print(42); return 7; } }",
+        ),
+    ])
+    .expect("linked compilation");
+    let app = loader.get("app").expect("app");
+    let main_rid = app.module().entry_point.expect("entry point").rid();
+    let mut output = CaptureOutput::default();
+    let value = run_method_loaded(app, &loader, main_rid, vec![], &mut output)
+        .expect("caller catch should handle the cross-module throw");
+    assert_eq!(value.as_int(), 7);
+    assert_eq!(output.lines, vec!["42"]);
+}
+
+#[test]
 fn return_inside_inner_try_runs_finally_before_outer_catch_path() {
     let module = zun_compiler::compile(
             "function main(): int { try { try { return 1; } finally { print(1); } } catch (outer: Error) { return 42; } }",

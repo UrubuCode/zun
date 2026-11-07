@@ -35,7 +35,8 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
 
 ## crates/zun_interp (interpreter)
 
-- **OPEN — latent correctness bug (NOT a refactor artifact).** In
+- **FIXED (commit `44d47178`)** — latent correctness bug (NOT a refactor
+  artifact). In
   `call_inner`, the `Opcode::Call` MemberRef/external path rebinds
   `let body = read_body(&callee.code, …)` (~lib.rs:2012), shadowing the current
   frame's `body`. When the callee returns `Err(RunError::Thrown(exception))`,
@@ -45,8 +46,13 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
   cross-module member call is routed against the *callee's* handler table and
   pc arithmetic instead of the current method's try/catch/finally. Every other
   call arm routes against the correct outer `body`. A real bug for cross-module
-  calls that throw; needs its own `fix` commit + a regression test. The
-  interpreter split must not "normalize" this away silently.
+  calls that throw. FIX: the shadowed binding is renamed `callee_body` (used
+  only for its `param_count`); the `route_exception` call now routes against the
+  current frame's outer `body`. Regression test
+  `cross_module_member_call_throw_routes_to_caller_catch`
+  (`zun_interp/src/method_tests.rs`) links two modules (`app` imports `core`),
+  has `app.main` wrap a throwing `core.boom()` in try/catch, and asserts the
+  catch runs (returns 7, prints 42). Fails before the fix (the throw escapes).
 - **OPEN (cleanup)** — `fn value_object` (collections/runtime_iter.rs) is a
   byte-for-byte duplicate of the `object` closure in the preamble of
   `call_managed_collection_inner` (~140). The collections split is the natural
