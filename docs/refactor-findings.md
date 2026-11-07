@@ -60,6 +60,39 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
   `array_construct.rs`) now call `object(...)`. Pure dedup, behavior-identical;
   covered by the existing green `zun_interp` suite.
 
+## Goal phase status — verified against the tree at HEAD (2026-11-07)
+
+- **Phase 1 (3 latent bugs): DONE.** Two have fail-before-fix regression tests
+  (see the section below); the third (`value_object` dedup, `6f73b48b`) is a
+  behavior-identical de-duplication with no dedicated test by design.
+- **Phase 2 (native parser retirement): DONE & verified.** `crates/zun_syntax/src/`
+  contains only `ast.rs`, `lib.rs`, and `oxc/`. A workspace-wide grep for
+  `parse_native` / `native_parser` / `parser_helpers` finds nothing; the only
+  `class_field_defaults` hits are an unrelated runtime state `HashMap` in
+  `zun_interp` (class field default *values*), not the retired parser file.
+- **Phase 3 (static monomorphization): PARTIAL.** `prove.rs` analysis +
+  `specialize.rs` emission with a soundness gate are in; the metric is now
+  reproducible (two committed harnesses). The remaining lever, partial
+  specialization (relax `BailReason::AnyArgument`), is proposed and **awaiting
+  user approval** — it is the only un-gated path left that moves the metric.
+- **Phase 4 (typed Array/Map/String floor): SLICE A done.** Shared string core
+  `crates/zun_core/src/string_ops.rs` (12 pub fns) landed (commit `9c975def`).
+  Slices D (GC kind-tag) and E (string representation) are **deferred by the
+  user** (touch the GC object model / frozen string layout).
+- **Phase 5 (Tier0 type feedback): foundation done.** `crates/zun_interp/src/
+  feedback.rs` (12 pub fns) hooked on the slow/miss path in
+  `collections/dynamic_call.rs`, env-gated (commit `d665ab1e`). Further hardening
+  is downstream of the phase-6 decision.
+- **Phase 6 (speculative Tier1 + deopt): surveyed read-only only.** Needs user
+  decisions on the feedback→JIT flow and the bridge Any-carrier ABI (JIT ABI is
+  a conditioned category).
+- **Option B (metadata marking + verifier pairing for phase 3): proposed,
+  awaiting approval** (touches the `.zm` contract).
+
+Everything marked awaiting/deferred is gated on an explicit user decision under
+the goal's propose-before-change conditions for the `.zm`/JIT/GC/string-layout
+categories; none can be done unilaterally.
+
 ## Phase-1 regression tests — fail-before-fix demonstrated (2026-11-07)
 
 The two phase-1 bugs with dedicated regression tests were verified to fail
