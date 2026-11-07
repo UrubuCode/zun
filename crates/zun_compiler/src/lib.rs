@@ -575,8 +575,8 @@ where
     let mut loader = zun_loader::ModuleLoader::new();
     for (module, source) in sources {
         let mut externals = Vec::new();
-        let mut parse_diagnostics = Vec::new();
-        let ast = zun_syntax::parse(source, &mut parse_diagnostics);
+        let ast = zun_syntax::oxc::parse_subset(source, true)
+            .map_err(|errors| errors.into_iter().map(Diagnostic::error).collect::<Vec<_>>())?;
         for import in ast.imports {
             for binding in import.names {
                 let imported = &source
@@ -723,9 +723,13 @@ where
             )));
             continue;
         }
-        let mut parse_diagnostics = Vec::new();
-        let program = zun_syntax::parse(source, &mut parse_diagnostics);
-        diagnostics.extend(parse_diagnostics);
+        let program = match zun_syntax::oxc::parse_subset(source, true) {
+            Ok(program) => program,
+            Err(errors) => {
+                diagnostics.extend(errors.into_iter().map(Diagnostic::error));
+                continue;
+            }
+        };
         let exports = program
             .functions
             .iter()

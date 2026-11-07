@@ -15,8 +15,7 @@ const COLLECTION_N: i64 = 10_000;
 
 fn compile(src: &str) -> zun_module::Module {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
-    assert!(diags.is_empty(), "parse: {diags:?}");
+    let ast = zun_syntax::oxc::parse_subset(src, true).expect("oxc parse");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema: {diags:?}");
     zun_ilgen::lower(&hir)

@@ -4,8 +4,7 @@ use zun_module::read_body;
 
 fn lower_src(src: &str) -> Module {
     let mut diags = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diags);
-    assert!(diags.is_empty(), "parse: {diags:?}");
+    let ast = zun_syntax::oxc::parse_subset(src, true).expect("oxc parse");
     let hir = zun_sema::check(src, &ast, &mut diags);
     assert!(diags.is_empty(), "sema: {diags:?}");
     lower(&hir)
@@ -44,8 +43,7 @@ fn lowers_expression_spans_into_sequence_points() {
 fn encodes_string_external_call_types_in_member_metadata() {
     let src = "extern function echo(value: string): string from \"host\"; function main(): string { return echo(\"zun\"); }";
     let mut diagnostics = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diagnostics);
-    assert!(diagnostics.is_empty(), "parse: {diagnostics:?}");
+    let ast = zun_syntax::oxc::parse_subset(src, true).expect("oxc parse");
     let hir = zun_sema::check_with_externals(
         src,
         &ast,
@@ -71,8 +69,7 @@ fn encodes_string_external_call_types_in_member_metadata() {
 fn encodes_two_string_external_call_types_in_member_metadata() {
     let src = "extern function join(left: string, right: string): string from \"host\"; function main(): string { return join(\"a\", \"b\"); }";
     let mut diagnostics = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diagnostics);
-    assert!(diagnostics.is_empty(), "parse: {diagnostics:?}");
+    let ast = zun_syntax::oxc::parse_subset(src, true).expect("oxc parse");
     let hir = zun_sema::check_with_externals(
         src,
         &ast,
@@ -98,8 +95,7 @@ fn encodes_two_string_external_call_types_in_member_metadata() {
 fn encodes_i32_and_u32_external_call_types_in_member_metadata() {
     let src = "extern function signed(value: i32): i32 from \"host\"; extern function unsigned(value: u32): u32 from \"host\"; function main(): i32 { return signed(1); }";
     let mut diagnostics = Vec::new();
-    let ast = zun_syntax::parse(src, &mut diagnostics);
-    assert!(diagnostics.is_empty(), "parse: {diagnostics:?}");
+    let ast = zun_syntax::oxc::parse_subset(src, true).expect("oxc parse");
     let hir = zun_sema::check_with_externals(
         src,
         &ast,

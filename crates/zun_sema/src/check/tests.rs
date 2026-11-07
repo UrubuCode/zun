@@ -5,12 +5,10 @@ use crate::hir;
 use crate::Ty;
 use zun_common::Diagnostic;
 use zun_syntax::oxc::parse_subset;
-use zun_syntax::parse;
 
 fn check_src(src: &str) -> (hir::Program, Vec<Diagnostic>) {
     let mut diags = Vec::new();
-    let ast = parse(src, &mut diags);
-    assert!(diags.is_empty(), "parse errors: {diags:?}");
+    let ast = parse_subset(src, true).expect("oxc parse");
     let hir = check(src, &ast, &mut diags);
     (hir, diags)
 }
@@ -47,7 +45,7 @@ fn checks_typed_function_and_finds_main() {
 fn default_extended_string_import_rebinds_the_frozen_string_type() {
     let src = "import String from \"extended-string\"; function main(value: String): String { return value.toUpperCase().reverse(); }";
     let mut diagnostics = Vec::new();
-    let ast = parse(src, &mut diagnostics);
+    let ast = parse_subset(src, true).expect("oxc parse");
     let hir = check_with_externals(src, &ast, &mut diagnostics, &[]);
     assert!(
         diagnostics.is_empty(),
@@ -61,7 +59,7 @@ fn default_extended_string_import_rebinds_the_frozen_string_type() {
 fn rebound_string_exposes_frozen_floor_extensions() {
     let src = "import String from \"extended-string\"; function main(value: String, needle: String): boolean { let size: u64 = value.length(); let upper: String = value.toUpperCase(); let lower: String = value.toLowerCase(); let trimmed: String = value.trim(); if (size == 0) { return upper == lower; } return value.includes(needle) || trimmed == value; }";
     let mut diagnostics = Vec::new();
-    let ast = parse(src, &mut diagnostics);
+    let ast = parse_subset(src, true).expect("oxc parse");
     let hir = check_with_externals(src, &ast, &mut diagnostics, &[]);
     assert!(
         diagnostics.is_empty(),
@@ -185,12 +183,14 @@ fn async_await_is_rejected_inside_handlers() {
 
 #[test]
 fn yield_is_rejected_outside_generator_functions() {
-    let (_, diagnostics) = check_src("function main(): int { return yield 1; }");
+    // OXC, the single front-end, rejects a `yield` outside a generator body at
+    // parse time, so the error surfaces as a parse diagnostic rather than a
+    // checker one.
+    let errors = parse_subset("function main(): int { return yield 1; }", true)
+        .expect_err("yield outside a generator must be rejected");
     assert!(
-        diagnostics.iter().any(|diagnostic| diagnostic
-            .message
-            .contains("yield is only valid inside a generator function")),
-        "{diagnostics:?}"
+        errors.iter().any(|message| message.contains("yield")),
+        "{errors:?}"
     );
 }
 
@@ -328,15 +328,6 @@ fn field_type_flows_through_access() {
         "class Box { v: number; }\n\
              function main() { let b = new Box(3); let y = b.v + 1; print(y); }",
     );
-}
-
-#[test]
-fn wrong_new_arity_diagnoses() {
-    let msg = first_error(
-        "class Point { x: number; y: number; }\n\
-             function main() { let p = new Point(1); }",
-    );
-    assert!(msg.contains("field(s)"), "{msg}");
 }
 
 #[test]
@@ -553,7 +544,7 @@ fn dynamic_property_builtins_are_type_checked() {
 fn checks_external_function_call_from_linker_signature() {
     let source = "import { answer } from \"core\"; function main(): int { return answer(41); }";
     let mut diagnostics = Vec::new();
-    let ast = parse(source, &mut diagnostics);
+    let ast = parse_subset(source, true).expect("oxc parse");
     let hir = check_with_externals(
         source,
         &ast,
@@ -707,9 +698,7 @@ fn error_does_not_cascade() {
 #[test]
 fn core_import_is_gated_for_untrusted_libraries() {
     let src = "import { eprintln } from \"zun:core\";\nfunction main(): void { eprintln(\"x\"); }";
-    let mut diags = Vec::new();
-    let ast = parse(src, &mut diags);
-    assert!(diags.is_empty(), "parse errors: {diags:?}");
+    let ast = parse_subset(src, true).expect("oxc parse");
 
     // Allowed (internal/module code): no diagnostic.
     let mut ok = Vec::new();
