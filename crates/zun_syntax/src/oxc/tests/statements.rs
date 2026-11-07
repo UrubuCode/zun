@@ -492,3 +492,15 @@ fn converts_do_while_statements_with_block_bodies() {
         crate::ast::Stmt::DoWhile { .. }
     ));
 }
+
+#[test]
+fn synthetic_names_are_deterministic_across_repeated_compiles() {
+    // Regression for the per-compile reset of the synthetic-identifier counters
+    // (destructuring temps, computed class fields, yield*): parsing the same
+    // source twice in one process must yield identical programs. Drifting
+    // process-global counters would change the synthetic Name spans.
+    let source = "const [a, b] = arr; class C { [\"k\"] = 1; }";
+    let first = parse_subset(source, true).expect("first parse");
+    let second = parse_subset(source, true).expect("second parse");
+    assert_eq!(first, second);
+}
