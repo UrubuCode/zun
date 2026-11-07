@@ -19,8 +19,8 @@ mod module_bound_function;
 mod ordered_map;
 mod promise_value;
 mod regexp;
-pub mod string_ops;
 pub mod serde;
+pub mod string_ops;
 mod symbols;
 mod typed_elements;
 #[path = "views.rs"]

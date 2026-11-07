@@ -357,9 +357,7 @@ fn collect_return_exprs<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a Option<Expr>>) 
                 collect_return_exprs(body, out)
             }
             Stmt::For { body, .. } | Stmt::ForOf { body, .. } => collect_return_exprs(body, out),
-            Stmt::Labeled { body, .. } => {
-                collect_return_exprs(std::slice::from_ref(&**body), out)
-            }
+            Stmt::Labeled { body, .. } => collect_return_exprs(std::slice::from_ref(&**body), out),
             Stmt::Try {
                 body,
                 catches,
@@ -429,7 +427,11 @@ fn collect_return_values<'a>(stmts: &'a mut [Stmt], out: &mut Vec<&'a mut Option
 }
 
 /// Rewrite a matching direct [`ExprKind::Call`] to target the specialization.
-fn route_call(func: &mut FuncIndex, args: &[Expr], routes: &BTreeMap<FuncIndex, Vec<Specialization>>) {
+fn route_call(
+    func: &mut FuncIndex,
+    args: &[Expr],
+    routes: &BTreeMap<FuncIndex, Vec<Specialization>>,
+) {
     let Some(specs) = routes.get(func) else {
         return;
     };
@@ -602,7 +604,9 @@ fn route_expr(expr: &mut Expr, routes: &BTreeMap<FuncIndex, Vec<Specialization>>
         }
 
         ExprKind::CallRestArray { args, .. } => route_expr(args, routes),
-        ExprKind::CallRestArrayFixed { fixed_args, args, .. } => {
+        ExprKind::CallRestArrayFixed {
+            fixed_args, args, ..
+        } => {
             for arg in fixed_args {
                 route_expr(arg, routes);
             }

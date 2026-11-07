@@ -159,7 +159,10 @@ pub fn split_on(text: &str, separator: &str) -> Vec<String> {
     let units: Vec<u16> = wtf16::encode(text).collect();
     let sep: Vec<u16> = wtf16::encode(separator).collect();
     if sep.is_empty() {
-        return units.iter().map(|unit| wtf16::from_units(&[*unit])).collect();
+        return units
+            .iter()
+            .map(|unit| wtf16::from_units(&[*unit]))
+            .collect();
     }
     let mut parts = Vec::new();
     let mut from = 0;

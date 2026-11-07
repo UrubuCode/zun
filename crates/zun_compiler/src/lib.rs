@@ -617,8 +617,12 @@ where
     let mut loader = zun_loader::ModuleLoader::new();
     for (module, source) in sources {
         let mut externals = Vec::new();
-        let ast = zun_syntax::oxc::parse_subset(source, true)
-            .map_err(|errors| errors.into_iter().map(Diagnostic::error).collect::<Vec<_>>())?;
+        let ast = zun_syntax::oxc::parse_subset(source, true).map_err(|errors| {
+            errors
+                .into_iter()
+                .map(Diagnostic::error)
+                .collect::<Vec<_>>()
+        })?;
         for import in ast.imports {
             for binding in import.names {
                 let imported = &source

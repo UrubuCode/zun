@@ -796,7 +796,11 @@ fn call_targets(stmts: &[hir::Stmt], out: &mut Vec<hir::FuncIndex>) {
             hir::Stmt::Expr(e) => expr(e, out),
             hir::Stmt::Return(Some(e)) | hir::Stmt::Throw(e) => expr(e, out),
             hir::Stmt::Group(ss) => ss.iter().for_each(|s| stmt(s, out)),
-            hir::Stmt::If { cond, then_body, else_body } => {
+            hir::Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 expr(cond, out);
                 call_targets(then_body, out);
                 call_targets(else_body, out);
@@ -829,14 +833,22 @@ fn emits_and_routes_a_monomorphic_specialization() {
         .iter()
         .position(|f| f.name == "sq")
         .expect("generic sq present");
-    assert_eq!(hir.functions[generic].locals[0], Ty::Any, "generic stays `any`");
+    assert_eq!(
+        hir.functions[generic].locals[0],
+        Ty::Any,
+        "generic stays `any`"
+    );
 
     let spec = hir
         .functions
         .iter()
         .position(|f| f.name == "sq$mono$number")
         .expect("specialization emitted");
-    assert_eq!(hir.functions[spec].locals[0], Ty::F64, "specialized param is number");
+    assert_eq!(
+        hir.functions[spec].locals[0],
+        Ty::F64,
+        "specialized param is number"
+    );
     assert_eq!(hir.functions[spec].return_ty, Ty::F64);
 
     // The caller (`main`) must target the specialization, never the generic.
@@ -896,7 +908,10 @@ fn emits_an_any_return_specialization_with_a_reboxed_return() {
     };
     assert_eq!(value.ty, Ty::Any, "the returned value is boxed to `Any`");
     let hir::ExprKind::BoxAny { value: inner } = &value.kind else {
-        panic!("expected the return to be re-boxed via BoxAny, got {:?}", value.kind);
+        panic!(
+            "expected the return to be re-boxed via BoxAny, got {:?}",
+            value.kind
+        );
     };
     assert_eq!(inner.ty, Ty::F64, "the boxed concrete result is an f64");
 }

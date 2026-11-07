@@ -53,8 +53,7 @@ impl<'a> Interp<'a> {
                 let setup = [target];
                 let wrapper = {
                     let _scope = unsafe { zun_gc::NativeRootScope::enter(&setup) };
-                    object(&self.protocol_iterator_new(source)?)
-                        .ok_or(RunError::BadToken)?
+                    object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?
                 };
                 let roots = [wrapper, setup[0]];
                 let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
@@ -529,8 +528,8 @@ impl<'a> Interp<'a> {
                             // the iterator (IteratorClose) before propagating.
                             if name == "arrayFromMapped" {
                                 if let Ok(wrapper_value) = self.protocol_iterator_new(source) {
-                                    let wrapper = object(&wrapper_value)
-                                        .ok_or(RunError::BadToken)?;
+                                    let wrapper =
+                                        object(&wrapper_value).ok_or(RunError::BadToken)?;
                                     let callback = match args.get(1).ok_or(RunError::BadToken)? {
                                         Value::Function(handle) => *handle,
                                         _ => return Err(RunError::BadToken),

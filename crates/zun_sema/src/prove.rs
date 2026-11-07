@@ -522,11 +522,7 @@ fn walk_expr(expr: &Expr, owner: FuncIndex, in_closure: bool, facts: &mut Facts)
         ExprKind::CallRest { func, args } | ExprKind::GeneratorCall { func, args, .. } => {
             // Rest/generator targets bail structurally; record the edge for
             // recursion but not as a fixed-arity call site.
-            facts
-                .call_edges
-                .entry(owner)
-                .or_default()
-                .insert(*func);
+            facts.call_edges.entry(owner).or_default().insert(*func);
             walk_args(args, owner, in_closure, facts);
         }
         ExprKind::CallRestArray { func, args } => {
@@ -689,7 +685,10 @@ fn record_direct_call(owner: FuncIndex, func: FuncIndex, args: &[Expr], facts: &
 pub fn ty_label(ty: Ty) -> String {
     use hir::{FloatKind, IntKind};
     match ty {
-        Ty::Int(IntKind { bits: 32, signed: true }) => "int".to_string(),
+        Ty::Int(IntKind {
+            bits: 32,
+            signed: true,
+        }) => "int".to_string(),
         Ty::Int(IntKind { bits, signed }) => {
             format!("{}{}", if signed { "i" } else { "u" }, bits)
         }
@@ -747,8 +746,14 @@ impl ProveReport {
         }
 
         out.push_str("\nSUMMARY\n-------\n");
-        out.push_str(&format!("total functions:        {}\n", self.functions.len()));
-        out.push_str(&format!("candidates:             {}\n", self.candidate_count));
+        out.push_str(&format!(
+            "total functions:        {}\n",
+            self.functions.len()
+        ));
+        out.push_str(&format!(
+            "candidates:             {}\n",
+            self.candidate_count
+        ));
         out.push_str(&format!("generic:                {}\n", self.generic_count));
         out.push_str(&format!(
             "any-argument call sites: {}\n",
@@ -814,7 +819,10 @@ mod tests {
              function apply(callback: any, x: number): number { return x; }\n\
              function main(): void { apply(helper, 2); helper(3); }",
         );
-        assert_eq!(verdict_of(&report, "helper"), &Verdict::Generic(BailReason::ReadAsValue));
+        assert_eq!(
+            verdict_of(&report, "helper"),
+            &Verdict::Generic(BailReason::ReadAsValue)
+        );
     }
 
     #[test]
@@ -833,6 +841,9 @@ mod tests {
     #[test]
     fn main_is_an_exported_entry() {
         let report = prove_src("function main(): int { return 0; }");
-        assert_eq!(verdict_of(&report, "main"), &Verdict::Generic(BailReason::Exported));
+        assert_eq!(
+            verdict_of(&report, "main"),
+            &Verdict::Generic(BailReason::Exported)
+        );
     }
 }

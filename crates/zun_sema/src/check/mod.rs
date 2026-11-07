@@ -103,7 +103,15 @@ pub fn check_with_externals(
     diagnostics: &mut Vec<Diagnostic>,
     external_functions: &[ExternalFunction],
 ) -> hir::Program {
-    check_impl(source, program, diagnostics, external_functions, true, true, true)
+    check_impl(
+        source,
+        program,
+        diagnostics,
+        external_functions,
+        true,
+        true,
+        true,
+    )
 }
 
 /// Like [`check`] but with Phase 3b monomorphic specialization enabled, for the

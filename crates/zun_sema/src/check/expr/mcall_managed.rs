@@ -104,7 +104,10 @@ impl Checker<'_> {
         Some((
             row.native,
             Self::managed_ty_to_ty(row.ret),
-            row.args.iter().map(|arg| Self::managed_ty_to_ty(*arg)).collect(),
+            row.args
+                .iter()
+                .map(|arg| Self::managed_ty_to_ty(*arg))
+                .collect(),
         ))
     }
 
