@@ -294,7 +294,6 @@ fn dispatch(file: &str, action: Action) -> ExitCode {
             } else {
                 zun_compiler::write_prelude_cache(path)
                     .and_then(|_| zun_compiler::read_prelude_cache(path))
-                    .map_err(|error| error)
             };
             match result {
                 Ok(module) => Some(module),

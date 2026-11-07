@@ -1270,7 +1270,7 @@ mod tests {
             .find(|method| module.strings.get(method.name) == "receiverValue")
             .expect("extern method metadata");
         let body = zun_module::read_body(&module.code, method.body_offset).expect("method body");
-        let text = zun_il::disassemble(&body.code).expect("disassemble method body");
+        let text = zun_il::disassemble(body.code).expect("disassemble method body");
         assert!(text.contains("call.builtin"), "{text}");
     }
 
