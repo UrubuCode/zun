@@ -93,6 +93,51 @@ Everything marked awaiting/deferred is gated on an explicit user decision under
 the goal's propose-before-change conditions for the `.zm`/JIT/GC/string-layout
 categories; none can be done unilaterally.
 
+## Phase 3 partial specialization — IMPLEMENTED, flag-gated off (2026-11-07)
+
+Approved by the user with conditions. Landed in commits `6bbc2bf0` (sema + gates)
+and `476d43b3` (`zun prove --partial`).
+
+- **What it does.** Relaxes the all-or-nothing `BailReason::AnyArgument`: a
+  parameter that is one concrete type at some intra-module call sites and `any`
+  at others becomes a candidate. The concrete sites route to the typed twin; the
+  `any` sites keep calling the generic. Sound without a guard — `route_call`
+  already requires an exact per-site type match, so an `any` argument never
+  selects a concrete twin, and the generic always remains.
+- **Flag.** `ZUN_PARTIAL_SPEC` env (mirrors `ZUN_FEEDBACK`), **off by default**.
+  `check_specialized_partial` / `prove_program_with(.., true)` /
+  `zun prove --partial` force it on for tests and measurement. No `.zm` change:
+  the twin is an extra MethodDef, verifier pairing via the existing mechanism.
+- **Before/after (prelude scale, `prove_prelude_scale.rs`).** partial OFF:
+  candidates=5, any-argument bails=8. partial ON: candidates=12 (+7), all 8
+  any-argument bails cleared, 1 became no-concrete-param; the 26 any call sites
+  stay on the generic (that is `any` remaining the expensive exception).
+- **Emitted vs candidates.** Over the raw prelude corpus, emission is 0: the 5
+  non-partial candidates are already fully typed (skip), and the +7 partial
+  candidates are rejected by the conservative emission gate on library bodies.
+  Emission + routing is validated end-to-end by the sema gate test (one twin
+  emitted, concrete site routed, `any` site kept on the generic).
+- **Gates (all green).** 8 sema gate tests (positive route-split + negative
+  soundness: read-as-value, closure capture, reassignment rejected, default
+  param, eval/`new Function`, dynamic import); interp==JIT equivalence with the
+  flag ON 221/221; round-trip + verifier load of a specialized module
+  (byte-stable); hot-path bench unaffected (flag off → hot path byte-identical).
+- **Pending to flip the default:** the user wants the compile-path emitted count
+  and conformance re-checked once there is a corpus that actually emits twins
+  (library bodies do not); phase 6 is explicitly deferred until phase-5 feedback
+  numbers are gathered.
+
+## Conformance baseline correction: 83/167, not 84 (2026-11-07)
+
+Measured with the current `target/debug/zun.exe` via `scripts/tests_check.sh`
+(`JOBS=2`): **83 pass, 1 Zun-divergent**, identical with `ZUN_PARTIAL_SPEC` on
+and off. The divergent fixture is `tests/streams/web-streams-encoding.ts`
+(`UnhandledPromiseRejection` instead of the stream output); it fails the same way
+with the flag OFF and when run standalone, so it is a **pre-existing,
+flag-independent** regression, not caused by partial specialization. The earlier
+"84/167" figure predates this binary. OPEN (out of scope here): triage
+`web-streams-encoding` separately.
+
 ## Phase-1 regression tests — fail-before-fix demonstrated (2026-11-07)
 
 The two phase-1 bugs with dedicated regression tests were verified to fail
