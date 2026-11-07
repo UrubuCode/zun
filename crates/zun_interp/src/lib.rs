@@ -13,6 +13,7 @@ mod decorators;
 mod dyn_member;
 mod errors;
 mod eval;
+pub mod feedback;
 mod gc_policy;
 mod hooks;
 mod integrity;

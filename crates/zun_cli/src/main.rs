@@ -178,6 +178,7 @@ fn run() -> ExitCode {
             )
         }
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
+        [cmd, flag, file] if cmd == "prove" && flag == "--runtime" => prove_runtime(file),
         [cmd, file] if cmd == "prove" => prove(file),
         _ => {
             eprintln!("{USAGE}");
@@ -191,7 +192,7 @@ usage: zun <command> <file.ts>
   run      compile and execute the program
   build    compile to a .zm module (use --trim, --aot, --preserve-roots <path>, or --prelude-cache <path>)
   disasm   compile and print the ZIL disassembly
-  prove    compile and print the static monomorphization analysis";
+  prove    compile and print the static monomorphization analysis (--runtime: run and print observed dynamic any-site tags)";
 
 #[derive(Clone)]
 enum Action {
@@ -715,6 +716,53 @@ fn prove(file: &str) -> ExitCode {
         }
         Err(diags) => {
             report(file, &source, &diags);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `zun prove --runtime <file.ts>`: compile and execute the program with Tier 0
+/// type feedback enabled, then print the observed per-site tag histograms — the
+/// dynamic complement to static `zun prove`. The program runs exactly as under
+/// `zun run` (its own output goes to stdout first); only the dynamic `any`
+/// dispatch path is instrumented, so a fully typed program reports no sites.
+fn prove_runtime(file: &str) -> ExitCode {
+    let path = Path::new(file);
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) => {
+            eprintln!("zun: cannot read {file}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let oxc_typescript = matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("ts") | Some("mts") | Some("tsx")
+    );
+    let use_oxc = oxc_typescript
+        || matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("js") | Some("mjs") | Some("cjs") | Some("jsx")
+        );
+    let module_result = if use_oxc {
+        zun_compiler::compile_with_oxc(&source, oxc_typescript)
+    } else {
+        zun_compiler::compile_with_default_std(&source)
+    };
+    let module = match module_result {
+        Ok(module) => module,
+        Err(diags) => {
+            report(file, &source, &diags);
+            return ExitCode::FAILURE;
+        }
+    };
+    match zun_vm::execute_and_prove_feedback(&module.write()) {
+        Ok(report) => {
+            print!("{report}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("zun: {error}");
             ExitCode::FAILURE
         }
     }

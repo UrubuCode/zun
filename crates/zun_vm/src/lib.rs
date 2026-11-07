@@ -177,6 +177,38 @@ pub fn execute(bytes: &[u8]) -> Result<Value, VmError> {
     execute_with(bytes, &mut out)
 }
 
+/// Load and run a `.zm` module with Tier 0 type feedback collection enabled,
+/// returning the rendered per-site tag histograms (the dynamic "where any
+/// persists" report). Program output still goes to stdout; the returned string
+/// is the feedback dump. The module is kept alive for the render so each site's
+/// source span resolves.
+///
+/// This is the runtime counterpart to the static `zun prove`: feedback is only
+/// recorded on the dynamic `any` dispatch path, so a fully typed program reports
+/// no sites.
+pub fn execute_and_prove_feedback(bytes: &[u8]) -> Result<String, VmError> {
+    let mut out = StdoutOutput;
+    zun_interp::feedback::reset();
+    zun_interp::feedback::set_enabled(true);
+    let module = load(bytes)?;
+    let result = {
+        #[cfg(feature = "eval")]
+        let host: Option<&dyn EvalHost> = Some(&CompilerEvalHost);
+        #[cfg(not(feature = "eval"))]
+        let host: Option<&dyn EvalHost> = None;
+        match unsafe { zun_codegen::Jit::new_bridged(&module, jit_bridge::bridge_config()) } {
+            Ok(jit) => {
+                let hook = JitHook::new(jit, &module);
+                let _bridge = jit_bridge::BridgeScope::enter(&module, None, &mut out);
+                zun_interp::run_with_eval_host(&module, &mut out, Some(&hook), host)
+            }
+            Err(_) => zun_interp::run_with_eval_host(&module, &mut out, None, host),
+        }
+    };
+    result.map_err(VmError::Run)?;
+    Ok(zun_interp::feedback::render(&module))
+}
+
 /// Load and run a `.zm` module, directing output to a custom sink.
 ///
 /// Tiering: the module's JIT-eligible methods are compiled up front, and the

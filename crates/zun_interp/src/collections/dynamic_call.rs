@@ -15,6 +15,17 @@ impl<'a> Interp<'a> {
         match name {
             "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4"
             | "dynamicCall5" | "dynamicCall6" => {
+                // Tier 0 type feedback: this is the dynamic `any` miss path, so
+                // recording the observed receiver/argument tags here is free for
+                // typed code (which resolves to typed natives and never arrives).
+                // Gated and off by default; the `active_frame` (method rid +
+                // bytecode offset of the dynamic call instruction) is the stable
+                // site key.
+                if crate::feedback::enabled() {
+                    if let Some((method_rid, offset)) = self.active_frame {
+                        crate::feedback::record(self.module, method_rid, offset, args);
+                    }
+                }
                 // A string receiver (an `any`-typed string): JS String methods.
                 if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
                     // A RegExp argument routes the regex-taking String methods
