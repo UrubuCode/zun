@@ -127,6 +127,30 @@ and `476d43b3` (`zun prove --partial`).
   (library bodies do not); phase 6 is explicitly deferred until phase-5 feedback
   numbers are gathered.
 
+## Phase 5 feedback census over the conformance corpus (2026-11-07)
+
+Item 2 of the user's decision: wire the Tier0 feedback into the corpus and
+report how polymorphic the residual dynamic `any` is, to decide phase 6. Method:
+ran every `tests/**/*.ts` fixture through `zun prove --runtime` (feedback on),
+aggregated each recorded dynamic `any` call-site as monomorphic (every
+receiver/arg histogram has one distinct tag) vs polymorphic (any histogram has
+>1 tag or overflowed). Measured on the default compile path (partial spec off;
+emission over these small/library programs is ~0 either way, so the flag does
+not move the dynamic picture).
+
+- fixtures: 85 ran (82 error/timeout — the same ones that fail conformance).
+- **dynamic any call-sites: 1388 total — 1377 monomorphic (99.2%), 11
+  polymorphic (0.8%).**
+- **dynamic any calls observed: 311,980** (the residual `any` dispatch volume).
+- The Rust hot-path microbenches are fully-typed loops with no dynamic `any`,
+  so they record nothing — the typed floor already carries them.
+
+Phase-6 reading: residual `any` dispatch is overwhelmingly **monomorphic at
+runtime** (99.2% of sites, and the 311,980 calls are dominated by them). A
+speculative Tier1 monomorphic specialization with a cheap guard + deopt would
+therefore hit its fast path almost always (guards rarely fail), which is a
+strong signal that phase 6 is worth doing. Decision is the user's.
+
 ## Conformance baseline correction: 83/167, not 84 (2026-11-07)
 
 Measured with the current `target/debug/zun.exe` via `scripts/tests_check.sh`
