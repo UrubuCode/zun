@@ -1,19 +1,10 @@
-//! The Zun TypeScript/JavaScript front-end: lexer, AST, and parser.
-//!
-//! Phase-1 scope: top-level functions, `let`, `if`/`else`, `while`, `return`,
-//! calls, and arithmetic over numbers, strings, and booleans. The parser never
-//! aborts — it reports [`Diagnostic`]s and recovers, so a driver always gets a
-//! best-effort [`Program`] plus the full error list.
-//!
-//! [`Diagnostic`]: zun_common::Diagnostic
+//! The Zun TypeScript/JavaScript front-end: the shared [`ast`] and the OXC
+//! adapter ([`oxc`]), which parses source into an [`ast::Program`].
 
 pub mod ast;
-pub mod lexer;
 pub mod oxc;
-pub mod parser;
 
 pub use ast::{
     BinaryOp, Block, Class, ClassField, Expr, Function, FunctionExpr, Import, Name, Param, Program,
     Stmt, TemplatePart, TypeAnnotation, UnaryOp,
 };
-pub use parser::parse;
