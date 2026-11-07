@@ -191,6 +191,54 @@ indices (coerce + bounds-check producing JS NaN/undefined), so a typed string
 receiver leaves the dynamic `stringMethod` builtin. Measurement programs live in
 the session scratchpad; nothing here was committed as a fix.
 
+## Tiering/OSR + interpreter base cost — deep diagnosis (2026-11-07)
+
+Follow-up time study (release, 5-run medians, startup subtracted). Per-iteration
+over 2M, `acc += i % 26`:
+- in a called function `hot()`: **~6.4 ns/iter** (Tier1 native).
+- in `main`, eligible (no `print`): **~438 ns/iter** (interpreter).
+- in `main` with a trailing `print`: ~304 ns/iter (interpreter).
+- `hot()` with a `print` *inside* the loop: ~2160 ns/iter (interpreter).
+
+**Finding 1 — OSR (interp→JIT) is not wired into the run path.** The machinery
+exists: the interpreter calls `hook.on_backedge_state` on every back-edge
+(`lib.rs:976-1015`), `JitHook` keeps per-loop back-edge counters with
+`DEFAULT_THRESHOLD = 2` and builds `OsrRequest`/`OsrSnapshot`s, and codegen has
+`zun_jit_osr_poll`. But the only callers of `take_osr_requests` /
+`take_osr_snapshots` outside `#[cfg(test)]` are tests — nothing in
+`run_with_eval_host` / `execute_*` drains or applies them. So a method that
+starts on the interpreter never transfers to native mid-loop. The entry method
+`main` is always interpreted, so a hot loop written at top level never tiers up
+(~438 vs ~6.4 ns, ~68×). `zun_jit_osr_poll` only replenishes the counter of a
+loop already running in Tier1. This matches the predicted "separate function
+fast, main slow ⇒ missing OSR."
+
+**Finding 2 — a non-eligible `CallBuiltin` disqualifies the whole method.**
+`eligible.rs:115` only admits `CallBuiltin` for date/math/collection/allocation/
+string builtins; `print` is none, so any method containing `print` (or other IO)
+is JIT-ineligible and runs entirely interpreted (hot+print = ~2160 ns/iter).
+
+**Finding 3 — interpreter base cost ≈ 20-23 ns/opcode.** The arith loop body is
+pure f64 (ldloc/const.f64/cmp/br/rem.f64/add.f64/dup/stloc/pop), ~18-20
+opcodes/iter, with **no** box/unbox, allocation, name lookup, or Value clone.
+The cost is structural (`lib.rs:554-564`): every instruction re-runs
+`decode_one(&code[pc..])` (byte re-parse, no decoded cache) plus two frame
+bookkeeping writes (`active_frame`, `call_stack` `frame.pc`) before the match;
+each back-edge also runs `poll_gc` + the hook. Re-decode + bookkeeping dominate.
+
+**Finding 4 — charCodeAt under JIT (in a JIT-able `hot()`):** typed-declared
+string ~1003 ns/iter vs `any` ~2766 ns/iter (~2.75×). Both are dominated by the
+non-inlined dynamic `call.builtin 354` (`stringMethod`) with box/unbox; the typed
+U64 intrinsic is never used for an f64 index, so even "typed under JIT" is ~1 µs.
+
+**Evidence-backed priority (user's provisional order, not implemented):**
+1. Get the JIT into loops: wire interp→JIT OSR (machinery exists, unused) and/or
+   compile + natively enter the entry; revisit the `print`/CallBuiltin cliff.
+2. Interpreter base cost: pre-decode/cache instructions, trim per-op bookkeeping.
+3. Typed string intrinsics for f64 indices (proposal A).
+4. Int narrowing (proposal B).
+5. Phase 6 only after the above.
+
 ## Conformance baseline correction: 83/167, not 84 (2026-11-07)
 
 Measured with the current `target/debug/zun.exe` via `scripts/tests_check.sh`
