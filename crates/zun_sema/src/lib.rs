@@ -12,6 +12,6 @@ pub mod prove;
 mod realm;
 pub mod typed_arrays;
 
-pub use check::{check, check_with_externals, ExternalFunction};
+pub use check::{check, check_specialized, check_with_externals, ExternalFunction};
 pub use hir::{Program, Ty};
 pub use prove::{prove_program, BailReason, FunctionVerdict, ProveReport, Verdict};

@@ -61,6 +61,7 @@ mod module_init;
 mod operators;
 mod pattern;
 mod signatures;
+mod specialize;
 mod stmt;
 
 use arities::*;
@@ -79,7 +80,7 @@ pub fn check(
     program: &ast::Program,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> hir::Program {
-    check_impl(source, program, diagnostics, &[], false, true)
+    check_impl(source, program, diagnostics, &[], false, true, false)
 }
 
 /// A source-level function signature imported from another module.
@@ -102,7 +103,20 @@ pub fn check_with_externals(
     diagnostics: &mut Vec<Diagnostic>,
     external_functions: &[ExternalFunction],
 ) -> hir::Program {
-    check_impl(source, program, diagnostics, external_functions, true, true)
+    check_impl(source, program, diagnostics, external_functions, true, true, true)
+}
+
+/// Like [`check`] but with Phase 3b monomorphic specialization enabled, for the
+/// IL-producing compile path. The emitted HIR carries extra specialized
+/// functions and routed call sites; the generic functions stay present and
+/// unchanged. Used by the compiler; `check` itself stays specialization-free so
+/// the pure analysis (`zun prove`) and the unit tests observe the original HIR.
+pub fn check_specialized(
+    source: &str,
+    program: &ast::Program,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> hir::Program {
+    check_impl(source, program, diagnostics, &[], false, true, true)
 }
 
 /// Check a program with the `zun:core` native surface **gated**: when
@@ -125,9 +139,11 @@ pub fn check_with_externals_core_gated(
         external_functions,
         true,
         allow_core,
+        true,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_impl(
     source: &str,
     program: &ast::Program,
@@ -135,6 +151,7 @@ fn check_impl(
     external_functions: &[ExternalFunction],
     allow_external_modules: bool,
     allow_core: bool,
+    specialize: bool,
 ) -> hir::Program {
     let hoisted = field_init_hoist::hoist(source, program);
     let program = hoisted.as_ref().unwrap_or(program);
@@ -309,15 +326,29 @@ fn check_impl(
             index
         })
     });
-    hir::Program {
+    // The module's own top-level functions occupy the leading function indices,
+    // in source order (see `collect_signatures`). Only those are candidates.
+    let top_level_count = program.functions.len();
+    let mut hir_program = hir::Program {
         functions,
         classes,
         main,
         module_init,
-        closures: checker.closures,
-        regex_matchers: checker.regex_matchers,
-        codegen_sites: checker.codegen_sites,
+        closures: std::mem::take(&mut checker.closures),
+        regex_matchers: std::mem::take(&mut checker.regex_matchers),
+        codegen_sites: std::mem::take(&mut checker.codegen_sites),
+    };
+    // Phase 3b: synthesize static monomorphic specializations for the certified
+    // candidates and route the agreeing intra-module call sites to them. This is
+    // purely additive — the generic functions stay unchanged and present as the
+    // always-safe fallback — and touches neither the `.zm` format nor the
+    // verifier. The report is computed over the final HIR (specialization reuses
+    // the exact same analysis that drives `zun prove`).
+    if specialize {
+        let report = crate::prove::prove_program(&hir_program, top_level_count);
+        checker.emit_specializations(program, &mut hir_program, &report, top_level_count);
     }
+    hir_program
 }
 
 /// A collected function signature.

@@ -560,7 +560,9 @@ pub fn prove_with_oxc(
         .filter(|function| function.name.span.start < user_len)
         .count();
     let mut diagnostics = Vec::new();
-    let hir = zun_sema::check_with_externals(&combined, &ast, &mut diagnostics, &[]);
+    // The analysis measures the original, pre-specialization HIR, so it uses the
+    // specialization-free `check` (specialization is a compile-path concern).
+    let hir = zun_sema::check(&combined, &ast, &mut diagnostics);
     if diagnostics.iter().any(is_error) {
         return Err(diagnostics);
     }

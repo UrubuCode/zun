@@ -19,6 +19,15 @@ fn check_ok(src: &str) -> hir::Program {
     hir
 }
 
+/// Check with Phase 3b monomorphic specialization enabled (the compile path).
+fn check_specialized_ok(src: &str) -> hir::Program {
+    let mut diags = Vec::new();
+    let ast = parse_subset(src, true).expect("oxc parse");
+    let hir = crate::check::check_specialized(src, &ast, &mut diags);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    hir
+}
+
 fn first_error(src: &str) -> String {
     let (_, diags) = check_src(src);
     assert!(!diags.is_empty(), "expected a diagnostic");
@@ -749,5 +758,110 @@ fn typed_array_single_any_arg_is_checked_once() {
     assert_eq!(
         arg_count_errors, 1,
         "the single argument must be checked exactly once: {diags:?}"
+    );
+}
+
+/// Collect every direct-call target index found anywhere in a function body.
+fn call_targets(stmts: &[hir::Stmt], out: &mut Vec<hir::FuncIndex>) {
+    fn expr(e: &hir::Expr, out: &mut Vec<hir::FuncIndex>) {
+        use hir::ExprKind::*;
+        match &e.kind {
+            Call { func, args } => {
+                out.push(*func);
+                for a in args {
+                    expr(a, out);
+                }
+            }
+            Binary { lhs, rhs, .. } => {
+                expr(lhs, out);
+                expr(rhs, out);
+            }
+            CallBuiltin { args, .. } => {
+                for a in args {
+                    expr(a, out);
+                }
+            }
+            Sequence { effect, value } => {
+                expr(effect, out);
+                expr(value, out);
+            }
+            Convert { value } | BoxAny { value } | Assign { value, .. } => expr(value, out),
+            Unary { operand, .. } => expr(operand, out),
+            _ => {}
+        }
+    }
+    fn stmt(s: &hir::Stmt, out: &mut Vec<hir::FuncIndex>) {
+        match s {
+            hir::Stmt::Let { init, .. } | hir::Stmt::BoxedLet { init, .. } => expr(init, out),
+            hir::Stmt::Expr(e) => expr(e, out),
+            hir::Stmt::Return(Some(e)) | hir::Stmt::Throw(e) => expr(e, out),
+            hir::Stmt::Group(ss) => ss.iter().for_each(|s| stmt(s, out)),
+            hir::Stmt::If { cond, then_body, else_body } => {
+                expr(cond, out);
+                call_targets(then_body, out);
+                call_targets(else_body, out);
+            }
+            hir::Stmt::While { cond, body } | hir::Stmt::DoWhile { body, cond } => {
+                expr(cond, out);
+                call_targets(body, out);
+            }
+            _ => {}
+        }
+    }
+    for s in stmts {
+        stmt(s, out);
+    }
+}
+
+#[test]
+fn emits_and_routes_a_monomorphic_specialization() {
+    // `sq` has an `any` parameter but a concrete (`number`) return and is only
+    // ever called with `number` arguments, so Phase 3b must synthesize a typed
+    // `sq$mono$number` specialization and route both call sites to it, while the
+    // generic `sq` stays present and unchanged (param still `any`).
+    let hir = check_specialized_ok(
+        "function sq(x: any): number { return x * x; } \
+         function main(): void { const a = 2; print(sq(a)); print(sq(3)); }",
+    );
+
+    let generic = hir
+        .functions
+        .iter()
+        .position(|f| f.name == "sq")
+        .expect("generic sq present");
+    assert_eq!(hir.functions[generic].locals[0], Ty::Any, "generic stays `any`");
+
+    let spec = hir
+        .functions
+        .iter()
+        .position(|f| f.name == "sq$mono$number")
+        .expect("specialization emitted");
+    assert_eq!(hir.functions[spec].locals[0], Ty::F64, "specialized param is number");
+    assert_eq!(hir.functions[spec].return_ty, Ty::F64);
+
+    // The caller (`main`) must target the specialization, never the generic.
+    let main = hir.main.expect("main present") as usize;
+    let mut targets = Vec::new();
+    call_targets(&hir.functions[main].body, &mut targets);
+    assert!(
+        targets.contains(&(spec as hir::FuncIndex)),
+        "call site routed to the specialization: {targets:?}",
+    );
+    assert!(
+        !targets.contains(&(generic as hir::FuncIndex)),
+        "no call site still targets the generic: {targets:?}",
+    );
+}
+
+#[test]
+fn does_not_specialize_a_polymorphic_function() {
+    // Disagreeing call sites keep the function generic: no specialization.
+    let hir = check_specialized_ok(
+        "function echo(x: any): any { return x; } \
+         function main(): void { print(echo(1)); print(echo(\"s\")); }",
+    );
+    assert!(
+        hir.functions.iter().all(|f| !f.name.contains("$mono$")),
+        "a polymorphic function must not be specialized",
     );
 }
