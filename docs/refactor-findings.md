@@ -35,7 +35,7 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
 
 ## crates/zun_interp (interpreter)
 
-- **FIXED (commit `44d47178`)** — latent correctness bug (NOT a refactor
+- **FIXED (commit `09144837`)** — latent correctness bug (NOT a refactor
   artifact). In
   `call_inner`, the `Opcode::Call` MemberRef/external path rebinds
   `let body = read_body(&callee.code, …)` (~lib.rs:2012), shadowing the current
@@ -53,7 +53,7 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
   (`zun_interp/src/method_tests.rs`) links two modules (`app` imports `core`),
   has `app.main` wrap a throwing `core.boom()` in try/catch, and asserts the
   catch runs (returns 7, prints 42). Fails before the fix (the throw escapes).
-- **FIXED (commit `PENDING3`)** — `fn value_object` (collections/runtime_iter.rs)
+- **FIXED (commit `6f73b48b`)** — `fn value_object` (collections/runtime_iter.rs)
   was a byte-for-byte duplicate of the `object` free fn in `collections/mod.rs`.
   Converged on the single `pub(super) fn object` in `mod.rs`: the duplicate
   `value_object` is deleted and its callers (`runtime_iter.rs`, `generator.rs`,
@@ -62,7 +62,7 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
 
 ## crates/zun_sema (checker)
 
-- **FIXED (commit `PENDING2`)** — in `check_new`'s realm BufferView path
+- **FIXED (commit `4d88c756`)** — in `check_new`'s realm BufferView path
   (`check/expr/new_realm.rs::new_ctor_buffer_view` / `new_typed_single_arg`),
   `new <TypedArray>(x)` with a single `any`-typed argument checked that argument
   with `self.check_expr` TWICE: once in the numeric/array single-arg probe (which
