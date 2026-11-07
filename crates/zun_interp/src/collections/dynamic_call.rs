@@ -440,7 +440,12 @@ impl<'a> Interp<'a> {
                 // `array`-prefixed name (`arrayJoin`), matching the sema fallback.
                 let is_array =
                     zun_gc::with_current_heap(|heap| heap.array_len(namespace).is_some());
-                if is_array && member.as_ref() == "push" {
+                // The one authoritative array-method table (shared with the
+                // typed sema path) names the member → native mapping and how
+                // each method normalizes its arguments.
+                let array_spec = zun_natives::array_method(member.as_ref());
+                let array_handling = array_spec.map(|spec| spec.handling);
+                if is_array && array_handling == Some(zun_natives::ArrayHandling::Push) {
                     // `push` has no `array*` native (typed code lowers it to an
                     // instruction); append directly and answer the new length.
                     if !call_args.is_empty() {
@@ -466,7 +471,7 @@ impl<'a> Interp<'a> {
                     });
                     return Ok(Value::Any(zun_core::Any::float(length as f64)));
                 }
-                if is_array && member.as_ref() == "pop" {
+                if is_array && array_handling == Some(zun_natives::ArrayHandling::Pop) {
                     if zun_gc::with_current_heap(|heap| heap.array_len(namespace)) != Some(0) {
                         self.guard_array(namespace, crate::integrity::ArrayOp::Remove)?;
                     }
@@ -481,29 +486,40 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Any(removed.unwrap_or_else(zun_core::Any::void)));
                 }
                 if is_array {
-                    let mut chars = member.chars();
-                    let native_name = match chars.next() {
-                        // `sort` has two natives, chosen by the comparator's presence.
-                        _ if member.as_ref() == "sort" => if call_args.is_empty() {
-                            "arraySortDefault"
-                        } else {
-                            "arraySortBy"
+                    use zun_natives::ArrayHandling;
+                    // The base native name comes from the shared table; a member
+                    // the table does not name keeps the open-set `array{Method}`
+                    // fallback so any other member still resolves (or errors and
+                    // falls through) exactly as before.
+                    let mut native_name = match array_spec {
+                        Some(spec) => spec.native.to_string(),
+                        None => {
+                            let mut chars = member.chars();
+                            match chars.next() {
+                                Some(first) => {
+                                    format!("array{}{}", first.to_ascii_uppercase(), chars.as_str())
+                                }
+                                None => member.to_string(),
+                            }
                         }
-                        .to_string(),
-                        Some(first) => {
-                            format!("array{}{}", first.to_ascii_uppercase(), chars.as_str())
-                        }
-                        None => member.to_string(),
                     };
-                    let mut native_name = native_name;
                     let mut native_args = Vec::with_capacity(call_args.len() + 1);
                     native_args.push(Value::Object(namespace));
                     native_args.extend(call_args.iter().cloned());
                     // Methods whose typed form takes defaulted/variadic arguments
-                    // are normalised to the matching runtime-argument natives.
-                    match member.as_ref() {
-                        "slice" => {
-                            native_name = "arraySliceRange".to_string();
+                    // are normalised to the matching runtime-argument natives,
+                    // driven by the shared table's handling classification.
+                    match array_handling {
+                        // `sort` has two natives, chosen by the comparator's presence.
+                        Some(ArrayHandling::Sort) => {
+                            native_name = if call_args.is_empty() {
+                                "arraySortDefault"
+                            } else {
+                                "arraySortBy"
+                            }
+                            .to_string();
+                        }
+                        Some(ArrayHandling::SliceRange) => {
                             native_args.resize(3, Value::Void);
                             for slot in native_args.iter_mut().skip(1) {
                                 *slot = match slot.clone() {
@@ -519,19 +535,18 @@ impl<'a> Interp<'a> {
                                 };
                             }
                         }
-                        "join" => {
+                        Some(ArrayHandling::JoinDefault) => {
                             if !matches!(native_args.get(1), Some(Value::Str(_))) {
                                 native_args.truncate(1);
                                 native_args.push(Value::Str(",".into()));
                             }
                         }
-                        "toString" => {
-                            native_name = "arrayJoin".to_string();
+                        Some(ArrayHandling::ToStringJoin) => {
                             native_args.truncate(1);
                             native_args.push(Value::Str(",".into()));
                         }
-                        "fill" | "copyWithin" => native_args.resize(4, Value::Void),
-                        "concat" => {
+                        Some(ArrayHandling::FillResize) => native_args.resize(4, Value::Void),
+                        Some(ArrayHandling::ConcatList) => {
                             let list = zun_gc::with_current_heap_mut(|heap| {
                                 let list = heap.alloc_array(0);
                                 for value in &call_args {
@@ -543,7 +558,7 @@ impl<'a> Interp<'a> {
                             });
                             native_args = vec![Value::Object(namespace), Value::Object(list)];
                         }
-                        "splice" => {
+                        Some(ArrayHandling::SpliceList) => {
                             let list = zun_gc::with_current_heap_mut(|heap| {
                                 let list = heap.alloc_array(0);
                                 for value in &call_args {
@@ -553,7 +568,6 @@ impl<'a> Interp<'a> {
                                 }
                                 list
                             });
-                            native_name = "arraySpliceArgs".to_string();
                             native_args = vec![Value::Object(namespace), Value::Object(list)];
                         }
                         _ => {}

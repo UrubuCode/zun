@@ -73,79 +73,19 @@ impl Checker<'_> {
             Ty::BufferView(kind) => crate::typed_arrays::method(kind, mname),
             _ => None,
         };
-        typed_array_method.or_else(|| match (receiver_ty, mname) {
-            // Standard `Array.prototype` methods routed to natives. The
-            // callback methods invoke the dynamic function value with the
-            // ECMAScript `(value, index, array)` signature (extra
-            // arguments dropped to the callback's declared arity).
-            (Ty::Array, "forEach") => Some((
-                "arrayForEach",
-                Ty::Void,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "map") => Some((
-                "arrayMap",
-                Ty::Array,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "filter") => Some((
-                "arrayFilter",
-                Ty::Array,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "find") => Some((
-                "arrayFind",
-                Ty::Any,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "findIndex") => Some((
-                "arrayFindIndex",
-                Ty::Int(IntKind::I32),
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "some") => Some((
-                "arraySome",
-                Ty::Boolean,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "every") => Some((
-                "arrayEvery",
-                Ty::Boolean,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "join") => Some(("arrayJoin", Ty::String, vec![Ty::String])),
-            (Ty::Array, "shift") => Some(("arrayShift", Ty::Any, vec![])),
-            (Ty::Array, "unshift") => Some(("arrayUnshift", Ty::Int(IntKind::U64), vec![Ty::Any])),
-            // `at(index)` with relative/undefined semantics (native).
-            (Ty::Array, "at") => Some(("arrayAt", Ty::Any, vec![Ty::F64])),
-            (Ty::Array, "findLast") => Some((
-                "arrayFindLast",
-                Ty::Any,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "findLastIndex") => Some((
-                "arrayFindLastIndex",
-                Ty::Int(IntKind::I32),
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "flatMap") => Some((
-                "arrayFlatMap",
-                Ty::Array,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "group") => Some((
-                "arrayGroup",
-                Ty::DynamicObject,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "groupToMap") => Some((
-                "arrayGroupToMap",
-                Ty::Map,
-                vec![Ty::Function(hir::DYNAMIC_FUNCTION)],
-            )),
-            (Ty::Array, "keys") => Some(("arrayKeys", Ty::Any, vec![])),
-            (Ty::Array, "values") => Some(("arrayValues", Ty::Any, vec![])),
-            (Ty::Array, "entries") => Some(("arrayEntries", Ty::Any, vec![])),
+        if typed_array_method.is_some() {
+            return typed_array_method;
+        }
+        // Standard `Array.prototype` methods routed to natives: the native
+        // name comes from the one authoritative `zun_natives` table shared
+        // with the dynamic `any`-array path; only the sema-side return and
+        // argument types stay here.
+        if receiver_ty == Ty::Array {
+            if let Some(descriptor) = Self::array_method_descriptor(mname) {
+                return Some(descriptor);
+            }
+        }
+        match (receiver_ty, mname) {
             (Ty::Map, "set") => Some(("mapSetChain", Ty::Map, vec![Ty::Any, Ty::Any])),
             (Ty::Map, "get") => Some(("mapGet", Ty::Any, vec![Ty::Any])),
             (Ty::Map, "has") => Some(("mapHas", Ty::Boolean, vec![Ty::Any])),
@@ -387,7 +327,44 @@ impl Checker<'_> {
                 Some(("bufferResize", Ty::Boolean, vec![Ty::Int(IntKind::U64)]))
             }
             _ => None,
-        })
+        }
+    }
+
+    /// The sema-side return and argument types for a standard `Array.prototype`
+    /// method, paired with its native name read from the single authoritative
+    /// `zun_natives` array-method table. Returns `None` for array methods the
+    /// typed path lowers through its own interceptors (`slice`, `concat`,
+    /// `splice`, `sort`, `push`, `pop`, …) rather than this fixed-arity table.
+    fn array_method_descriptor(mname: &str) -> Option<(&'static str, Ty, Vec<Ty>)> {
+        let dynamic_fn = Ty::Function(hir::DYNAMIC_FUNCTION);
+        // The callback methods invoke the dynamic function value with the
+        // ECMAScript `(value, index, array)` signature (extra arguments
+        // dropped to the callback's declared arity).
+        let (return_ty, expected): (Ty, Vec<Ty>) = match mname {
+            "forEach" => (Ty::Void, vec![dynamic_fn]),
+            "map" => (Ty::Array, vec![dynamic_fn]),
+            "filter" => (Ty::Array, vec![dynamic_fn]),
+            "find" => (Ty::Any, vec![dynamic_fn]),
+            "findIndex" => (Ty::Int(IntKind::I32), vec![dynamic_fn]),
+            "some" => (Ty::Boolean, vec![dynamic_fn]),
+            "every" => (Ty::Boolean, vec![dynamic_fn]),
+            "join" => (Ty::String, vec![Ty::String]),
+            "shift" => (Ty::Any, vec![]),
+            "unshift" => (Ty::Int(IntKind::U64), vec![Ty::Any]),
+            // `at(index)` with relative/undefined semantics (native).
+            "at" => (Ty::Any, vec![Ty::F64]),
+            "findLast" => (Ty::Any, vec![dynamic_fn]),
+            "findLastIndex" => (Ty::Int(IntKind::I32), vec![dynamic_fn]),
+            "flatMap" => (Ty::Array, vec![dynamic_fn]),
+            "group" => (Ty::DynamicObject, vec![dynamic_fn]),
+            "groupToMap" => (Ty::Map, vec![dynamic_fn]),
+            "keys" => (Ty::Any, vec![]),
+            "values" => (Ty::Any, vec![]),
+            "entries" => (Ty::Any, vec![]),
+            _ => return None,
+        };
+        let native = zun_natives::array_method(mname)?.native;
+        Some((native, return_ty, expected))
     }
 
     /// The native module a managed/typed-array intrinsic resolves against,

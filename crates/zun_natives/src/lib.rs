@@ -16,6 +16,8 @@
 //! the same way.
 
 mod array_ext;
+mod array_methods;
+pub use array_methods::{array_method, ArrayHandling, ArrayMethod};
 mod boolean;
 mod buffer;
 mod collections;
