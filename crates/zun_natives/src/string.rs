@@ -117,15 +117,9 @@ fn index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeE
     };
     let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
-    let index = if needle_units.is_empty() {
-        0
-    } else {
-        value_units
-            .windows(needle_units.len())
-            .position(|window| window == needle_units.as_slice())
-            .map(|index| index as i64)
-            .unwrap_or(-1)
-    };
+    let index = zun_core::string_ops::find_from(&value_units, &needle_units, 0)
+        .map(|index| index as i64)
+        .unwrap_or(-1);
     Ok(NativeValue::Int(index))
 }
 
@@ -144,15 +138,10 @@ fn last_index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
     };
     let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
-    let index = if needle_units.is_empty() {
-        value_units.len() as i64
-    } else {
-        value_units
-            .windows(needle_units.len())
-            .rposition(|window| window == needle_units.as_slice())
+    let index =
+        zun_core::string_ops::last_index_from(&value_units, &needle_units, value_units.len())
             .map(|index| index as i64)
-            .unwrap_or(-1)
-    };
+            .unwrap_or(-1);
     Ok(NativeValue::Int(index))
 }
 
@@ -207,15 +196,8 @@ fn substring(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
         }
     };
     let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
-    let start = start.min(units.len());
-    let end = end.min(units.len());
-    let (start, end) = if start <= end {
-        (start, end)
-    } else {
-        (end, start)
-    };
     Ok(NativeValue::Str(zun_core::wtf16::from_units(
-        &units[start..end],
+        zun_core::string_ops::substring_units(&units, start, end),
     )))
 }
 
@@ -241,21 +223,14 @@ fn pad_start(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
         Some(NativeArg::Str(fill)) => fill,
         _ => return Err(NativeError("padStart: expected a fill string".to_string())),
     };
-    let length = zun_core::wtf16::len16(value);
-    if target <= length {
+    let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
+    if target <= units.len() {
         return Ok(NativeValue::Str(value.to_string()));
     }
-    let padding_units = target - length;
-    let mut padding = String::new();
-    while zun_core::wtf16::len16(&padding) < padding_units {
-        padding.push_str(fill);
-    }
-    let padding = zun_core::wtf16::encode(&padding)
-        .take(padding_units)
-        .collect::<Vec<_>>();
-    let mut result = zun_core::wtf16::from_units(&padding);
-    result.push_str(value);
-    Ok(NativeValue::Str(result))
+    let fill: Vec<u16> = zun_core::wtf16::encode(fill).collect();
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(
+        &zun_core::string_ops::pad_units(&units, target, &fill, true),
+    )))
 }
 
 #[allow(clippy::redundant_guards)] // guard reads clearer than an empty-string pattern here
@@ -280,21 +255,14 @@ fn pad_end(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
         Some(NativeArg::Str(fill)) => fill,
         _ => return Err(NativeError("padEnd: expected a fill string".to_string())),
     };
-    let length = zun_core::wtf16::len16(value);
-    if target <= length {
+    let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
+    if target <= units.len() {
         return Ok(NativeValue::Str(value.to_string()));
     }
-    let padding_units = target - length;
-    let mut padding = String::new();
-    while zun_core::wtf16::len16(&padding) < padding_units {
-        padding.push_str(fill);
-    }
-    let padding = zun_core::wtf16::encode(&padding)
-        .take(padding_units)
-        .collect::<Vec<_>>();
-    let mut result = value.to_string();
-    result.push_str(&zun_core::wtf16::from_units(&padding));
-    Ok(NativeValue::Str(result))
+    let fill: Vec<u16> = zun_core::wtf16::encode(fill).collect();
+    Ok(NativeValue::Str(zun_core::wtf16::from_units(
+        &zun_core::string_ops::pad_units(&units, target, &fill, false),
+    )))
 }
 
 fn to_lower_case(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -388,15 +356,9 @@ fn repeat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
             ))
         }
     };
-    if value.is_empty() {
-        return Ok(NativeValue::Str(String::new()));
-    }
-    if (value.len() as u128) * (count as u128) > 536_870_888 {
-        return Err(NativeError("RangeError: Invalid string length".to_string()));
-    }
-    Ok(NativeValue::Str(zun_core::wtf16::normalize(
-        value.repeat(count),
-    )))
+    zun_core::string_ops::repeat(value, count)
+        .map(NativeValue::Str)
+        .ok_or_else(|| NativeError("RangeError: Invalid string length".to_string()))
 }
 
 /// `key in new String(s)`: a code-unit index below the length, or `length`.
@@ -472,20 +434,13 @@ fn at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> 
         _ => return Err(NativeError("at: expected a numeric index".to_string())),
     };
     let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
-    let len = units.len() as f64;
-    let resolved = if relative < 0.0 {
-        len + relative
-    } else {
-        relative
-    };
-    if resolved < 0.0 || resolved >= len {
+    match zun_core::string_ops::at_index(units.len(), relative) {
+        Some(index) => Ok(NativeValue::Str(zun_core::wtf16::from_units(
+            &units[index..index + 1],
+        ))),
         // Out of range yields `undefined`, per spec.
-        return Ok(NativeValue::Void);
+        None => Ok(NativeValue::Void),
     }
-    let index = resolved as usize;
-    Ok(NativeValue::Str(zun_core::wtf16::from_units(
-        &units[index..index + 1],
-    )))
 }
 
 fn code_point_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -502,22 +457,16 @@ fn code_point_at(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Na
         }
     };
     let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
-    let Some(&first) = units.get(index) else {
-        return Err(NativeError(format!(
-            "codePointAt: index {index} is out of bounds"
-        )));
-    };
     // A leading high surrogate followed by a low surrogate combines into an
-    // astral code point; otherwise the bare code unit is the code point.
-    if (0xD800..=0xDBFF).contains(&first) {
-        if let Some(&second) = units.get(index + 1) {
-            if (0xDC00..=0xDFFF).contains(&second) {
-                let code = 0x10000 + (((first as u32 - 0xD800) << 10) | (second as u32 - 0xDC00));
-                return Ok(NativeValue::Int(code as i64));
-            }
-        }
+    // astral code point; otherwise the bare code unit is the code point. An
+    // out-of-range index is an error on this typed floor (the dynamic surface
+    // returns `undefined` instead).
+    match zun_core::string_ops::code_point_at(&units, index) {
+        Some(code) => Ok(NativeValue::Int(i64::from(code))),
+        None => Err(NativeError(format!(
+            "codePointAt: index {index} is out of bounds"
+        ))),
     }
-    Ok(NativeValue::Int(first as i64))
 }
 
 fn slice(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -539,25 +488,13 @@ fn slice(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
         return Err(NativeError("slice: expected a numeric end".to_string()));
     };
     let units: Vec<u16> = zun_core::wtf16::encode(value).collect();
-    let len = units.len() as f64;
     // Negative indices count from the end; both ends clamp into range. An
     // absent `end` is passed as a value past any string length, so it clamps
     // to `len` here.
-    let normalize = |index: f64| -> usize {
-        let resolved = if index < 0.0 {
-            (len + index).max(0.0)
-        } else {
-            index.min(len)
-        };
-        resolved as usize
-    };
-    let begin = normalize(start);
-    let finish = normalize(end);
-    if begin >= finish {
-        return Ok(NativeValue::Str(String::new()));
-    }
+    let begin = zun_core::string_ops::relative_index(start, units.len());
+    let finish = zun_core::string_ops::relative_index(end, units.len());
     Ok(NativeValue::Str(zun_core::wtf16::from_units(
-        &units[begin..finish],
+        zun_core::string_ops::slice_units(&units, begin, finish),
     )))
 }
 

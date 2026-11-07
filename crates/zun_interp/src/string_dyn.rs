@@ -9,6 +9,9 @@
 use super::collections::{is_truthy, js_string_to_number, unbox_arg};
 use super::value::Value;
 use super::{Interp, RunError};
+use zun_core::string_ops::{
+    clamp_index, find_from, integer_or_infinity, last_index_from, relative_index,
+};
 
 fn units(text: &str) -> Vec<u16> {
     zun_core::wtf16::encode(text).collect()
@@ -16,50 +19,6 @@ fn units(text: &str) -> Vec<u16> {
 
 fn from_units(units: &[u16]) -> String {
     zun_core::wtf16::from_units(units)
-}
-
-/// ToIntegerOrInfinity on an already-numeric value (`-0` folds to `+0`).
-fn integer_or_infinity(number: f64) -> f64 {
-    if number.is_nan() {
-        0.0
-    } else if number.is_infinite() {
-        number
-    } else {
-        number.trunc() + 0.0
-    }
-}
-
-/// Clamp an integer-or-infinity into `[0, len]`.
-fn clamp_index(number: f64, len: usize) -> usize {
-    if number <= 0.0 {
-        0
-    } else if number >= len as f64 {
-        len
-    } else {
-        number as usize
-    }
-}
-
-/// Resolve a relative index (negative counts from the end) into `[0, len]`.
-fn relative_index(number: f64, len: usize) -> usize {
-    if number < 0.0 {
-        let resolved = len as f64 + number;
-        if resolved <= 0.0 {
-            0
-        } else {
-            resolved as usize
-        }
-    } else {
-        clamp_index(number, len)
-    }
-}
-
-fn find_from(haystack: &[u16], needle: &[u16], from: usize) -> Option<usize> {
-    if needle.len() > haystack.len() {
-        return None;
-    }
-    let last = haystack.len() - needle.len();
-    (from..=last).find(|&start| haystack[start..start + needle.len()] == *needle)
 }
 
 fn number(value: f64) -> Value {
@@ -182,7 +141,7 @@ impl<'a> Interp<'a> {
                 } else {
                     clamp_index(self.dyn_integer(&a1)?, len)
                 };
-                text(&s[start.min(end)..start.max(end)])
+                text(zun_core::string_ops::substring_units(&s, start, end))
             }
             "slice" => {
                 let start = relative_index(self.dyn_integer(&a0)?, len);
@@ -191,11 +150,7 @@ impl<'a> Interp<'a> {
                 } else {
                     relative_index(self.dyn_integer(&a1)?, len)
                 };
-                if start >= end {
-                    Value::Str("".into())
-                } else {
-                    text(&s[start..end])
-                }
+                text(zun_core::string_ops::slice_units(&s, start, end))
             }
             "substr" => {
                 let start = relative_index(self.dyn_integer(&a0)?, len);
@@ -205,11 +160,7 @@ impl<'a> Interp<'a> {
                     self.dyn_integer(&a1)?
                 };
                 let end = (start as f64 + count.max(0.0)).min(len as f64) as usize;
-                if start >= end {
-                    Value::Str("".into())
-                } else {
-                    text(&s[start..end])
-                }
+                text(zun_core::string_ops::slice_units(&s, start, end))
             }
             "indexOf" => {
                 let needle = units(&self.dyn_to_string(&a0)?);
@@ -227,17 +178,9 @@ impl<'a> Interp<'a> {
                 } else {
                     clamp_index(integer_or_infinity(position), len)
                 };
-                if needle.len() > len {
-                    number(-1.0)
-                } else {
-                    let start = from.min(len - needle.len());
-                    match (0..=start)
-                        .rev()
-                        .find(|&at| s[at..at + needle.len()] == *needle)
-                    {
-                        Some(index) => number(index as f64),
-                        None => number(-1.0),
-                    }
+                match last_index_from(&s, &needle, from) {
+                    Some(index) => number(index as f64),
+                    None => number(-1.0),
                 }
             }
             "includes" | "startsWith" | "endsWith" if self.is_regexp(&a0)? => {
@@ -276,13 +219,11 @@ impl<'a> Interp<'a> {
                         self.dyn_to_string(&a0)?
                     )));
                 }
-                if !recv.is_empty() && count > 0.0 && (recv.len() as f64) * count > 536_870_888.0 {
-                    return Err(RunError::Native("RangeError: Invalid string length".into()));
-                }
-                if recv.is_empty() {
-                    Value::Str("".into())
-                } else {
-                    Value::Str(zun_core::wtf16::normalize(recv.repeat(count as usize)).into())
+                match zun_core::string_ops::repeat(recv, count as usize) {
+                    Some(result) => Value::Str(result.into()),
+                    None => {
+                        return Err(RunError::Native("RangeError: Invalid string length".into()))
+                    }
                 }
             }
             "includes" => {
@@ -314,17 +255,12 @@ impl<'a> Interp<'a> {
                 if target <= len as f64 || fill.is_empty() {
                     Value::Str(recv.into())
                 } else {
-                    let missing = target as usize - len;
-                    let padding: Vec<u16> = fill.iter().cycle().take(missing).copied().collect();
-                    let mut out = Vec::with_capacity(target as usize);
-                    if name == "padStart" {
-                        out.extend_from_slice(&padding);
-                        out.extend_from_slice(&s);
-                    } else {
-                        out.extend_from_slice(&s);
-                        out.extend_from_slice(&padding);
-                    }
-                    text(&out)
+                    text(&zun_core::string_ops::pad_units(
+                        &s,
+                        target as usize,
+                        &fill,
+                        name == "padStart",
+                    ))
                 }
             }
             "charAt" => {
@@ -346,32 +282,19 @@ impl<'a> Interp<'a> {
             "codePointAt" => {
                 let index = self.dyn_integer(&a0)?;
                 if index >= 0.0 && index < len as f64 {
-                    let i = index as usize;
-                    let first = u32::from(s[i]);
-                    if (0xD800..0xDC00).contains(&first) && i + 1 < len {
-                        let second = u32::from(s[i + 1]);
-                        if (0xDC00..0xE000).contains(&second) {
-                            return Ok(Some(number(f64::from(
-                                0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00),
-                            ))));
-                        }
+                    match zun_core::string_ops::code_point_at(&s, index as usize) {
+                        Some(code) => number(f64::from(code)),
+                        None => Value::Void,
                     }
-                    number(f64::from(first))
                 } else {
                     Value::Void
                 }
             }
             "at" => {
                 let index = self.dyn_integer(&a0)?;
-                let resolved = if index < 0.0 {
-                    len as f64 + index
-                } else {
-                    index
-                };
-                if resolved >= 0.0 && resolved < len as f64 {
-                    text(&s[resolved as usize..resolved as usize + 1])
-                } else {
-                    Value::Void
+                match zun_core::string_ops::at_index(len, index) {
+                    Some(i) => text(&s[i..i + 1]),
+                    None => Value::Void,
                 }
             }
             "split" if !self.is_regexp(&a0)? => {
@@ -391,19 +314,7 @@ impl<'a> Interp<'a> {
                 let pieces: Vec<String> = if Self::is_undefined(&a0) {
                     vec![recv.to_owned()]
                 } else {
-                    let separator = units(&self.dyn_to_string(&a0)?);
-                    if separator.is_empty() {
-                        s.iter().map(|unit| from_units(&[*unit])).collect()
-                    } else {
-                        let mut parts = Vec::new();
-                        let mut from = 0;
-                        while let Some(at) = find_from(&s, &separator, from) {
-                            parts.push(from_units(&s[from..at]));
-                            from = at + separator.len();
-                        }
-                        parts.push(from_units(&s[from..]));
-                        parts
-                    }
+                    zun_core::string_ops::split_on(recv, &self.dyn_to_string(&a0)?)
                 };
                 let pieces: Vec<String> = pieces.into_iter().take(limit).collect();
                 let array = zun_gc::with_current_heap_mut(|heap| {

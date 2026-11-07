@@ -19,6 +19,7 @@ mod module_bound_function;
 mod ordered_map;
 mod promise_value;
 mod regexp;
+pub mod string_ops;
 pub mod serde;
 mod symbols;
 mod typed_elements;
