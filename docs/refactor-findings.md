@@ -412,14 +412,24 @@ byte-correct). It bites any method the eligibility predicate admits but the
 lowering table cannot translate (an easy `eligible.rs` vs `builtins_table.rs`
 mismatch).
 
-Fix (separate small PR, approved): negative-cache the failure (a `failed`
-set), mark the method so it returns to the interpreter exactly once, and make
-`is_compiled` mean "defined", not "listed". Add a regression test (an eligible
-method with translation forced to fail runs correctly on the interpreter and
-records exactly one compile attempt) and an invariant test (every builtin name
-in `eligible.rs` has a `builtins_table.rs` entry, failing if one is added
-without the other). The C work (JIT thunks for the D3 char-access natives) lands
-with D2 phase 1, which is the matching JIT-ABI effort.
+**FIXED** (D5 PR): negative-cache the failure. `Jit` gains a `failed: HashSet`
+and a per-method `attempts` counter (`crates/zun_codegen/src/lib.rs`).
+`ensure_compiled` short-circuits to `Ok(false)` when the rid is cached-failed and,
+on a `define_method` error, records both the failing member and the requested
+entry as failed. `is_compiled` is now `eligible && !failed` (no longer "merely in
+the eligible list"), so the `on_backedge` gate (`is_compiled && !is_defined`)
+stops retrying a failed method — it falls back to the interpreter exactly once.
+Tests: `failed_translation_is_attempted_once_then_cached` (force an eligible
+method whose body has `print` — an unlisted CallBuiltin — to be translated;
+assert `compile_attempts == 1` and that 1000 further `ensure_compiled` calls do
+not re-attempt) and `every_eligible_builtin_has_a_lowering` (iterate all native
+ids: any builtin an eligibility predicate admits must have a `builtin_desc` entry
+or be one of the hand-lowered `op_call_builtin` names — fails if `eligible.rs`
+and `builtins_table.rs` drift apart). Before/after: the storm measured 10.53 s /
+2M iters (~2M recompiles); after, one attempt (unit test) and the interpreter
+fallback (~1 s class). The C work (JIT thunks for the D3 char-access natives, +
+the shared ASCII fast-path bit) lands with D2 phase 1, the matching JIT-ABI
+effort.
 
 ## Conformance baseline correction: 83/167, not 84 (2026-11-07)
 

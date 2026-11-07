@@ -10,7 +10,7 @@
 mod arith;
 mod arrays;
 mod builtins;
-mod builtins_table;
+pub(crate) mod builtins_table;
 mod calls;
 mod exceptions;
 mod objects;

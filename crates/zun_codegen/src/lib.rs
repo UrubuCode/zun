@@ -147,6 +147,14 @@ pub struct Jit {
     callees: HashMap<u32, Vec<u32>>,
     /// Methods whose bodies are defined and finalized.
     defined: HashSet<u32>,
+    /// Methods whose translation was attempted and failed. A failure is cached
+    /// here so the lazy-tiering path falls back to the interpreter exactly once
+    /// instead of re-attempting a full compile on every backedge (see D5 in
+    /// docs/refactor-findings.md).
+    failed: HashSet<u32>,
+    /// Count of `define_method` translation attempts per method. Used by the D5
+    /// regression test to assert a failed method is attempted exactly once.
+    attempts: HashMap<u32, u32>,
     sigs: HashMap<u32, Sig>,
     ctx: cranelift_codegen::Context,
     fb_ctx: FunctionBuilderContext,
@@ -688,6 +696,8 @@ impl Jit {
             eligible: eligible.clone(),
             callees: HashMap::new(),
             defined: HashSet::new(),
+            failed: HashSet::new(),
+            attempts: HashMap::new(),
             sigs: HashMap::new(),
             ctx: cranelift_codegen::Context::new(),
             fb_ctx: FunctionBuilderContext::new(),
@@ -791,6 +801,12 @@ impl Jit {
         if self.defined.contains(&rid) {
             return Ok(true);
         }
+        // A prior translation failure (of this method or one of its eligible
+        // callees) is cached: fall back to the interpreter without re-attempting
+        // the compile. This is the fix for the per-backedge recompile storm (D5).
+        if self.failed.contains(&rid) {
+            return Ok(false);
+        }
         // Collect the transitive eligible-callee closure that still needs
         // defining, then define and finalize it as one batch.
         let mut worklist = vec![rid];
@@ -803,7 +819,14 @@ impl Jit {
             }
         }
         for &m in &batch {
-            self.define_method(zm, m)?;
+            if let Err(error) = self.define_method(zm, m) {
+                // Cache the failure for the whole requested closure so neither
+                // the failing member `m` nor the entry `rid` is retried; both
+                // stay on the interpreter from here on.
+                self.failed.insert(m);
+                self.failed.insert(rid);
+                return Err(error);
+            }
         }
         self.module
             .finalize_definitions()
@@ -818,6 +841,7 @@ impl Jit {
 
     /// Translate and define one method body and its shim (no finalize).
     fn define_method(&mut self, zm: &Module, rid: u32) -> Result<(), JitError> {
+        *self.attempts.entry(rid).or_insert(0) += 1;
         let body = read_body(
             &zm.code,
             zm.tables.method_defs[rid as usize - 1].body_offset,
@@ -951,7 +975,21 @@ impl Jit {
 
     /// Whether `method_rid` is eligible for JIT compilation.
     pub fn is_compiled(&self, method_rid: u32) -> bool {
-        self.eligible.contains(&method_rid)
+        // Eligible AND not known to have failed translation. A method whose body
+        // could not be translated is not "compiled": reporting it as such made
+        // the lazy-tiering path retry `ensure_compiled` on every backedge (D5).
+        self.eligible.contains(&method_rid) && !self.failed.contains(&method_rid)
+    }
+
+    /// Whether `method_rid`'s translation was attempted and failed (cached).
+    pub fn is_failed(&self, method_rid: u32) -> bool {
+        self.failed.contains(&method_rid)
+    }
+
+    /// Number of `define_method` translation attempts for `method_rid`. After a
+    /// failure the negative cache keeps this at 1 (D5 regression gate).
+    pub fn compile_attempts(&self, method_rid: u32) -> u32 {
+        self.attempts.get(&method_rid).copied().unwrap_or(0)
     }
 
     /// Whether `method_rid`'s body has actually been compiled and finalized.
@@ -1561,6 +1599,43 @@ mod tests {
         zun_jit_store_ref, JitAnyAbi,
     };
     use object::{Object as _, ObjectSection as _, ObjectSymbol as _};
+
+    // D5: a JIT-eligible method whose body fails to translate must be attempted
+    // exactly once, then cached as failed and left on the interpreter — never
+    // recompiled on subsequent backedges. We simulate the eligibility/lowering
+    // mismatch by force-marking a method that contains `print` (an unlisted
+    // CallBuiltin, which the translator rejects) as eligible.
+    #[test]
+    fn failed_translation_is_attempted_once_then_cached() {
+        let module = zun_compiler::compile(
+            "function main(): void { let i = 0; while (i < 3) { print(i); i = i + 1; } }",
+        )
+        .expect("compile");
+        let rid = module.entry_point.expect("entry").rid();
+        let mut jit = super::Jit::new(&module).expect("jit builds");
+
+        // `main` contains `print`, so the real predicate excludes it. Force the
+        // mismatch and give it an (empty) callee set so the batch is just `main`.
+        jit.eligible.insert(rid);
+        jit.callees.entry(rid).or_default();
+
+        assert!(!jit.is_failed(rid));
+        // First attempt: translation fails and is cached.
+        assert!(jit.ensure_compiled(&module, rid).is_err());
+        assert!(jit.is_failed(rid), "failure must be cached");
+        assert!(!jit.is_compiled(rid), "a failed method is not compiled");
+        assert_eq!(jit.compile_attempts(rid), 1);
+
+        // Subsequent calls (simulating repeated backedges) must not re-attempt.
+        for _ in 0..1000 {
+            assert_eq!(jit.ensure_compiled(&module, rid).ok(), Some(false));
+        }
+        assert_eq!(
+            jit.compile_attempts(rid),
+            1,
+            "a cached failure is never recompiled"
+        );
+    }
 
     #[test]
     fn metadata_object_exports_the_embedded_module_symbol() {

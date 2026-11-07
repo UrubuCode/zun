@@ -1417,3 +1417,46 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
     }
     eligible
 }
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use zun_il::{Instruction, Opcode, Operand};
+
+    /// D5 invariant: every builtin the eligibility predicates admit must have a
+    /// lowering — either a `builtin_desc` descriptor or one of the hand-lowered
+    /// special cases in `op_call_builtin`. If someone adds a name to
+    /// `eligible.rs` without a `builtins_table.rs` entry (or vice versa), this
+    /// fails, catching the eligible/lowerable mismatch that caused the D5
+    /// recompile storm.
+    #[test]
+    fn every_eligible_builtin_has_a_lowering() {
+        // Builtins lowered by name in `op_call_builtin` rather than `builtin_desc`.
+        const HAND_LOWERED: &[&str] = &["mapClear", "setClear", "mapGet"];
+        for id in 0u32..4096 {
+            let Some(f) = zun_natives::by_id(id) else {
+                continue;
+            };
+            let instr = Instruction {
+                opcode: Opcode::CallBuiltin,
+                operand: Operand::Imm32(id as i32),
+            };
+            let eligible = string_builtin(&instr)
+                || collection_builtin(&instr)
+                || math_builtin(&instr)
+                || date_builtin(&instr)
+                || allocation_builtin(&instr);
+            if !eligible {
+                continue;
+            }
+            let lowerable = crate::translate::builtins_table::builtin_desc(Some(f.name)).is_some()
+                || HAND_LOWERED.contains(&f.name);
+            assert!(
+                lowerable,
+                "builtin `{}` (id {id}) is JIT-eligible in eligible.rs but has no \
+                 lowering in builtins_table.rs or op_call_builtin (D5 invariant)",
+                f.name
+            );
+        }
+    }
+}
