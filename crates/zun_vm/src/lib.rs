@@ -209,6 +209,37 @@ pub fn execute_and_prove_feedback(bytes: &[u8]) -> Result<String, VmError> {
     Ok(zun_interp::feedback::render(&module))
 }
 
+/// Measurement-only sibling of [`execute_and_prove_feedback`] that renders the
+/// recorded feedback **even when the program errors**, capturing the dynamic
+/// `any` sites observed up to the point of the error. Intended for the phase-5
+/// census over fixtures that fail mid-execution (bias check); not a runtime
+/// entry point. The error, if any, is reported alongside the dump.
+pub fn execute_and_prove_feedback_lenient(bytes: &[u8]) -> Result<String, VmError> {
+    let mut out = StdoutOutput;
+    zun_interp::feedback::reset();
+    zun_interp::feedback::set_enabled(true);
+    let module = load(bytes)?;
+    let result = {
+        #[cfg(feature = "eval")]
+        let host: Option<&dyn EvalHost> = Some(&CompilerEvalHost);
+        #[cfg(not(feature = "eval"))]
+        let host: Option<&dyn EvalHost> = None;
+        match unsafe { zun_codegen::Jit::new_bridged(&module, jit_bridge::bridge_config()) } {
+            Ok(jit) => {
+                let hook = JitHook::new(jit, &module);
+                let _bridge = jit_bridge::BridgeScope::enter(&module, None, &mut out);
+                zun_interp::run_with_eval_host(&module, &mut out, Some(&hook), host)
+            }
+            Err(_) => zun_interp::run_with_eval_host(&module, &mut out, None, host),
+        }
+    };
+    let mut report = zun_interp::feedback::render(&module);
+    if let Err(error) = result {
+        report.push_str(&format!("  (program errored before completion: {error})\n"));
+    }
+    Ok(report)
+}
+
 /// Load and run a `.zm` module, directing output to a custom sink.
 ///
 /// Tiering: the module's JIT-eligible methods are compiled up front, and the

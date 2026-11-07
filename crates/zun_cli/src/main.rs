@@ -178,7 +178,10 @@ fn run() -> ExitCode {
             )
         }
         [cmd, file] if cmd == "disasm" => dispatch(file, Action::Disasm),
-        [cmd, flag, file] if cmd == "prove" && flag == "--runtime" => prove_runtime(file),
+        [cmd, flag, file] if cmd == "prove" && flag == "--runtime" => prove_runtime(file, false),
+        [cmd, flag, file] if cmd == "prove" && flag == "--runtime-lenient" => {
+            prove_runtime(file, true)
+        }
         [cmd, flag, file] if cmd == "prove" && flag == "--partial" => prove_partial(file, true),
         [cmd, file] if cmd == "prove" => prove_partial(file, false),
         _ => {
@@ -727,7 +730,7 @@ fn prove_partial(file: &str, partial: bool) -> ExitCode {
 /// dynamic complement to static `zun prove`. The program runs exactly as under
 /// `zun run` (its own output goes to stdout first); only the dynamic `any`
 /// dispatch path is instrumented, so a fully typed program reports no sites.
-fn prove_runtime(file: &str) -> ExitCode {
+fn prove_runtime(file: &str, lenient: bool) -> ExitCode {
     let path = Path::new(file);
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
@@ -757,7 +760,13 @@ fn prove_runtime(file: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match zun_vm::execute_and_prove_feedback(&module.write()) {
+    let bytes = module.write();
+    let result = if lenient {
+        zun_vm::execute_and_prove_feedback_lenient(&bytes)
+    } else {
+        zun_vm::execute_and_prove_feedback(&bytes)
+    };
+    match result {
         Ok(report) => {
             print!("{report}");
             ExitCode::SUCCESS
