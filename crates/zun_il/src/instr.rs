@@ -210,6 +210,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // arbitrary float literal exercised by the round-trip test
     fn float_roundtrip() {
         let i = Instruction::new(Opcode::ConstF64, Operand::Float64(3.141592653589793));
         let mut bytes = Vec::new();

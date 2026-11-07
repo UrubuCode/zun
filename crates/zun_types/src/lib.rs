@@ -95,81 +95,6 @@ impl CoreTypes {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn vtable_resolves_an_override_for_a_derived_type() {
-        let module = zun_compiler::compile(
-            "class Base { speak(): int { return 1; } }\n\
-             class Derived extends Base { speak(): int { return 2; } }\n\
-             function main(): int { return 0; }",
-        )
-        .expect("compile");
-        let types = TypeSystem::from_module(&module).expect("types");
-        let base_method = module
-            .tables
-            .method_defs
-            .iter()
-            .position(|method| module.strings.get(method.name) == "speak")
-            .map(|index| index as u32 + 1)
-            .expect("base method");
-        let derived_method = types
-            .resolve_virtual(2, base_method)
-            .expect("derived implementation");
-        assert_ne!(base_method, derived_method);
-    }
-
-    #[test]
-    fn vtable_uses_virtual_slots_instead_of_method_rids() {
-        let module = zun_compiler::compile(
-            "class Base { speak(): int { return 1; } }
-             class Derived extends Base { speak(): int { return 2; } }
-             function helper(): int { return 3; }
-             function main(): int { return 0; }",
-        )
-        .expect("compile");
-        let types = TypeSystem::from_module(&module).expect("types");
-        let speak = module
-            .tables
-            .method_defs
-            .iter()
-            .position(|method| module.strings.get(method.name) == "speak")
-            .map(|index| index as u32 + 1)
-            .expect("speak method");
-        let slots = types.virtual_slot_count();
-        assert!(slots <= module.tables.method_defs.len());
-        let slot = types.virtual_slot(speak).expect("speak slot");
-        assert!(slot < slots);
-        assert_eq!(types.get(2).expect("derived type").vtable.len(), slots);
-    }
-
-    #[test]
-    fn core_types_bind_the_managed_promise_anchor() {
-        let module = zun_compiler::compile(
-            "class Promise { state: int; }\n\
-             function main(): int { return 0; }",
-        )
-        .expect("compile");
-        let types = TypeSystem::from_module(&module).expect("types");
-        let core = CoreTypes::from_module(&module, &types);
-        assert!(core.get(zun_core::CoreTypeId::Promise).is_some());
-    }
-
-    #[test]
-    fn layout_exposes_reference_field_slots() {
-        let module = zun_compiler::compile(
-            "class Child { value: int; }\n\
-             class Parent { child: Child; count: int; }\n\
-             function main(): int { return 0; }",
-        )
-        .expect("compile");
-        let types = TypeSystem::from_module(&module).expect("types");
-        assert_eq!(types.reference_slots(2), vec![0]);
-    }
-}
-
 impl TypeSystem {
     /// Build descriptors and virtual dispatch tables from module metadata.
     pub fn from_module(module: &Module) -> Result<Self, TypeError> {
@@ -348,5 +273,80 @@ impl TypeSystem {
             });
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vtable_resolves_an_override_for_a_derived_type() {
+        let module = zun_compiler::compile(
+            "class Base { speak(): int { return 1; } }\n\
+             class Derived extends Base { speak(): int { return 2; } }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        let base_method = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == "speak")
+            .map(|index| index as u32 + 1)
+            .expect("base method");
+        let derived_method = types
+            .resolve_virtual(2, base_method)
+            .expect("derived implementation");
+        assert_ne!(base_method, derived_method);
+    }
+
+    #[test]
+    fn vtable_uses_virtual_slots_instead_of_method_rids() {
+        let module = zun_compiler::compile(
+            "class Base { speak(): int { return 1; } }
+             class Derived extends Base { speak(): int { return 2; } }
+             function helper(): int { return 3; }
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        let speak = module
+            .tables
+            .method_defs
+            .iter()
+            .position(|method| module.strings.get(method.name) == "speak")
+            .map(|index| index as u32 + 1)
+            .expect("speak method");
+        let slots = types.virtual_slot_count();
+        assert!(slots <= module.tables.method_defs.len());
+        let slot = types.virtual_slot(speak).expect("speak slot");
+        assert!(slot < slots);
+        assert_eq!(types.get(2).expect("derived type").vtable.len(), slots);
+    }
+
+    #[test]
+    fn core_types_bind_the_managed_promise_anchor() {
+        let module = zun_compiler::compile(
+            "class Promise { state: int; }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        let core = CoreTypes::from_module(&module, &types);
+        assert!(core.get(zun_core::CoreTypeId::Promise).is_some());
+    }
+
+    #[test]
+    fn layout_exposes_reference_field_slots() {
+        let module = zun_compiler::compile(
+            "class Child { value: int; }\n\
+             class Parent { child: Child; count: int; }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        assert_eq!(types.reference_slots(2), vec![0]);
     }
 }
