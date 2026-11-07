@@ -5,6 +5,11 @@
 //! interpreter only; the Cranelift JIT (Tier 1) and GC plug in here later
 //! behind the same entry points, without changing this surface.
 
+// The FFI/extension surface is the native ABI boundary (`extern "C"` host and
+// thunk entry points); their safety contract is the documented host calling
+// convention rather than a per-function `# Safety` restatement.
+#![allow(clippy::missing_safety_doc)]
+
 #[cfg(feature = "eval")]
 mod eval_host;
 mod extension;

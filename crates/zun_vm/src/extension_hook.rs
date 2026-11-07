@@ -284,6 +284,7 @@ mod tests {
         0
     }
 
+    #[allow(clippy::manual_c_str_literals)] // explicit NUL-terminated byte string mirrors the C ABI
     fn registry() -> OwnedRegistry {
         let mut owned = OwnedRegistry::new();
         let mut host: ZunRegistry = owned.as_registry();

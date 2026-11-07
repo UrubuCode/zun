@@ -412,6 +412,7 @@ impl NativeLibraryResolver {
         self.libraries.contains_key(name)
     }
 
+    #[allow(clippy::len_without_is_empty)] // count accessor; emptiness is not a meaningful query here
     pub fn len(&self) -> usize {
         self.libraries.len()
     }
@@ -1304,6 +1305,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[allow(clippy::absurd_extreme_comparisons)] // asserts the u32 return stays within range
     fn typed_u32_signature_calls_a_real_system_symbol() {
         let library = unsafe { NativeLibrary::open("kernel32") }.expect("kernel32");
         let signature = FfiSignature::new([], FfiScalar::U32);

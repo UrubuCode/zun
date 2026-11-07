@@ -129,6 +129,7 @@ impl<T: Clone, F: FnMut(&mut usize) -> GeneratorStep<T>> GeneratorStateMachine<T
     }
 
     /// Advance once. Completion is sticky, as required by iterator semantics.
+    #[allow(clippy::should_implement_trait)] // generator step, deliberately not Iterator::next
     pub fn next(&mut self) -> GeneratorStep<T> {
         if self.done {
             return GeneratorStep::Complete;
@@ -810,7 +811,7 @@ mod tests {
         });
         assert!(promise.resolve(5));
         assert_eq!(*seen.lock().unwrap(), None);
-        assert_eq!(queue.lock().unwrap().run_one(), true);
+        assert!(queue.lock().unwrap().run_one());
         assert_eq!(*seen.lock().unwrap(), Some(5));
     }
 

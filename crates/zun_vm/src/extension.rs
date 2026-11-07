@@ -104,10 +104,10 @@ impl ExtensionResolver {
         let path = std::path::absolute(&path)
             .map_err(|error| FfiError::new(format!("native object path is unusable: {error}")))?;
         let key = path.to_string_lossy().into_owned();
-        if !self.extensions.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.extensions.entry(key) {
             // SAFETY: forwarded from the caller's trusted-extension contract.
             let extension = unsafe { LoadedExtension::load_path(&path) }?;
-            self.extensions.insert(key, extension);
+            e.insert(extension);
         }
         Ok(true)
     }
@@ -132,6 +132,7 @@ impl ExtensionResolver {
         self.extensions.contains_key(name)
     }
 
+    #[allow(clippy::len_without_is_empty)] // count accessor; emptiness is not a meaningful query here
     pub fn len(&self) -> usize {
         self.extensions.len()
     }
@@ -191,6 +192,7 @@ impl LoadedExtension {
                 "extension registration failed with status {status}"
             )));
         }
+        #[allow(clippy::drop_non_drop)] // explicit end-of-scope marker for the registration borrow
         drop(register);
         Ok(Self { library, registry })
     }
@@ -231,6 +233,12 @@ impl LoadedExtension {
     }
 }
 
+/// The host target triple (compile-time), matching the keys of a `.zmlib`'s
+/// embedded native objects.
+pub fn host_triple() -> String {
+    target_lexicon::Triple::host().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,10 +258,4 @@ mod tests {
         assert!(!resolver.contains("zun-extension-that-does-not-exist"));
         assert_eq!(resolver.len(), 0);
     }
-}
-
-/// The host target triple (compile-time), matching the keys of a `.zmlib`'s
-/// embedded native objects.
-pub fn host_triple() -> String {
-    target_lexicon::Triple::host().to_string()
 }
