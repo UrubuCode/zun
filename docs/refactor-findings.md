@@ -190,3 +190,13 @@ Run with the machine idle (it only freezes under concurrent load):
   statically-typed string receiver. Preserved as-is by the surface convergence
   (Slice A); needs a spec-correctness decision + fix (make the typed floor
   return NaN/undefined) with a regression test.
+
+## crates/zun_sema number interceptor overlap (found during table-driven eval)
+
+- **OPEN (latent, order-dependent)** — `mcall_number_a` and `mcall_number_b`
+  (crates/zun_sema/src/check/expr/mcall_number.rs ~:37 vs ~:133/:175) both match
+  the same `(F64, name)` keys for `toExponential`/`toPrecision`/`toFixed`; only
+  the first-match ORDER makes `_a` win. A reorder would silently change behavior.
+  When the ordered method_call chain is later table-driven, add a duplicate-key
+  `debug_assert` and a test pinning this precedence (and the array-before-managed
+  exclusion in array_method_descriptor).
