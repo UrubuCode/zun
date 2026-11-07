@@ -5,17 +5,6 @@
 use super::*;
 
 impl<'a> Interp<'a> {
-    /// The managed object an interpreter value refers to, unboxing an `Any`.
-    pub(crate) fn value_object(value: &Value) -> Option<zun_gc::Obj> {
-        match value {
-            Value::Object(object) => Some(*object),
-            Value::Any(any) => any
-                .as_object()
-                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-            _ => None,
-        }
-    }
-
     /// ECMAScript `GetIterator(source)`: resolve the iterator object that drives
     /// a for-of / spread / collection-constructor over `source`.
     ///
@@ -67,7 +56,7 @@ impl<'a> Interp<'a> {
         };
         let call_args = self.with_this_arg(handle, source, Vec::new());
         let result = self.invoke_function_value(handle, call_args)?;
-        Self::value_object(&result).ok_or_else(|| {
+        object(&result).ok_or_else(|| {
             RunError::Native("TypeError: [Symbol.iterator]() did not return an object".into())
         })
     }
@@ -123,7 +112,7 @@ impl<'a> Interp<'a> {
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
         let next_args = self.with_this_arg(next, it, Vec::new());
         let result = self.invoke_function_value(next, next_args)?;
-        let Some(result_obj) = Self::value_object(&result) else {
+        let Some(result_obj) = object(&result) else {
             return Err(RunError::Native(
                 "TypeError: iterator.next() did not return an object".into(),
             ));
@@ -526,7 +515,7 @@ impl<'a> Interp<'a> {
         let setup = [target];
         let wrapper = {
             let _scope = unsafe { zun_gc::NativeRootScope::enter(&setup) };
-            Self::value_object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?
+            object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?
         };
         let roots = [wrapper, setup[0]];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };

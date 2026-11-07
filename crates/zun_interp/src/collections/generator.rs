@@ -197,7 +197,7 @@ impl<'a> Interp<'a> {
                 let return_args = self.with_this_arg(method, it, Vec::new());
                 match self.invoke_function_value(method, return_args) {
                     Ok(result) => {
-                        if !throwing && Self::value_object(&result).is_none() {
+                        if !throwing && object(&result).is_none() {
                             return Err(RunError::Native(
                                 "TypeError: iterator.return() did not return an object".into(),
                             ));

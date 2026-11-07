@@ -53,10 +53,12 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
   (`zun_interp/src/method_tests.rs`) links two modules (`app` imports `core`),
   has `app.main` wrap a throwing `core.boom()` in try/catch, and asserts the
   catch runs (returns 7, prints 42). Fails before the fix (the throw escapes).
-- **OPEN (cleanup)** — `fn value_object` (collections/runtime_iter.rs) is a
-  byte-for-byte duplicate of the `object` closure in the preamble of
-  `call_managed_collection_inner` (~140). The collections split is the natural
-  moment to converge on one; flagged, not changed.
+- **FIXED (commit `PENDING3`)** — `fn value_object` (collections/runtime_iter.rs)
+  was a byte-for-byte duplicate of the `object` free fn in `collections/mod.rs`.
+  Converged on the single `pub(super) fn object` in `mod.rs`: the duplicate
+  `value_object` is deleted and its callers (`runtime_iter.rs`, `generator.rs`,
+  `array_construct.rs`) now call `object(...)`. Pure dedup, behavior-identical;
+  covered by the existing green `zun_interp` suite.
 
 ## crates/zun_sema (checker)
 
