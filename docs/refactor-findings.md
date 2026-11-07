@@ -190,11 +190,24 @@ Run with the machine idle (it only freezes under concurrent load):
   by ad-hoc `zun prove` runs over a prelude-prepended corpus during the session;
   there is **no committed harness** that reproduces them, so the baseline is lost
   on memory/context clear and cannot be regression-gated per phase.
-- The clean, un-gated fix is a small committed measurement test (e.g. in
-  `zun_compiler`) that runs `prove_program` over a fixed corpus (the prelude, or
-  a checked-in `.ts` fixture) and asserts the candidate / any-site / emitted
-  counts, so each phase can show the number moving. Proposed; not yet built
-  (one scoped edit).
+- The clean, un-gated fix is a small committed measurement test that runs
+  `prove_program` over a fixed corpus and asserts the counts, so each phase can
+  show the number moving. **DONE** — two committed harnesses:
+  `crates/zun_compiler/tests/prove_baseline.rs` (a small hand-derivable corpus,
+  exact verdicts) and `crates/zun_compiler/tests/prove_prelude_scale.rs` (the
+  whole prelude, structural invariants + printed snapshot).
+- **Correction to the in-session metric.** The "653 any-argument sites / 231
+  candidates / 66 specializations" figure quoted during the session could NOT be
+  reproduced: no committed corpus or path produces it, and its exact input is
+  unknown. The honest, reproducible prelude-scale snapshot (`with_prelude("")`,
+  all top-level functions analyzed) is:
+  `total=40, candidates=5, generic=35, any_call_sites=26`, with bail histogram
+  `no concrete parameter=24, any-typed argument=8, async=2, spread/default=1`.
+  So at prelude scale the partial-specialization lever (the 8 `any-typed
+  argument` bails) could convert up to 8 more functions; the 24 `no concrete
+  parameter` bails are functions with no intra-module callers and are not
+  addressable by partial specialization. The 653/231/66 numbers should be
+  treated as retired/unverifiable, not as a live baseline.
 - Known lever to move the metric, within the approved phase-3 envelope but
   beyond its literal "all call sites agree" rule (so it needs explicit approval,
   per the goal's propose-before-change conditions): **partial specialization** —
