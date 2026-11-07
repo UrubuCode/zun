@@ -181,6 +181,42 @@ Run with the machine idle (it only freezes under concurrent load):
   behavior-preserving reorganization.
 - `cargo fmt --all -- --check`: CLEAN (commit 124232b1).
 
+## Phase 3 primary metric (`zun prove`) is not reproducible — OPEN
+
+- **OPEN (process/evidence gap, not a code defect)** — The goal's primary
+  metric ("`any` becomes the expensive exception") was tracked in-session as
+  `zun prove` reporting ~653 any-argument call sites, ~231 monomorphization
+  candidates, and 66 emitted static specializations. Those numbers were produced
+  by ad-hoc `zun prove` runs over a prelude-prepended corpus during the session;
+  there is **no committed harness** that reproduces them, so the baseline is lost
+  on memory/context clear and cannot be regression-gated per phase.
+- The clean, un-gated fix is a small committed measurement test (e.g. in
+  `zun_compiler`) that runs `prove_program` over a fixed corpus (the prelude, or
+  a checked-in `.ts` fixture) and asserts the candidate / any-site / emitted
+  counts, so each phase can show the number moving. Proposed; not yet built
+  (one scoped edit).
+- Known lever to move the metric, within the approved phase-3 envelope but
+  beyond its literal "all call sites agree" rule (so it needs explicit approval,
+  per the goal's propose-before-change conditions): **partial specialization** —
+  relax the all-or-nothing `BailReason::AnyArgument` in `prove.rs` so a parameter
+  that sees one concrete type at some static sites and `any` at others still gets
+  `f$T(T)`, routing only the statically-`T` sites to the twin and leaving the
+  `any` sites on the generic. Sound without a guard (static per-site dispatch;
+  generic remains the fallback); stays entirely in `zun_sema` (prove.rs +
+  specialize.rs routing); does not touch `.zm`, JIT, GC, or the string layout.
+
+## Workspace validation — current at HEAD 35338991 (recorded)
+
+The per-crate serial baseline in the sections above was re-confirmed at the
+current HEAD (35338991): 23/23 crates `cargo test -p <crate>` green,
+`cargo test -p zun_cli` 20/20 after `cargo build -p zun_vm` (the stale-`.lib`
+guard, not a regression), conformance 84/167 unchanged, interp==JIT equivalence
+373 unchanged, `cargo fmt --all -- --check` clean, hot-path bench ≈ baseline
+(JIT arith ~2.3 ns). Remaining goal phases (4 typed floor completion, 5 feedback
+hardening, 6 speculative Tier1, Option B metadata marking, slices D/E) are gated
+on explicit user design decisions on the conditioned categories and are not
+started.
+
 ## crates/zun_natives string typed floor (found during phase 4 slice A)
 
 - **OPEN (latent, likely non-spec)** — the TYPED `zun:string` floor errors
