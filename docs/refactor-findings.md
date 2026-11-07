@@ -60,6 +60,22 @@ Discovered 2026-11-06 during the `oxc.rs` and `zun_ilgen` reorganizations.
   `array_construct.rs`) now call `object(...)`. Pure dedup, behavior-identical;
   covered by the existing green `zun_interp` suite.
 
+## Phase-1 regression tests — fail-before-fix demonstrated (2026-11-07)
+
+The two phase-1 bugs with dedicated regression tests were verified to fail
+against their pre-fix code and pass once restored, non-destructively (revert the
+code hunk on the working tree, keep the HEAD test, run, restore — no commit, no
+worktree):
+- `typed_array_single_any_arg_is_checked_once` (zun_sema): against the pre-fix
+  `new_realm.rs` (`4d88c756^`) the arg-count diagnostic is emitted TWICE
+  (`left: 2, right: 1`); passes at HEAD.
+- `cross_module_member_call_throw_routes_to_caller_catch` (zun_interp): with the
+  `body`/`callee_body` shadow reintroduced on HEAD `lib.rs`, the cross-module
+  throw escapes the caller catch (`Thrown(..)` propagates); passes at HEAD.
+The third phase-1 item (`value_object` dedup, `6f73b48b`) is a behavior-identical
+de-duplication with no dedicated test by design (covered by the existing suite),
+so it has no fail-before-fix to show.
+
 ## crates/zun_sema (checker)
 
 - **FIXED (commit `4d88c756`)** — in `check_new`'s realm BufferView path
