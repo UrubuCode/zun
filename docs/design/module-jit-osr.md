@@ -84,6 +84,27 @@ precondition for the loop region being eligible at all.
    and returns the updated locals at loop exit. In-process equivalence tests
    only; no transfer wiring yet.
 
+   **Known blocker (found while scoping slice 3).** `translate::translate_body`
+   builds the function with a single linear model: an entry block that defines
+   the method *params* and jumps to IL block 0, then `Translator::run` lowers
+   instructions 0..N in order, lazily threading the operand stack across each
+   block edge by *fallthrough* and discovering each block's parameter signature
+   on the first edge into it. An OSR entry has to (a) take *every* local as a
+   parameter, not just the method params, and (b) jump from the entry straight
+   to the loop-header block mid-body. That mid-body jump gives the header block
+   an extra predecessor whose argument list is fixed *before* `run` has
+   discovered the block's lazy parameter signature, so a naive
+   `jump(header, &[])` risks an arg-count mismatch against params `run` appends
+   later (it is only safe at a provably stack-empty header, which
+   `is_valid_osr_snapshot` already requires). Slice 3 therefore needs `run` to
+   support a distinct entry point (seed the all-locals Variables, pin the
+   header's parameter signature to empty up front, and leave IL block 0
+   unreachable) rather than a localized prologue tweak. This is a real
+   translator change, not a quick edit — do it behind the equivalence harness
+   on a method whose body *from the patchpoint* is fully eligible first (OSR to
+   method end, the .NET model), and only then add the return-to-interp exits
+   (slice 4) for the ineligible-tail case the module entry needs.
+
 4. **OSR transfer + return-to-interp.** Consume `take_valid_osr_snapshots`: call
    the OSR entry with the live frame state, and on loop exit hand updated locals
    back to the interpreter to finish the method (the dynamic head/tail of
