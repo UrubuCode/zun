@@ -31,7 +31,7 @@ pub(super) struct Interp<'a> {
     pub(super) class_symbol_methods: HashMap<(u32, u64), zun_core::FunctionHandle>,
     /// Typed-class `valueOf`/`toString` instance methods by name, keyed
     /// `(class TypeDef rid, method name)`; populated by `classSetMethod`.
-    pub(super) class_named_methods: HashMap<(u32, String), zun_core::FunctionHandle>,
+    pub(super) class_named_methods: HashMap<u32, HashMap<String, zun_core::FunctionHandle>>,
     /// Literal field-initializer defaults `(class rid, field slot)`; populated
     /// by `classSetFieldDefault`, applied by runtime construction.
     pub(super) class_field_defaults: HashMap<(u32, u32), Value>,

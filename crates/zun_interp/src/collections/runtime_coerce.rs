@@ -579,7 +579,8 @@ impl<'a> Interp<'a> {
             // object's function slot is invoked as a plain closure.
             let typed = self
                 .class_named_methods
-                .get(&(obj.type_rid(), name.to_string()))
+                .get(&obj.type_rid())
+                .and_then(|methods| methods.get(name))
                 .copied();
             let method = match typed {
                 Some(method) => Some((method, vec![Value::Object(obj)])),

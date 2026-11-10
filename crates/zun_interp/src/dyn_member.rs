@@ -280,7 +280,8 @@ impl Interp<'_> {
         // registered getter (`get_<name>`, e.g. `Error.name`).
         let typed_getter = if getter.is_none() {
             self.class_named_methods
-                .get(&(object.type_rid(), format!("get_{name}")))
+                .get(&object.type_rid())
+                .and_then(|methods| methods.get(&format!("get_{name}")))
                 .copied()
         } else {
             None

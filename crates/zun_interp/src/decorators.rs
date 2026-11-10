@@ -68,8 +68,10 @@ impl Interp<'_> {
         for handle in &self.decorator_initializers {
             root_handle(*handle, roots);
         }
-        for handle in self.class_named_methods.values() {
-            root_handle(*handle, roots);
+        for methods in self.class_named_methods.values() {
+            for handle in methods.values() {
+                root_handle(*handle, roots);
+            }
         }
         for (_, handle) in &self.instance_initializers {
             root_handle(*handle, roots);
@@ -96,7 +98,11 @@ impl Interp<'_> {
     fn method_entry(&self, type_rid: u32, decl: u32, name: &str) -> Option<FunctionHandle> {
         let mut current = Some(type_rid);
         while let Some(rid) = current {
-            if let Some(handle) = self.class_named_methods.get(&(rid, name.to_string())) {
+            if let Some(handle) = self
+                .class_named_methods
+                .get(&rid)
+                .and_then(|methods| methods.get(name))
+            {
                 return Some(*handle);
             }
             current = self.types.get(rid).and_then(|descriptor| {
@@ -108,7 +114,8 @@ impl Interp<'_> {
             });
         }
         self.class_named_methods
-            .get(&(decl, name.to_string()))
+            .get(&decl)
+            .and_then(|methods| methods.get(name))
             .copied()
     }
 
@@ -214,7 +221,10 @@ impl Interp<'_> {
         let name = string(Self::arg(args, 1)?)?;
         // A decorator that returned no function leaves the method untouched.
         if let Value::Function(handle) = Self::arg(args, 2)? {
-            self.class_named_methods.insert((class, name), *handle);
+            self.class_named_methods
+                .entry(class)
+                .or_default()
+                .insert(name, *handle);
         }
         Ok(Value::Void)
     }
@@ -232,7 +242,12 @@ impl Interp<'_> {
     fn native_class_method_box(&mut self, args: &[Value]) -> Result<Value, RunError> {
         let class = number(Self::arg(args, 0)?)? as u32;
         let name = string(Self::arg(args, 1)?)?;
-        match self.class_named_methods.get(&(class, name)).copied() {
+        match self
+            .class_named_methods
+            .get(&class)
+            .and_then(|methods| methods.get(&name))
+            .copied()
+        {
             Some(handle) => Ok(Self::function_box(handle)),
             None => Ok(Value::Any(zun_core::Any::null())),
         }
@@ -318,7 +333,7 @@ impl Interp<'_> {
 /// closures that already borrow other `Interp` fields.
 pub(super) fn rewrite_decorator_fields(
     initializers: &mut [FunctionHandle],
-    named_methods: &mut std::collections::HashMap<(u32, String), FunctionHandle>,
+    named_methods: &mut std::collections::HashMap<u32, std::collections::HashMap<String, FunctionHandle>>,
     instance_initializers: &mut [(u32, FunctionHandle)],
     field_transforms: &mut [(u32, u32, FunctionHandle)],
     relocation: &zun_gc::RelocationMap,
@@ -327,8 +342,10 @@ pub(super) fn rewrite_decorator_fields(
     for handle in initializers.iter_mut() {
         rewritten += rewrite_handle(handle, relocation);
     }
-    for handle in named_methods.values_mut() {
-        rewritten += rewrite_handle(handle, relocation);
+    for methods in named_methods.values_mut() {
+        for handle in methods.values_mut() {
+            rewritten += rewrite_handle(handle, relocation);
+        }
     }
     for (_, handle) in instance_initializers.iter_mut() {
         rewritten += rewrite_handle(handle, relocation);

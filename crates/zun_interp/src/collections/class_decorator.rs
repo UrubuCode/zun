@@ -176,7 +176,10 @@ impl<'a> Interp<'a> {
                     Value::Function(function) => *function,
                     _ => return Err(RunError::BadToken),
                 };
-                self.class_named_methods.insert((class_rid, name), function);
+                self.class_named_methods
+                    .entry(class_rid)
+                    .or_default()
+                    .insert(name, function);
                 Ok(Value::Void)
             }
             "classSetFieldDefault" => {
