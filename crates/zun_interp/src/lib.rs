@@ -975,10 +975,12 @@ impl Interp<'_> {
                 Opcode::Branch => {
                     let target = branch_target(next, &instr.operand);
                     if target < *pc {
-                        if let Some(hook) = self.hook {
-                            hook.on_backedge_state(method_rid, target, *pc, stack, locals);
+                        if let Some(resume) =
+                            self.loop_backedge(method_rid, target, *pc, stack, locals, parent)
+                        {
+                            *pc = resume;
+                            continue;
                         }
-                        self.poll_gc(stack, locals, parent);
                     }
                     *pc = target;
                 }
@@ -989,10 +991,12 @@ impl Interp<'_> {
                     }) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
-                            if let Some(hook) = self.hook {
-                                hook.on_backedge_state(method_rid, target, *pc, stack, locals);
+                            if let Some(resume) =
+                                self.loop_backedge(method_rid, target, *pc, stack, locals, parent)
+                            {
+                                *pc = resume;
+                                continue;
                             }
-                            self.poll_gc(stack, locals, parent);
                         }
                         *pc = target;
                     }
@@ -1004,10 +1008,12 @@ impl Interp<'_> {
                     }) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
-                            if let Some(hook) = self.hook {
-                                hook.on_backedge_state(method_rid, target, *pc, stack, locals);
+                            if let Some(resume) =
+                                self.loop_backedge(method_rid, target, *pc, stack, locals, parent)
+                            {
+                                *pc = resume;
+                                continue;
                             }
-                            self.poll_gc(stack, locals, parent);
                         }
                         *pc = target;
                     }
@@ -1682,6 +1688,32 @@ impl Interp<'_> {
                 },
             )
         }
+    }
+
+    /// Handle a taken backward branch to `target`. First offers a stack-empty
+    /// loop to the hook for native OSR; on success returns the resume PC with
+    /// `locals` already updated. Otherwise reports the backedge to the hook.
+    /// Either way the GC safepoint is polled. The caller sets `*pc` itself.
+    fn loop_backedge(
+        &mut self,
+        method_rid: u32,
+        target: usize,
+        pc: usize,
+        stack: &mut [Value],
+        locals: &mut [Value],
+        parent: Option<&RootLink>,
+    ) -> Option<usize> {
+        if let Some(hook) = self.hook {
+            if stack.is_empty() {
+                if let Some(resume) = hook.try_loop_osr(method_rid, target, locals) {
+                    self.poll_gc(stack, locals, parent);
+                    return Some(resume);
+                }
+            }
+            hook.on_backedge_state(method_rid, target, pc, stack, locals);
+        }
+        self.poll_gc(stack, locals, parent);
+        None
     }
 
     /// Poll the adaptive GC budget at an interpreter safepoint.

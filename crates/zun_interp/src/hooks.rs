@@ -46,6 +46,22 @@ pub trait CallHook {
 
     fn on_backedge(&self, _method_rid: u32, _target_pc: usize) {}
 
+    /// Try to run the remaining iterations of the loop headed at `header_pc`
+    /// natively (loop on-stack replacement). On success the loop has run,
+    /// `locals` has been OVERWRITTEN in place with the post-loop values, and
+    /// `Some(resume_pc)` (an IL byte offset) is returned; the interpreter
+    /// continues from there with an empty operand stack. Only valid to call
+    /// when the operand stack is empty. The default returns `None`, which
+    /// keeps the interpreter looping.
+    fn try_loop_osr(
+        &self,
+        _method_rid: u32,
+        _header_pc: usize,
+        _locals: &mut [Value],
+    ) -> Option<usize> {
+        None
+    }
+
     /// Observe a hot loop together with the live Tier 0 evaluation state.
     /// Implementations may retain the snapshot for a later OSR transfer;
     /// execution remains in the interpreter until that transfer is explicit.

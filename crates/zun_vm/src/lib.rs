@@ -385,6 +385,17 @@ impl<E: CallHook + ?Sized> CallHook for CombinedCallHook<'_, E> {
         }
     }
 
+    fn try_loop_osr(
+        &self,
+        method_rid: u32,
+        header_pc: usize,
+        locals: &mut [Value],
+    ) -> Option<usize> {
+        self.jit
+            .as_ref()?
+            .try_loop_osr(method_rid, header_pc, locals)
+    }
+
     fn on_backedge_state(
         &self,
         method_rid: u32,

@@ -49,7 +49,18 @@ pub struct JitHook<'a> {
     loop_counts: RefCell<HashMap<(u32, usize), u64>>,
     osr_requests: RefCell<Vec<OsrRequest>>,
     osr_snapshots: RefCell<Vec<OsrSnapshot>>,
+    /// Hotness counters for live loop OSR, separate from `loop_counts`.
+    osr_counts: RefCell<HashMap<(u32, usize), u64>>,
+    /// Per-loop OSR state: a ready entry or a cached "no OSR here" verdict.
+    osr_loops: RefCell<HashMap<(u32, usize), OsrLoop>>,
+    osr_transfers: std::cell::Cell<u64>,
     threshold: u32,
+}
+
+/// Cached result of the loop-OSR gate for one `(method, header)`.
+enum OsrLoop {
+    Ready(zun_codegen::OsrEntryId, Vec<JitKind>),
+    Rejected,
 }
 
 impl core::fmt::Debug for JitHook<'_> {
@@ -90,8 +101,16 @@ impl<'a> JitHook<'a> {
             loop_counts: RefCell::new(HashMap::new()),
             osr_requests: RefCell::new(Vec::new()),
             osr_snapshots: RefCell::new(Vec::new()),
+            osr_counts: RefCell::new(HashMap::new()),
+            osr_loops: RefCell::new(HashMap::new()),
+            osr_transfers: std::cell::Cell::new(0),
             threshold,
         }
+    }
+
+    /// Number of live loop-OSR transfers that completed successfully.
+    pub fn osr_transfers(&self) -> u64 {
+        self.osr_transfers.get()
     }
 
     /// Return the number of interpreted backedges observed at a loop header.
@@ -250,6 +269,34 @@ impl<'a> JitHook<'a> {
             && backedge_targets.contains(&snapshot.target_pc)
     }
 
+    /// Run the conservative loop-OSR gate and compile the entry. Any failure
+    /// yields `Rejected`, which is cached so it is never retried.
+    fn build_osr_loop(&self, method_rid: u32, header_pc: usize) -> OsrLoop {
+        if method_rid == 0
+            || !self.is_osr_patchpoint_allowed(method_rid, header_pc)
+            || zun_codegen::loop_region(self.module, method_rid, header_pc).is_none()
+            || !zun_codegen::loop_region_eligible(self.module, method_rid, header_pc)
+        {
+            return OsrLoop::Rejected;
+        }
+        let mut jit = self.jit.borrow_mut();
+        let Ok(id) = jit.ensure_osr_loop_compiled(self.module, method_rid, header_pc) else {
+            return OsrLoop::Rejected;
+        };
+        let Some(kinds) = jit.osr_param_kinds(id) else {
+            return OsrLoop::Rejected;
+        };
+        // Scalars only for now: object/array/string locals need GC-root care
+        // across the native loop.
+        if !kinds
+            .iter()
+            .all(|k| matches!(k, JitKind::Num(_) | JitKind::Bool))
+        {
+            return OsrLoop::Rejected;
+        }
+        OsrLoop::Ready(id, kinds.to_vec())
+    }
+
     fn is_osr_patchpoint_allowed(&self, method_rid: u32, target_pc: usize) -> bool {
         if method_rid == 0 {
             return false;
@@ -374,6 +421,74 @@ impl CallHook for JitHook<'_> {
         Some(unpack_value(result, jit.return_kind(method_rid), unsafe {
             &*heap
         }))
+    }
+
+    fn try_loop_osr(
+        &self,
+        method_rid: u32,
+        header_pc: usize,
+        locals: &mut [Value],
+    ) -> Option<usize> {
+        let key = (method_rid, header_pc);
+        if matches!(self.osr_loops.borrow().get(&key), Some(OsrLoop::Rejected)) {
+            return None;
+        }
+        if !self.osr_loops.borrow().contains_key(&key) {
+            let count = {
+                let mut counts = self.osr_counts.borrow_mut();
+                let c = counts.entry(key).or_insert(0);
+                *c += 1;
+                *c
+            };
+            if count < u64::from(self.threshold.max(1)) {
+                return None; // stay interpreted while cold
+            }
+            let verdict = self.build_osr_loop(method_rid, header_pc);
+            self.osr_loops.borrow_mut().insert(key, verdict);
+        }
+        let loops = self.osr_loops.borrow();
+        let Some(OsrLoop::Ready(id, kinds)) = loops.get(&key) else {
+            return None;
+        };
+        if kinds.len() != locals.len() {
+            return None;
+        }
+        // Refuse (without caching) if a local does not hold a value of its
+        // declared scalar kind, e.g. a not-yet-initialized slot: unpacking it
+        // back would silently change its type.
+        let kind_matches = |v: &Value, k: JitKind| match (v, k) {
+            (Value::Bool(_), JitKind::Bool) => true,
+            (Value::Float(_, n), JitKind::Num(m)) => *n == m && matches!(m, NumKind::F64 | NumKind::F32),
+            (Value::Int(_, n), JitKind::Num(m)) => *n == m && !matches!(m, NumKind::F64 | NumKind::F32),
+            _ => false,
+        };
+        if !locals.iter().zip(kinds).all(|(v, &k)| kind_matches(v, k)) {
+            return None;
+        }
+        let heap = zun_gc::current_heap_ptr()?;
+        let packed: Vec<u64> = locals
+            .iter()
+            .zip(kinds)
+            .map(|(v, &k)| pack_value(v, k, unsafe { &mut *heap }))
+            .collect();
+        let mut out = vec![0u64; packed.len()];
+        let jit = self.jit.borrow();
+        let resume = match unsafe {
+            jit.call_osr_loop_packed_with_heap(*id, &packed, &mut out, &mut *heap)
+        } {
+            Ok(resume) => resume,
+            Err(_) => {
+                drop(jit);
+                drop(loops);
+                self.osr_loops.borrow_mut().insert(key, OsrLoop::Rejected);
+                return None;
+            }
+        };
+        for ((slot, &bits), &k) in locals.iter_mut().zip(&out).zip(kinds) {
+            *slot = unpack_value(bits, Some(k), unsafe { &*heap });
+        }
+        self.osr_transfers.set(self.osr_transfers.get() + 1);
+        Some(resume as usize)
     }
 
     fn on_backedge(&self, method_rid: u32, target_pc: usize) {
