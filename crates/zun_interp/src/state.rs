@@ -71,6 +71,15 @@ pub(super) struct Interp<'a> {
     /// wins), so prelude-helper resolution (`__zunMakeAsyncGen`, Set-op helpers)
     /// is O(1) instead of rescanning every `method_def`.
     pub(super) function_rid_by_name: std::cell::OnceCell<HashMap<String, u32>>,
+    /// Per type: method name -> most-derived implementation rid (from the
+    /// vtable), built on first dynamic method access so `instance_method_rid`
+    /// is O(1) instead of scanning the vtable by name each time.
+    pub(super) instance_method_index:
+        std::cell::RefCell<HashMap<u32, std::rc::Rc<HashMap<String, u32>>>>,
+    /// Per type: instance-field name -> layout (own, non-static fields), built
+    /// on first dynamic field access so `instance_member_get`/`set` are O(1).
+    pub(super) instance_field_index:
+        std::cell::RefCell<HashMap<u32, std::rc::Rc<HashMap<String, zun_types::FieldLayout>>>>,
 }
 
 /// The `await` substrate owned by one interpreter session.

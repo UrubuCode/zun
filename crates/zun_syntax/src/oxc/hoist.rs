@@ -349,8 +349,8 @@ pub(super) fn convert_function_statements(
     if hoisted.is_empty() {
         return Ok(converted);
     }
-    // One pre-order pass over the body mirrors `find_var_name_span` for every
-    // hoisted name at once (first declaration in statement order wins).
+    // One pre-order pass over the body collects every hoisted name's span at
+    // once (first declaration in statement order wins).
     let mut var_spans: std::collections::HashMap<&str, Span> =
         std::collections::HashMap::new();
     collect_var_name_spans(body, &mut var_spans);
@@ -376,8 +376,8 @@ pub(super) fn convert_function_statements(
 }
 
 /// Collect every `var` binding identifier's name and span in one pre-order pass
-/// that mirrors [`find_var_name_span`]'s traversal (including its ignoring of
-/// `for` heads). The first encounter of a name wins.
+/// over statement bodies (ignoring `for` heads). The first encounter of a name
+/// wins.
 pub(super) fn collect_var_name_spans<'s>(
     body: &[Statement<'s>],
     out: &mut std::collections::HashMap<&'s str, Span>,
@@ -446,58 +446,4 @@ pub(super) fn collect_var_name_spans<'s>(
     for statement in body {
         in_statement(statement, out);
     }
-}
-
-pub(super) fn find_var_name_span(body: &[Statement<'_>], name: &str) -> Option<Span> {
-    fn in_declaration(
-        declaration: &oxc_ast::ast::VariableDeclaration<'_>,
-        name: &str,
-    ) -> Option<Span> {
-        for declarator in &declaration.declarations {
-            if let BindingPattern::BindingIdentifier(identifier) = &declarator.id {
-                if identifier.name == name {
-                    return Some(Span::new(identifier.span.start, identifier.span.end));
-                }
-            }
-        }
-        None
-    }
-    fn in_statement(statement: &Statement<'_>, name: &str) -> Option<Span> {
-        match statement {
-            Statement::VariableDeclaration(declaration) => in_declaration(declaration, name),
-            Statement::BlockStatement(block) => {
-                block.body.iter().find_map(|s| in_statement(s, name))
-            }
-            Statement::IfStatement(s) => in_statement(&s.consequent, name)
-                .or_else(|| s.alternate.as_ref().and_then(|a| in_statement(a, name))),
-            Statement::ForStatement(s) => in_statement(&s.body, name),
-            Statement::ForInStatement(s) => in_statement(&s.body, name),
-            Statement::ForOfStatement(s) => in_statement(&s.body, name),
-            Statement::WhileStatement(s) => in_statement(&s.body, name),
-            Statement::DoWhileStatement(s) => in_statement(&s.body, name),
-            Statement::LabeledStatement(s) => in_statement(&s.body, name),
-            Statement::TryStatement(s) => s
-                .block
-                .body
-                .iter()
-                .find_map(|x| in_statement(x, name))
-                .or_else(|| {
-                    s.handler
-                        .as_ref()
-                        .and_then(|h| h.body.body.iter().find_map(|x| in_statement(x, name)))
-                })
-                .or_else(|| {
-                    s.finalizer
-                        .as_ref()
-                        .and_then(|f| f.body.iter().find_map(|x| in_statement(x, name)))
-                }),
-            Statement::SwitchStatement(s) => s
-                .cases
-                .iter()
-                .find_map(|c| c.consequent.iter().find_map(|x| in_statement(x, name))),
-            _ => None,
-        }
-    }
-    body.iter()
-        .find_map(|statement| in_statement(statement, name))
 }

@@ -145,20 +145,73 @@ impl<'a> Interp<'a> {
     /// override), or `None` when the object is not a typed instance or has no
     /// such method.
     pub(crate) fn instance_method_rid(&self, object: zun_gc::Obj, name: &str) -> Option<u32> {
-        let type_rid = object.type_rid();
+        self.instance_method_map(object.type_rid())?.get(name).copied()
+    }
+
+    /// Lazily built `method name -> implementation rid` index for a type's
+    /// vtable (first vtable entry for a name wins, matching the previous
+    /// `.find`), so repeated dynamic method lookups are O(1).
+    fn instance_method_map(
+        &self,
+        type_rid: u32,
+    ) -> Option<std::rc::Rc<std::collections::HashMap<String, u32>>> {
         if type_rid == 0 {
             return None;
         }
+        if let Some(cached) = self.instance_method_index.borrow().get(&type_rid) {
+            return Some(cached.clone());
+        }
         let descriptor = self.types.get(type_rid)?;
-        descriptor.vtable.iter().copied().find(|&rid| {
-            rid != 0
-                && self
-                    .module
-                    .tables
-                    .method_defs
-                    .get(rid as usize - 1)
-                    .is_some_and(|method| self.module.strings.get(method.name) == name)
-        })
+        let mut map = std::collections::HashMap::new();
+        for &rid in &descriptor.vtable {
+            if rid == 0 {
+                continue;
+            }
+            if let Some(method) = self.module.tables.method_defs.get(rid as usize - 1) {
+                map.entry(self.module.strings.get(method.name).to_string())
+                    .or_insert(rid);
+            }
+        }
+        let rc = std::rc::Rc::new(map);
+        self.instance_method_index
+            .borrow_mut()
+            .insert(type_rid, rc.clone());
+        Some(rc)
+    }
+
+    /// Lazily built `field name -> layout` index for a type's own non-static
+    /// instance fields (first occurrence wins), so dynamic field access is O(1).
+    fn instance_field_map(
+        &self,
+        type_rid: u32,
+    ) -> Option<std::rc::Rc<std::collections::HashMap<String, zun_types::FieldLayout>>> {
+        if type_rid == 0 {
+            return None;
+        }
+        if let Some(cached) = self.instance_field_index.borrow().get(&type_rid) {
+            return Some(cached.clone());
+        }
+        let type_def = self.module.tables.type_defs.get(type_rid as usize - 1)?;
+        let (start, end) = (type_def.field_start, type_def.field_end);
+        let mut map = std::collections::HashMap::new();
+        for field_rid in start..end {
+            let Some(field) = self.module.tables.field_defs.get(field_rid as usize - 1) else {
+                continue;
+            };
+            if field.is_static {
+                continue;
+            }
+            let Some(layout) = self.types.get_field(field_rid) else {
+                continue;
+            };
+            map.entry(self.module.strings.get(field.name).to_string())
+                .or_insert(layout);
+        }
+        let rc = std::rc::Rc::new(map);
+        self.instance_field_index
+            .borrow_mut()
+            .insert(type_rid, rc.clone());
+        Some(rc)
     }
 
     /// Read member `name` of a typed class instance reached through `any`: an
@@ -173,20 +226,10 @@ impl<'a> Interp<'a> {
         if type_rid == 0 {
             return Ok(None);
         }
-        let Some(type_def) = self.module.tables.type_defs.get(type_rid as usize - 1) else {
-            return Ok(None);
-        };
-        let (start, end) = (type_def.field_start, type_def.field_end);
-        for field_rid in start..end {
-            let Some(field) = self.module.tables.field_defs.get(field_rid as usize - 1) else {
-                continue;
-            };
-            if field.is_static || self.module.strings.get(field.name) != name {
-                continue;
-            }
-            let Some(layout) = self.types.get_field(field_rid) else {
-                continue;
-            };
+        if let Some(layout) = self
+            .instance_field_map(type_rid)
+            .and_then(|map| map.get(name).copied())
+        {
             let value = zun_gc::with_current_heap(|heap| {
                 crate::value::load_field(layout.kind, object, layout.slot, heap)
             });
@@ -223,17 +266,11 @@ impl Interp<'_> {
             let Some(type_def) = self.module.tables.type_defs.get(current as usize - 1) else {
                 return false;
             };
-            let (start, end, base) = (type_def.field_start, type_def.field_end, type_def.base);
-            for field_rid in start..end {
-                let Some(field) = self.module.tables.field_defs.get(field_rid as usize - 1) else {
-                    continue;
-                };
-                if field.is_static || self.module.strings.get(field.name) != name {
-                    continue;
-                }
-                let Some(layout) = self.types.get_field(field_rid) else {
-                    continue;
-                };
+            let base = type_def.base;
+            if let Some(layout) = self
+                .instance_field_map(current)
+                .and_then(|map| map.get(name).copied())
+            {
                 let (slot, kind) = (layout.slot, layout.kind);
                 let value = match value {
                     Value::Any(any) => {
