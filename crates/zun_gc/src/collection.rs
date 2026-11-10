@@ -14,7 +14,7 @@ impl Heap {
     pub unsafe fn collect_with_registered_native_frames(
         &mut self,
         roots: &[Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         with_active_native_frames(|active| {
             let mut all_roots = roots.to_vec();
@@ -29,7 +29,7 @@ impl Heap {
     pub unsafe fn collect(
         &mut self,
         roots: &[Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         // SAFETY: callers uphold the root contract documented on the public
         // entry point; this is the complete-heap policy.
@@ -45,7 +45,7 @@ impl Heap {
     pub unsafe fn collect_young(
         &mut self,
         roots: &[Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         // SAFETY: same root contract as `collect`.
         unsafe { self.collect_generation(roots, ref_slots, true, false, None) }
@@ -55,7 +55,7 @@ impl Heap {
     pub unsafe fn collect_young_evacuating(
         &mut self,
         roots: &mut [Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         on_relocation: &mut dyn FnMut(&RelocationMap),
     ) -> usize {
         unsafe { self.collect_generation(roots, ref_slots, true, true, Some(on_relocation)) }
@@ -66,7 +66,7 @@ impl Heap {
     pub unsafe fn collect_young_evacuating_with_native_frames(
         &mut self,
         roots: &mut [Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         frames: &[StoppedNativeFrame<'_>],
         on_relocation: &mut dyn FnMut(&RelocationMap),
     ) -> usize {
@@ -98,7 +98,7 @@ impl Heap {
     pub unsafe fn collect_young_with_native_frames(
         &mut self,
         roots: &[Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         frames: &[StoppedNativeFrame<'_>],
     ) -> usize {
         let mut all_roots = roots.to_vec();
@@ -117,7 +117,7 @@ impl Heap {
     pub unsafe fn collect_young_with_registered_native_frames(
         &mut self,
         roots: &[Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         with_active_native_frames(|active| {
             let frames: Vec<_> = active
@@ -135,7 +135,7 @@ impl Heap {
     unsafe fn collect_generation(
         &mut self,
         roots: &[Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         young_only: bool,
         evacuate: bool,
         mut on_relocation: Option<&mut dyn FnMut(&RelocationMap)>,
@@ -239,7 +239,7 @@ impl Heap {
         }
         while let Some(idx) = work.pop() {
             let obj = Obj(self.records[idx].addr);
-            for slot in ref_slots(obj.type_rid()) {
+            for &slot in ref_slots(obj.type_rid()).iter() {
                 let child = obj.field(slot) as *mut u64;
                 if child.is_null() {
                     continue;
@@ -397,7 +397,7 @@ impl Heap {
                     }
                 }
             }
-            for slot in ref_slots(obj.type_rid()) {
+            for &slot in ref_slots(obj.type_rid()).iter() {
                 let child = obj.field(slot) as *mut u64;
                 if let Some(&child_idx) = self.by_addr.get(&(child as usize)) {
                     if !self.records[child_idx].marked {
@@ -634,7 +634,7 @@ impl Heap {
         &mut self,
         roots: &[Obj],
         functions: &[zun_core::FunctionHandle],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         let mut all_roots = roots.to_vec();
         all_roots.extend(functions.iter().filter_map(|function| {
@@ -655,7 +655,7 @@ impl Heap {
     pub unsafe fn collect_with_native_roots(
         &mut self,
         roots: &[Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         let mut all_roots = roots.to_vec();
         append_native_roots(&mut all_roots);
@@ -668,7 +668,7 @@ impl Heap {
     pub unsafe fn collect_young_with_native_roots(
         &mut self,
         roots: &[Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         let mut all_roots = roots.to_vec();
         append_native_roots(&mut all_roots);
@@ -686,7 +686,7 @@ impl Heap {
         registry: &StackMapRegistry,
         pc: usize,
         sp: *const u8,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         let mut all_roots = roots.to_vec();
         all_roots.extend(unsafe { registry.roots_at(pc, sp) });
@@ -700,7 +700,7 @@ impl Heap {
         registry: &StackMapRegistry,
         pc: usize,
         sp: *const u8,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         let mut all_roots = roots.to_vec();
         all_roots.extend(unsafe { registry.roots_at(pc, sp) });
@@ -718,7 +718,7 @@ impl Heap {
         roots: &[Obj],
         pc: usize,
         sp: *const u8,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         super::with_active_stack_map_registry(|registry| {
             let Some(registry) = registry else {
@@ -741,7 +741,7 @@ impl Heap {
         roots: &[Obj],
         pc: usize,
         sp: *const u8,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         super::with_active_stack_map_registry(|registry| {
             let Some(registry) = registry else {
@@ -765,7 +765,7 @@ impl Heap {
         roots: &mut [Obj],
         pc: usize,
         sp: *mut u8,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         super::with_active_stack_map_registry(|registry| {
             let Some(registry) = registry else {

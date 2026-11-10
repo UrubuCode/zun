@@ -188,7 +188,7 @@ impl Jit {
             if self.types.get(type_rid).is_none() {
                 break;
             }
-            heap.register_reference_slots(type_rid, self.types.reference_slots(type_rid));
+            heap.register_reference_slots(type_rid, self.types.reference_slots(type_rid).to_vec());
         }
     }
 
@@ -1708,12 +1708,12 @@ mod tests {
             zun_jit_array_store_any(array.addr() as i64, 0, 3, child.addr() as u64),
             1
         );
-        assert_eq!(unsafe { heap.collect(&[array], &|_| Vec::new()) }, 0);
+        assert_eq!(unsafe { heap.collect(&[array], &|_| std::rc::Rc::from(Vec::new())) }, 0);
         assert_eq!(
             heap.array_get(array, 0).and_then(|value| value.as_object()),
             Some(child.addr() as usize)
         );
-        assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 2);
+        assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 2);
     }
 
     #[test]
@@ -1751,7 +1751,7 @@ mod tests {
     fn jit_reference_store_preserves_young_target_through_minor_collection() {
         let mut heap = zun_gc::Heap::new();
         let owner = heap.alloc(1, 1);
-        unsafe { heap.collect(&[owner], &|_| vec![0]) };
+        unsafe { heap.collect(&[owner], &|_| std::rc::Rc::from(vec![0usize])) };
         let child = heap.alloc(2, 0);
         let _scope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
 
@@ -1759,7 +1759,7 @@ mod tests {
             zun_jit_store_ref(owner.addr() as i64, 0, child.addr() as i64),
             1
         );
-        assert_eq!(unsafe { heap.collect_young(&[owner], &|_| vec![0]) }, 0);
+        assert_eq!(unsafe { heap.collect_young(&[owner], &|_| std::rc::Rc::from(vec![0usize])) }, 0);
         assert_eq!(owner.field(0), child.addr() as u64);
     }
 }

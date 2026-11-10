@@ -18,7 +18,7 @@ fn function_environment_is_kept_as_a_gc_root() {
     let garbage = heap.alloc(4, 0);
     let function = zun_core::FunctionHandle::new(11, Some(environment.addr() as usize));
 
-    let freed = unsafe { heap.collect_with_function_roots(&[], &[function], &|_| Vec::new()) };
+    let freed = unsafe { heap.collect_with_function_roots(&[], &[function], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(freed, 1);
     assert_eq!(heap.live_count(), 1);
     assert!(heap.by_addr.contains_key(&(environment.addr() as usize)));
@@ -34,12 +34,12 @@ fn promise_result_keeps_managed_object_alive() {
         heap.promise_resolve(promise, zun_core::Any::object(result.addr() as usize)),
         Some(true)
     );
-    assert_eq!(unsafe { heap.collect(&[promise], &|_| Vec::new()) }, 0);
+    assert_eq!(unsafe { heap.collect(&[promise], &|_| std::rc::Rc::from(Vec::new())) }, 0);
     assert_eq!(
         heap.promise_state(promise),
         Some(zun_core::ManagedPromiseState::Resolved)
     );
-    assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 2);
+    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 2);
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn map_traces_object_keys_and_values() {
         zun_core::Any::object(key.addr() as usize),
         zun_core::Any::object(value.addr() as usize),
     );
-    let no_refs = |_: u32| Vec::<usize>::new();
+    let no_refs = |_: u32| std::rc::Rc::<[usize]>::from(Vec::new());
     let freed = unsafe { heap.collect(&[map], &no_refs) };
     assert_eq!(freed, 0);
     assert_eq!(heap.live_count(), 3);
@@ -175,7 +175,7 @@ fn weak_reference_does_not_keep_target_alive() {
     let target = heap.alloc(1, 0);
     let weak = heap.weak_ref_new(target);
     assert_eq!(heap.weak_ref_get(weak), Some(target));
-    let freed = unsafe { heap.collect(&[], &|_| Vec::new()) };
+    let freed = unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(freed, 1);
     assert_eq!(heap.weak_ref_get(weak), None);
 }
@@ -188,12 +188,12 @@ fn weak_ref_object_clears_once_its_target_is_collected() {
     let target = heap.alloc(1, 0);
     let weak_ref = heap.alloc_weak_ref(target);
     assert_eq!(
-        unsafe { heap.collect(&[weak_ref, target], &|_| Vec::new()) },
+        unsafe { heap.collect(&[weak_ref, target], &|_| std::rc::Rc::from(Vec::new())) },
         0
     );
     assert_eq!(heap.weak_ref_get_object(weak_ref), Some(target));
     // Drop the target root; only the WeakRef object stays rooted.
-    unsafe { heap.collect(&[weak_ref], &|_| Vec::new()) };
+    unsafe { heap.collect(&[weak_ref], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(heap.weak_ref_get_object(weak_ref), None);
 }
 
@@ -202,7 +202,7 @@ fn weak_reference_observes_a_live_root() {
     let mut heap = Heap::new();
     let target = heap.alloc(1, 0);
     let weak = heap.weak_ref_new(target);
-    assert_eq!(unsafe { heap.collect(&[target], &|_| Vec::new()) }, 0);
+    assert_eq!(unsafe { heap.collect(&[target], &|_| std::rc::Rc::from(Vec::new())) }, 0);
     assert_eq!(heap.weak_ref_get(weak), Some(target));
 }
 
@@ -213,13 +213,13 @@ fn weak_map_promotes_value_only_when_key_is_live() {
     let key = heap.alloc(1, 0);
     let value = heap.alloc(2, 0);
     assert!(heap.weak_map_set(weak_map, key, value));
-    assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 0);
+    assert_eq!(unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) }, 0);
     assert_eq!(heap.weak_map_get(weak_map), Some((key, value)));
 
     let key2 = heap.alloc(3, 0);
     let value2 = heap.alloc(4, 0);
     assert!(heap.weak_map_set(weak_map, key2, value2));
-    assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 2);
+    assert_eq!(unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) }, 2);
     assert_eq!(heap.weak_map_get(weak_map), Some((key, value)));
 }
 
@@ -232,7 +232,7 @@ fn weak_map_promotion_traces_dynamic_value_children() {
     let child = heap.alloc(2, 0);
     heap.dynamic_set(value, "child", zun_core::Any::object(child.addr() as usize));
     heap.weak_map_set(weak_map, key, value);
-    assert_eq!(unsafe { heap.collect(&[key], &|_| Vec::new()) }, 0);
+    assert_eq!(unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) }, 0);
     assert_eq!(heap.live_count(), 3);
 }
 
@@ -247,7 +247,7 @@ fn weak_map_ephemeron_chain_promotes_transitively() {
     assert!(heap.weak_map_set(first, root_key, value1));
     // `value1` is itself a key: promoting it must promote its own value.
     assert!(heap.weak_map_set(second, value1, value2));
-    assert_eq!(unsafe { heap.collect(&[root_key], &|_| Vec::new()) }, 0);
+    assert_eq!(unsafe { heap.collect(&[root_key], &|_| std::rc::Rc::from(Vec::new())) }, 0);
     assert_eq!(heap.weak_map_get(first), Some((root_key, value1)));
     assert_eq!(heap.weak_map_get(second), Some((value1, value2)));
 }
@@ -268,7 +268,7 @@ fn weak_map_ephemerons_survive_repeated_collections_only_for_live_keys() {
         handles.push((weak_map, key, value));
     }
 
-    let no_refs = |_: u32| Vec::<usize>::new();
+    let no_refs = |_: u32| std::rc::Rc::<[usize]>::from(Vec::new());
     for _ in 0..4 {
         unsafe { heap.collect(&live_keys, &no_refs) };
     }
@@ -305,9 +305,9 @@ fn weak_map_stress_cycles_with_collection_at_each_safepoint() {
     let mut entries = Vec::new();
     let ref_slots = |type_rid: u32| {
         if type_rid == 0 {
-            Vec::new()
+            std::rc::Rc::from(Vec::new())
         } else {
-            vec![0usize]
+            std::rc::Rc::from(vec![0usize])
         }
     };
 
@@ -338,7 +338,7 @@ fn weak_map_stress_cycles_with_collection_at_each_safepoint() {
 fn weak_map_stress_cycles_survive_evacuating_minor_collection() {
     let mut heap = Heap::new();
     let weak_map = heap.alloc_weak_map();
-    unsafe { heap.collect(&[weak_map], &|_| Vec::new()) };
+    unsafe { heap.collect(&[weak_map], &|_| std::rc::Rc::from(Vec::new())) };
     let weak_map_id = heap
         .weak_map_objects
         .get(&(weak_map.addr() as usize))
@@ -350,9 +350,9 @@ fn weak_map_stress_cycles_survive_evacuating_minor_collection() {
     let mut key_values = Vec::new();
     let ref_slots = |type_rid: u32| {
         if type_rid == 0 {
-            Vec::new()
+            std::rc::Rc::from(Vec::new())
         } else {
-            vec![0usize]
+            std::rc::Rc::from(vec![0usize])
         }
     };
 
@@ -390,7 +390,7 @@ fn finalization_queues_token_after_target_is_swept() {
     let target = heap.alloc(1, 0);
     heap.finalization_register(target, 99);
     assert!(heap.finalization_drain().is_empty());
-    assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
+    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 1);
     assert_eq!(heap.finalization_drain(), vec![99]);
     assert!(heap.finalization_drain().is_empty());
 }
@@ -401,7 +401,7 @@ fn finalization_queue_preserves_callback_routing_metadata() {
     let target = heap.alloc(1, 0);
     heap.finalization_register_with_callback(target, 99, 7);
     assert!(heap.finalization_drain_records().is_empty());
-    unsafe { heap.collect(&[], &|_| Vec::new()) };
+    unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(
         heap.finalization_drain_records(),
         vec![FinalizationRecord {
@@ -419,7 +419,7 @@ fn finalization_queue_preserves_closure_callback_identity() {
     let environment = heap.alloc(2, 0);
     let callback = zun_core::FunctionHandle::new(17, Some(environment.addr() as usize));
     heap.finalization_register_with_function(target, 100, callback);
-    unsafe { heap.collect(&[], &|_| Vec::new()) };
+    unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) };
     let records = heap.finalization_drain_records();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].callback, Some(callback));
@@ -441,7 +441,7 @@ fn finalization_delivers_an_object_held_value() {
     );
     // The target has no root, so it is swept and the registration queued;
     // the held object must still be alive for the pending cleanup.
-    unsafe { heap.collect(&[], &|_| Vec::new()) };
+    unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert!(heap.by_addr.contains_key(&(held.addr() as usize)));
     let records = heap.finalization_drain_records();
     assert_eq!(records.len(), 1);
@@ -455,10 +455,10 @@ fn minor_collection_keeps_registered_callback_environment_alive() {
     let environment = heap.alloc(2, 0);
     let callback = zun_core::FunctionHandle::new(17, Some(environment.addr() as usize));
     heap.finalization_register_with_function(target, 100, callback);
-    unsafe { heap.collect(&[target], &|_| Vec::new()) };
+    unsafe { heap.collect(&[target], &|_| std::rc::Rc::from(Vec::new())) };
     let garbage = heap.alloc(3, 0);
 
-    assert_eq!(unsafe { heap.collect_young(&[target], &|_| Vec::new()) }, 1);
+    assert_eq!(unsafe { heap.collect_young(&[target], &|_| std::rc::Rc::from(Vec::new())) }, 1);
     assert!(heap.by_addr.contains_key(&(environment.addr() as usize)));
     assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
 }
@@ -470,7 +470,7 @@ fn finalization_unregister_cancels_before_target_is_swept() {
     let id = heap.finalization_register(target, 99);
     assert!(heap.finalization_unregister(id));
     assert!(!heap.finalization_unregister(id));
-    unsafe { heap.collect(&[], &|_| Vec::new()) };
+    unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert!(heap.finalization_drain().is_empty());
 }
 
@@ -479,7 +479,7 @@ fn finalization_unregister_rejects_already_queued_registration() {
     let mut heap = Heap::new();
     let target = heap.alloc(1, 0);
     let id = heap.finalization_register(target, 101);
-    unsafe { heap.collect(&[], &|_| Vec::new()) };
+    unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert!(!heap.finalization_unregister(id));
     assert_eq!(heap.finalization_drain(), vec![101]);
 }
@@ -492,7 +492,7 @@ fn byte_buffers_roundtrip_through_the_heap() {
     assert_eq!(heap.buffer_set(buffer, 2, 0xfe), Some(true));
     assert_eq!(heap.buffer_get(buffer, 2), Some(0xfe));
     assert_eq!(heap.buffer_set(buffer, 4, 1), Some(false));
-    assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
+    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 1);
     assert_eq!(heap.buffer_len(buffer), None);
 }
 
@@ -598,7 +598,7 @@ fn error_values_roundtrip_through_the_heap() {
     assert_eq!(heap.error_name(error), Some("RangeError"));
     assert_eq!(heap.error_set_message(error, "fixed"), Some(()));
     assert_eq!(heap.error_message(error), Some("fixed"));
-    assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
+    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 1);
     assert_eq!(heap.error_message(error), None);
 }
 
@@ -710,7 +710,7 @@ fn dynamic_object_references_are_traced_by_collection() {
         zun_core::Any::object(child.addr() as usize),
     );
     let unreachable = heap.alloc(8, 0);
-    let no_refs = |_: u32| Vec::<usize>::new();
+    let no_refs = |_: u32| std::rc::Rc::<[usize]>::from(Vec::new());
 
     let freed = unsafe { heap.collect(&[dynamic], &no_refs) };
     assert_eq!(freed, 1);
@@ -740,7 +740,7 @@ fn array_storage_roundtrips_and_traces_object_elements() {
         Some(9)
     );
     let unreachable = heap.alloc(8, 0);
-    let no_refs = |_: u32| Vec::<usize>::new();
+    let no_refs = |_: u32| std::rc::Rc::<[usize]>::from(Vec::new());
     let freed = unsafe { heap.collect(&[array], &no_refs) };
     assert_eq!(freed, 1);
     assert_eq!(heap.live_count(), 2);
@@ -758,7 +758,7 @@ fn collect_frees_unreachable_and_keeps_reachable() {
     assert_eq!(heap.live_count(), 3);
 
     // Type 1 has a reference in slot 0; types 2 and 3 have none.
-    let ref_slots = |type_rid: u32| if type_rid == 1 { vec![0usize] } else { vec![] };
+    let ref_slots = |type_rid: u32| if type_rid == 1 { std::rc::Rc::from(vec![0usize]) } else { std::rc::Rc::from(vec![]) };
     // Root set is just `a`; `a` keeps `b` alive; `c` is garbage.
     let freed = unsafe { heap.collect(&[a], &ref_slots) };
     assert_eq!(freed, 1);
@@ -772,7 +772,7 @@ fn full_collection_promotes_surviving_objects() {
     let garbage = heap.alloc(8, 0);
     assert_eq!(heap.generation_counts(), (2, 0));
 
-    let freed = unsafe { heap.collect(&[keep], &|_| Vec::new()) };
+    let freed = unsafe { heap.collect(&[keep], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(freed, 1);
     assert_eq!(heap.generation_counts(), (0, 1));
     assert!(heap.by_addr.contains_key(&(keep.addr() as usize)));
@@ -789,7 +789,7 @@ fn nursery_budget_tracks_bump_allocations_and_resets_after_minor_collection() {
     heap.nursery_budget = 32 * 1024;
     heap.nursery_bytes = heap.nursery_budget;
     assert!(heap.nursery_collection_due());
-    unsafe { heap.collect_young(&[], &|_| Vec::new()) };
+    unsafe { heap.collect_young(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert!(!heap.nursery_collection_due());
 }
 
@@ -797,7 +797,7 @@ fn nursery_budget_tracks_bump_allocations_and_resets_after_minor_collection() {
 fn write_barrier_remembers_old_objects_pointing_to_young_objects() {
     let mut heap = Heap::new();
     let old = heap.alloc(7, 1);
-    unsafe { heap.collect(&[old], &|_| Vec::new()) };
+    unsafe { heap.collect(&[old], &|_| std::rc::Rc::from(Vec::new())) };
     let young = heap.alloc(8, 0);
 
     heap.store_field(old, 0, young.addr() as u64, true);
@@ -813,7 +813,7 @@ fn compaction_plan_reports_reclaimable_storage_without_moving_objects() {
     let live = heap.alloc(1, 2);
     let dead = heap.alloc(2, 3);
     let live_addr = live.addr();
-    unsafe { heap.collect(&[live], &|_| Vec::new()) };
+    unsafe { heap.collect(&[live], &|_| std::rc::Rc::from(Vec::new())) };
 
     let plan = heap.compaction_plan();
     assert_eq!(plan.live_objects, 1);
@@ -837,9 +837,9 @@ fn relocation_rewrites_reference_fields_without_moving_objects() {
     relocation.insert(old_target, new_target);
     let rewritten = heap.rewrite_object_references(&relocation, &|type_rid| {
         if type_rid == 1 {
-            vec![0]
+            std::rc::Rc::from(vec![0])
         } else {
-            vec![]
+            std::rc::Rc::from(vec![])
         }
     });
 
@@ -863,9 +863,9 @@ fn relocation_coordinator_runs_heap_owned_passes() {
     assert_eq!(
         heap.rewrite_all_references(&relocation, &|type_rid| {
             if type_rid == 1 {
-                vec![0]
+                std::rc::Rc::from(vec![0])
             } else {
-                vec![]
+                std::rc::Rc::from(vec![])
             }
         }),
         3
@@ -888,9 +888,9 @@ fn compaction_moves_live_objects_and_rewrites_interpreter_roots() {
     let result = unsafe {
         heap.compact(&mut roots, &|type_rid| {
             if type_rid == 1 {
-                vec![0]
+                std::rc::Rc::from(vec![0])
             } else {
-                vec![]
+                std::rc::Rc::from(vec![])
             }
         })
     };
@@ -914,7 +914,7 @@ fn compaction_callback_exposes_forwarding_map_before_release() {
     let mut relocated = None;
 
     let result = unsafe {
-        heap.compact_with_relocation(&mut roots, &|_| Vec::new(), &mut |map| {
+        heap.compact_with_relocation(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &mut |map| {
             relocated = Some(map.relocate_address(old_address))
         })
     };
@@ -938,9 +938,9 @@ fn collect_and_compact_reclaims_dead_objects_before_moving_survivors() {
     let result = unsafe {
         heap.collect_and_compact(&mut roots, &|type_rid| {
             if type_rid == 1 {
-                vec![0]
+                std::rc::Rc::from(vec![0])
             } else {
-                vec![]
+                std::rc::Rc::from(vec![])
             }
         })
     };
@@ -962,7 +962,7 @@ fn compaction_rewrites_active_native_roots_before_releasing_chunks() {
     let _scope = unsafe { NativeRootScope::enter(&native_roots) };
     let mut roots = vec![object];
 
-    let result = unsafe { heap.compact(&mut roots, &|_| Vec::new()) };
+    let result = unsafe { heap.compact(&mut roots, &|_| std::rc::Rc::from(Vec::new())) };
 
     assert_eq!(result.moved_objects, 1);
     assert_eq!(result.rewritten_references, 1);
@@ -989,7 +989,7 @@ fn compaction_rewrites_a_stopped_native_frame_stack_map() {
     let result = unsafe {
         heap.compact_with_native_frame(
             &mut roots,
-            &|_| Vec::new(),
+            &|_| std::rc::Rc::from(Vec::new()),
             &registry,
             20,
             frame.as_mut_ptr(),
@@ -1040,7 +1040,7 @@ fn compaction_rewrites_multiple_stopped_native_frames() {
     ];
     let mut roots = vec![object];
 
-    let result = unsafe { heap.compact_with_native_frames(&mut roots, &|_| Vec::new(), &frames) };
+    let result = unsafe { heap.compact_with_native_frames(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &frames) };
 
     assert_eq!(result.moved_objects, 1);
     assert_eq!(result.rewritten_references, 2);
@@ -1071,7 +1071,7 @@ fn compaction_rewrites_registered_native_frame_stack_map() {
     let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 50, frame.as_mut_ptr()) };
     let mut roots = vec![object];
 
-    let result = unsafe { heap.compact_with_registered_native_frames(&mut roots, &|_| Vec::new()) };
+    let result = unsafe { heap.compact_with_registered_native_frames(&mut roots, &|_| std::rc::Rc::from(Vec::new())) };
 
     assert_eq!(result.moved_objects, 1);
     assert_eq!(result.rewritten_references, 1);
@@ -1097,7 +1097,7 @@ fn collection_marks_registered_native_frame_roots() {
     }]);
     let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 60, frame.as_mut_ptr()) };
 
-    let reclaimed = unsafe { heap.collect_with_registered_native_frames(&[], &|_| Vec::new()) };
+    let reclaimed = unsafe { heap.collect_with_registered_native_frames(&[], &|_| std::rc::Rc::from(Vec::new())) };
 
     assert_eq!(reclaimed, 0);
     assert_eq!(heap.live_count(), 1);
@@ -1122,7 +1122,7 @@ fn collect_and_compact_preserves_registered_native_frame_roots() {
     let mut roots = Vec::new();
 
     let result = unsafe {
-        heap.collect_and_compact_with_registered_native_frames(&mut roots, &|_| Vec::new())
+        heap.collect_and_compact_with_registered_native_frames(&mut roots, &|_| std::rc::Rc::from(Vec::new()))
     };
 
     assert_eq!(result.reclaimed_objects, 0);
@@ -1157,7 +1157,7 @@ fn collect_and_compact_marks_native_root_scopes() {
     let mut explicit_roots = Vec::new();
 
     let result = unsafe {
-        heap.collect_and_compact_with_registered_native_frames(&mut explicit_roots, &|_| Vec::new())
+        heap.collect_and_compact_with_registered_native_frames(&mut explicit_roots, &|_| std::rc::Rc::from(Vec::new()))
     };
 
     assert_eq!(result.reclaimed_objects, 0);
@@ -1188,7 +1188,7 @@ fn collect_and_compact_accepts_explicit_native_frames() {
     }];
 
     let result = unsafe {
-        heap.collect_and_compact_with_native_frames(&mut Vec::new(), &|_| Vec::new(), &frames)
+        heap.collect_and_compact_with_native_frames(&mut Vec::new(), &|_| std::rc::Rc::from(Vec::new()), &frames)
     };
 
     assert_eq!(result.reclaimed_objects, 0);
@@ -1214,7 +1214,7 @@ fn young_collection_marks_registered_native_frame_roots() {
     let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 90, frame.as_mut_ptr()) };
 
     let reclaimed =
-        unsafe { heap.collect_young_with_registered_native_frames(&[], &|_| Vec::new()) };
+        unsafe { heap.collect_young_with_registered_native_frames(&[], &|_| std::rc::Rc::from(Vec::new())) };
 
     assert_eq!(reclaimed, 0);
     assert_eq!(heap.live_count(), 1);
@@ -1230,9 +1230,9 @@ fn compaction_rewrites_data_view_buffer_fields_and_indexes() {
     unsafe {
         heap.compact(&mut roots, &|type_rid| {
             if type_rid == 0 {
-                vec![0]
+                std::rc::Rc::from(vec![0])
             } else {
-                vec![]
+                std::rc::Rc::from(vec![])
             }
         });
     }
@@ -1353,12 +1353,12 @@ fn relocation_rewrites_promise_and_proxy_state() {
 fn minor_collection_reclaims_unreachable_young_and_promotes_reachable_young() {
     let mut heap = Heap::new();
     let old = heap.alloc(7, 1);
-    unsafe { heap.collect(&[old], &|_| vec![0]) };
+    unsafe { heap.collect(&[old], &|_| std::rc::Rc::from(vec![0usize])) };
     let young = heap.alloc(8, 0);
     let garbage = heap.alloc(9, 0);
     heap.store_field(old, 0, young.addr() as u64, true);
 
-    let freed = unsafe { heap.collect_young(&[], &|_| vec![0]) };
+    let freed = unsafe { heap.collect_young(&[], &|_| std::rc::Rc::from(vec![0usize])) };
     assert_eq!(freed, 1);
     assert!(heap.by_addr.contains_key(&(old.addr() as usize)));
     assert!(heap.by_addr.contains_key(&(young.addr() as usize)));
@@ -1370,7 +1370,7 @@ fn minor_collection_reclaims_unreachable_young_and_promotes_reachable_young() {
 fn evacuating_minor_collection_rewrites_roots_and_old_to_young_fields() {
     let mut heap = Heap::new();
     let old = heap.alloc(7, 1);
-    unsafe { heap.collect(&[old], &|_| vec![0]) };
+    unsafe { heap.collect(&[old], &|_| std::rc::Rc::from(vec![0usize])) };
     let young = heap.alloc(8, 0);
     let old_young_address = young.addr();
     heap.store_field(old, 0, old_young_address as u64, true);
@@ -1378,7 +1378,7 @@ fn evacuating_minor_collection_rewrites_roots_and_old_to_young_fields() {
     let mut relocated = false;
 
     let freed = unsafe {
-        heap.collect_young_evacuating(&mut roots, &|_| vec![0], &mut |map| {
+        heap.collect_young_evacuating(&mut roots, &|_| std::rc::Rc::from(vec![0usize]), &mut |map| {
             relocated =
                 map.relocate_address(old_young_address as usize) != old_young_address as usize;
         })
@@ -1398,7 +1398,7 @@ fn evacuating_minor_collection_rewrites_addressed_array_side_tables() {
     let old_address = array.addr();
     let mut roots = vec![array];
 
-    unsafe { heap.collect_young_evacuating(&mut roots, &|_| Vec::new(), &mut |_| {}) };
+    unsafe { heap.collect_young_evacuating(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &mut |_| {}) };
 
     assert_ne!(roots[0].addr(), old_address);
     assert_eq!(heap.array_len(roots[0]), Some(1));
@@ -1409,7 +1409,7 @@ fn evacuating_minor_collection_rewrites_addressed_array_side_tables() {
 fn evacuating_minor_collection_rewrites_stopped_native_frame_roots() {
     let mut heap = Heap::new();
     let old = heap.alloc(7, 0);
-    unsafe { heap.collect(&[old], &|_| Vec::new()) };
+    unsafe { heap.collect(&[old], &|_| std::rc::Rc::from(Vec::new())) };
     let young = heap.alloc(8, 0);
     let old_address = young.addr();
     let mut frame = [0u8; 8];
@@ -1432,7 +1432,7 @@ fn evacuating_minor_collection_rewrites_stopped_native_frame_roots() {
     let freed = unsafe {
         heap.collect_young_evacuating_with_native_frames(
             &mut roots,
-            &|_| Vec::new(),
+            &|_| std::rc::Rc::from(Vec::new()),
             &frames,
             &mut |_| {},
         )
@@ -1448,11 +1448,11 @@ fn evacuating_minor_collection_rewrites_stopped_native_frame_roots() {
 fn minor_collection_clears_dead_young_weak_references() {
     let mut heap = Heap::new();
     let old = heap.alloc(7, 0);
-    unsafe { heap.collect(&[old], &|_| Vec::new()) };
+    unsafe { heap.collect(&[old], &|_| std::rc::Rc::from(Vec::new())) };
     let young = heap.alloc(8, 0);
     let weak = heap.weak_ref_new(young);
 
-    assert_eq!(unsafe { heap.collect_young(&[old], &|_| Vec::new()) }, 1);
+    assert_eq!(unsafe { heap.collect_young(&[old], &|_| std::rc::Rc::from(Vec::new())) }, 1);
     assert_eq!(heap.weak_ref_get(weak), None);
     assert!(heap.by_addr.contains_key(&(old.addr() as usize)));
 }
@@ -1465,7 +1465,7 @@ fn side_table_reference_writes_enter_the_remembered_set() {
     let set = heap.alloc_set();
     let dynamic = heap.alloc_dynamic();
     let promise = heap.alloc_promise();
-    unsafe { heap.collect(&[array, map, set, dynamic, promise], &|_| Vec::new()) };
+    unsafe { heap.collect(&[array, map, set, dynamic, promise], &|_| std::rc::Rc::from(Vec::new())) };
     let child = heap.alloc(8, 0);
 
     assert!(heap
@@ -1495,7 +1495,7 @@ fn side_table_reference_writes_enter_the_remembered_set() {
 fn weak_map_writes_remember_an_old_owner_for_minor_ephemeron_scanning() {
     let mut heap = Heap::new();
     let weak_map = heap.alloc_weak_map();
-    unsafe { heap.collect(&[weak_map], &|_| Vec::new()) };
+    unsafe { heap.collect(&[weak_map], &|_| std::rc::Rc::from(Vec::new())) };
     let key = heap.alloc(8, 0);
     let value = heap.alloc(9, 0);
 
@@ -1510,7 +1510,7 @@ fn collection_reuses_freed_blocks() {
     let garbage = heap.alloc(1, 2);
     let garbage_addr = garbage.addr();
     let garbage_hash = garbage.identity_hash();
-    let no_refs = |_: u32| Vec::<usize>::new();
+    let no_refs = |_: u32| std::rc::Rc::<[usize]>::from(Vec::new());
 
     let freed = unsafe { heap.collect(&[keep], &no_refs) };
     assert_eq!(freed, 1);
@@ -1534,7 +1534,7 @@ fn transitively_reachable_objects_survive() {
     let unreachable = heap.alloc(1, 1);
     let _ = unreachable;
 
-    let ref_slots = |_: u32| vec![0usize];
+    let ref_slots = |_: u32| std::rc::Rc::from(vec![0usize]);
     let freed = unsafe { heap.collect(&[a], &ref_slots) };
     assert_eq!(freed, 1); // only the detached object
     assert_eq!(heap.live_count(), 3);
@@ -1574,7 +1574,7 @@ fn collection_keeps_native_roots_alive() {
     let object = heap.alloc(1, 0);
     let registered = [object];
     let _scope = unsafe { NativeRootScope::enter(&registered) };
-    let freed = unsafe { heap.collect_with_native_roots(&[], &|_| Vec::new()) };
+    let freed = unsafe { heap.collect_with_native_roots(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(freed, 0);
     assert_eq!(heap.live_count(), 1);
 }
@@ -1597,7 +1597,7 @@ fn nested_native_root_scopes_restore_the_outer_frame() {
         roots.clear();
         append_native_roots(&mut roots);
         assert_eq!(roots, vec![outer_object, inner_object]);
-        let freed = unsafe { heap.collect_with_native_roots(&[], &|_| Vec::new()) };
+        let freed = unsafe { heap.collect_with_native_roots(&[], &|_| std::rc::Rc::from(Vec::new())) };
         assert_eq!(freed, 0);
         assert_eq!(heap.live_count(), 2);
     }
@@ -1605,7 +1605,7 @@ fn nested_native_root_scopes_restore_the_outer_frame() {
     roots.clear();
     append_native_roots(&mut roots);
     assert_eq!(roots, outer);
-    let freed = unsafe { heap.collect_with_native_roots(&[], &|_| Vec::new()) };
+    let freed = unsafe { heap.collect_with_native_roots(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(freed, 1);
     assert_eq!(heap.live_count(), 1);
     drop(outer_scope);
@@ -1695,7 +1695,7 @@ fn active_stack_map_collection_consumes_the_thread_registry() {
 
     let freed = unsafe {
         heap.collect_with_active_native_frame(&[], 101, frame.as_ptr() as *const u8, &|_| {
-            Vec::new()
+            std::rc::Rc::from(Vec::new())
         })
     };
     assert_eq!(freed, 0);
@@ -1718,7 +1718,7 @@ fn active_stack_map_collection_includes_native_root_scopes() {
     let _scope = unsafe { ActiveStackMapScope::enter(&registry) };
 
     let reclaimed =
-        unsafe { heap.collect_with_active_native_frame(&[], 105, frame.as_ptr(), &|_| Vec::new()) };
+        unsafe { heap.collect_with_active_native_frame(&[], 105, frame.as_ptr(), &|_| std::rc::Rc::from(Vec::new())) };
 
     assert_eq!(reclaimed, 0);
     assert_eq!(heap.live_count(), 1);
@@ -1729,7 +1729,7 @@ fn active_stack_map_collection_falls_back_to_explicit_roots() {
     let mut heap = Heap::new();
     let object = heap.alloc(1, 0);
     let freed = unsafe {
-        heap.collect_with_active_native_frame(&[object], 100, std::ptr::null(), &|_| Vec::new())
+        heap.collect_with_active_native_frame(&[object], 100, std::ptr::null(), &|_| std::rc::Rc::from(Vec::new()))
     };
     assert_eq!(freed, 0);
     assert_eq!(heap.live_count(), 1);
@@ -1767,7 +1767,7 @@ fn native_frame_stack_map_roots_participate_in_collection() {
 
     let freed = unsafe {
         heap.collect_with_native_frame(&[], &registry, 101, frame.as_ptr() as *const u8, &|_| {
-            Vec::new()
+            std::rc::Rc::from(Vec::new())
         })
     };
     assert_eq!(freed, 0);
@@ -1783,7 +1783,7 @@ fn generator_state_keeps_argument_object_alive() {
         .expect("generator state")
         .args
         .push(zun_core::Any::object(child.addr() as usize));
-    let freed = unsafe { heap.collect(&[generator], &|_| Vec::new()) };
+    let freed = unsafe { heap.collect(&[generator], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(freed, 0);
     assert_eq!(heap.live_count(), 2);
 }
@@ -1795,7 +1795,7 @@ fn bigint_payload_is_traced_by_its_managed_owner_and_relocated() {
     let bigint =
         heap.alloc_bigint(zun_core::BigInt::parse_decimal("18446744073709551616").unwrap());
     let mut roots = vec![bigint];
-    let result = unsafe { heap.collect_and_compact(&mut roots, &|_| Vec::new()) };
+    let result = unsafe { heap.collect_and_compact(&mut roots, &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(result.reclaimed_objects, 1);
     assert_eq!(
         heap.bigint_value(roots[0]).unwrap().to_string(),
@@ -1813,7 +1813,7 @@ fn realm_global_object_is_a_heap_singleton_and_relocates() {
     let global = heap.global_object();
     assert_eq!(heap.global_object(), global);
     let mut roots = vec![global];
-    unsafe { heap.collect_young_evacuating(&mut roots, &|_| Vec::new(), &mut |_| {}) };
+    unsafe { heap.collect_young_evacuating(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &mut |_| {}) };
     assert_eq!(heap.global_object(), roots[0]);
     assert_ne!(roots[0], global);
 }

@@ -58,7 +58,7 @@ mod tests {
         let target = heap.alloc(1, 0);
         let handler = heap.alloc(2, 0);
         let proxy = heap.alloc_proxy(target, handler);
-        assert_eq!(unsafe { heap.collect(&[proxy], &|_| Vec::new()) }, 0);
+        assert_eq!(unsafe { heap.collect(&[proxy], &|_| std::rc::Rc::from(Vec::new())) }, 0);
         assert_eq!(heap.proxy_target(proxy), Some(target));
         assert_eq!(heap.proxy_handler(proxy), Some(handler));
     }

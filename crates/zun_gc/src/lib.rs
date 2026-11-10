@@ -388,7 +388,7 @@ impl Heap {
     pub unsafe fn compact(
         &mut self,
         roots: &mut [Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> CompactionResult {
         unsafe { self.compact_impl(roots, ref_slots, &[], None) }
     }
@@ -398,7 +398,7 @@ impl Heap {
     pub unsafe fn compact_with_native_frame(
         &mut self,
         roots: &mut [Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         registry: &StackMapRegistry,
         pc: usize,
         sp: *mut u8,
@@ -412,7 +412,7 @@ impl Heap {
     pub unsafe fn compact_with_native_frames(
         &mut self,
         roots: &mut [Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         frames: &[StoppedNativeFrame<'_>],
     ) -> CompactionResult {
         unsafe { self.compact_impl(roots, ref_slots, frames, None) }
@@ -428,7 +428,7 @@ impl Heap {
     pub unsafe fn compact_with_registered_native_frames(
         &mut self,
         roots: &mut [Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> CompactionResult {
         with_active_native_frames(|active| {
             let frames: Vec<_> = active
@@ -455,7 +455,7 @@ impl Heap {
     pub unsafe fn compact_with_relocation(
         &mut self,
         roots: &mut [Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         on_relocation: &mut dyn FnMut(&RelocationMap),
     ) -> CompactionResult {
         unsafe { self.compact_impl(roots, ref_slots, &[], Some(on_relocation)) }
@@ -464,7 +464,7 @@ impl Heap {
     unsafe fn compact_impl(
         &mut self,
         roots: &mut [Obj],
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         native_frames: &[StoppedNativeFrame<'_>],
         mut on_relocation: Option<&mut dyn FnMut(&RelocationMap)>,
     ) -> CompactionResult {
@@ -538,7 +538,7 @@ impl Heap {
     pub unsafe fn collect_and_compact(
         &mut self,
         roots: &mut Vec<Obj>,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> CollectionCompactionResult {
         let mark_roots = roots.clone();
         let reclaimed_objects = unsafe { self.collect(&mark_roots, ref_slots) };
@@ -560,7 +560,7 @@ impl Heap {
     pub unsafe fn collect_and_compact_with_relocation(
         &mut self,
         roots: &mut Vec<Obj>,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         on_relocation: &mut dyn FnMut(&RelocationMap),
     ) -> CollectionCompactionResult {
         let mark_roots = roots.clone();
@@ -582,7 +582,7 @@ impl Heap {
     pub unsafe fn collect_and_compact_with_registered_native_frames(
         &mut self,
         roots: &mut Vec<Obj>,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> CollectionCompactionResult {
         with_active_native_frames(|active| {
             let frames: Vec<_> = active
@@ -607,7 +607,7 @@ impl Heap {
     pub unsafe fn collect_and_compact_with_native_frames(
         &mut self,
         roots: &mut Vec<Obj>,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         frames: &[StoppedNativeFrame<'_>],
     ) -> CollectionCompactionResult {
         let mut mark_roots = roots.clone();
@@ -631,12 +631,12 @@ impl Heap {
     pub fn rewrite_object_references(
         &mut self,
         relocation: &RelocationMap,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         let mut rewritten = 0;
         for record in self.records.iter().filter(|record| record.alive) {
             let object = Obj(record.addr);
-            for field in ref_slots(object.type_rid()) {
+            for &field in ref_slots(object.type_rid()).iter() {
                 let slot = unsafe { object.addr().add(zun_core::OBJECT_HEADER_SLOTS + field) };
                 if unsafe { relocation.rewrite_slot(slot) } {
                     rewritten += 1;
@@ -1069,7 +1069,7 @@ impl Heap {
     pub fn rewrite_all_references(
         &mut self,
         relocation: &RelocationMap,
-        ref_slots: &dyn Fn(u32) -> Vec<usize>,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         let mut rewritten = 0;
         if let Some(object) = self.global_object {

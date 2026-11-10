@@ -891,9 +891,9 @@ fn gc_preserves_and_reclaims_a_jit_allocated_object_by_root_contract() {
         .expect("jit object allocation");
     let object = unsafe { zun_gc::Obj::from_addr(bits as *mut u64) };
     assert_eq!(object.field(0), 7);
-    assert_eq!(unsafe { heap.collect(&[object], &|_| Vec::new()) }, 0);
+    assert_eq!(unsafe { heap.collect(&[object], &|_| std::rc::Rc::from(Vec::new())) }, 0);
     assert_eq!(object.field(0), 7);
-    assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 1);
+    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 1);
 }
 
 #[test]
@@ -924,15 +924,17 @@ fn gc_traces_references_inside_a_jit_allocated_object() {
     assert_eq!(
         unsafe {
             heap.collect(&[holder], &|type_rid| {
-                (type_rid == holder_type)
-                    .then_some(vec![0])
-                    .unwrap_or_default()
+                std::rc::Rc::from(if type_rid == holder_type {
+                    vec![0usize]
+                } else {
+                    Vec::new()
+                })
             })
         },
         0
     );
     assert_eq!(box_object.field(0), 7);
-    assert_eq!(unsafe { heap.collect(&[], &|_| Vec::new()) }, 2);
+    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 2);
 }
 
 #[test]

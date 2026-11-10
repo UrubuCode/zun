@@ -4,6 +4,8 @@
 //! It owns no executable code and does not alter the `.zm` format: all slots
 //! are derived from the stable TypeDef/FieldDef/MethodDef tables.
 
+use std::rc::Rc;
+
 use zun_il::JitKind;
 use zun_metadata::Token;
 use zun_module::Module;
@@ -58,6 +60,10 @@ pub struct TypeSystem {
     types: Vec<TypeDescriptor>,
     fields: Vec<Option<FieldLayout>>,
     method_slots: Vec<Option<usize>>,
+    /// Per type (0-based by type index): the object slots that hold references
+    /// and must be traced, precomputed once. The GC's per-object mark callback
+    /// returns a cheap `Rc` clone of this instead of rebuilding the list.
+    reference_slots_by_type: Vec<Rc<[usize]>>,
 }
 
 /// Immutable load-time binding for the types supplied by `zun:core`.
@@ -183,10 +189,23 @@ impl TypeSystem {
                 resolved[index] = true;
             }
         }
+        let reference_slots_by_type = types
+            .iter()
+            .map(|descriptor| {
+                let slots: Vec<usize> = descriptor
+                    .fields
+                    .iter()
+                    .filter(|field| JitKind::from_byte(field.kind) == JitKind::Object)
+                    .map(|field| field.slot)
+                    .collect();
+                Rc::from(slots)
+            })
+            .collect();
         Ok(Self {
             types,
             fields: field_index,
             method_slots,
+            reference_slots_by_type,
         })
     }
 
@@ -202,18 +221,15 @@ impl TypeSystem {
         self.fields.get(field_rid as usize).copied().flatten()
     }
 
-    /// Return object slots whose values are references and must be traced.
-    pub fn reference_slots(&self, type_rid: u32) -> Vec<usize> {
-        self.get(type_rid)
-            .map(|descriptor| {
-                descriptor
-                    .fields
-                    .iter()
-                    .filter(|field| JitKind::from_byte(field.kind) == JitKind::Object)
-                    .map(|field| field.slot)
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// Return object slots whose values are references and must be traced. The
+    /// list is precomputed per type, so this is a cheap `Rc` clone rather than a
+    /// fresh allocation on every call (it is invoked per object during GC).
+    pub fn reference_slots(&self, type_rid: u32) -> Rc<[usize]> {
+        type_rid
+            .checked_sub(1)
+            .and_then(|rid| self.reference_slots_by_type.get(rid as usize))
+            .cloned()
+            .unwrap_or_else(|| Rc::from(Vec::new()))
     }
 
     /// Resolve a virtual method token for a runtime type in O(1).
@@ -347,6 +363,6 @@ mod tests {
         )
         .expect("compile");
         let types = TypeSystem::from_module(&module).expect("types");
-        assert_eq!(types.reference_slots(2), vec![0]);
+        assert_eq!(types.reference_slots(2).to_vec(), vec![0]);
     }
 }

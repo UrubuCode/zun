@@ -57,7 +57,12 @@ pub unsafe extern "C" fn zun_rt_alloc(
             // count-based cadence in that case.
             if heap.native_allocation_due() || heap.nursery_collection_due() {
                 let layouts = heap.reference_slots.clone();
-                let ref_slots = |rid: u32| layouts.get(&rid).cloned().unwrap_or_default();
+                let ref_slots = |rid: u32| {
+                    layouts
+                        .get(&rid)
+                        .map(|slots| std::rc::Rc::from(slots.as_slice()))
+                        .unwrap_or_else(|| std::rc::Rc::from(Vec::new()))
+                };
                 // SAFETY: the active frame and all registered roots remain
                 // stopped and valid for this allocation slow path.
                 unsafe {
