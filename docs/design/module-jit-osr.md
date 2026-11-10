@@ -79,12 +79,19 @@ precondition for the loop region being eligible at all.
    analysis, unit-tested (`cargo test -p zun_codegen`), no Cranelift, no risk.
    **(this slice)**
 
-3. **OSR entry codegen (loop region).** Compile a native function that enters at
-   the patchpoint, takes the live locals as parameters, runs the eligible loop,
-   and returns the updated locals at loop exit. In-process equivalence tests
-   only; no transfer wiring yet.
+3. **OSR entry codegen (loop region). — milestone A DONE (`ad69ca16`).**
+   `translate_body(osr_entry_pc)` + `Jit::ensure_osr_compiled` compile an OSR
+   entry: a native function taking every local, jumping to the patchpoint, and
+   running the body to its own `ret`s (the .NET "OSR to method end" model).
+   Verified by `tests/osr_entry.rs`: OSR-entry(initial locals) == normal JIT ==
+   interpreter. The blocker below was resolved by pinning the patchpoint block's
+   operand-stack signature empty (sound because loop-carried locals ride SSA
+   Variables, not block params, so a stack-empty header needs no edge args) and
+   leaving IL block 0 lowered-but-unreachable. Still open in this slice: `Any`
+   (`JitKind::Other`) locals/results, and eligibility is the conservative
+   whole-method check rather than `loop_region_eligible` of the tail.
 
-   **Known blocker (found while scoping slice 3).** `translate::translate_body`
+   **Known blocker (resolved in milestone A; kept for the record).** `translate::translate_body`
    builds the function with a single linear model: an entry block that defines
    the method *params* and jumps to IL block 0, then `Translator::run` lowers
    instructions 0..N in order, lazily threading the operand stack across each
