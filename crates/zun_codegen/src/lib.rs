@@ -195,6 +195,9 @@ struct OsrEntry {
     /// Every local's kind, in local-index order (the OSR entry's parameters).
     sig: Sig,
     stack_maps: Vec<StackMapInfo>,
+    /// Milestone B: a loop-only entry that takes a trailing `out_locals`
+    /// pointer and returns the resume PC (see [`Jit::ensure_osr_loop_compiled`]).
+    loop_exit: bool,
 }
 
 impl core::fmt::Debug for Jit {
@@ -889,6 +892,7 @@ impl Jit {
             self.bridge_enabled,
             self.bridge_pending_addr,
             None,
+            None,
         ) {
             // Translation failed partway, so `FunctionBuilder::finalize` never
             // ran: the builder context is left dirty and `ctx.func` holds a
@@ -973,16 +977,58 @@ impl Jit {
         method_rid: u32,
         target_pc: usize,
     ) -> Result<OsrEntryId, JitError> {
-        if let Some(index) = self
-            .osr_entries
-            .iter()
-            .position(|e| e.method_rid == method_rid && e.target_pc == target_pc)
-        {
+        self.osr_compile(zm, method_rid, target_pc, false)
+    }
+
+    /// Compile a return-to-interpreter OSR entry for the loop whose header is at
+    /// `target_pc` (module-JIT epic slice 3, milestone B). Only the loop region
+    /// is lowered, so an ineligible method tail does not matter; the region
+    /// itself must be eligible, have no `ret`/`throw`/handlers and exactly one
+    /// exit target, and the method no `Any` locals.
+    ///
+    /// Exit ABI: the native entry takes every local (like milestone A) plus a
+    /// trailing `out_locals: *mut u64`, and returns the IL byte PC to resume at
+    /// (the exit target). On exit every local is stored to `out_locals[i]`,
+    /// packed as in [`Self::call_osr_packed`]. Call it through
+    /// [`Self::call_osr_loop_packed`].
+    pub fn ensure_osr_loop_compiled(
+        &mut self,
+        zm: &Module,
+        method_rid: u32,
+        target_pc: usize,
+    ) -> Result<OsrEntryId, JitError> {
+        self.osr_compile(zm, method_rid, target_pc, true)
+    }
+
+    fn osr_compile(
+        &mut self,
+        zm: &Module,
+        method_rid: u32,
+        target_pc: usize,
+        loop_exit: bool,
+    ) -> Result<OsrEntryId, JitError> {
+        if let Some(index) = self.osr_entries.iter().position(|e| {
+            e.method_rid == method_rid && e.target_pc == target_pc && e.loop_exit == loop_exit
+        }) {
             return Ok(OsrEntryId(index));
         }
-        if !self.ensure_compiled(zm, method_rid)? {
-            return Err(JitError::Ineligible(method_rid));
-        }
+        let region_end = if loop_exit {
+            let (_, end) = eligible::loop_region(zm, method_rid, target_pc).ok_or_else(|| {
+                JitError::Compile {
+                    method_rid,
+                    detail: "no loop region at the OSR patchpoint".into(),
+                }
+            })?;
+            if !eligible::loop_region_eligible(zm, method_rid, target_pc) {
+                return Err(JitError::Ineligible(method_rid));
+            }
+            Some(end)
+        } else {
+            if !self.ensure_compiled(zm, method_rid)? {
+                return Err(JitError::Ineligible(method_rid));
+            }
+            None
+        };
         let body = read_body(
             &zm.code,
             zm.tables.method_defs[method_rid as usize - 1].body_offset,
@@ -997,7 +1043,9 @@ impl Jit {
             .map(|&b| JitKind::from_byte(b))
             .collect();
         if local_kinds.contains(&JitKind::Other)
-            || (body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Other)
+            || (!loop_exit
+                && body.returns_value
+                && JitKind::from_byte(body.return_kind) == JitKind::Other)
         {
             return Err(JitError::Compile {
                 method_rid,
@@ -1009,10 +1057,19 @@ impl Jit {
         for &kind in &local_kinds {
             signature.params.push(AbiParam::new(clif_ty(kind)));
         }
+        if loop_exit {
+            // Trailing out_locals pointer; the entry returns the resume PC.
+            signature.params.push(AbiParam::new(types::I64));
+            signature.returns.clear();
+            signature.returns.push(AbiParam::new(types::I64));
+        }
         let func_id = self
             .module
             .declare_function(
-                &format!("m{method_rid}_osr{target_pc}"),
+                &format!(
+                    "m{method_rid}_osr{target_pc}{}",
+                    if loop_exit { "_loop" } else { "" }
+                ),
                 Linkage::Local,
                 &signature,
             )
@@ -1032,6 +1089,7 @@ impl Jit {
             self.bridge_enabled,
             self.bridge_pending_addr,
             Some(target_pc),
+            region_end,
         ) {
             self.fb_ctx = FunctionBuilderContext::new();
             self.module.clear_context(&mut self.ctx);
@@ -1061,22 +1119,36 @@ impl Jit {
             .unwrap_or_default();
         self.module.clear_context(&mut self.ctx);
 
-        let returns = body
-            .returns_value
-            .then(|| JitKind::from_byte(body.return_kind));
+        let returns = if loop_exit {
+            Some(JitKind::Num(NumKind::U64))
+        } else {
+            body.returns_value
+                .then(|| JitKind::from_byte(body.return_kind))
+        };
         let sig = Sig {
             param_kinds: local_kinds,
             returns,
         };
-        let shim_id = shim::define_shim(
-            &mut self.module,
-            &mut self.ctx,
-            &mut self.fb_ctx,
-            &format!("m{method_rid}_osr{target_pc}_shim"),
-            func_id,
-            &sig.param_kinds,
-            sig.returns,
-        )
+        let shim_id = if loop_exit {
+            shim::define_osr_loop_shim(
+                &mut self.module,
+                &mut self.ctx,
+                &mut self.fb_ctx,
+                &format!("m{method_rid}_osr{target_pc}_loop_shim"),
+                func_id,
+                &sig.param_kinds,
+            )
+        } else {
+            shim::define_shim(
+                &mut self.module,
+                &mut self.ctx,
+                &mut self.fb_ctx,
+                &format!("m{method_rid}_osr{target_pc}_shim"),
+                func_id,
+                &sig.param_kinds,
+                sig.returns,
+            )
+        }
         .map_err(|detail| JitError::Compile { method_rid, detail })?;
         self.module
             .finalize_definitions()
@@ -1088,6 +1160,7 @@ impl Jit {
             func_id,
             sig,
             stack_maps,
+            loop_exit,
         });
         self.refresh_stack_map_pcs();
         self.refresh_virtual_table();
@@ -1131,6 +1204,10 @@ impl Jit {
             .osr_entries
             .get(id.0)
             .ok_or(JitError::Ineligible(0))?;
+        if entry.loop_exit {
+            // A loop-exit entry needs an out buffer; use `call_osr_loop_packed`.
+            return Err(JitError::Ineligible(entry.method_rid));
+        }
         if entry.sig.param_kinds.len() != locals.len() {
             return Err(JitError::Arity {
                 expected: entry.sig.param_kinds.len(),
@@ -1148,6 +1225,63 @@ impl Jit {
         let ptr = self.module.get_finalized_function(entry.shim_id);
         let f: extern "C" fn(*const u64) -> u64 = unsafe { std::mem::transmute(ptr) };
         Ok(f(locals.as_ptr()))
+    }
+
+    /// Call a loop-exit OSR entry (see [`Self::ensure_osr_loop_compiled`]) with
+    /// every local packed into `u64` slots. On return `out_locals` holds every
+    /// local's value at the loop exit (same packing) and the result is the IL
+    /// byte PC at which the interpreter must resume.
+    ///
+    /// `locals` and `out_locals` must both have one slot per local; the same
+    /// safety contract as [`Self::call_osr_packed`] applies.
+    pub fn call_osr_loop_packed(
+        &self,
+        id: OsrEntryId,
+        locals: &[u64],
+        out_locals: &mut [u64],
+    ) -> Result<u64, JitError> {
+        let entry = self
+            .osr_entries
+            .get(id.0)
+            .ok_or(JitError::Ineligible(0))?;
+        if !entry.loop_exit {
+            return Err(JitError::Ineligible(entry.method_rid));
+        }
+        let expected = entry.sig.param_kinds.len();
+        if expected != locals.len() || expected != out_locals.len() {
+            return Err(JitError::Arity {
+                expected,
+                found: if expected != locals.len() {
+                    locals.len()
+                } else {
+                    out_locals.len()
+                },
+            });
+        }
+        let native_roots: Vec<zun_gc::Obj> = locals
+            .iter()
+            .zip(&entry.sig.param_kinds)
+            .filter(|&(_, &kind)| kind == JitKind::Object)
+            .map(|(&arg, _)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
+            .collect();
+        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
+        let ptr = self.module.get_finalized_function(entry.shim_id);
+        let f: extern "C" fn(*const u64, *mut u64) -> u64 = unsafe { std::mem::transmute(ptr) };
+        Ok(f(locals.as_ptr(), out_locals.as_mut_ptr()))
+    }
+
+    /// [`Self::call_osr_loop_packed`] while `heap` is the current managed heap.
+    pub fn call_osr_loop_packed_with_heap(
+        &self,
+        id: OsrEntryId,
+        locals: &[u64],
+        out_locals: &mut [u64],
+        heap: &mut zun_gc::Heap,
+    ) -> Result<u64, JitError> {
+        self.register_heap_layouts(heap);
+        let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
+        self.call_osr_loop_packed(id, locals, out_locals)
     }
 
     fn refresh_virtual_table(&mut self) {
@@ -1676,6 +1810,7 @@ pub fn compile_object_for_target(
             &body,
             false,
             0,
+            None,
             None,
         )
         .map_err(|detail| JitError::Compile {

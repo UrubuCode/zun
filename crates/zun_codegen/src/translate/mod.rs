@@ -78,6 +78,13 @@ pub(crate) fn is_float(kind: JitKind) -> bool {
 /// `pc` instead of block 0. The header must have an empty operand stack. The
 /// rest of the body then runs normally to its own `ret`s. `None` is the
 /// ordinary method translation.
+///
+/// With `osr_region_end = Some(end)` as well (milestone B, "return-to-interpreter
+/// exit") only the loop region `[pc, end)` is lowered. The caller-set signature
+/// is `(every local..., out_locals: *mut u64) -> u64`; the region must have
+/// exactly one exit target, which becomes an exit block that stores every local
+/// into `out_locals` (packed like `call_osr_packed`) and returns that target's
+/// IL byte offset as the resume PC.
 #[allow(clippy::too_many_arguments)] // mirrors the codegen translation live state
 pub fn translate_body(
     module: &mut dyn ClifModule,
@@ -93,6 +100,7 @@ pub fn translate_body(
     bridge_enabled: bool,
     pending_slot_addr: u64,
     osr_entry_pc: Option<usize>,
+    osr_region_end: Option<usize>,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
 
@@ -108,6 +116,19 @@ pub fn translate_body(
         index_of_offset.insert(off, instrs.len());
     }
 
+    // Milestone B: validate the loop region and find its single exit.
+    let region = match (osr_entry_pc, osr_region_end) {
+        (Some(start), Some(end)) => Some(osr_region_info(
+            body,
+            &instrs,
+            &offset_of_index,
+            &index_of_offset,
+            start,
+            end,
+        )?),
+        (None, Some(_)) => return Err("an OSR region needs an entry pc".into()),
+        _ => None,
+    };
     let mut leaders = find_leaders(&instrs, &offset_of_index, &index_of_offset)?;
     // Each catch handler's entry is a branch target (the `throw` jumps to it), so
     // it must be a block leader even though no textual branch points at it.
@@ -121,12 +142,28 @@ pub fn translate_body(
     let mut builder = FunctionBuilder::new(&mut ctx.func, fb_ctx);
     let mut blocks: BTreeMap<usize, Block> = BTreeMap::new();
     for &leader in &leaders {
+        if let Some(r) = &region {
+            // Region mode lowers only the loop's own blocks.
+            if leader < r.start_idx || leader >= r.end_idx {
+                continue;
+            }
+        }
         blocks.insert(leader, builder.create_block());
     }
+    // The OSR-exit block stands in for the (never lowered) block at the exit target.
+    let osr_exit_block = region.as_ref().map(|r| {
+        let block = builder.create_block();
+        blocks.insert(r.exit_idx, block);
+        block
+    });
     // The prologue gets its own entry block: a method whose first instruction is a
     // loop header makes `blocks[&0]` a branch target, and Cranelift forbids
     // jumping to the entry block.
-    let first = blocks[&0];
+    let first = if region.is_some() {
+        None
+    } else {
+        Some(blocks[&0])
+    };
     // OSR entry: resolve the patchpoint's block (it must be a block leader).
     let osr_block = match osr_entry_pc {
         None => None,
@@ -205,13 +242,35 @@ pub fn translate_body(
         let z = typed_zero(&mut builder, local_kinds[i]);
         builder.def_var(vars[i], z);
     }
+    let osr_exit = match (&region, osr_exit_block) {
+        (Some(r), Some(block)) => {
+            if local_kinds.contains(&JitKind::Other) {
+                return Err("OSR loop exit does not support Any locals".into());
+            }
+            let out_ptr = *entry_params
+                .get(param_value)
+                .ok_or("OSR loop entry is missing its out_locals parameter")?;
+            Some(OsrExit {
+                block,
+                resume_pc: r.exit_pc as i64,
+                out_ptr,
+            })
+        }
+        _ => None,
+    };
     let osr_counter = builder.declare_var(types::I64);
     let initial_osr_counter = builder.ins().iconst(types::I64, 1000);
     builder.def_var(osr_counter, initial_osr_counter);
     // OSR: jump straight to the patchpoint block; IL block 0 is left
     // unreachable but is still lowered so every block ends up filled.
-    builder.ins().jump(osr_block.unwrap_or(first), &[]);
-    builder.switch_to_block(first);
+    builder
+        .ins()
+        .jump(osr_block.or(first).expect("entry target"), &[]);
+    builder.switch_to_block(if region.is_some() {
+        osr_block.expect("OSR region has a patchpoint block")
+    } else {
+        first.expect("block 0")
+    });
 
     let mut t = Translator {
         builder,
@@ -226,14 +285,23 @@ pub fn translate_body(
         module,
         zm,
         osr_counter,
-        method_return_kind: JitKind::from_byte(body.return_kind),
-        method_returns_value: body.returns_value,
+        // Region mode returns the resume PC (u64).
+        method_return_kind: if region.is_some() {
+            JitKind::Num(NumKind::U64)
+        } else {
+            JitKind::from_byte(body.return_kind)
+        },
+        method_returns_value: body.returns_value || region.is_some(),
         handlers: body.handlers.clone(),
         bridge_enabled,
         pending_slot_addr,
         exc_exit: None,
         osr_pinned: osr_block,
         osr_error: None,
+        run_range: region
+            .as_ref()
+            .map_or((0, instrs.len()), |r| (r.start_idx, r.end_idx)),
+        osr_exit,
     };
     t.run(&instrs, &offset_of_index, &index_of_offset)?;
     if let Some(error) = t.osr_error.take() {
@@ -249,6 +317,98 @@ pub(crate) fn typed_zero(builder: &mut FunctionBuilder, kind: JitKind) -> Value 
         types::F64 => builder.ins().f64const(0.0),
         ty => builder.ins().iconst(ty, 0),
     }
+}
+
+/// A validated OSR loop region (milestone B).
+struct RegionInfo {
+    start_idx: usize,
+    end_idx: usize,
+    /// Instruction index and IL byte offset of the single exit target.
+    exit_idx: usize,
+    exit_pc: usize,
+}
+
+/// The OSR-exit block (milestone B): stores every local to `out_ptr` and returns
+/// `resume_pc`.
+pub(crate) struct OsrExit {
+    pub(crate) block: Block,
+    pub(crate) resume_pc: i64,
+    pub(crate) out_ptr: Value,
+}
+
+/// Validate the loop region `[start, end)` for a return-to-interpreter OSR entry:
+/// no `ret`/`throw`, no exception handler touching it, and exactly one distinct
+/// exit target (a branch target outside the region, or the fall-through past its
+/// last instruction).
+fn osr_region_info(
+    body: &MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+    offset_of_index: &[usize],
+    index_of_offset: &BTreeMap<usize, usize>,
+    start: usize,
+    end: usize,
+) -> Result<RegionInfo, String> {
+    let &start_idx = index_of_offset
+        .get(&start)
+        .ok_or("OSR patchpoint is not on an instruction boundary")?;
+    let &end_idx = index_of_offset
+        .get(&end)
+        .ok_or("OSR region end is not on an instruction boundary")?;
+    if start_idx >= end_idx {
+        return Err("empty OSR region".into());
+    }
+    for h in &body.handlers {
+        let (ts, te, hs) = (
+            h.try_start as usize,
+            h.try_end as usize,
+            h.handler_start as usize,
+        );
+        if (ts < end && te > start) || (hs >= start && hs < end) {
+            return Err("OSR loop exit does not support exception handlers in the loop".into());
+        }
+    }
+    let mut exits: BTreeSet<usize> = BTreeSet::new();
+    for i in start_idx..end_idx {
+        let instr = &instrs[i];
+        let next = offset_of_index[i] + instr.encoded_len();
+        match instr.opcode {
+            Opcode::Ret | Opcode::Throw => {
+                return Err("OSR loop exit does not support ret/throw in the loop".into());
+            }
+            Opcode::Branch | Opcode::BranchTrue | Opcode::BranchFalse => {
+                if let Operand::Branch(disp) = instr.operand {
+                    let target = (next as i64 + disp as i64) as usize;
+                    if target < start || target >= end {
+                        exits.insert(target);
+                    }
+                }
+                if instr.opcode != Opcode::Branch && next >= end {
+                    exits.insert(next);
+                }
+            }
+            _ => {
+                if next >= end {
+                    exits.insert(next);
+                }
+            }
+        }
+    }
+    if exits.len() != 1 {
+        return Err(format!(
+            "OSR loop exit needs exactly one exit target, found {}",
+            exits.len()
+        ));
+    }
+    let exit_pc = *exits.iter().next().expect("one exit");
+    let &exit_idx = index_of_offset
+        .get(&exit_pc)
+        .ok_or("OSR exit target is not on an instruction boundary")?;
+    Ok(RegionInfo {
+        start_idx,
+        end_idx,
+        exit_idx,
+        exit_pc,
+    })
 }
 
 fn find_leaders(
@@ -321,6 +481,11 @@ pub(crate) struct Translator<'a> {
     /// Set when an edge into the pinned patchpoint block carries a non-empty
     /// stack; the translation is then rejected rather than miscompiled.
     pub(crate) osr_error: Option<String>,
+    /// Half-open instruction-index range `run` lowers (the whole body, or the
+    /// OSR loop region).
+    pub(crate) run_range: (usize, usize),
+    /// Milestone B: the return-to-interpreter exit, when lowering a loop region.
+    pub(crate) osr_exit: Option<OsrExit>,
 }
 
 impl Translator<'_> {
@@ -337,7 +502,9 @@ impl Translator<'_> {
         target: Block,
         stack: &[Slot],
     ) -> Vec<BlockArg> {
-        if self.osr_pinned == Some(target) {
+        if self.osr_pinned == Some(target)
+            || self.osr_exit.as_ref().is_some_and(|x| x.block == target)
+        {
             // The OSR entry jumps here with no arguments, so the signature is
             // fixed empty; a non-empty edge cannot be threaded.
             block_sigs.entry(target).or_default();
@@ -370,8 +537,9 @@ impl Translator<'_> {
         let mut block_sigs: HashMap<Block, Vec<JitKind>> = HashMap::new();
         let mut builtin_ids: HashMap<&'static str, FuncId> = HashMap::new();
 
-        for (i, instr) in instrs.iter().enumerate() {
-            if i != 0 {
+        let (lo, hi) = self.run_range;
+        for (i, instr) in instrs.iter().enumerate().take(hi).skip(lo) {
+            if i != lo {
                 if let Some(&block) = self.blocks.get(&i) {
                     if !terminated(instrs, i) {
                         let args = self.thread_edge(&mut block_sigs, block, &stack);
@@ -761,6 +929,35 @@ impl Translator<'_> {
             }
         }
 
+        if let Some(exit) = self.osr_exit.take() {
+            // Falling off the region's last instruction is the exit edge.
+            let last = &instrs[hi - 1];
+            if !matches!(
+                last.opcode,
+                Opcode::Branch
+                    | Opcode::Ret
+                    | Opcode::Throw
+                    | Opcode::BranchTrue
+                    | Opcode::BranchFalse
+            ) {
+                let args = self.thread_edge(&mut block_sigs, exit.block, &stack);
+                self.builder.ins().jump(exit.block, &args);
+            }
+            self.builder.switch_to_block(exit.block);
+            for slot in 0..self.local_kinds.len() {
+                let kind = self.local_kinds[slot];
+                let v = self.builder.use_var(self.vars[slot]);
+                let packed = crate::shim::pack_result(&mut self.builder, v, kind);
+                self.builder.ins().store(
+                    MemFlags::trusted(),
+                    packed,
+                    exit.out_ptr,
+                    (slot * 8) as i32,
+                );
+            }
+            let pc = self.builder.ins().iconst(types::I64, exit.resume_pc);
+            self.builder.ins().return_(&[pc]);
+        }
         self.finish_exc_exit();
         self.builder.seal_all_blocks();
         Ok(())

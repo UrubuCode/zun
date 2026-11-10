@@ -64,6 +64,11 @@ impl Translator<'_> {
         if let Some(block) = self.exc_exit {
             return block;
         }
+        if self.osr_exit.is_some() {
+            // The OSR loop exit has no way to propagate a pending throw yet.
+            self.osr_error =
+                Some("OSR loop exit does not support bridged calls that may throw".into());
+        }
         let block = self.builder.create_block();
         self.exc_exit = Some(block);
         block
