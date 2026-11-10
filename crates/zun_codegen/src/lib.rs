@@ -1261,7 +1261,7 @@ impl Jit {
         let native_roots: Vec<zun_gc::Obj> = locals
             .iter()
             .zip(&entry.sig.param_kinds)
-            .filter(|&(_, &kind)| kind == JitKind::Object)
+            .filter(|&(_, &kind)| matches!(kind, JitKind::Object | JitKind::Array))
             .map(|(&arg, _)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
             .collect();
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };

@@ -68,3 +68,49 @@ fn oxc_module_top_level_for_loop_matches() {
     assert_eq!(plain.lines, ["1999000"]);
     assert!(hook.osr_transfers() > 0, "loop OSR must have fired");
 }
+
+// ---- Object / array locals (GC stress) -------------------------------------
+//
+// Note: a class with an explicit `constructor` is not yet JIT-eligible (a void
+// constructor call is followed by a `Pop`, which the native translator does not
+// model), so these classes use field initializers and plain field stores.
+
+const P: &str = "class P { x: number = 0; y: number = 0; dist(): number { return this.x * this.x + this.y * this.y; } }\n";
+
+#[test]
+fn object_allocating_loop_matches_across_many_collections() {
+    let src = format!(
+        "{P}function main() {{ let acc = 0; let i = 0; while (i < 120000) {{ const p = new P(); p.x = i; p.y = i + 1; acc = acc + p.dist(); i = i + 1; }} print(acc); }}"
+    );
+    let (plain, hooked, transfers) = run_both(&src, 2);
+    assert_eq!(plain, hooked);
+    assert!(transfers > 0, "object loop OSR must have fired");
+}
+
+#[test]
+fn input_object_local_survives_loop_and_is_read_after() {
+    let src = format!(
+        "{P}function main() {{ const keep = new P(); keep.x = 3; keep.y = 4; let acc = 0; let i = 0; while (i < 100000) {{ const t = new P(); t.x = i; t.y = 1; acc = acc + t.dist() + keep.x; i = i + 1; }} print(acc); print(keep.dist()); }}"
+    );
+    let (plain, hooked, transfers) = run_both(&src, 2);
+    assert_eq!(plain, hooked);
+    assert!(transfers > 0, "loop OSR must have fired");
+}
+
+#[test]
+fn surviving_loop_object_is_returned_in_post_loop_locals() {
+    let src = format!(
+        "{P}function main() {{ let last = new P(); let i = 0; while (i < 100000) {{ last = new P(); last.x = i; last.y = i * 2; i = i + 1; }} print(last.x); print(last.y); print(last.dist()); let j = 0; let s = 0; while (j < 100000) {{ const q = new P(); q.x = j; s = s + q.x; j = j + 1; }} print(s); print(last.dist()); }}"
+    );
+    let (plain, hooked, transfers) = run_both(&src, 2);
+    assert_eq!(plain, hooked);
+    assert!(transfers > 0, "loop OSR must have fired");
+}
+
+#[test]
+fn input_array_local_survives_loop_and_is_read_after() {
+    let src = "function main() { let acc = 0; let i = 0; const a: number[] = [1, 2, 3]; while (i < 50000) { acc = acc + a.length; i = i + 1; } print(acc); print(a[0]); print(a[2]); }";
+    let (plain, hooked, transfers) = run_both(src, 2);
+    assert_eq!(plain, hooked);
+    assert!(transfers > 0, "array-local loop OSR must have fired");
+}

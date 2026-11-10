@@ -286,12 +286,15 @@ impl<'a> JitHook<'a> {
         let Some(kinds) = jit.osr_param_kinds(id) else {
             return OsrLoop::Rejected;
         };
-        // Scalars only for now: object/array/string locals need GC-root care
-        // across the native loop.
-        if !kinds
-            .iter()
-            .all(|k| matches!(k, JitKind::Num(_) | JitKind::Bool))
-        {
+        // Scalars plus managed objects/arrays. Input objects are rooted by
+        // `call_osr_loop_packed`, and the loop frame's stack maps cover
+        // allocations inside the loop. Strings and functions stay interpreted.
+        if !kinds.iter().all(|k| {
+            matches!(
+                k,
+                JitKind::Num(_) | JitKind::Bool | JitKind::Object | JitKind::Array
+            )
+        }) {
             return OsrLoop::Rejected;
         }
         OsrLoop::Ready(id, kinds.to_vec())
@@ -458,6 +461,7 @@ impl CallHook for JitHook<'_> {
         // back would silently change its type.
         let kind_matches = |v: &Value, k: JitKind| match (v, k) {
             (Value::Bool(_), JitKind::Bool) => true,
+            (Value::Object(_), JitKind::Object | JitKind::Array) => true,
             (Value::Float(_, n), JitKind::Num(m)) => *n == m && matches!(m, NumKind::F64 | NumKind::F32),
             (Value::Int(_, n), JitKind::Num(m)) => *n == m && !matches!(m, NumKind::F64 | NumKind::F32),
             _ => false,
