@@ -33,23 +33,28 @@ So two independent gaps: (A) a hot loop in an *ineligible* method cannot be
 compiled; (B) there is no OSR transfer that enters native code at a loop header
 with live state and returns.
 
-## Why the top-level case does NOT need the hard OSR transfer
+## Why the top-level case needs OSR (revised after measuring)
 
-For a top-level numeric loop the only things keeping `<main>` ineligible are
-dynamic ops that sit **outside** the loop body, plus one that the compiler puts
-**inside** it:
+Slice 1's hope was that eliding the `globalSet` mirror would make `<main>`
+eligible once a residual `console.log` was bridged. A disassembly of
+`bench/compute.ts`'s `<main>` *after* slice 1 disproves that: with the mirror
+gone the hot loop body is pure `f64` (eligible), but the rest of the entry is
+full of the **intentionally-costly dynamic path** the typed JIT does not model —
+`ConstNull` (synthesised static inits at the top), and `newarray` + `box.any` +
+the dynamic call for `console.log`'s argument at the bottom. Those are the same
+`NewDynamic`/`Load/StoreDynamic`/`ConstNull`/`box`/`Any` opcodes listed as a
+*deferred foundation* in the JIT-eligibility notes, not a single bridgeable call.
 
-- the per-write `globalSet` **mirror** of a top-level `let`/`const` to the realm
-  store (emitted so a function can read the binding via `globalGet`) — this lands
-  *inside* the loop when the loop writes the binding; and
-- `console.log` / array+box for its arguments, *after* the loop.
+So making the **whole** `<main>` eligible means building the dynamic-path JIT —
+a large, separate effort. The realistic path to the top-level win is therefore
+**OSR of the eligible hot loop region alone**: compile just the loop, transfer
+in at its header and back out at its exit, and leave the dynamic head/tail of the
+entry (static inits, `console.log`) running in the interpreter. The loop region
+of `bench/compute.ts` is pure `f64` and is eligible as-is.
 
-If the mirror is elided when no function reads the binding (Slice 1), and the
-residual entry builtins are made bridgeable/eligible (Slice 2), then `<main>`
-becomes an ordinary eligible method and the existing pre-compile path
-(`JitHook::with_threshold`) runs it native on its single invocation — **no OSR
-transfer required**. OSR (Slices 3-5) is only needed for the harder case where an
-ineligible op is genuinely *inside* a hot loop and cannot be elided.
+Slice 1 still stands on its own: it removes a per-iteration dynamic `globalSet`
+from top-level loops (measured ~2.4× on `compute.ts`, interpreter-only) and is a
+precondition for the loop region being eligible at all.
 
 ## Slices (value front-loaded)
 
@@ -67,28 +72,30 @@ ineligible op is genuinely *inside* a hot loop and cannot be elided.
    stdout diff against a pre-change baseline (normalise nondeterministic
    `Obj(0x..)` / panic TIDs) + `cargo test -p zun_sema`.**
 
-2. **Make the module entry eligible.** Route the residual top-level builtins
-   (`console.log`, the array/box for its args) through the JIT↔interp bridge
-   (see `jit-interp-bridge.md`) or the eligible-builtin allowlist, so a top-level
-   program with pure loops + I/O compiles end-to-end and the pre-compile path
-   runs it native. Target: close the ~297× on `bench/compute.ts` / `methods.ts`
-   with no OSR.
+2. **Loop-region eligibility analysis.** Given a method and a backedge target
+   (loop header) PC, compute the loop region and decide whether every opcode in
+   it is JIT-lowerable — independent of the ineligible dynamic ops in the
+   method's head/tail. This is the gate the OSR compiler consumes. Pure
+   analysis, unit-tested (`cargo test -p zun_codegen`), no Cranelift, no risk.
+   **(this slice)**
 
-3. **OSR entry codegen (loop region).** Compile an OSR variant of a method that
-   enters at a patchpoint, taking live locals as parameters. In-process
-   equivalence tests only (`cargo test -p zun_codegen`), no transfer wiring.
+3. **OSR entry codegen (loop region).** Compile a native function that enters at
+   the patchpoint, takes the live locals as parameters, runs the eligible loop,
+   and returns the updated locals at loop exit. In-process equivalence tests
+   only; no transfer wiring yet.
 
 4. **OSR transfer + return-to-interp.** Consume `take_valid_osr_snapshots`: call
    the OSR entry with the live frame state, and on loop exit hand updated locals
-   back to the interpreter to finish the method. Reuses the existing snapshot /
-   validity / root-rewrite scaffolding.
+   back to the interpreter to finish the method (the dynamic head/tail of
+   `<main>` keeps running interpreted). Reuses the existing snapshot / validity /
+   root-rewrite scaffolding.
 
 5. **Tiering policy & de-opt safety.** Thresholds, patchpoint placement, guards,
    and the interaction with the GC safepoint contract.
 
-Slices 1-2 deliver the measured top-level win. Slices 3-5 are the true OSR
-foundation for in-loop-dynamic cases, and are the part the PLAN defers next to
-the call bridge.
+Slice 1 delivers an interpreter-only speedup and unblocks the loop region.
+Slices 2-5 are the true OSR foundation (the part the PLAN defers next to the
+call bridge) and are what delivers the top-level win.
 
 ## Invariants to preserve
 

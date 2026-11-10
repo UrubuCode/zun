@@ -19,7 +19,10 @@ mod thunks;
 mod translate;
 
 pub use any_abi::JitAnyAbi;
-pub use eligible::{eligible_methods, eligible_methods_bridged, eligible_methods_with_literals};
+pub use eligible::{
+    eligible_methods, eligible_methods_bridged, eligible_methods_with_literals, loop_region,
+    loop_region_eligible,
+};
 pub use zun_il::{JitKind, NumKind};
 
 // Runtime thunks live in `thunks/`; re-export every public symbol at the

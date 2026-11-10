@@ -1126,6 +1126,80 @@ fn call_returns_function(module: &Module, rid: u32, function_byte: u8) -> bool {
 }
 
 /// Compute the set of JIT-eligible method RIDs for `module`.
+/// The half-open IL byte region `[target_pc, end)` of the loop whose header is
+/// at `target_pc`, or `None` when no backedge targets it (or the body cannot be
+/// decoded, or `target_pc` is not an instruction boundary). `end` is the end of
+/// the furthest instruction that branches back to the header — i.e. the loop
+/// body, the unit an OSR entry would compile (slice 3 of the module-JIT epic,
+/// `docs/design/module-jit-osr.md`).
+pub fn loop_region(module: &Module, method_rid: u32, target_pc: usize) -> Option<(usize, usize)> {
+    let method = module.tables.method_defs.get(method_rid as usize - 1)?;
+    let body = zun_module::read_body(&module.code, method.body_offset).ok()?;
+    let instrs = decode_all(body.code).ok()?;
+    let mut offset = 0usize;
+    let mut header_on_boundary = false;
+    let mut end: Option<usize> = None;
+    for instr in &instrs {
+        if offset == target_pc {
+            header_on_boundary = true;
+        }
+        let next = offset + instr.encoded_len();
+        if let Operand::Branch(displacement) = instr.operand {
+            let target = next as i64 + i64::from(displacement);
+            if target == target_pc as i64 && next > target_pc {
+                end = Some(end.map_or(next, |e| e.max(next)));
+            }
+        }
+        offset = next;
+    }
+    if !header_on_boundary {
+        return None;
+    }
+    end.map(|e| (target_pc, e))
+}
+
+/// Whether every instruction in the loop region at `target_pc` is JIT-lowerable,
+/// independent of any ineligible dynamic op in the method's head or tail. This
+/// is the gate an OSR entry compiler consumes: a method whose `<main>`-style
+/// body is otherwise ineligible can still have a hot loop region that is. Uses
+/// the same per-instruction predicates as whole-method eligibility.
+pub fn loop_region_eligible(module: &Module, method_rid: u32, target_pc: usize) -> bool {
+    let Some((start, end)) = loop_region(module, method_rid, target_pc) else {
+        return false;
+    };
+    let Some(method) = module.tables.method_defs.get(method_rid as usize - 1) else {
+        return false;
+    };
+    let Ok(body) = zun_module::read_body(&module.code, method.body_offset) else {
+        return false;
+    };
+    let Ok(instrs) = decode_all(body.code) else {
+        return false;
+    };
+    let string_method_rids: HashSet<u32> = module
+        .tables
+        .type_defs
+        .iter()
+        .filter(|ty| module.strings.get(ty.name) == "String")
+        .flat_map(|ty| ty.method_start..ty.method_end)
+        .collect();
+    let mut offset = 0usize;
+    for instr in &instrs {
+        let next = offset + instr.encoded_len();
+        if offset >= start && offset < end {
+            if requires_exception_bridge(instr.opcode)
+                || !opcode_supported(instr.opcode, instr)
+                || !instr_fields_ok(module, instr)
+                || !callvirt_is_non_overridden(module, instr, &string_method_rids)
+            {
+                return false;
+            }
+        }
+        offset = next;
+    }
+    true
+}
+
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
     eligible_methods_with_literals(module, false)
 }
