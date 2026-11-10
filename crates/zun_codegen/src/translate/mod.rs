@@ -71,6 +71,13 @@ pub(crate) fn is_float(kind: JitKind) -> bool {
 
 /// Translate `body` into `ctx.func`. `zm` provides callee frames (arity and
 /// return kind); `func_ids` maps method RIDs to declared Cranelift functions.
+///
+/// With `osr_entry_pc = Some(pc)` (module-JIT epic slice 3) this builds an OSR
+/// entry variant: the caller-set signature carries EVERY local (not just the
+/// params), and control enters at the loop-header block starting at byte offset
+/// `pc` instead of block 0. The header must have an empty operand stack. The
+/// rest of the body then runs normally to its own `ret`s. `None` is the
+/// ordinary method translation.
 #[allow(clippy::too_many_arguments)] // mirrors the codegen translation live state
 pub fn translate_body(
     module: &mut dyn ClifModule,
@@ -85,6 +92,7 @@ pub fn translate_body(
     body: &MethodBody<'_>,
     bridge_enabled: bool,
     pending_slot_addr: u64,
+    osr_entry_pc: Option<usize>,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
 
@@ -119,6 +127,20 @@ pub fn translate_body(
     // loop header makes `blocks[&0]` a branch target, and Cranelift forbids
     // jumping to the entry block.
     let first = blocks[&0];
+    // OSR entry: resolve the patchpoint's block (it must be a block leader).
+    let osr_block = match osr_entry_pc {
+        None => None,
+        Some(pc) => {
+            let &idx = index_of_offset
+                .get(&pc)
+                .ok_or("OSR patchpoint is not on an instruction boundary")?;
+            Some(
+                *blocks
+                    .get(&idx)
+                    .ok_or("OSR patchpoint is not a block leader")?,
+            )
+        }
+    };
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
 
@@ -140,11 +162,14 @@ pub fn translate_body(
     builder.switch_to_block(entry);
     let entry_params: Vec<Value> = builder.block_params(entry).to_vec();
     let mut param_value = 0usize;
-    for (i, &kind) in local_kinds
-        .iter()
-        .take(body.param_count as usize)
-        .enumerate()
-    {
+    // An OSR entry receives every local as a parameter; a normal entry only the
+    // method params (the remaining locals are zero-initialized below).
+    let entry_locals = if osr_block.is_some() {
+        local_kinds.len()
+    } else {
+        body.param_count as usize
+    };
+    for (i, &kind) in local_kinds.iter().take(entry_locals).enumerate() {
         if kind == JitKind::Other {
             let slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
@@ -176,14 +201,16 @@ pub fn translate_body(
         }
     }
     // Zero-initialize non-parameter locals to a typed zero.
-    for i in body.param_count as usize..local_kinds.len() {
+    for i in entry_locals..local_kinds.len() {
         let z = typed_zero(&mut builder, local_kinds[i]);
         builder.def_var(vars[i], z);
     }
     let osr_counter = builder.declare_var(types::I64);
     let initial_osr_counter = builder.ins().iconst(types::I64, 1000);
     builder.def_var(osr_counter, initial_osr_counter);
-    builder.ins().jump(first, &[]);
+    // OSR: jump straight to the patchpoint block; IL block 0 is left
+    // unreachable but is still lowered so every block ends up filled.
+    builder.ins().jump(osr_block.unwrap_or(first), &[]);
     builder.switch_to_block(first);
 
     let mut t = Translator {
@@ -205,8 +232,13 @@ pub fn translate_body(
         bridge_enabled,
         pending_slot_addr,
         exc_exit: None,
+        osr_pinned: osr_block,
+        osr_error: None,
     };
     t.run(&instrs, &offset_of_index, &index_of_offset)?;
+    if let Some(error) = t.osr_error.take() {
+        return Err(error);
+    }
     t.builder.finalize();
     Ok(())
 }
@@ -283,6 +315,12 @@ pub(crate) struct Translator<'a> {
     /// The method's single exceptional-exit block (returns an ABI-shaped dummy,
     /// leaving the pending slot set), created lazily on the first post-call check.
     pub(crate) exc_exit: Option<Block>,
+    /// OSR entry (module-JIT slice 3): the patchpoint block, whose operand-stack
+    /// signature is pinned empty because the entry jumps to it with no args.
+    pub(crate) osr_pinned: Option<Block>,
+    /// Set when an edge into the pinned patchpoint block carries a non-empty
+    /// stack; the translation is then rejected rather than miscompiled.
+    pub(crate) osr_error: Option<String>,
 }
 
 impl Translator<'_> {
@@ -299,6 +337,15 @@ impl Translator<'_> {
         target: Block,
         stack: &[Slot],
     ) -> Vec<BlockArg> {
+        if self.osr_pinned == Some(target) {
+            // The OSR entry jumps here with no arguments, so the signature is
+            // fixed empty; a non-empty edge cannot be threaded.
+            block_sigs.entry(target).or_default();
+            if !stack.is_empty() {
+                self.osr_error = Some("OSR patchpoint block has a non-empty stack".into());
+                return Vec::new();
+            }
+        }
         if let std::collections::hash_map::Entry::Vacant(e) = block_sigs.entry(target) {
             for &(_, kind) in stack {
                 let param = self.builder.append_block_param(target, clif_ty(kind));

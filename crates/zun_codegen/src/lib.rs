@@ -175,6 +175,26 @@ pub struct Jit {
     /// Address of the per-thread pending-exception slot the JIT loads after a
     /// call to detect a propagated throw (0 when no bridge).
     bridge_pending_addr: u64,
+    /// OSR entry variants compiled by [`Jit::ensure_osr_compiled`]
+    /// (module-JIT epic slice 3), indexed by [`OsrEntryId`].
+    osr_entries: Vec<OsrEntry>,
+}
+
+/// Handle to an OSR entry compiled by [`Jit::ensure_osr_compiled`]
+/// (module-JIT epic slice 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OsrEntryId(usize);
+
+/// A compiled OSR entry: an all-locals variant of a method that starts at a
+/// loop header (module-JIT epic slice 3).
+struct OsrEntry {
+    method_rid: u32,
+    target_pc: usize,
+    shim_id: FuncId,
+    func_id: FuncId,
+    /// Every local's kind, in local-index order (the OSR entry's parameters).
+    sig: Sig,
+    stack_maps: Vec<StackMapInfo>,
 }
 
 impl core::fmt::Debug for Jit {
@@ -713,6 +733,7 @@ impl Jit {
             stack_map_registry: zun_gc::StackMapRegistry::new(),
             bridge_enabled: bridge_fn.is_some(),
             bridge_pending_addr,
+            osr_entries: Vec::new(),
         };
 
         let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
@@ -867,6 +888,7 @@ impl Jit {
             &body,
             self.bridge_enabled,
             self.bridge_pending_addr,
+            None,
         ) {
             // Translation failed partway, so `FunctionBuilder::finalize` never
             // ran: the builder context is left dirty and `ctx.func` holds a
@@ -935,6 +957,199 @@ impl Jit {
         Ok(())
     }
 
+    /// Compile an OSR entry variant of `method_rid` that begins at the loop
+    /// header at byte offset `target_pc` (module-JIT epic slice 3, milestone A).
+    ///
+    /// The result is a native function taking EVERY local of the method (in
+    /// local-index order) that jumps straight to the header and then runs the
+    /// rest of the body to its own `ret`s ("OSR to method end"). Milestone A
+    /// requires the whole method to be JIT-eligible (a conservative superset of
+    /// "the body from the patchpoint is eligible"), no `Any` locals/return, and
+    /// a stack-empty header; otherwise it returns an error and nothing is
+    /// compiled. Compiled entries are cached per `(method, pc)`.
+    pub fn ensure_osr_compiled(
+        &mut self,
+        zm: &Module,
+        method_rid: u32,
+        target_pc: usize,
+    ) -> Result<OsrEntryId, JitError> {
+        if let Some(index) = self
+            .osr_entries
+            .iter()
+            .position(|e| e.method_rid == method_rid && e.target_pc == target_pc)
+        {
+            return Ok(OsrEntryId(index));
+        }
+        if !self.ensure_compiled(zm, method_rid)? {
+            return Err(JitError::Ineligible(method_rid));
+        }
+        let body = read_body(
+            &zm.code,
+            zm.tables.method_defs[method_rid as usize - 1].body_offset,
+        )
+        .map_err(|e| JitError::Compile {
+            method_rid,
+            detail: e.to_string(),
+        })?;
+        let local_kinds: Vec<JitKind> = body
+            .local_kinds
+            .iter()
+            .map(|&b| JitKind::from_byte(b))
+            .collect();
+        if local_kinds.contains(&JitKind::Other)
+            || (body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Other)
+        {
+            return Err(JitError::Compile {
+                method_rid,
+                detail: "OSR entry does not support Any locals or results yet".into(),
+            });
+        }
+        let mut signature = body_signature(&self.module, &body);
+        signature.params.clear();
+        for &kind in &local_kinds {
+            signature.params.push(AbiParam::new(clif_ty(kind)));
+        }
+        let func_id = self
+            .module
+            .declare_function(
+                &format!("m{method_rid}_osr{target_pc}"),
+                Linkage::Local,
+                &signature,
+            )
+            .map_err(|e| JitError::Module(e.to_string()))?;
+        self.ctx.func.signature = signature;
+        if let Err(detail) = translate::translate_body(
+            &mut self.module,
+            zm,
+            &mut self.ctx,
+            &mut self.fb_ctx,
+            &self.func_ids,
+            &self.types,
+            self.virtual_table_ptrs.as_ptr(),
+            self.literal_ptrs.as_ptr(),
+            core::ptr::null(),
+            &body,
+            self.bridge_enabled,
+            self.bridge_pending_addr,
+            Some(target_pc),
+        ) {
+            self.fb_ctx = FunctionBuilderContext::new();
+            self.module.clear_context(&mut self.ctx);
+            return Err(JitError::Compile { method_rid, detail });
+        }
+        self.module
+            .define_function(func_id, &mut self.ctx)
+            .map_err(|e| JitError::Compile {
+                method_rid,
+                detail: e.to_string(),
+            })?;
+        let stack_maps = self
+            .ctx
+            .compiled_code()
+            .map(|code| {
+                code.buffer
+                    .user_stack_maps()
+                    .iter()
+                    .map(|&(code_offset, span, ref stack_map)| StackMapInfo {
+                        code_offset,
+                        span,
+                        pc: 0,
+                        reference_slots: stack_map.entries().map(|(_, offset)| offset).collect(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.module.clear_context(&mut self.ctx);
+
+        let returns = body
+            .returns_value
+            .then(|| JitKind::from_byte(body.return_kind));
+        let sig = Sig {
+            param_kinds: local_kinds,
+            returns,
+        };
+        let shim_id = shim::define_shim(
+            &mut self.module,
+            &mut self.ctx,
+            &mut self.fb_ctx,
+            &format!("m{method_rid}_osr{target_pc}_shim"),
+            func_id,
+            &sig.param_kinds,
+            sig.returns,
+        )
+        .map_err(|detail| JitError::Compile { method_rid, detail })?;
+        self.module
+            .finalize_definitions()
+            .map_err(|e| JitError::Module(e.to_string()))?;
+        self.osr_entries.push(OsrEntry {
+            method_rid,
+            target_pc,
+            shim_id,
+            func_id,
+            sig,
+            stack_maps,
+        });
+        self.refresh_stack_map_pcs();
+        self.refresh_virtual_table();
+        Ok(OsrEntryId(self.osr_entries.len() - 1))
+    }
+
+    /// The parameter kinds of an OSR entry: every local of the method, in
+    /// local-index order (module-JIT epic slice 3).
+    pub fn osr_param_kinds(&self, id: OsrEntryId) -> Option<&[JitKind]> {
+        self.osr_entries
+            .get(id.0)
+            .map(|e| e.sig.param_kinds.as_slice())
+    }
+
+    /// The return kind of an OSR entry (the method's), `None` for void.
+    pub fn osr_return_kind(&self, id: OsrEntryId) -> Option<JitKind> {
+        self.osr_entries.get(id.0).and_then(|e| e.sig.returns)
+    }
+
+    /// Call an OSR entry with every local packed into `u64` slots (the same
+    /// packing as [`Self::call_packed`]) while `heap` is the current managed
+    /// heap, returning the packed result (module-JIT epic slice 3).
+    pub fn call_osr_packed_with_heap(
+        &self,
+        id: OsrEntryId,
+        locals: &[u64],
+        heap: &mut zun_gc::Heap,
+    ) -> Result<u64, JitError> {
+        self.register_heap_layouts(heap);
+        let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
+        self.call_osr_packed(id, locals)
+    }
+
+    /// Call an OSR entry with every local packed into `u64` slots.
+    ///
+    /// # Safety contract
+    /// Same as [`Self::call_packed`]: `locals` must match the entry's local
+    /// kinds, and object locals must be valid managed pointers.
+    pub fn call_osr_packed(&self, id: OsrEntryId, locals: &[u64]) -> Result<u64, JitError> {
+        let entry = self
+            .osr_entries
+            .get(id.0)
+            .ok_or(JitError::Ineligible(0))?;
+        if entry.sig.param_kinds.len() != locals.len() {
+            return Err(JitError::Arity {
+                expected: entry.sig.param_kinds.len(),
+                found: locals.len(),
+            });
+        }
+        let native_roots: Vec<zun_gc::Obj> = locals
+            .iter()
+            .zip(&entry.sig.param_kinds)
+            .filter(|&(_, &kind)| kind == JitKind::Object)
+            .map(|(&arg, _)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
+            .collect();
+        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
+        let ptr = self.module.get_finalized_function(entry.shim_id);
+        let f: extern "C" fn(*const u64) -> u64 = unsafe { std::mem::transmute(ptr) };
+        Ok(f(locals.as_ptr()))
+    }
+
     fn refresh_virtual_table(&mut self) {
         for type_rid in 1..=self.types.len() as u32 {
             let Some(ty) = self.types.get(type_rid) else {
@@ -966,8 +1181,15 @@ impl Jit {
                 map.pc = base + map.code_offset as usize;
             }
         }
+        for entry in &mut self.osr_entries {
+            let base = self.module.get_finalized_function(entry.func_id) as usize;
+            for map in &mut entry.stack_maps {
+                map.pc = base + map.code_offset as usize;
+            }
+        }
+        let osr_maps = self.osr_entries.iter().map(|e| &e.stack_maps);
         self.stack_map_registry
-            .replace(self.stack_maps.values().flat_map(|maps| {
+            .replace(self.stack_maps.values().chain(osr_maps).flat_map(|maps| {
                 maps.iter().map(|map| zun_gc::NativeStackMap {
                     pc: map.pc,
                     span: map.span,
@@ -1454,6 +1676,7 @@ pub fn compile_object_for_target(
             &body,
             false,
             0,
+            None,
         )
         .map_err(|detail| JitError::Compile {
             method_rid: rid,
