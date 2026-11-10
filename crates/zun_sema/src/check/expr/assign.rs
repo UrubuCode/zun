@@ -31,6 +31,7 @@ impl Checker<'_> {
                 value = Self::unbox_to(value, slot_ty);
                 let mirror_global = cx.is_module_scope
                     && self.module_globals.contains(&text)
+                    && self.globals_read_in_functions.contains(&text)
                     && cx.scopes.iter().find_map(|s| s.get(&text).copied()) == Some(slot)
                     && (slot_ty == Ty::Function(hir::DYNAMIC_FUNCTION)
                         || (!matches!(slot_ty, Ty::Function(_))

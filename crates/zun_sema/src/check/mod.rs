@@ -254,6 +254,7 @@ fn check_impl(
         type_param_names: HashSet::new(),
         enums: HashMap::new(),
         module_globals: HashSet::new(),
+        globals_read_in_functions: HashSet::new(),
         pending_static_classes: VecDeque::new(),
         arguments_functions: HashSet::new(),
         fn_mutated_globals: HashSet::new(),
@@ -280,6 +281,47 @@ fn check_impl(
             checker
                 .module_globals
                 .insert(checker.text(name).to_string());
+        }
+    }
+    // Slice 1 of the module-JIT epic (docs/design/module-jit-osr.md): a
+    // top-level binding only needs its realm-store mirror if some function /
+    // arrow / method body references it. Collect, soundly and conservatively
+    // from source text, every identifier that can appear in such a body:
+    //   (a) each declared function / method / symbol-method body span, and
+    //   (b) each top-level statement that contains any function / arrow / object
+    //       or class method node (detected structurally; a reassigned top-level
+    //       function lowers to a top-level `let f = function …`, and object
+    //       method shorthand `{ get() {} }` stores an `Expr::Function`).
+    // Dynamic code generation (`eval` / `new Function`) can read any binding by
+    // name at run time, so if the module uses it, keep every mirror. Missing a
+    // reader would silently corrupt a program, so this must only ever
+    // over-include.
+    if checker.source.contains("eval(") || checker.source.contains("Function(") {
+        checker.globals_read_in_functions = checker.module_globals.clone();
+    } else {
+        let mut spans: Vec<Span> = Vec::new();
+        for f in &program.functions {
+            spans.push(f.span);
+        }
+        for class in &program.classes {
+            for m in &class.methods {
+                spans.push(m.span);
+            }
+            for sm in &class.symbol_methods {
+                spans.push(sm.function.span);
+            }
+        }
+        for statement in &program.top_level {
+            if stmt_has_function(statement) {
+                if let Some(span) = stmt_full_span(statement) {
+                    spans.push(span);
+                }
+            }
+        }
+        for span in spans {
+            if let Some(text) = checker.source.get(span.start as usize..span.end as usize) {
+                collect_identifier_words(text, &mut checker.globals_read_in_functions);
+            }
         }
     }
     {
@@ -510,6 +552,14 @@ struct Checker<'a> {
     /// function body can read them, matching JS module scope. All are dynamic
     /// (`any`).
     module_globals: HashSet<String>,
+    /// Module globals that some function/method/arrow body references by name
+    /// (so a top-level write must be mirrored to the realm store for that
+    /// reader to observe it). A sound over-approximation; names outside this set
+    /// are pure `<main>` locals whose per-write realm mirror is dead, which also
+    /// keeps the top-level entry closer to JIT-eligible. Over-inclusion only ever
+    /// keeps an unnecessary mirror — it never drops a needed one. See
+    /// `docs/design/module-jit-osr.md` (slice 1).
+    globals_read_in_functions: HashSet<String>,
     /// Classes whose non-literal static initializers run in the module body at
     /// their declaration position (ascending by source offset), so they can see
     /// the module bindings declared above them.
@@ -642,6 +692,193 @@ impl Checker<'_> {
 
 #[cfg(test)]
 mod tests;
+
+/// The full source span of a top-level statement (start..end), for the mirror
+/// elision scan. Mirrors [`Checker::stmt_start`]'s variant coverage.
+fn stmt_full_span(statement: &ast::Stmt) -> Option<Span> {
+    use ast::Stmt::*;
+    match statement {
+        Let { span, .. }
+        | Destructure { span, .. }
+        | If { span, .. }
+        | While { span, .. }
+        | DoWhile { span, .. }
+        | For { span, .. }
+        | ForOf { span, .. }
+        | ForIn { span, .. }
+        | Switch { span, .. }
+        | Labeled { span, .. }
+        | Break { span, .. }
+        | Continue { span, .. }
+        | Return { span, .. }
+        | Throw { span, .. }
+        | Try { span, .. } => Some(*span),
+        Expr(expr) => Some(expr.span()),
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+/// Whether a top-level statement contains any function / arrow / object- or
+/// class-method node anywhere (all are `Expr::Function`). Exhaustive matches
+/// (no wildcard arm) make the compiler enforce that no AST shape is missed,
+/// which is what keeps the mirror-elision sound.
+fn stmt_has_function(statement: &ast::Stmt) -> bool {
+    use ast::Stmt::*;
+    let block = |b: &ast::Block| b.statements.iter().any(stmt_has_function);
+    match statement {
+        Let { init, .. } | Destructure { init, .. } => expr_has_function(init),
+        Expr(expr) => expr_has_function(expr),
+        If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } => {
+            expr_has_function(cond)
+                || block(then_block)
+                || else_block.as_ref().is_some_and(block)
+        }
+        While { cond, body, .. } | DoWhile { body, cond, .. } => {
+            expr_has_function(cond) || block(body)
+        }
+        For {
+            init,
+            extra_init,
+            cond,
+            update,
+            body,
+            ..
+        } => {
+            init.as_ref().is_some_and(|s| stmt_has_function(s))
+                || extra_init.iter().any(stmt_has_function)
+                || cond.as_ref().is_some_and(expr_has_function)
+                || update.as_ref().is_some_and(expr_has_function)
+                || block(body)
+        }
+        ForOf { iterable, body, .. } => expr_has_function(iterable) || block(body),
+        ForIn { object, body, .. } => expr_has_function(object) || block(body),
+        Switch {
+            discriminant,
+            cases,
+            ..
+        } => {
+            expr_has_function(discriminant)
+                || cases.iter().any(|case| {
+                    case.test.as_ref().is_some_and(expr_has_function) || block(&case.body)
+                })
+        }
+        Labeled { statement, .. } => stmt_has_function(statement),
+        Return { value, .. } => value.as_ref().is_some_and(expr_has_function),
+        Throw { value, .. } => expr_has_function(value),
+        Try {
+            body,
+            catches,
+            finally,
+            ..
+        } => {
+            block(body)
+                || catches.iter().any(|clause| block(&clause.body))
+                || finally.as_ref().is_some_and(block)
+        }
+        Break { .. } | Continue { .. } => false,
+    }
+}
+
+/// Whether an expression contains a function / arrow / method node anywhere.
+fn expr_has_function(expr: &ast::Expr) -> bool {
+    use ast::Expr::*;
+    let any = |es: &[ast::Expr]| es.iter().any(expr_has_function);
+    match expr {
+        Function(_) => true,
+        ObjectLiteral { properties, .. } => properties.iter().any(|member| match member {
+            ast::ObjectMember::Property(property) => expr_has_function(&property.value),
+            ast::ObjectMember::Spread { expr, .. } => expr_has_function(expr),
+        }),
+        ArrayLiteral { elements, .. } => elements.iter().any(|element| match element {
+            ast::ArrayElement::Expr(e) | ast::ArrayElement::Spread(e) => expr_has_function(e),
+            ast::ArrayElement::Hole => false,
+        }),
+        Template { parts, .. } => parts.iter().any(|part| match part {
+            ast::TemplatePart::Expr(e) => expr_has_function(e),
+            ast::TemplatePart::Text(_) => false,
+        }),
+        TaggedTemplate { tag, exprs, .. } => {
+            expr_has_function(tag) || exprs.iter().any(|e| expr_has_function(e))
+        }
+        StaticMethodCall { args, .. } | Call { args, .. } | New { args, .. } => any(args),
+        Assign { value, .. }
+        | Await { operand: value, .. }
+        | Yield { value, .. }
+        | Unary { operand: value, .. }
+        | Cast { expr: value, .. }
+        | Spread { expr: value, .. } => expr_has_function(value),
+        ImportCall { specifier, .. } => expr_has_function(specifier),
+        Binary { lhs, rhs, .. } => expr_has_function(lhs) || expr_has_function(rhs),
+        Conditional {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } => {
+            expr_has_function(condition)
+                || expr_has_function(when_true)
+                || expr_has_function(when_false)
+        }
+        ComputedCall { callee, args, .. }
+        | OptionalCall { callee, args, .. }
+        | NewDynamic { callee, args, .. } => expr_has_function(callee) || any(args),
+        MethodCall { receiver, args, .. } => expr_has_function(receiver) || any(args),
+        OptionalMethodCall { object, args, .. } => expr_has_function(object) || any(args),
+        OptionalField { object, .. }
+        | OptionalIndex { object, .. }
+        | Field { object, .. }
+        | PrivateField { object, .. } => expr_has_function(object),
+        OptionalChain { object, body, .. } | TempBind { value: object, body, .. } => {
+            expr_has_function(object) || expr_has_function(body)
+        }
+        FieldAssign { object, value, .. } | PrivateFieldAssign { object, value, .. } => {
+            expr_has_function(object) || expr_has_function(value)
+        }
+        Index { object, index, .. } => expr_has_function(object) || expr_has_function(index),
+        IndexAssign {
+            object,
+            index,
+            value,
+            ..
+        } => {
+            expr_has_function(object) || expr_has_function(index) || expr_has_function(value)
+        }
+        Number { .. }
+        | BigInt { .. }
+        | String { .. }
+        | RegexLiteral { .. }
+        | Bool { .. }
+        | Null { .. }
+        | Ident(_)
+        | StaticField { .. }
+        | ChainRoot { .. } => false,
+    }
+}
+
+/// Collect every maximal identifier word in `text` into `names`. Used as a
+/// sound over-approximation of the names a function body references; string and
+/// comment contents are swept in too, which only ever keeps an extra (harmless)
+/// realm-store mirror.
+fn collect_identifier_words(text: &str, names: &mut HashSet<String>) {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    let mut start: Option<usize> = None;
+    for (index, ch) in text.char_indices() {
+        if is_ident(ch) {
+            start.get_or_insert(index);
+        } else if let Some(from) = start.take() {
+            names.insert(text[from..index].to_string());
+        }
+    }
+    if let Some(from) = start {
+        names.insert(text[from..].to_string());
+    }
+}
 
 /// Where a runtime decorator applies, for the typed-context lowering.
 #[derive(Clone, Copy)]
