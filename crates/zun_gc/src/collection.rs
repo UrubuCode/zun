@@ -166,7 +166,11 @@ impl Heap {
             }
         }
         if young_only {
-            for address in self.remembered_set.clone() {
+            // Move the set out to iterate it while mutating `self.records`
+            // (disjoint fields), then put it back — the later retain/clear pass
+            // still needs it. Avoids cloning the whole set on every minor GC.
+            let remembered = std::mem::take(&mut self.remembered_set);
+            for &address in &remembered {
                 if let Some(&idx) = self.by_addr.get(&address) {
                     if !self.records[idx].marked {
                         self.records[idx].marked = true;
@@ -174,6 +178,7 @@ impl Heap {
                     }
                 }
             }
+            self.remembered_set = remembered;
         }
         // Finalizer callbacks are strong runtime-owned callables. Their
         // target is weak, but a captured callback environment must survive
