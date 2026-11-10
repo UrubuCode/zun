@@ -204,11 +204,18 @@ impl Interp<'_> {
     /// created on first use, anchored (non-enumerable) on the realm global so
     /// it is rooted, and linked to its base class's prototype.
     pub(crate) fn class_prototype_object(&self, rid: u32) -> zun_gc::Obj {
-        let key = format!("$classProto#{rid}");
-        let existing = zun_gc::with_current_heap_mut(|heap| {
-            let global = heap.global_object();
-            heap.dynamic_get(global, &key).and_then(|a| a.as_object())
-        });
+        self.prototype_keys
+            .borrow_mut()
+            .entry(rid)
+            .or_insert_with(|| format!("$classProto#{rid}"));
+        let existing = {
+            let keys = self.prototype_keys.borrow();
+            let key = keys.get(&rid).expect("prototype key cached above");
+            zun_gc::with_current_heap_mut(|heap| {
+                let global = heap.global_object();
+                heap.dynamic_get(global, key).and_then(|a| a.as_object())
+            })
+        };
         if let Some(address) = existing {
             return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
         }
@@ -278,6 +285,12 @@ impl Interp<'_> {
                 }
             }
         }
+        let key = self
+            .prototype_keys
+            .borrow()
+            .get(&rid)
+            .expect("prototype key cached above")
+            .clone();
         zun_gc::with_current_heap_mut(|heap| {
             let proto = heap.alloc_dynamic();
             let any = zun_core::Any::object(proto.addr() as usize);

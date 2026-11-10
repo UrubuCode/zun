@@ -80,6 +80,11 @@ pub(super) struct Interp<'a> {
     /// on first dynamic field access so `instance_member_get`/`set` are O(1).
     pub(super) instance_field_index:
         std::cell::RefCell<HashMap<u32, std::rc::Rc<HashMap<String, zun_types::FieldLayout>>>>,
+    /// Cached `$classProto#<rid>` anchor key per class, so walking a prototype
+    /// chain does not `format!` a fresh key string on every level/access. The
+    /// prototype object itself is still looked up on the global each time, so
+    /// relocation stays correct.
+    pub(super) prototype_keys: std::cell::RefCell<HashMap<u32, String>>,
 }
 
 /// The `await` substrate owned by one interpreter session.
