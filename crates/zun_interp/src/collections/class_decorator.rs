@@ -66,13 +66,24 @@ impl<'a> Interp<'a> {
                 // more initializers cannot extend it), popping one at a time so
                 // the not-yet-run tail stays in the rooted queue.
                 let batch = self.decorator_initializers.len();
-                for _ in 0..batch {
-                    if self.decorator_initializers.is_empty() {
+                // Walk the current batch by index instead of `remove(0)`, which
+                // would shift the whole queue per initializer (O(N²)). The
+                // unprocessed tail stays in the rooted queue throughout.
+                for index in 0..batch {
+                    let Some(function) = self.decorator_initializers.get(index).copied() else {
                         break;
+                    };
+                    if let Err(error) =
+                        self.invoke_function_value(function, vec![Value::Any(zun_core::Any::null())])
+                    {
+                        // The already-run prefix is gone, as with `pop_front`;
+                        // initializers a callback queued stay for the next drain.
+                        self.decorator_initializers.drain(..index + 1);
+                        return Err(error);
                     }
-                    let function = self.decorator_initializers.remove(0);
-                    self.invoke_function_value(function, vec![Value::Any(zun_core::Any::null())])?;
                 }
+                let processed = batch.min(self.decorator_initializers.len());
+                self.decorator_initializers.drain(..processed);
                 Ok(Value::Void)
             }
             "classBox" => {

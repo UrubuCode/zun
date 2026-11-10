@@ -237,6 +237,22 @@ fn weak_map_promotion_traces_dynamic_value_children() {
 }
 
 #[test]
+fn weak_map_ephemeron_chain_promotes_transitively() {
+    let mut heap = Heap::new();
+    let first = heap.weak_map_new();
+    let second = heap.weak_map_new();
+    let root_key = heap.alloc(1, 0);
+    let value1 = heap.alloc(2, 0);
+    let value2 = heap.alloc(3, 0);
+    assert!(heap.weak_map_set(first, root_key, value1));
+    // `value1` is itself a key: promoting it must promote its own value.
+    assert!(heap.weak_map_set(second, value1, value2));
+    assert_eq!(unsafe { heap.collect(&[root_key], &|_| Vec::new()) }, 0);
+    assert_eq!(heap.weak_map_get(first), Some((root_key, value1)));
+    assert_eq!(heap.weak_map_get(second), Some((value1, value2)));
+}
+
+#[test]
 fn weak_map_ephemerons_survive_repeated_collections_only_for_live_keys() {
     let mut heap = Heap::new();
     let mut handles = Vec::new();

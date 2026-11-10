@@ -70,18 +70,65 @@ fn parse_float_prefix(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValu
         Some(NativeArg::Any(value)) if value.as_string().is_some() => "",
         _ => return Ok(NativeValue::Float(f64::NAN)),
     };
-    // The longest prefix that parses as an `f64` is the JS result; Rust's
-    // `FromStr` rejects trailing junk, so extend the window greedily.
-    let mut best = f64::NAN;
-    for end in 1..=text.len() {
-        if !text.is_char_boundary(end) {
-            continue;
-        }
-        if let Ok(value) = text[..end].parse::<f64>() {
-            best = value;
+    Ok(NativeValue::Float(longest_float_prefix(text)))
+}
+
+/// Parse the longest prefix of `text` that `f64::from_str` accepts, returning
+/// `NaN` when no prefix parses. `text` must already have its leading whitespace
+/// trimmed.
+///
+/// A single left-to-right scan walks the numeric grammar (sign, digits, at most
+/// one `.`, and a complete exponent) instead of re-parsing every prefix, which
+/// keeps `Number.parseFloat` linear in the input length. The accepted grammar
+/// matches what `from_str` accepts, including the `inf`/`infinity`/`nan`
+/// spellings.
+fn longest_float_prefix(text: &str) -> f64 {
+    let bytes = text.as_bytes();
+    let mut at = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let rest = &bytes[at..];
+    // `f64::from_str` accepts these spellings case-insensitively; the longest
+    // matching spelling is the longest valid prefix.
+    for word in [b"infinity".as_slice(), b"inf", b"nan"] {
+        if rest.len() >= word.len() && rest[..word.len()].eq_ignore_ascii_case(word) {
+            if let Ok(value) = text[..at + word.len()].parse::<f64>() {
+                return value;
+            }
         }
     }
-    Ok(NativeValue::Float(best))
+    let integer_start = at;
+    while at < bytes.len() && bytes[at].is_ascii_digit() {
+        at += 1;
+    }
+    let integer_digits = at - integer_start;
+    let mut fraction_digits = 0;
+    if bytes.get(at) == Some(&b'.') {
+        at += 1;
+        let fraction_start = at;
+        while at < bytes.len() && bytes[at].is_ascii_digit() {
+            at += 1;
+        }
+        fraction_digits = at - fraction_start;
+    }
+    if integer_digits == 0 && fraction_digits == 0 {
+        return f64::NAN;
+    }
+    // An exponent belongs to the number only when it has at least one digit;
+    // otherwise the valid prefix ends before the `e`/`E`.
+    let mut end = at;
+    if matches!(bytes.get(at), Some(b'e' | b'E')) {
+        let mut exp_at = at + 1;
+        if matches!(bytes.get(exp_at), Some(b'+' | b'-')) {
+            exp_at += 1;
+        }
+        let exp_digits_start = exp_at;
+        while exp_at < bytes.len() && bytes[exp_at].is_ascii_digit() {
+            exp_at += 1;
+        }
+        if exp_at > exp_digits_start {
+            end = exp_at;
+        }
+    }
+    text[..end].parse::<f64>().unwrap_or(f64::NAN)
 }
 
 /// `Number.parseInt(s, radix?)` — parse an integer in `radix` (0 means detect:

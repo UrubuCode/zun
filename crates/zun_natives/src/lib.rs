@@ -1281,6 +1281,38 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // literals are test data
+    fn number_parse_float_prefix_matches_longest_f64_prefix() {
+        let mut sink = TestSink;
+        let (parse_float, _) = resolve("number", "parseFloatPrefix").unwrap();
+        let mut parse = |text: &str| match dispatch(
+            parse_float,
+            &[NativeArg::Str(text)],
+            &mut sink,
+        )
+        .unwrap()
+        {
+            NativeValue::Float(value) => value,
+            other => panic!("expected Float, got {other:?}"),
+        };
+        assert_eq!(parse("1.2e3x"), 1200.0);
+        assert_eq!(parse("  -4.5"), -4.5);
+        assert_eq!(parse(".5"), 0.5);
+        assert_eq!(parse("1e"), 1.0);
+        assert_eq!(parse("1e+"), 1.0);
+        assert_eq!(parse("0x10"), 0.0);
+        assert_eq!(parse("5.e3"), 5000.0);
+        assert_eq!(parse("1.e"), 1.0);
+        assert_eq!(parse("Infinity"), f64::INFINITY);
+        assert_eq!(parse("-Infinity"), f64::NEG_INFINITY);
+        assert_eq!(parse("3.14abc"), 3.14);
+        assert!(parse("abc").is_nan());
+        assert!(parse("").is_nan());
+        assert!(parse(".").is_nan());
+        assert!(parse("+").is_nan());
+    }
+
+    #[test]
     fn number_to_string_radix_renders_bases() {
         let mut sink = TestSink;
         let (to_string, _) = resolve("number", "toStringRadix").unwrap();

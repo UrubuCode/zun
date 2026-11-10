@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::bytes::{read_name, read_u32, take, write_name};
-use crate::{content_id, LoadError, SignedModuleLock};
+use crate::{content_id, ContentId, LoadError, SignedModuleLock};
 
 /// A deterministic `.zmlib` package containing signed module metadata and
 /// serialized `.zm` payloads.
@@ -47,21 +47,23 @@ impl Zmlib {
     /// Construct a package and ensure every payload matches its lock entry.
     pub fn new(lock: SignedModuleLock, modules: Vec<(String, Vec<u8>)>) -> Result<Self, LoadError> {
         lock.verify_signature()?;
-        for (name, bytes) in &modules {
-            let expected = lock
+        {
+            let lock_entries: std::collections::HashMap<&str, ContentId> = lock
                 .lock
                 .entries
                 .iter()
-                .find(|(entry, _)| entry == name)
-                .map(|(_, id)| *id)
-                .ok_or_else(|| {
+                .map(|(name, id)| (name.as_str(), *id))
+                .collect();
+            for (name, bytes) in &modules {
+                let expected = lock_entries.get(name.as_str()).copied().ok_or_else(|| {
                     LoadError::InvalidManifest(format!("package module `{name}` is not locked"))
                 })?;
-            let found = content_id(bytes);
-            if expected != found {
-                return Err(LoadError::InvalidManifest(format!(
-                    "package module `{name}` has content identity mismatch"
-                )));
+                let found = content_id(bytes);
+                if expected != found {
+                    return Err(LoadError::InvalidManifest(format!(
+                        "package module `{name}` has content identity mismatch"
+                    )));
+                }
             }
         }
         Ok(Self {

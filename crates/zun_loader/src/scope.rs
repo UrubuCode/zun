@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use zun_metadata::{TableKind, Token};
@@ -38,13 +38,17 @@ impl ModuleScope {
             None
         };
         let mut exports = HashMap::new();
+        // Collect every method RID owned by a type definition once, so the
+        // per-method ownership test below is O(1) instead of scanning types.
+        let mut type_methods = HashSet::new();
+        for ty in &module.tables.type_defs {
+            for rid in ty.method_start..ty.method_end {
+                type_methods.insert(rid);
+            }
+        }
         for (rid, method) in module.tables.method_defs.iter().enumerate() {
             let method_rid = rid as u32 + 1;
-            let is_type_method = module
-                .tables
-                .type_defs
-                .iter()
-                .any(|ty| (ty.method_start..ty.method_end).contains(&method_rid));
+            let is_type_method = type_methods.contains(&method_rid);
             if is_type_method {
                 continue;
             }

@@ -7,8 +7,6 @@
 //! `char`. They coincide on BMP-only input, so the corpus is kept BMP (the
 //! astral-plane caveat is documented in `zun_regex::zil`).
 
-use std::rc::Rc;
-
 use zun_il::NumKind;
 use zun_interp::value::Value;
 use zun_interp::{CallHook, CaptureOutput};
@@ -97,7 +95,7 @@ const INPUTS: &[&str] = &[
 ];
 
 fn args(input: &str) -> Vec<Value> {
-    vec![Value::Str(Rc::from(input))]
+    vec![Value::Str(input.into())]
 }
 
 #[test]
@@ -151,7 +149,7 @@ fn is_match_runs_on_tier0_and_tier1_and_matches_the_runtime_engine() {
                     .try_call(
                         match_rid,
                         &[
-                            Value::Str(Rc::from(*input)),
+                            Value::Str((*input).into()),
                             Value::Int(pos as i64, NumKind::U64),
                             Value::Object(buf),
                         ],

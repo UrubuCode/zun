@@ -16,11 +16,11 @@ impl<'a> Checker<'a> {
             if cx.is_module_scope && cx.scopes.len() == 2 && !self.pending_static_classes.is_empty()
             {
                 if let Some(start) = Self::stmt_start(statement) {
-                    while let Some(&class_idx) = self.pending_static_classes.first() {
+                    while let Some(&class_idx) = self.pending_static_classes.front() {
                         if self.classes[class_idx as usize].span_start >= start {
                             break;
                         }
-                        self.pending_static_classes.remove(0);
+                        self.pending_static_classes.pop_front();
                         let init = self.class_static_initializers(cx, class_idx);
                         stmts.extend(init);
                     }
@@ -69,7 +69,10 @@ impl<'a> Checker<'a> {
         // Anything still pending (a declaration at the tail) runs at the end.
         if cx.is_module_scope && cx.scopes.len() == 2 {
             while !self.pending_static_classes.is_empty() {
-                let class_idx = self.pending_static_classes.remove(0);
+                let class_idx = self
+                    .pending_static_classes
+                    .pop_front()
+                    .expect("pending static class");
                 let init = self.class_static_initializers(cx, class_idx);
                 stmts.extend(init);
             }

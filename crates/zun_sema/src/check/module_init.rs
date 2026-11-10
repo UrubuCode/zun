@@ -61,7 +61,7 @@ impl Checker<'_> {
         for class_idx in 0..self.classes.len() {
             match last_start {
                 Some(last) if self.classes[class_idx].span_start < last => {
-                    self.pending_static_classes.push(class_idx as u32)
+                    self.pending_static_classes.push_back(class_idx as u32)
                 }
                 _ => early.push(class_idx as u32),
             }

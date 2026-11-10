@@ -250,7 +250,8 @@ impl PromiseTable {
         if id == other {
             return true;
         }
-        let mut seen = vec![id];
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(id);
         let mut frontier = vec![id];
         while let Some(current) = frontier.pop() {
             for waiter in &self.cell(current).waiters {
@@ -258,8 +259,7 @@ impl PromiseTable {
                     if *next == other {
                         return true;
                     }
-                    if !seen.contains(next) {
-                        seen.push(*next);
+                    if seen.insert(*next) {
                         frontier.push(*next);
                     }
                 }

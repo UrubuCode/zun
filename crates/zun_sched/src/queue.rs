@@ -19,7 +19,7 @@
 //! is the drain-to-empty discipline a production JavaScript engine uses for its
 //! microtask queue.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use super::{ContinuationId, TaskId};
 
@@ -37,8 +37,8 @@ pub enum Ran {
 pub struct Queues {
     continuations: VecDeque<ContinuationId>,
     tasks: VecDeque<TaskId>,
-    cancelled: Vec<ContinuationId>,
-    cancelled_tasks: Vec<TaskId>,
+    cancelled: HashSet<ContinuationId>,
+    cancelled_tasks: HashSet<TaskId>,
 }
 
 impl Queues {
@@ -69,9 +69,7 @@ impl Queues {
     /// on a promise, or while neither, and one flag covers all three. A separate
     /// cancellation queue would have to be kept in agreement with the other two.
     pub fn cancel(&mut self, continuation: ContinuationId) {
-        if !self.cancelled.contains(&continuation) {
-            self.cancelled.push(continuation);
-        }
+        self.cancelled.insert(continuation);
     }
 
     /// Whether a continuation has been cancelled.
@@ -87,9 +85,7 @@ impl Queues {
     /// same reason it is for continuations: a task can be cleared while queued,
     /// while still pending in the timer heap, or while neither.
     pub fn cancel_task(&mut self, task: TaskId) {
-        if !self.cancelled_tasks.contains(&task) {
-            self.cancelled_tasks.push(task);
-        }
+        self.cancelled_tasks.insert(task);
     }
 
     /// Whether a task has been cancelled.

@@ -26,6 +26,7 @@ pub fn parse(pattern: &str) -> Result<ParsedPattern, RegexParseError> {
         group_total,
         scanned_names,
         names: Vec::new(),
+        name_set: std::collections::HashSet::new(),
         next_group: 0,
     };
     let node = p.disjunction(0)?;
@@ -82,6 +83,8 @@ struct Parser {
     group_total: usize,
     scanned_names: Vec<(String, usize)>,
     names: Vec<(String, usize)>,
+    /// Names already registered in `names`, for an O(1) duplicate test.
+    name_set: std::collections::HashSet<String>,
     next_group: usize,
 }
 
@@ -311,7 +314,7 @@ impl Parser {
         let index = if capturing {
             self.next_group += 1;
             if let Some(n) = &name {
-                if self.names.iter().any(|(m, _)| m == n) {
+                if !self.name_set.insert(n.clone()) {
                     return Err(self.err("duplicate capture group name"));
                 }
                 self.names.push((n.clone(), self.next_group));

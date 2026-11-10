@@ -137,9 +137,7 @@ pub(crate) fn hoist(source: &str, program: &ast::Program) -> Option<ast::Program
                     matches!(s, ast::Stmt::Expr(ast::Expr::Call { callee, .. }) if name_is(source, callee, "super"))
                 });
                 let at = super_at.map_or(0, |i| i + 1);
-                for (offset, statement) in statements.into_iter().enumerate() {
-                    ctor.body.statements.insert(at + offset, statement);
-                }
+                ctor.body.statements.splice(at..at, statements);
             }
             None => {
                 class.methods.push(ast::Function {

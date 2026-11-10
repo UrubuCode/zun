@@ -231,6 +231,10 @@ impl Interp<'_> {
             Option<zun_core::FunctionHandle>,
             Option<zun_core::FunctionHandle>,
         )> = Vec::new();
+        // Key -> position in `accessors`, so pairing a getter/setter is O(1)
+        // while the `Vec` still preserves first-seen prototype property order.
+        let mut accessor_index: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         if let Some(def) = self
             .module
             .tables
@@ -258,11 +262,13 @@ impl Interp<'_> {
                     continue;
                 };
                 let handle = zun_core::FunctionHandle::new(method_rid, None);
-                let index = match accessors.iter().position(|(n, _, _)| n == prop) {
-                    Some(index) => index,
+                let index = match accessor_index.get(prop) {
+                    Some(&index) => index,
                     None => {
+                        let index = accessors.len();
                         accessors.push((prop.to_owned(), None, None));
-                        accessors.len() - 1
+                        accessor_index.insert(prop.to_owned(), index);
+                        index
                     }
                 };
                 if is_get {

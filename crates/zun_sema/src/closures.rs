@@ -488,14 +488,14 @@ impl Checker<'_> {
                 return;
             }
             if let Some(slot) = cx.lookup(text) {
-                if !uses.slots.contains(&slot) {
+                if uses.slot_set.insert(slot) {
                     uses.slots.push(slot);
                 }
                 if mutated {
                     uses.mutated.insert(slot);
                 }
             } else if let Some(capture) = cx.captures.get(text) {
-                if !uses.inherited.iter().any(|existing| existing.name == text) {
+                if uses.inherited_names.insert(text.to_owned()) {
                     uses.inherited.push(capture.clone());
                 }
             }

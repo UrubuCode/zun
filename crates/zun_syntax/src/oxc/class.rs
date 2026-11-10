@@ -1,5 +1,9 @@
 use super::*;
 
+/// First index in `Class::methods` for each (name, accessor, static) member.
+type MethodIndex =
+    std::collections::HashMap<(String, Option<crate::ast::AccessorKind>, bool), usize>;
+
 thread_local! {
     /// Per-compilation counter for synthetic computed-field key/slot names
     /// (`__ck{n}` / `__cf{n}`). Reset at the top of `parse_subset` so the
@@ -101,6 +105,7 @@ pub(super) fn convert_class_declaration_inner(
         .flatten();
     let mut fields = Vec::new();
     let mut methods = Vec::new();
+    let mut method_index = MethodIndex::new();
     let mut symbol_methods = Vec::new();
     for element in &class_declaration.body.body {
         match element {
@@ -120,6 +125,7 @@ pub(super) fn convert_class_declaration_inner(
                     class_declaration,
                     method,
                     &mut methods,
+                    &mut method_index,
                     &mut symbol_methods,
                 )?;
             }
@@ -476,6 +482,7 @@ fn convert_method(
     class_declaration: &oxc_ast::ast::Class<'_>,
     method: &oxc_ast::ast::MethodDefinition<'_>,
     methods: &mut Vec<Function>,
+    method_index: &mut MethodIndex,
     symbol_methods: &mut Vec<crate::ast::ClassSymbolMethod>,
 ) -> Result<(), Vec<String>> {
     let (name_span, computed_key) = method_name_and_key(source, method)?;
@@ -483,7 +490,7 @@ fn convert_method(
         // `extern m(..): T;` arrives as a bodiless method
         // signature (see `preprocess_externs`).
         if let Some(module) = extern_mark(name_span.start) {
-            push_extern_method(source, method, name_span, module, methods)?;
+            push_extern_method(source, method, name_span, module, methods, method_index)?;
             return Ok(());
         }
         return Err(vec!["OXC adapter requires class method bodies".into()]);
@@ -498,6 +505,7 @@ fn convert_method(
         computed_key,
         function,
         methods,
+        method_index,
         symbol_methods,
     );
     Ok(())
@@ -549,6 +557,7 @@ fn push_extern_method(
     name_span: Span,
     module: Option<String>,
     methods: &mut Vec<Function>,
+    method_index: &mut MethodIndex,
 ) -> Result<(), Vec<String>> {
     let mut prologue = Vec::new();
     let mut params = Vec::new();
@@ -557,7 +566,7 @@ fn push_extern_method(
             convert_formal_param(source, parameter, &mut prologue).map_err(|error| vec![error])?,
         );
     }
-    methods.push(Function {
+    let function = Function {
         name: Name { span: name_span },
         type_params: Vec::new(),
         decorators: Vec::new(),
@@ -575,7 +584,15 @@ fn push_extern_method(
             span: Span::new(method.span.start, method.span.end),
         },
         span: Span::new(method.span.start, method.span.end),
-    });
+    };
+    // Keep the first index for a given member, matching `find`'s semantics.
+    let key = (
+        source[function.name.span.start as usize..function.name.span.end as usize].to_owned(),
+        function.accessor,
+        function.is_static,
+    );
+    method_index.entry(key).or_insert(methods.len());
+    methods.push(function);
     Ok(())
 }
 
@@ -745,6 +762,7 @@ fn register_method(
     computed_key: Option<Expr>,
     function: Function,
     methods: &mut Vec<Function>,
+    method_index: &mut MethodIndex,
     symbol_methods: &mut Vec<crate::ast::ClassSymbolMethod>,
 ) {
     match computed_key {
@@ -757,16 +775,16 @@ fn register_method(
             // A later declaration of the same member (same
             // name, accessor kind, staticness) replaces the
             // earlier one, as in JS.
-            let text = |f: &Function| {
-                source[f.name.span.start as usize..f.name.span.end as usize].to_owned()
-            };
-            let key = (text(&function), function.accessor, function.is_static);
-            if let Some(existing) = methods
-                .iter_mut()
-                .find(|m| (text(m), m.accessor, m.is_static) == key)
-            {
-                *existing = function;
+            let key = (
+                source[function.name.span.start as usize..function.name.span.end as usize]
+                    .to_owned(),
+                function.accessor,
+                function.is_static,
+            );
+            if let Some(&index) = method_index.get(&key) {
+                methods[index] = function;
             } else {
+                method_index.insert(key, methods.len());
                 methods.push(function);
             }
         }

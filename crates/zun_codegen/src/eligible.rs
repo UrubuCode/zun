@@ -524,7 +524,11 @@ fn instr_fields_ok(module: &Module, instr: &zun_il::Instruction) -> bool {
 
 /// Validate a virtual call token. Its target set is added to the call graph
 /// below, so overridden implementations can be compiled for indirect calls.
-fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> bool {
+fn callvirt_is_non_overridden(
+    module: &Module,
+    instr: &zun_il::Instruction,
+    string_method_rids: &HashSet<u32>,
+) -> bool {
     if instr.opcode != Opcode::CallVirt {
         return true;
     }
@@ -536,13 +540,10 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
         .method_defs
         .get(token.rid() as usize - 1)
         .is_some_and(|method| {
-            module.tables.type_defs.iter().any(|ty| {
-                token.rid() >= ty.method_start
-                    && token.rid() < ty.method_end
-                    && module.strings.get(ty.name) == "String"
-                    && matches!(
-                        module.strings.get(method.name),
-                        "length"
+            string_method_rids.contains(&token.rid())
+                && matches!(
+                    module.strings.get(method.name),
+                    "length"
                             | "contains"
                             | "includes"
                             | "charCodeAt"
@@ -567,8 +568,7 @@ fn callvirt_is_non_overridden(module: &Module, instr: &zun_il::Instruction) -> b
                             | "toInt"
                             | "toFloat"
                             | "toBoolean"
-                    )
-            })
+                )
         })
     {
         // Primitive-backed String.length is lowered directly by the JIT and
@@ -1156,6 +1156,17 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
             .or_default()
             .push(index as u32 + 1);
     }
+    // Method rids owned by the `String` type, precomputed once. The CallVirt
+    // non-override check only needs to know whether a method belongs to String,
+    // which previously meant scanning every type_def for every CallVirt
+    // instruction (O(instructions * type_defs)).
+    let string_method_rids: HashSet<u32> = module
+        .tables
+        .type_defs
+        .iter()
+        .filter(|ty| module.strings.get(ty.name) == "String")
+        .flat_map(|ty| ty.method_start..ty.method_end)
+        .collect();
     // Callees per candidate, tagged `is_virtual`: a `CallVirt` callee must be
     // eligible (the translator lowers it through the vtable, not the bridge),
     // while a direct `Call` callee may be bridged when ineligible.
@@ -1360,7 +1371,10 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
         if !instrs.iter().all(|i| instr_fields_ok(module, i)) {
             continue;
         }
-        if !instrs.iter().all(|i| callvirt_is_non_overridden(module, i)) {
+        if !instrs
+            .iter()
+            .all(|i| callvirt_is_non_overridden(module, i, &string_method_rids))
+        {
             continue;
         }
         let mut callees = Vec::new();

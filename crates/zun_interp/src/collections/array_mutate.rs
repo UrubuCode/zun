@@ -336,23 +336,26 @@ impl<'a> Interp<'a> {
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let result = zun_gc::with_current_heap_mut(|heap| {
                     let excluded_count = heap.array_len(excluded).unwrap_or(0);
-                    let mut excluded_names = Vec::with_capacity(excluded_count);
-                    let mut excluded_symbols = Vec::new();
+                    // Hash sets keep the per-key exclusion test O(1) instead of
+                    // scanning the excluded list for every source key.
+                    let mut excluded_names =
+                        std::collections::HashSet::with_capacity(excluded_count);
+                    let mut excluded_symbols = std::collections::HashSet::new();
                     for index in 0..excluded_count {
                         if let Some(any) = heap.array_get(excluded, index) {
                             if let Some(symbol) = any.as_symbol() {
-                                excluded_symbols.push(symbol);
+                                excluded_symbols.insert(symbol);
                                 continue;
                             }
                             // Static keys are strings; a computed key may also be a number.
                             if let Some(key) = stringify_any(any, heap) {
-                                excluded_names.push(key);
+                                excluded_names.insert(key);
                             }
                         }
                     }
                     let result = heap.alloc_dynamic();
                     for key in heap.dynamic_keys(source).unwrap_or_default() {
-                        if !excluded_names.iter().any(|name| name == &key) {
+                        if !excluded_names.contains(&key) {
                             if let Some(value) = heap.dynamic_get(source, &key) {
                                 heap.dynamic_set(result, key, value);
                             }

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use crate::bytes::{read_name, read_u16, read_u32, take, write_name};
@@ -72,13 +74,19 @@ impl ModuleIndex {
         let count = read_u32(bytes, &mut cursor)
             .ok_or_else(|| LoadError::InvalidManifest("truncated registry index".into()))?;
         let mut index = Self::new();
+        let mut seen = HashSet::new();
         for _ in 0..count {
             let name = read_name(bytes, &mut cursor)?;
             let raw = take(bytes, &mut cursor, 32)
                 .ok_or_else(|| LoadError::InvalidManifest("truncated content ID".into()))?;
             let mut id = [0u8; 32];
             id.copy_from_slice(raw);
-            index.push(name, ContentId(id))?;
+            if name.is_empty() || !seen.insert(name.clone()) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "duplicate or empty index entry `{name}`"
+                )));
+            }
+            index.entries.push((name, ContentId(id)));
         }
         if cursor != bytes.len() {
             return Err(LoadError::InvalidManifest(

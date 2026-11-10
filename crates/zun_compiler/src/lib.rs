@@ -57,6 +57,13 @@ fn walk_reachable_methods(
     worklist: &mut Vec<u32>,
     reachable: &mut HashSet<u32>,
 ) -> Result<HashSet<u32>, String> {
+    // Index method definitions by name once; virtual calls retain every method
+    // with a matching name. The RID list per name stays ascending, matching the
+    // previous per-call full scan's push order.
+    let mut by_name: HashMap<zun_metadata::StringIndex, Vec<u32>> = HashMap::new();
+    for (index, method) in module.tables.method_defs.iter().enumerate() {
+        by_name.entry(method.name).or_default().push(index as u32 + 1);
+    }
     while let Some(rid) = worklist.pop() {
         if !reachable.insert(rid) {
             continue;
@@ -80,10 +87,8 @@ fn walk_reachable_methods(
                 }
                 Opcode::CallVirt if token.table() == Some(zun_metadata::TableKind::MethodDef) => {
                     let name = module.tables.method_defs[token.rid() as usize - 1].name;
-                    for (index, candidate) in module.tables.method_defs.iter().enumerate() {
-                        if candidate.name == name {
-                            worklist.push(index as u32 + 1);
-                        }
+                    if let Some(rids) = by_name.get(&name) {
+                        worklist.extend(rids);
                     }
                 }
                 Opcode::Call if token.table() == Some(zun_metadata::TableKind::MemberRef) => {

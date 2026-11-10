@@ -7,7 +7,7 @@
 
 use crate::hir;
 use crate::hir::{IntKind, Ty};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use zun_common::{Diagnostic, Span};
 use zun_syntax::ast;
 
@@ -227,6 +227,9 @@ fn check_impl(
         by_name: HashMap::new(),
         classes: Vec::new(),
         classes_by_name: HashMap::new(),
+        full_fields_cache: std::cell::RefCell::new(HashMap::new()),
+        full_initializers_cache: std::cell::RefCell::new(HashMap::new()),
+        field_index_cache: std::cell::RefCell::new(HashMap::new()),
         methods_by_class: Vec::new(),
         imports: HashMap::new(),
         namespace_imports: HashMap::new(),
@@ -251,7 +254,7 @@ fn check_impl(
         type_param_names: HashSet::new(),
         enums: HashMap::new(),
         module_globals: HashSet::new(),
-        pending_static_classes: Vec::new(),
+        pending_static_classes: VecDeque::new(),
         arguments_functions: HashSet::new(),
         fn_mutated_globals: HashSet::new(),
         reassigned_fn_names: HashSet::new(),
@@ -423,6 +426,17 @@ struct Checker<'a> {
     by_name: HashMap<String, u32>,
     classes: Vec<ClassInfo>,
     classes_by_name: HashMap<String, u32>,
+    /// Memoized full field layout per class (inherited-first slot order), built
+    /// lazily once the class table is final. Avoids re-walking the base chain on
+    /// every `full_fields`/`field_of` call (previously O(classes * depth)).
+    full_fields_cache:
+        std::cell::RefCell<HashMap<u32, std::rc::Rc<Vec<(String, Ty, bool, bool)>>>>,
+    /// Memoized full initializer list per class, paired with `full_fields_cache`.
+    full_initializers_cache:
+        std::cell::RefCell<HashMap<u32, std::rc::Rc<Vec<Option<Box<ast::Expr>>>>>>,
+    /// Per class: field name -> (first slot, type), for O(1) `field_of`.
+    field_index_cache:
+        std::cell::RefCell<HashMap<u32, std::rc::Rc<HashMap<String, (u16, Ty)>>>>,
     /// Per class index: method name -> global func index.
     methods_by_class: Vec<HashMap<String, u32>>,
     /// Imported intrinsic name -> (dispatch id, its native signature).
@@ -499,7 +513,7 @@ struct Checker<'a> {
     /// Classes whose non-literal static initializers run in the module body at
     /// their declaration position (ascending by source offset), so they can see
     /// the module bindings declared above them.
-    pending_static_classes: Vec<u32>,
+    pending_static_classes: VecDeque<u32>,
     /// Functions whose body materializes an `arguments` object: their callers
     /// report the real argument count (see `setCallArgc`).
     arguments_functions: HashSet<u32>,
@@ -561,8 +575,10 @@ struct FunctionCx {
 #[derive(Default)]
 struct CaptureUse {
     slots: Vec<hir::LocalSlot>,
+    slot_set: HashSet<hir::LocalSlot>,
     mutated: HashSet<hir::LocalSlot>,
     inherited: Vec<hir::Capture>,
+    inherited_names: HashSet<String>,
 }
 
 impl Checker<'_> {

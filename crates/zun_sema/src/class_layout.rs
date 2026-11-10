@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use super::Checker;
 use crate::hir;
 use crate::hir::Ty;
@@ -6,41 +9,80 @@ impl<'a> Checker<'a> {
     /// The full field layout of a class: inherited fields first (base's full
     /// layout), then the class's own fields, in slot order.
     pub(super) fn full_fields(&self, class: u32) -> Vec<(String, Ty, bool, bool)> {
+        (*self.full_fields_rc(class)).clone()
+    }
+
+    /// Shared, memoized backing for [`Self::full_fields`]. Each class's layout is
+    /// built once (reusing its base's cached layout) and then reused, so the
+    /// base chain is walked a constant number of times instead of per call.
+    fn full_fields_rc(&self, class: u32) -> Rc<Vec<(String, Ty, bool, bool)>> {
+        if let Some(cached) = self.full_fields_cache.borrow().get(&class) {
+            return cached.clone();
+        }
         let info = &self.classes[class as usize];
         let mut fields = match info.base {
-            Some(b) => self.full_fields(b),
+            Some(b) => (*self.full_fields_rc(b)).clone(),
             None => Vec::new(),
         };
         fields.extend(info.own_fields.iter().cloned());
-        fields
+        let rc = Rc::new(fields);
+        self.full_fields_cache
+            .borrow_mut()
+            .insert(class, rc.clone());
+        rc
     }
 
     /// Field initializers in the same inherited-first slot order as the layout.
     pub(super) fn full_initializers(&self, class: u32) -> Vec<Option<Box<zun_syntax::ast::Expr>>> {
+        (*self.full_initializers_rc(class)).clone()
+    }
+
+    /// Shared, memoized backing for [`Self::full_initializers`].
+    fn full_initializers_rc(&self, class: u32) -> Rc<Vec<Option<Box<zun_syntax::ast::Expr>>>> {
+        if let Some(cached) = self.full_initializers_cache.borrow().get(&class) {
+            return cached.clone();
+        }
         let info = &self.classes[class as usize];
         let mut initializers = match info.base {
-            Some(b) => self.full_initializers(b),
+            Some(b) => (*self.full_initializers_rc(b)).clone(),
             None => Vec::new(),
         };
         initializers.extend(info.own_initializers.iter().cloned());
-        initializers
+        let rc = Rc::new(initializers);
+        self.full_initializers_cache
+            .borrow_mut()
+            .insert(class, rc.clone());
+        rc
+    }
+
+    /// Memoized `field name -> (first slot, type)` index for `class`, matching
+    /// the first-occurrence semantics of the previous linear `.find` scan.
+    fn field_index(&self, class: u32) -> Rc<HashMap<String, (u16, Ty)>> {
+        if let Some(cached) = self.field_index_cache.borrow().get(&class) {
+            return cached.clone();
+        }
+        let mut map: HashMap<String, (u16, Ty)> = HashMap::new();
+        for (slot, (name, ty, _, _)) in self.full_fields_rc(class).iter().enumerate() {
+            map.entry(name.clone()).or_insert((slot as u16, *ty));
+        }
+        let rc = Rc::new(map);
+        self.field_index_cache
+            .borrow_mut()
+            .insert(class, rc.clone());
+        rc
     }
 
     /// Find a field's slot and type, searching inherited fields too.
     pub(super) fn field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
-        self.full_fields(class)
-            .into_iter()
-            .enumerate()
-            .find(|(_, (n, _, _, _))| n == name)
-            .map(|(slot, (_, ty, _, _))| (slot as u16, ty))
+        self.field_index(class).get(name).copied()
     }
 
     pub(super) fn static_field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
-        self.full_fields(class)
-            .into_iter()
+        self.full_fields_rc(class)
+            .iter()
             .enumerate()
             .find(|(_, (n, _, is_static, _))| n == name && *is_static)
-            .map(|(slot, (_, ty, _, _))| (slot as u16, ty))
+            .map(|(slot, (_, ty, _, _))| (slot as u16, *ty))
     }
 
     /// True when `class` declares a private method or accessor named `name`
@@ -60,11 +102,9 @@ impl<'a> Checker<'a> {
             .iter()
             .find_map(|(name, &index)| (index == class).then_some(name.as_str()))?;
         let internal_name = format!("#{owner}#{name}");
-        self.full_fields(class)
-            .into_iter()
-            .enumerate()
-            .find(|(_, (n, _, _, is_private))| *is_private && n == &internal_name)
-            .map(|(slot, (_, ty, _, _))| (slot as u16, ty))
+        // Internal names (`#owner#field`) are always private, so a name hit in
+        // the field index is necessarily the private field we are after.
+        self.field_index(class).get(&internal_name).copied()
     }
 
     /// Resolve a method name to its function index, searching base classes.

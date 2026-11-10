@@ -101,14 +101,13 @@ impl TypeSystem {
         let method_count = module.tables.method_defs.len();
         let mut method_slots = vec![None; method_count + 1];
         let mut slot_names = Vec::new();
+        let mut slot_by_name: std::collections::HashMap<_, usize> =
+            std::collections::HashMap::new();
         for (index, method) in module.tables.method_defs.iter().enumerate() {
-            let slot = slot_names
-                .iter()
-                .position(|&name| name == method.name)
-                .unwrap_or_else(|| {
-                    slot_names.push(method.name);
-                    slot_names.len() - 1
-                });
+            let slot = *slot_by_name.entry(method.name).or_insert_with(|| {
+                slot_names.push(method.name);
+                slot_names.len() - 1
+            });
             method_slots[index + 1] = Some(slot);
         }
         let mut types: Vec<TypeDescriptor> = Vec::with_capacity(module.tables.type_defs.len());
@@ -144,9 +143,10 @@ impl TypeSystem {
         let mut resolved = vec![false; count];
         for start in 0..count {
             let mut chain = Vec::new();
+            let mut seen = std::collections::HashSet::new();
             let mut cursor = start;
             while !resolved[cursor] {
-                if chain.contains(&cursor) {
+                if !seen.insert(cursor) {
                     return Err(TypeError::BadBase);
                 }
                 chain.push(cursor);

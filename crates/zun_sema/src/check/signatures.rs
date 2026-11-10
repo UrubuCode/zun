@@ -74,6 +74,13 @@ impl Checker<'_> {
         // order. Instance methods have an implicit leading `this`; static
         // methods intentionally do not.
         self.methods_by_class = vec![HashMap::new(); program.classes.len()];
+        // Owned names avoid borrowing `self` across the loop's `&mut self`
+        // calls (the same set was previously rescanned per method).
+        let classes_used_as_base: HashSet<String> = program
+            .classes
+            .iter()
+            .filter_map(|class| class.base.as_ref().map(|base| self.text(base).to_owned()))
+            .collect();
         for (class_idx, class) in program.classes.iter().enumerate() {
             for m in &class.methods {
                 let base_name = self.text(&m.name).to_string();
@@ -128,11 +135,7 @@ impl Checker<'_> {
                     && !m.is_static
                     && !m.is_async
                     && !m.is_generator
-                    && !program.classes.iter().any(|other| {
-                        other
-                            .base
-                            .is_some_and(|base| self.text(&base) == self.text(&class.name))
-                    })
+                    && !classes_used_as_base.contains(self.text(&class.name))
                     && self.block_returns_only_this(&m.body);
                 let return_ty = match &m.return_type {
                     Some(t) => self.resolve_annotation(t),

@@ -125,18 +125,25 @@ impl Checker<'_> {
                 span,
             })
         };
+        // Raw method names per class, precomputed once (previously rescanned
+        // for every routed method/class pair).
+        let raw_method_names: Vec<HashSet<&str>> = program
+            .classes
+            .iter()
+            .map(|class| class.methods.iter().map(|m| self.text(&m.name)).collect())
+            .collect();
         for (func, class) in routed {
             let Some(name) = self.method_name_of(class, func) else {
                 continue;
             };
             body.push(register(class, &name, func));
             // Undecorated overrides in subclasses.
-            for (sub, sub_class) in program.classes.iter().enumerate() {
+            for (sub, _sub_class) in program.classes.iter().enumerate() {
                 let sub = sub as u32;
                 if sub == class || !self.is_subclass(sub, class) {
                     continue;
                 }
-                if !sub_class.methods.iter().any(|m| self.text(&m.name) == name) {
+                if !raw_method_names[sub as usize].contains(name.as_str()) {
                     continue;
                 }
                 let Some(&own) = self
@@ -241,6 +248,14 @@ impl Checker<'_> {
             let class_idx = class_idx as u32;
             let class_name = self.text(&class.name).to_string();
             let full_fields = self.full_fields(class_idx);
+            // First slot for each field name (matching `.position`).
+            let slot_of: HashMap<&str, usize> = {
+                let mut slots = HashMap::new();
+                for (slot, (name, _, _, _)) in full_fields.iter().enumerate() {
+                    slots.entry(name.as_str()).or_insert(slot);
+                }
+                slots
+            };
             // Field decorators run at class-definition time with
             // `kind: "field"`. Private (`#x`) fields stay deferred. A decorator
             // returning a function installs it as the field's initializer
@@ -250,10 +265,9 @@ impl Checker<'_> {
                     continue;
                 }
                 let field_name = self.text(&field.name).to_string();
-                let slot = full_fields
-                    .iter()
-                    .position(|(name, _, _, _)| *name == field_name)
-                    .map_or(-1, |slot| slot as i32);
+                let slot = slot_of
+                    .get(field_name.as_str())
+                    .map_or(-1, |&slot| slot as i32);
                 for decorator in field.decorators.iter().rev() {
                     let target = DecoratorTarget {
                         class_idx,

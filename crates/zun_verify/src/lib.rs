@@ -20,7 +20,9 @@
 //!
 //! [`StackEffect`]: zun_il::StackEffect
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
+
 use zun_il::{decode_one, Opcode, Operand, StackEffect};
 
 /// Describes the method being verified.
@@ -99,7 +101,7 @@ pub fn verify_body(
     }
     boundaries.insert(body.code.len());
 
-    for (index, handler) in body.handlers.iter().enumerate() {
+    for handler in &body.handlers {
         let valid_bounds = boundaries.contains(&(handler.try_start as usize))
             && boundaries.contains(&(handler.try_end as usize))
             && boundaries.contains(&(handler.handler_start as usize))
@@ -123,30 +125,70 @@ pub fn verify_body(
                 });
             }
         }
-        for other in body.handlers.iter().skip(index + 1) {
-            let crosses = |a_start: u32, a_end: u32, b_start: u32, b_end: u32| {
-                (a_start < b_start && b_start < a_end && a_end < b_end)
-                    || (b_start < a_start && a_start < b_end && b_end < a_end)
-            };
-            if crosses(
-                handler.try_start,
-                handler.try_end,
-                other.try_start,
-                other.try_end,
-            ) || crosses(
-                handler.handler_start,
-                handler.handler_end,
-                other.handler_start,
-                other.handler_end,
-            ) {
-                return Err(VerifyError {
-                    offset: other.try_start as usize,
-                    kind: ErrorKind::InvalidHandlerRegion,
-                });
-            }
-        }
+    }
+    // A region crosses another when it starts strictly inside it and ends
+    // strictly outside it. Sort by start and sweep the active end offsets; a
+    // proper crossing is an active end strictly inside the current region.
+    // This replaces the previous pairwise O(H²) scan with O(H log H).
+    let try_crossing = first_crossing(
+        body.handlers
+            .iter()
+            .enumerate()
+            .map(|(index, handler)| (index, handler.try_start, handler.try_end)),
+    );
+    let handler_crossing = first_crossing(
+        body.handlers
+            .iter()
+            .enumerate()
+            .map(|(index, handler)| (index, handler.handler_start, handler.handler_end)),
+    );
+    if let Some(other) = try_crossing.or(handler_crossing) {
+        return Err(VerifyError {
+            offset: body.handlers[other].try_start as usize,
+            kind: ErrorKind::InvalidHandlerRegion,
+        });
     }
     Ok(())
+}
+
+/// Return the index of the later-declared handler in a pair of crossing
+/// half-open `(start, end)` regions, if any. Regions are identified by their
+/// declaration index so the reported handler matches the old scan's
+/// `other.try_start` (the later-declared one).
+fn first_crossing(regions: impl Iterator<Item = (usize, u32, u32)>) -> Option<usize> {
+    let mut sorted: Vec<(usize, u32, u32)> = regions.collect();
+    sorted.sort_by_key(|&(_, start, _)| start);
+    let mut active: BTreeSet<(u32, usize)> = BTreeSet::new();
+    let mut index = 0;
+    while index < sorted.len() {
+        let group_start = sorted[index].1;
+        // Drop regions that end at or before this start: they cannot cross
+        // this or any later region.
+        while let Some(&entry) = active.first() {
+            if entry.0 <= group_start {
+                active.remove(&entry);
+            } else {
+                break;
+            }
+        }
+        let mut next = index;
+        while next < sorted.len() && sorted[next].1 == group_start {
+            let (orig, _, end) = sorted[next];
+            let lower = Bound::Excluded((group_start, usize::MAX));
+            let upper = Bound::Excluded((end, 0));
+            if let Some(&(_, earlier)) = active.range((lower, upper)).next() {
+                return Some(earlier.max(orig));
+            }
+            next += 1;
+        }
+        // Equal-start regions cannot cross each other, so insert the whole
+        // group only after every member has been queried.
+        for &(orig, _, end) in &sorted[index..next] {
+            active.insert((end, orig));
+        }
+        index = next;
+    }
+    None
 }
 
 /// Resolves a call instruction's arity: `(args_popped, results_pushed)`.

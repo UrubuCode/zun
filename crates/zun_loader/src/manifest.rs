@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -157,6 +158,7 @@ impl ModuleLock {
         let count = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
         let mut cursor = 11;
         let mut lock = Self::new();
+        let mut seen = HashSet::new();
         for _ in 0..count {
             let name = read_name(bytes, &mut cursor)?;
             let end = cursor
@@ -168,7 +170,12 @@ impl ModuleLock {
             cursor = end;
             let mut id = [0u8; 32];
             id.copy_from_slice(raw);
-            lock.push(name, ContentId(id))?;
+            if !seen.insert(name.clone()) {
+                return Err(LoadError::InvalidManifest(format!(
+                    "duplicate lock entry `{name}`"
+                )));
+            }
+            lock.entries.push((name, ContentId(id)));
         }
         let capability_count = read_u32(bytes, &mut cursor)
             .ok_or_else(|| LoadError::InvalidManifest("truncated capability section".into()))?

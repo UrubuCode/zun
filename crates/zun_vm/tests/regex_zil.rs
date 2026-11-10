@@ -2,7 +2,6 @@
 //! function runs on Tier 0 and Tier 1 and agrees with the `zun_regex`
 //! interpreter.
 
-use std::rc::Rc;
 use zun_il::NumKind;
 use zun_interp::value::Value;
 use zun_interp::{CallHook, CaptureOutput};
@@ -18,7 +17,7 @@ fn natives() -> StringNatives {
 
 fn args(input: &str, pos: usize) -> Vec<Value> {
     vec![
-        Value::Str(Rc::from(input)),
+        Value::Str(input.into()),
         Value::Int(pos as i64, NumKind::U64),
     ]
 }
@@ -198,7 +197,7 @@ fn backtracking_matcher_agrees_with_interpreter_on_tier0_and_tier1() {
                     &loaded,
                     alloc_rid,
                     vec![
-                        Value::Str(Rc::from(*input)),
+                        Value::Str((*input).into()),
                         Value::Int(pos as i64, NumKind::U64),
                     ],
                     &mut out,
@@ -217,7 +216,7 @@ fn backtracking_matcher_agrees_with_interpreter_on_tier0_and_tier1() {
                     .try_call(
                         match_rid,
                         &[
-                            Value::Str(Rc::from(*input)),
+                            Value::Str((*input).into()),
                             Value::Int(pos as i64, NumKind::U64),
                             Value::Object(buf),
                         ],

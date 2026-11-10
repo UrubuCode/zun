@@ -92,6 +92,8 @@ impl Interp<'_> {
             Value::Object(array) => {
                 if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(*array)) {
                     let mut names: Vec<String> = Vec::new();
+                    let mut seen: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
                     for index in 0..len {
                         let item = zun_gc::with_current_heap(|heap| {
                             heap.array_get(*array, index)
@@ -104,7 +106,9 @@ impl Interp<'_> {
                             _ => None,
                         };
                         if let Some(name) = name {
-                            if !names.contains(&name) {
+                            // First-seen order drives serialization; the set
+                            // only makes the duplicate test O(1).
+                            if seen.insert(name.clone()) {
                                 names.push(name);
                             }
                         }

@@ -217,7 +217,7 @@ pub struct Function {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccessorKind {
     Get,
     Set,
@@ -1069,16 +1069,23 @@ fn synthetic_registry() -> &'static std::sync::Mutex<Vec<String>> {
     REGISTRY.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
+/// Reverse index of [`synthetic_registry`] (text -> id) for O(1) interning.
+fn synthetic_names() -> &'static std::sync::Mutex<std::collections::HashMap<String, u32>> {
+    static NAMES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, u32>>,
+    > = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 /// Create an identifier with the given text that is not backed by source.
 pub fn synthetic_ident(text: &str) -> Name {
-    let mut registry = synthetic_registry().lock().expect("synthetic registry");
-    let index = match registry.iter().position(|existing| existing == text) {
-        Some(index) => index,
-        None => {
-            registry.push(text.to_owned());
-            registry.len() - 1
-        }
-    } as u32;
+    let mut names = synthetic_names().lock().expect("synthetic names");
+    let index = *names.entry(text.to_owned()).or_insert_with(|| {
+        let mut registry = synthetic_registry().lock().expect("synthetic registry");
+        let index = registry.len() as u32;
+        registry.push(text.to_owned());
+        index
+    });
     Name {
         span: Span::new(NAMED_SYNTHETIC_BASE + index, NAMED_SYNTHETIC_BASE + index),
     }

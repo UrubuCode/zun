@@ -356,99 +356,93 @@ impl Heap {
         }
 
         // Ephemeron fixed point: a marked key promotes its value, while strong
-        // fields of promoted values can make later keys reachable.
-        loop {
-            let mut promoted = false;
-            for entry in &self.weak_maps {
-                for &(key, value) in &entry.entries {
-                    let Some(&key_idx) = self.by_addr.get(&key) else {
-                        continue;
-                    };
-                    let Some(&value_idx) = self.by_addr.get(&value) else {
-                        continue;
-                    };
-                    if self.records[key_idx].marked && !self.records[value_idx].marked {
-                        self.records[value_idx].marked = true;
-                        work.push(value_idx);
-                        promoted = true;
+        // fields of promoted values can make later keys reachable. Index the
+        // key -> values edges once, seed promotions from already-marked keys,
+        // then resolve a key's values when the key itself enters the work list.
+        // Each entry is therefore visited a constant number of times instead of
+        // re-scanning every ephemeron on each propagation round.
+        let mut ephemeron_values: HashMap<usize, Vec<usize>> = HashMap::new();
+        for entry in &self.weak_maps {
+            for &(key, value) in &entry.entries {
+                ephemeron_values.entry(key).or_default().push(value);
+            }
+        }
+        // Seed from keys that were already reachable when the strong trace
+        // finished; those objects are no longer in `work`.
+        for entry in &self.weak_maps {
+            for &(key, value) in &entry.entries {
+                let Some(&key_idx) = self.by_addr.get(&key) else {
+                    continue;
+                };
+                let Some(&value_idx) = self.by_addr.get(&value) else {
+                    continue;
+                };
+                if self.records[key_idx].marked && !self.records[value_idx].marked {
+                    self.records[value_idx].marked = true;
+                    work.push(value_idx);
+                }
+            }
+        }
+        while let Some(idx) = work.pop() {
+            let obj = Obj(self.records[idx].addr);
+            // A newly marked object that is itself an ephemeron key promotes
+            // its associated values.
+            if let Some(values) = ephemeron_values.get(&(obj.addr() as usize)) {
+                for &value in values {
+                    if let Some(&value_idx) = self.by_addr.get(&value) {
+                        if !self.records[value_idx].marked {
+                            self.records[value_idx].marked = true;
+                            work.push(value_idx);
+                        }
                     }
                 }
             }
-            while let Some(idx) = work.pop() {
-                let obj = Obj(self.records[idx].addr);
-                for slot in ref_slots(obj.type_rid()) {
-                    let child = obj.field(slot) as *mut u64;
-                    if let Some(&child_idx) = self.by_addr.get(&(child as usize)) {
+            for slot in ref_slots(obj.type_rid()) {
+                let child = obj.field(slot) as *mut u64;
+                if let Some(&child_idx) = self.by_addr.get(&(child as usize)) {
+                    if !self.records[child_idx].marked {
+                        self.records[child_idx].marked = true;
+                        work.push(child_idx);
+                    }
+                }
+            }
+            if let Some(properties) = self.dynamic_objects.get(&(obj.addr() as usize)) {
+                for child in properties.object_references() {
+                    if let Some(&child_idx) = self.by_addr.get(&child) {
                         if !self.records[child_idx].marked {
                             self.records[child_idx].marked = true;
                             work.push(child_idx);
                         }
                     }
                 }
-                if let Some(properties) = self.dynamic_objects.get(&(obj.addr() as usize)) {
-                    for child in properties.object_references() {
-                        if let Some(&child_idx) = self.by_addr.get(&child) {
-                            if !self.records[child_idx].marked {
-                                self.records[child_idx].marked = true;
-                                work.push(child_idx);
-                            }
+            }
+            if let Some(array) = self.arrays.get(&(obj.addr() as usize)) {
+                for child in array.object_references() {
+                    if let Some(&child_idx) = self.by_addr.get(&child) {
+                        if !self.records[child_idx].marked {
+                            self.records[child_idx].marked = true;
+                            work.push(child_idx);
                         }
                     }
                 }
-                if let Some(array) = self.arrays.get(&(obj.addr() as usize)) {
-                    for child in array.object_references() {
-                        if let Some(&child_idx) = self.by_addr.get(&child) {
-                            if !self.records[child_idx].marked {
-                                self.records[child_idx].marked = true;
-                                work.push(child_idx);
-                            }
+            }
+            if let Some(fields) = self.any_fields.get(&(obj.addr() as usize)) {
+                let any_children: Vec<usize> = fields
+                    .values()
+                    .filter_map(|value| value.as_object())
+                    .collect();
+                for child in any_children {
+                    if let Some(&child_idx) = self.by_addr.get(&child) {
+                        if !self.records[child_idx].marked {
+                            self.records[child_idx].marked = true;
+                            work.push(child_idx);
                         }
                     }
                 }
-                if let Some(fields) = self.any_fields.get(&(obj.addr() as usize)) {
-                    let any_children: Vec<usize> = fields
-                        .values()
-                        .filter_map(|value| value.as_object())
-                        .collect();
-                    for child in any_children {
-                        if let Some(&child_idx) = self.by_addr.get(&child) {
-                            if !self.records[child_idx].marked {
-                                self.records[child_idx].marked = true;
-                                work.push(child_idx);
-                            }
-                        }
-                    }
-                }
-                if let Some(map) = self.maps.get(&(obj.addr() as usize)) {
-                    for (key, value) in map.iter() {
-                        for child in [key, value].into_iter().filter_map(|item| item.as_object()) {
-                            if let Some(&child_idx) = self.by_addr.get(&child) {
-                                if !self.records[child_idx].marked {
-                                    self.records[child_idx].marked = true;
-                                    work.push(child_idx);
-                                }
-                            }
-                        }
-                    }
-                }
-                if let Some(set) = self.sets.get(&(obj.addr() as usize)) {
-                    for (key, _) in set.iter() {
-                        if let Some(&child_idx) =
-                            key.as_object().and_then(|child| self.by_addr.get(&child))
-                        {
-                            if !self.records[child_idx].marked {
-                                self.records[child_idx].marked = true;
-                                work.push(child_idx);
-                            }
-                        }
-                    }
-                }
-                if let Some(promise) = self.promises.get(&(obj.addr() as usize)) {
-                    let children = [
-                        promise.result().and_then(|value| value.as_object()),
-                        promise.reason().and_then(|value| value.as_object()),
-                    ];
-                    for child in children.into_iter().flatten() {
+            }
+            if let Some(map) = self.maps.get(&(obj.addr() as usize)) {
+                for (key, value) in map.iter() {
+                    for child in [key, value].into_iter().filter_map(|item| item.as_object()) {
                         if let Some(&child_idx) = self.by_addr.get(&child) {
                             if !self.records[child_idx].marked {
                                 self.records[child_idx].marked = true;
@@ -458,8 +452,31 @@ impl Heap {
                     }
                 }
             }
-            if !promoted {
-                break;
+            if let Some(set) = self.sets.get(&(obj.addr() as usize)) {
+                for (key, _) in set.iter() {
+                    if let Some(&child_idx) =
+                        key.as_object().and_then(|child| self.by_addr.get(&child))
+                    {
+                        if !self.records[child_idx].marked {
+                            self.records[child_idx].marked = true;
+                            work.push(child_idx);
+                        }
+                    }
+                }
+            }
+            if let Some(promise) = self.promises.get(&(obj.addr() as usize)) {
+                let children = [
+                    promise.result().and_then(|value| value.as_object()),
+                    promise.reason().and_then(|value| value.as_object()),
+                ];
+                for child in children.into_iter().flatten() {
+                    if let Some(&child_idx) = self.by_addr.get(&child) {
+                        if !self.records[child_idx].marked {
+                            self.records[child_idx].marked = true;
+                            work.push(child_idx);
+                        }
+                    }
+                }
             }
         }
 
