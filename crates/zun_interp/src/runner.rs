@@ -87,6 +87,8 @@ impl<'a> OwnedGeneratorSession<'a> {
             active_frame: None,
             call_stack: Vec::new(),
             async_state: AsyncState::default(),
+            type_rid_by_name: std::cell::OnceCell::new(),
+            function_rid_by_name: std::cell::OnceCell::new(),
         };
         let outcome = if let Some(frame) = self.pending.take() {
             interp.resume_suspended(frame)
@@ -417,6 +419,8 @@ impl<'a> ResumableSession<'a> {
                 active_frame: None,
                 call_stack: Vec::new(),
                 async_state: AsyncState::default(),
+            type_rid_by_name: std::cell::OnceCell::new(),
+            function_rid_by_name: std::cell::OnceCell::new(),
             },
             method_rid,
             args: Some(args),
@@ -565,6 +569,8 @@ pub(super) fn run_method_with(
         active_frame: None,
         call_stack: Vec::new(),
         async_state: AsyncState::default(),
+            type_rid_by_name: std::cell::OnceCell::new(),
+            function_rid_by_name: std::cell::OnceCell::new(),
     };
     // Run the module initializer once before the entry point (PLAN §3.1, doc 02
     // area 10): it seeds the realm global on this same heap so `globalThis.Map`
@@ -650,6 +656,8 @@ pub(crate) fn construct_class_loaded(
         active_frame: None,
         call_stack: Vec::new(),
         async_state: AsyncState::default(),
+            type_rid_by_name: std::cell::OnceCell::new(),
+            function_rid_by_name: std::cell::OnceCell::new(),
     };
     // Run the defining module's initializer first so field defaults, field
     // transforms, and instance initializers are registered on this interpreter
@@ -720,6 +728,8 @@ pub(crate) fn run_method_loaded_on_current_heap_bare(
         active_frame: None,
         call_stack: Vec::new(),
         async_state: AsyncState::default(),
+            type_rid_by_name: std::cell::OnceCell::new(),
+            function_rid_by_name: std::cell::OnceCell::new(),
     };
     let first = interp.call(method_rid, args, None);
     let outcome = match first {

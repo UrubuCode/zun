@@ -108,14 +108,37 @@ impl<'a> Interp<'a> {
     }
 
     /// The RID of the module-level function `name` (a prelude helper such as
-    /// `__zunSetOpSet`), or `None` when the module does not carry it.
+    /// `__zunSetOpSet`), or `None` when the module does not carry it. Resolved
+    /// through a lazily built name index (first declaration wins), so repeated
+    /// helper lookups do not rescan the whole method table.
     pub(crate) fn free_function_rid(&self, name: &str) -> Option<u32> {
-        self.module
-            .tables
-            .method_defs
-            .iter()
-            .position(|method| self.module.strings.get(method.name) == name)
-            .map(|index| index as u32 + 1)
+        self.function_rid_by_name
+            .get_or_init(|| {
+                let mut map = std::collections::HashMap::new();
+                for (index, method) in self.module.tables.method_defs.iter().enumerate() {
+                    map.entry(self.module.strings.get(method.name).to_string())
+                        .or_insert(index as u32 + 1);
+                }
+                map
+            })
+            .get(name)
+            .copied()
+    }
+
+    /// The RID of the TypeDef named `name` (first declaration wins), via a
+    /// lazily built name index, so dynamic class resolution is O(1).
+    pub(crate) fn type_rid_of(&self, name: &str) -> Option<u32> {
+        self.type_rid_by_name
+            .get_or_init(|| {
+                let mut map = std::collections::HashMap::new();
+                for (index, ty) in self.module.tables.type_defs.iter().enumerate() {
+                    map.entry(self.module.strings.get(ty.name).to_string())
+                        .or_insert(index as u32 + 1);
+                }
+                map
+            })
+            .get(name)
+            .copied()
     }
 
     /// The method RID implementing `name` on a typed instance (most-derived

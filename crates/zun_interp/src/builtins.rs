@@ -40,8 +40,12 @@ pub(super) fn call_builtin(
         return Ok(());
     }
     // `Boolean(x)` needs the heap to see through a boxed string (the native
-    // only sees its handle), so truthiness is decided here.
-    if zun_natives::resolve_name("booleanCoerce").is_some_and(|(boolean_id, _)| boolean_id == id) {
+    // only sees its handle), so truthiness is decided here. The dispatch id is
+    // fixed per process, so resolve it once instead of on every CallBuiltin.
+    static BOOLEAN_COERCE_ID: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    let boolean_coerce_id =
+        *BOOLEAN_COERCE_ID.get_or_init(|| zun_natives::resolve_name("booleanCoerce").map(|(id, _)| id));
+    if boolean_coerce_id == Some(id) {
         let flag = zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&args[0], heap));
         stack.push(Value::Bool(flag));
         return Ok(());
@@ -75,14 +79,8 @@ impl Interp<'_> {
     /// Allocate an instance of the Error-family class `class` (`message`,
     /// `stackFrames`, `cause` layout) without running its constructor.
     pub(crate) fn new_error_object(&mut self, class: &str, message: &str) -> Option<zun_gc::Obj> {
-        let rid = self
-            .module
-            .tables
-            .type_defs
-            .iter()
-            .position(|ty| self.module.strings.get(ty.name) == class)?
-            + 1;
-        let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid as u32);
+        let rid = self.type_rid_of(class)?;
+        let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid);
         let (field_start, field_count) = self.type_field_range(token).ok()?;
         let kinds: Vec<u8> = (0..field_count as u32)
             .map(|i| self.field_kind_at(field_start + i))

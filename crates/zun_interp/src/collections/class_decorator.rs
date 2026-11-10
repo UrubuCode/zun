@@ -298,13 +298,7 @@ impl<'a> Interp<'a> {
                             })
                         });
                         if let Some(class_name) = class_name {
-                            let rid = self
-                                .module
-                                .tables
-                                .type_defs
-                                .iter()
-                                .position(|def| self.module.strings.get(def.name) == class_name)
-                                .map(|index| index as u32 + 1);
+                            let rid = self.type_rid_of(&class_name);
                             if let Some(rid) = rid {
                                 return self.call_managed_collection(
                                     "instanceofClass",

@@ -34,14 +34,8 @@ pub(super) fn split_native_error(message: &str) -> Option<(&'static str, &str)> 
 impl<'a> Interp<'a> {
     /// Allocate an instance of prelude error class `class` carrying `message`.
     pub(super) fn make_error_value(&self, class: &str, message: &str) -> Option<Value> {
-        let rid = self
-            .module
-            .tables
-            .type_defs
-            .iter()
-            .position(|ty| self.module.strings.get(ty.name) == class)?
-            + 1;
-        let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid as u32);
+        let rid = self.type_rid_of(class)?;
+        let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid);
         let (field_start, field_count) = self.type_field_range(token).ok()?;
         let kinds: Vec<u8> = (0..field_count as u32)
             .map(|i| self.field_kind_at(field_start + i))

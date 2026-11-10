@@ -63,6 +63,14 @@ pub(super) struct Interp<'a> {
     /// the turn-drain (slice 3); the old eager-at-settle `then`/combinator path
     /// is retired.
     pub(super) async_state: AsyncState,
+    /// Lazily built `type name -> TypeDef rid` index (first declaration wins),
+    /// so dynamic `instanceof` / managed-error construction resolve a class by
+    /// name in O(1) instead of rescanning every `type_def`.
+    pub(super) type_rid_by_name: std::cell::OnceCell<HashMap<String, u32>>,
+    /// Lazily built `function name -> MethodDef rid` index (first declaration
+    /// wins), so prelude-helper resolution (`__zunMakeAsyncGen`, Set-op helpers)
+    /// is O(1) instead of rescanning every `method_def`.
+    pub(super) function_rid_by_name: std::cell::OnceCell<HashMap<String, u32>>,
 }
 
 /// The `await` substrate owned by one interpreter session.

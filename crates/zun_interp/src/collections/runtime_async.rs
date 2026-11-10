@@ -282,12 +282,7 @@ impl<'a> Interp<'a> {
             return Ok(Value::Object(generator));
         }
         let maker = self
-            .module
-            .tables
-            .method_defs
-            .iter()
-            .position(|method| self.module.strings.get(method.name) == "__zunMakeAsyncGen")
-            .map(|index| index as u32 + 1)
+            .free_function_rid("__zunMakeAsyncGen")
             .ok_or_else(|| RunError::Native("async generator support is unavailable".into()))?;
         let roots = [generator];
         let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
