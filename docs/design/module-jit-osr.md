@@ -112,11 +112,24 @@ precondition for the loop region being eligible at all.
    method end, the .NET model), and only then add the return-to-interp exits
    (slice 4) for the ineligible-tail case the module entry needs.
 
-4. **OSR transfer + return-to-interp.** Consume `take_valid_osr_snapshots`: call
-   the OSR entry with the live frame state, and on loop exit hand updated locals
-   back to the interpreter to finish the method (the dynamic head/tail of
-   `<main>` keeps running interpreted). Reuses the existing snapshot / validity /
-   root-rewrite scaffolding.
+4. **OSR transfer + return-to-interp.** The *codegen* half is DONE as milestone B
+   (`9d07dc62`): `Jit::ensure_osr_loop_compiled` + `call_osr_loop_packed` compile
+   a loop-region-only entry that takes every local, runs the loop, and on the
+   single exit edge writes the updated locals to an out-buffer and returns the
+   resume IL PC. Verified in-process incl. a mid-loop-state entry. What remains
+   is the **live VM wiring**: when the interpreter hits a hot backedge at a
+   stack-empty header whose region is `loop_region_eligible`, pack the live
+   locals, call the loop-exit OSR entry, then set the interpreter's locals from
+   the out-buffer and jump its PC to the returned resume offset (the dynamic
+   head/tail of `<main>` keeps running interpreted). Reuses the existing snapshot
+   / validity / root-rewrite scaffolding in `jit_hook.rs`.
+
+   **Machine constraint:** this wiring lives in `zun_vm`/`zun_interp` and can only
+   be verified end-to-end by `zun_vm` tests, which link heavily — the build that
+   freezes this machine (see [[zun-build-resource-limits]] in project memory).
+   So slice 4 must be done with care: per-crate `zun_interp` tests where
+   possible, and the one-off `zun_cli` release build + `bench/` run to confirm
+   the 297× only when deliberately scheduled, not in a tight edit loop.
 
 5. **Tiering policy & de-opt safety.** Thresholds, patchpoint placement, guards,
    and the interaction with the GC safepoint contract.
