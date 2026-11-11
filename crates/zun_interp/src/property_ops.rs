@@ -140,6 +140,13 @@ impl Desc {
     }
 }
 
+/// Getters on the shared `%TypedArray%.prototype`: `buffer`, `byteLength`,
+/// `byteOffset`, `length` and `@@toStringTag`.
+pub(crate) const BUILTIN_TA_BUFFER: u32 = 100;
+pub(crate) const BUILTIN_TA_BYTE_LENGTH: u32 = 101;
+pub(crate) const BUILTIN_TA_BYTE_OFFSET: u32 = 102;
+pub(crate) const BUILTIN_TA_LENGTH: u32 = 103;
+pub(crate) const BUILTIN_TA_TAG: u32 = 104;
 pub(crate) const BUILTIN_MAP_SIZE: u32 = 16;
 pub(crate) const BUILTIN_SET_SIZE: u32 = 17;
 pub(crate) const BUILTIN_ARRAY_ITER_NEXT: u32 = 18;
@@ -212,6 +219,78 @@ impl Interp<'_> {
             let any = zun_core::Any::object(root.addr() as usize);
             heap.dynamic_define(global, OBJECT_PROTOTYPE_KEY, any, false);
             root
+        })
+    }
+
+    /// The intrinsic `%TypedArray%.prototype`: owns the geometry getters and the
+    /// `@@toStringTag` getter shared by every concrete typed-array kind.
+    pub(crate) fn typed_array_prototype_singleton() -> zun_gc::Obj {
+        let root = Self::object_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap
+                .dynamic_get(global, "$TypedArray.prototype")
+                .and_then(|a| a.as_object())
+            {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, "$TypedArray.prototype", any, false);
+            for (name, kind) in [
+                ("buffer", BUILTIN_TA_BUFFER),
+                ("byteLength", BUILTIN_TA_BYTE_LENGTH),
+                ("byteOffset", BUILTIN_TA_BYTE_OFFSET),
+                ("length", BUILTIN_TA_LENGTH),
+            ] {
+                heap.dynamic_define_accessor(
+                    proto,
+                    name.to_owned(),
+                    Some(zun_core::FunctionHandle::new_builtin_method(kind)),
+                    None,
+                    false,
+                    true,
+                );
+            }
+            heap.dynamic_set_symbol_getter(
+                proto,
+                zun_core::WellKnownSymbol::ToStringTag.id(),
+                zun_core::FunctionHandle::new_builtin_method(BUILTIN_TA_TAG),
+            );
+            proto
+        })
+    }
+
+    /// The intrinsic `%TypedArray%` constructor stand-in: a non-global object
+    /// named `TypedArray` whose `prototype` is the shared typed-array prototype
+    /// and which inherits from `Function.prototype`.
+    pub(crate) fn typed_array_intrinsic_singleton() -> zun_gc::Obj {
+        let proto = Self::typed_array_prototype_singleton();
+        let fn_proto = Self::function_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap
+                .dynamic_get(global, "$TypedArray")
+                .and_then(|a| a.as_object())
+            {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let ctor = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(ctor, Some(zun_core::Any::object(fn_proto.addr() as usize)));
+            let any = zun_core::Any::object(ctor.addr() as usize);
+            heap.dynamic_define(global, "$TypedArray", any, false);
+            let name = zun_core::Any::string(heap.intern_string("TypedArray"));
+            heap.dynamic_define_data(ctor, "name", name, false, false, true);
+            heap.dynamic_define_data(
+                ctor,
+                "prototype",
+                zun_core::Any::object(proto.addr() as usize),
+                false,
+                false,
+                false,
+            );
+            ctor
         })
     }
 
@@ -466,6 +545,10 @@ impl Interp<'_> {
             } else {
                 None
             };
+            if zun_core::TypedElement::ALL.iter().any(|k| is_class(heap, k.js_name())) {
+                let shared = Self::typed_array_prototype_singleton();
+                heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(shared.addr() as usize)));
+            }
             if is_class(heap, "String") {
                 heap.dynamic_set_symbol_function(
                     proto,
@@ -639,6 +722,44 @@ impl Interp<'_> {
                     None => Err(self.incompatible_receiver(what)),
                 }
             }
+            BUILTIN_TA_BUFFER..=BUILTIN_TA_TAG => {
+                let typed = this_obj.filter(|o| {
+                    zun_gc::with_current_heap(|heap| heap.typed_array_element(*o).is_some())
+                });
+                if kind == BUILTIN_TA_TAG {
+                    return Ok(match typed {
+                        Some(o) => {
+                            let name = zun_gc::with_current_heap(|heap| {
+                                heap.typed_array_element(o).map(|k| k.js_name())
+                            })
+                            .unwrap_or("");
+                            Value::Str(name.into())
+                        }
+                        None => Value::Void,
+                    });
+                }
+                let label = match kind {
+                    BUILTIN_TA_BUFFER => "buffer",
+                    BUILTIN_TA_BYTE_LENGTH => "byteLength",
+                    BUILTIN_TA_BYTE_OFFSET => "byteOffset",
+                    _ => "length",
+                };
+                let o = typed.ok_or_else(|| {
+                    self.incompatible_receiver(&format!("get TypedArray.prototype.{label}"))
+                })?;
+                let num = |n: Option<usize>| {
+                    Value::Float(n.unwrap_or(0) as f64, zun_il::NumKind::F64)
+                };
+                Ok(zun_gc::with_current_heap(|heap| match kind {
+                    BUILTIN_TA_BUFFER => heap
+                        .typed_array_buffer(o)
+                        .map(Value::Object)
+                        .unwrap_or(Value::Void),
+                    BUILTIN_TA_BYTE_LENGTH => num(heap.typed_array_byte_len(o)),
+                    BUILTIN_TA_BYTE_OFFSET => num(heap.typed_array_byte_offset(o)),
+                    _ => num(heap.typed_array_len(o)),
+                }))
+            }
             BUILTIN_ITER_SELF | BUILTIN_SPECIES_GETTER => Ok(this),
             BUILTIN_MAP_ITERATOR | BUILTIN_SET_ITERATOR => {
                 let want_map = kind == BUILTIN_MAP_ITERATOR;
@@ -790,6 +911,11 @@ impl Interp<'_> {
             BUILTIN_PROXY_REVOKE => "",
             BUILTIN_STRING_ITERATOR => "[Symbol.iterator]",
             BUILTIN_SPECIES_GETTER => "get [Symbol.species]",
+            BUILTIN_TA_BUFFER => "get buffer",
+            BUILTIN_TA_BYTE_LENGTH => "get byteLength",
+            BUILTIN_TA_BYTE_OFFSET => "get byteOffset",
+            BUILTIN_TA_LENGTH => "get length",
+            BUILTIN_TA_TAG => "get [Symbol.toStringTag]",
             k if (BUILTIN_COLLECTION_BASE..BUILTIN_COLLECTION_BASE + COLLECTION_METHODS.len() as u32)
                 .contains(&k) =>
             {

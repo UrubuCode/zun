@@ -924,6 +924,17 @@ impl Interp<'_> {
                                 zun_core::Any::string(heap.intern_string(text))
                             }))
                         }
+                        None if symbol == zun_core::WellKnownSymbol::ToStringTag.id()
+                            && zun_gc::with_current_heap(|heap| heap.typed_array_element(object).is_some()) =>
+                        {
+                            let text = zun_gc::with_current_heap(|heap| {
+                                heap.typed_array_element(object).map(|k| k.js_name())
+                            })
+                            .unwrap_or("");
+                            Value::Any(zun_gc::with_current_heap_mut(|heap| {
+                                zun_core::Any::string(heap.intern_string(text))
+                            }))
+                        }
                         // Built-in iterables expose `[Symbol.iterator]` as a
                         // callable that produces their iterator.
                         None if symbol == zun_core::WellKnownSymbol::Iterator.id()

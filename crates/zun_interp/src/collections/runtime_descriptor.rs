@@ -314,6 +314,14 @@ impl<'a> Interp<'a> {
         symbol: zun_core::SymbolId,
     ) -> Option<zun_gc::Obj> {
         zun_gc::with_current_heap_mut(|heap| {
+            if let Some(getter) = heap.dynamic_symbol_getter(obj, symbol) {
+                let out = heap.alloc_dynamic();
+                heap.dynamic_set_function(out, "get", getter);
+                heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
+                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(false));
+                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(true));
+                return Some(out);
+            }
             let value = heap.dynamic_get_symbol(obj, symbol)?;
             let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
             let frozen = !heap.dynamic_can_set(obj, " __symbol_probe");

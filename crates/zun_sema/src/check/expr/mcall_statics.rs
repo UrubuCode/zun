@@ -454,6 +454,46 @@ impl Checker<'_> {
         None
     }
 
+    /// `<Kind>Array.from.call(<OtherKind>Array, ...)` / `.of.call(...)`: the
+    /// receiver constructor selects the element kind of the result.
+    pub(in crate::check) fn try_mcall_typed_static_call(
+        &mut self,
+        cx: &mut FunctionCx,
+        receiver: &ast::Expr,
+        method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::Expr::Field {
+            object: inner_obj,
+            field: inner_field,
+            ..
+        } = receiver
+        else {
+            return None;
+        };
+        let ast::Expr::Ident(owner) = inner_obj.as_ref() else {
+            return None;
+        };
+        let statik = self.text(inner_field).to_string();
+        if self.text(method) != "call"
+            || !matches!(statik.as_str(), "from" | "of")
+            || crate::typed_arrays::view_kind(self.text(owner)).is_none()
+            || self.classes_by_name.contains_key(self.text(owner))
+        {
+            return None;
+        }
+        let ast::Expr::Ident(target) = args.first()? else {
+            return None;
+        };
+        let target_name = self.text(target).to_string();
+        let view_kind = crate::typed_arrays::view_kind(&target_name)?;
+        if self.classes_by_name.contains_key(target_name.as_str()) {
+            return None;
+        }
+        Some(self.check_typed_array_static(cx, view_kind, &statik, &args[1..], span))
+    }
+
     /// `Math.<fn>.apply(thisArg, array)` / `Math.<fn>.call(thisArg, ...args)`.
     pub(in crate::check) fn try_mcall_math_apply(
         &mut self,

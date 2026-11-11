@@ -109,6 +109,11 @@ impl<'a> Interp<'a> {
                 }
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                if let Ok(key) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
+                    if let Some(hit) = self.typed_view_has(object, &key) {
+                        return Ok(Value::Bool(hit));
+                    }
+                }
                 let name = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name,
                     _ => return Err(RunError::BadToken),

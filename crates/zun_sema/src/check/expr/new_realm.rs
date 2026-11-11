@@ -80,6 +80,9 @@ impl Checker<'_> {
                     return Some(self.new_buffer_dynamic(cx, name, args, span));
                 }
                 if matches!(kind, hir::BufferViewKind::DataView) {
+                    if !self.typed_ctor_fits_static(cx, args) || !self.first_arg_is_buffer(cx, args) {
+                        return Some(self.new_buffer_dynamic(cx, name, args, span));
+                    }
                     let before = self.diagnostics.len();
                     let typed = self.new_ctor_buffer_view(cx, name, args, span, native, kind);
                     if self.diagnostics.len() == before {
@@ -664,5 +667,18 @@ impl Checker<'_> {
             }
             _ => false,
         }
+    }
+}
+
+impl Checker<'_> {
+    /// Whether the first constructor argument is statically an `ArrayBuffer`.
+    fn first_arg_is_buffer(&mut self, cx: &mut FunctionCx, args: &[ast::Expr]) -> bool {
+        let Some(first) = args.first() else {
+            return false;
+        };
+        let before = self.diagnostics.len();
+        let checked = self.check_expr(cx, first);
+        self.diagnostics.truncate(before);
+        checked.ty == Ty::Buffer
     }
 }

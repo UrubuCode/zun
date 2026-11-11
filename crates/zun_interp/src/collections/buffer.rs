@@ -225,7 +225,7 @@ impl<'a> Interp<'a> {
                 let view = zun_gc::with_current_heap_mut(|heap| {
                     heap.alloc_data_view(buffer, offset, length)
                 })
-                .ok_or(RunError::BadToken)?;
+                .ok_or_else(|| self.view_error("RangeError", "Invalid DataView length"))?;
                 Ok(Value::Object(view))
             }
             "dataViewTrackingNew" => {
@@ -238,7 +238,9 @@ impl<'a> Interp<'a> {
                 let view = zun_gc::with_current_heap_mut(|heap| {
                     heap.alloc_data_view_tracking(buffer, offset)
                 })
-                .ok_or(RunError::BadToken)?;
+                .ok_or_else(|| {
+                    self.view_error("RangeError", "Start offset is outside the bounds of the buffer")
+                })?;
                 Ok(Value::Object(view))
             }
             "dataViewLength" => {

@@ -34,6 +34,11 @@ impl Checker<'_> {
         {
             return e;
         }
+        if let Some(e) =
+            self.try_mcall_typed_static_call(cx, receiver.as_ref(), method, args, span)
+        {
+            return e;
+        }
         if let Some(e) = self.try_mcall_math_apply(cx, receiver.as_ref(), method, args, span) {
             return e;
         }

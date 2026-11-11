@@ -670,6 +670,16 @@ impl<'a> Interp<'a> {
                 if let Ok(first) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
                     let is_builtin_ctor = matches!(&first, Value::Any(any)
                         if any.as_class_descriptor().is_some_and(|t| self.user_class_rid(t).is_none()));
+                    if let Value::Any(any) = &first {
+                        if let Some(token) = any.as_class_descriptor() {
+                            if self.user_class_rid(token).is_none()
+                                && self.typed_ctor_kind(token).is_some()
+                            {
+                                let ctor = Self::typed_array_intrinsic_singleton();
+                                return Ok(Value::Any(zun_core::Any::object(ctor.addr() as usize)));
+                            }
+                        }
+                    }
                     if is_builtin_ctor || matches!(first, Value::Function(_)) {
                         let proto = Self::function_prototype_singleton();
                         return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
@@ -699,6 +709,13 @@ impl<'a> Interp<'a> {
                 }
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
                 if prototype.is_none() {
+                    if let Some(kind) =
+                        zun_gc::with_current_heap(|heap| heap.typed_array_element(obj))
+                    {
+                        if let Some(proto) = self.builtin_prototype_by_name(kind.js_name()) {
+                            return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                        }
+                    }
                     let builtin =zun_gc::with_current_heap(|heap| {
                         if heap.array_len(obj).is_some() {
                             Some("Array")

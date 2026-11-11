@@ -225,7 +225,7 @@ impl Checker<'_> {
                 // A value the element type cannot take (a BigInt into a
                 // `BigInt64Array`, a string, ...) is converted at run time.
                 if !value.ty.is_error()
-                    && !self.is_assignable(value.ty, elem_ty)
+                    && (!self.is_assignable(value.ty, elem_ty) || value.ty == Ty::Any)
                     && !(elem_ty.is_int() && value.ty == Ty::F64)
                     && !matches!(value.ty, Ty::Int(_) | Ty::Float(_))
                 {

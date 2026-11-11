@@ -52,7 +52,7 @@ fn wrap_bits(n: f64, bits: u32) -> i64 {
 }
 
 impl Interp<'_> {
-    fn view_error(&mut self, class: &str, message: &str) -> RunError {
+    pub(crate) fn view_error(&mut self, class: &str, message: &str) -> RunError {
         match self.new_error_object(class, message) {
             Some(object) => RunError::Thrown(Value::Object(object)),
             None => RunError::Native(format!("{class}: {message}")),
@@ -1153,5 +1153,68 @@ impl Interp<'_> {
             }
         }
         Ok(true)
+    }
+}
+
+impl Interp<'_> {
+    /// `key in view` for a typed array: `Some(answer)` when `view` is one. A
+    /// numeric key is a present element only when in range (no chain lookup);
+    /// any other key answers for the geometry accessors and the shared methods.
+    pub(crate) fn typed_view_has(&mut self, view: zun_gc::Obj, key: &Value) -> Option<bool> {
+        crate::typed_arrays::element_of(view)?;
+        if let Some(n) = typed_numeric_key(key) {
+            let len = crate::typed_arrays::element_len(view).unwrap_or(0);
+            return Some(
+                n.fract() == 0.0
+                    && n >= 0.0
+                    && n < len as f64
+                    && !(n == 0.0 && n.is_sign_negative()),
+            );
+        }
+        let Value::Str(name) = key else {
+            return Some(false);
+        };
+        Some(matches!(
+            name.as_ref(),
+            "length"
+                | "byteLength"
+                | "byteOffset"
+                | "buffer"
+                | "BYTES_PER_ELEMENT"
+                | "constructor"
+                | "toString"
+                | "valueOf"
+                | "hasOwnProperty"
+                | "at"
+                | "copyWithin"
+                | "entries"
+                | "every"
+                | "fill"
+                | "filter"
+                | "find"
+                | "findIndex"
+                | "findLast"
+                | "findLastIndex"
+                | "forEach"
+                | "includes"
+                | "indexOf"
+                | "join"
+                | "keys"
+                | "lastIndexOf"
+                | "map"
+                | "reduce"
+                | "reduceRight"
+                | "reverse"
+                | "set"
+                | "slice"
+                | "some"
+                | "sort"
+                | "subarray"
+                | "toLocaleString"
+                | "toReversed"
+                | "toSorted"
+                | "values"
+                | "with"
+        ))
     }
 }

@@ -1019,6 +1019,8 @@ impl<'a> Interp<'a> {
                                     "Map"
                                 } else if heap.set_values(obj).is_some() {
                                     "Set"
+                                } else if let Some(kind) = heap.typed_array_element(obj) {
+                                    kind.js_name()
                                 } else {
                                     "Object"
                                 }
