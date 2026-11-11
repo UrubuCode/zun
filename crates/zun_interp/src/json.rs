@@ -480,6 +480,16 @@ impl Interp<'_> {
                         "TypeError: Do not know how to serialize a BigInt".into(),
                     ));
                 }
+                // A `JSON.rawJSON` box embeds its text verbatim.
+                if zun_gc::with_current_heap(|heap| heap.dynamic_is_raw_json(obj)) {
+                    let text = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get(obj, "rawJSON")
+                            .and_then(|any| Value::unbox_any(any, heap))
+                    });
+                    if let Some(Value::Str(text)) = text {
+                        return Ok(Some(text.to_string()));
+                    }
+                }
                 // Cycle detection against every ancestor currently on the path.
                 for ancestor in 1..slot {
                     if ancestor != slot && ctx.slot_get(ancestor).addr() == obj.addr() {

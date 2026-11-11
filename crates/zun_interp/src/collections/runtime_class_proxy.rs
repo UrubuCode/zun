@@ -61,6 +61,8 @@ impl<'a> Interp<'a> {
             let mut call_args = Vec::with_capacity(values.len() + 1);
             call_args.push(Value::Object(obj));
             call_args.extend(values);
+            let call_args = self.pack_rest_call_args(ctor, call_args);
+            let mut call_args = call_args;
             // Omitted trailing parameters carry the null sentinel that the
             // callee's default-parameter prologue consumes.
             let declared = self
@@ -236,6 +238,57 @@ impl<'a> Interp<'a> {
         Ok(Value::Void)
     }
 
+    /// Whether a function value receives the `this` argument of `apply` /
+    /// `bind` as its leading parameter. Receivers are positional for an
+    /// unbound `@this` closure, a class instance method and a receiver-taking
+    /// built-in. A plain function keeps the positional receiver only when the
+    /// full argument list (`total_args`, receiver included) still fits its
+    /// declared parameters; otherwise the receiver is dropped, as in
+    /// ECMAScript. A bound function never takes a receiver.
+    pub(crate) fn handle_takes_this(
+        &self,
+        target: zun_core::FunctionHandle,
+        total_args: usize,
+    ) -> bool {
+        if target.is_bound() {
+            return false;
+        }
+        if target.builtin_method().is_some_and(|kind| kind >= 16) {
+            return true;
+        }
+        let rid = target.method_rid();
+        let Some(method) = self
+            .module
+            .tables
+            .method_defs
+            .get((rid as usize).wrapping_sub(1))
+        else {
+            return false;
+        };
+        let name = self.module.strings.get(method.name);
+        let class_member = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .any(|def| (def.method_start..def.method_end).contains(&rid));
+        if name.contains("@this") || (class_member && !method.is_static && !name.starts_with('<')) {
+            return true;
+        }
+        let Some(body) = read_body(&self.module.code, method.body_offset).ok() else {
+            return false;
+        };
+        let declared =
+            (body.param_count as usize).saturating_sub(usize::from(target.environment().is_some()));
+        let rest = name.ends_with("@rest>")
+            || (method.signature.0 != 0 && self.module.blobs.get(method.signature) == b"R");
+        if rest {
+            // A leading fixed parameter before the rest can hold the receiver.
+            return declared >= 2;
+        }
+        total_args <= declared
+    }
+
     pub(crate) fn resolve_call_target(
         &self,
         mut handle: zun_core::FunctionHandle,
@@ -266,6 +319,15 @@ impl<'a> Interp<'a> {
                 }
                 Ok::<_, RunError>((target, prepended))
             })?;
+            // The first bound argument is `thisArg`; a target that has no
+            // receiver parameter (a plain function, or another bound
+            // function) ignores it.
+            let mut prepended = prepended;
+            let takes_this =
+                self.handle_takes_this(target, prepended.len() + call_args.len());
+            if !takes_this && !prepended.is_empty() {
+                prepended.remove(0);
+            }
             let mut combined = prepended;
             combined.append(&mut call_args);
             call_args = combined;

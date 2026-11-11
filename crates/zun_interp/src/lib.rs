@@ -738,7 +738,9 @@ impl Interp<'_> {
                     let index = pop(stack)?.as_int();
                     let array = pop(stack)?.as_object();
                     if index < 0 {
-                        return Err(RunError::Malformed("negative array index".into()));
+                        // A negative index reads `undefined`, as in JS.
+                        stack.push(Value::Void);
+                        continue;
                     }
                     // Reading past the end answers `undefined`, as in JS.
                     let past_end = zun_gc::with_current_heap(|heap| {

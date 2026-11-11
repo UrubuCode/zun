@@ -638,7 +638,9 @@ impl<'a> Interp<'a> {
             "objectIsFrozen" => self.col_object_core(name, args),
             "objectCreate" => self.col_object_core(name, args),
             "objectGetPrototypeOf" => self.col_object_core(name, args),
-            "objectJsonStringify" => self.col_object_core(name, args),
+            "objectJsonStringify" | "objectRawJson" | "objectIsRawJson" => {
+                self.col_object_core(name, args)
+            }
             "objectPrototype" => self.col_object_core(name, args),
             "regexpPrototype" | "stringPrototype" | "functionPrototype" => self.col_object_core(name, args),
             "objectSetPrototypeOf" | "reflectSetPrototypeOf" => self.col_object_core(name, args),

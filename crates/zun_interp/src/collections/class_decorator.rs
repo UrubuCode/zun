@@ -132,6 +132,23 @@ impl<'a> Interp<'a> {
                 };
                 self.class_symbol_methods
                     .insert((class_rid, symbol.get()), function);
+                // An instance symbol method is also a property of the class
+                // prototype object (`C.prototype[Symbol.iterator]`).
+                let instance_method = self
+                    .module
+                    .tables
+                    .method_defs
+                    .get((function.method_rid() as usize).wrapping_sub(1))
+                    .is_some_and(|method| {
+                        let name = self.module.strings.get(method.name);
+                        !method.is_static || name.contains("@this")
+                    });
+                if instance_method && !function.is_bound() && function.builtin_method().is_none() {
+                    let proto = self.class_prototype_object(class_rid);
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set_symbol_function(proto, symbol, function);
+                    });
+                }
                 // Subclasses inherit the symbol method unless they declare their own.
                 let count = self.module.tables.type_defs.len() as u32;
                 for rid in 1..=count {

@@ -537,6 +537,20 @@ impl Heap {
         }
     }
 
+    /// Mark a dynamic object as a `JSON.rawJSON` box.
+    pub fn dynamic_mark_raw_json(&mut self, object: Obj) {
+        if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            properties.mark_raw_json();
+        }
+    }
+
+    /// Whether a dynamic object is a `JSON.rawJSON` box.
+    pub fn dynamic_is_raw_json(&self, object: Obj) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.is_raw_json())
+    }
+
     /// Whether a dynamic object has been frozen.
     pub fn dynamic_is_frozen(&self, object: Obj) -> bool {
         self.dynamic_objects

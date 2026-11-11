@@ -304,6 +304,39 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // `Function.prototype.bind` on a function value reached through
+                // `any`: `[thisArg, ...partial]` becomes the bound arguments.
+                if let Value::Function(handle) = &receiver_concrete {
+                    if member.as_ref() == "bind" {
+                        let target = *handle;
+                        let unboxed = args[2..]
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Any(any) => {
+                                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .ok_or(RunError::BadToken)
+                                }
+                                other => Ok(other.clone()),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(unboxed.len());
+                            for (index, value) in unboxed.iter().enumerate() {
+                                let any = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                let _ = heap.array_set(array, index, any);
+                            }
+                            array
+                        });
+                        let bound = self.col_function(
+                            "functionBind",
+                            &[Value::Function(target), Value::Object(array)],
+                        )?;
+                        let bound = self.col_function("functionBox", &[bound])?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| bound.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // `Function.prototype.call/apply` on a function value reached
                 // through `any`.
                 if let Value::Function(handle) = &receiver_concrete {

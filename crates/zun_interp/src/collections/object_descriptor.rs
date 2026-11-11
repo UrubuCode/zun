@@ -259,9 +259,14 @@ impl<'a> Interp<'a> {
             }
             "objectDefineProperty" | "reflectDefineProperty" => {
                 let strict = name == "objectDefineProperty";
-                let proxy = match args.first().and_then(Self::class_token_of) {
-                    Some(token) => Self::class_expando_bag(token),
-                    None => object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
+                let function_bag = match args.first().map(unbox_arg) {
+                    Some(Ok(Value::Function(handle))) => Some(crate::function_expando_bag(handle)),
+                    _ => None,
+                };
+                let proxy = match (args.first().and_then(Self::class_token_of), function_bag) {
+                    (Some(token), _) => Self::class_expando_bag(token),
+                    (None, Some(bag)) => bag,
+                    (None, None) => object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
                         RunError::Native(
                             "TypeError: Object.defineProperty called on non-object".into(),
                         )
@@ -395,6 +400,43 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(roots[0]))
             }
             "objectGetOwnPropertyDescriptor" => {
+                // A function value owns `name` / `length` (read-only,
+                // non-enumerable, configurable); script-defined keys live in
+                // its expando bag.
+                if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
+                    let bag = crate::function_expando_bag(handle);
+                    return match args.get(1).and_then(crate::property_ops::prop_key) {
+                        Some(crate::property_ops::PropKey::Str(key)) => {
+                            if zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, &key)) {
+                                return Ok(match self.build_descriptor(bag, &key)? {
+                                    Some(d) => Value::Object(d),
+                                    None => Value::Void,
+                                });
+                            }
+                            if key != "name" && key != "length" {
+                                return Ok(Value::Void);
+                            }
+                            let value = self.function_meta(handle, &key).unwrap_or_else(|| {
+                                if key == "name" {
+                                    Value::Str("".into())
+                                } else {
+                                    Value::Float(0.0, zun_il::NumKind::F64)
+                                }
+                            });
+                            let out = zun_gc::with_current_heap_mut(|heap| {
+                                let out = heap.alloc_dynamic();
+                                let any = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                heap.dynamic_set(out, "value".to_owned(), any);
+                                heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(false));
+                                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(false));
+                                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(true));
+                                out
+                            });
+                            Ok(Value::Object(out))
+                        }
+                        _ => Ok(Value::Void),
+                    };
+                }
                 // A property a script defined on a class value lives in its bag.
                 if let Some(token) = args.first().and_then(Self::class_token_of) {
                     let bag = Self::class_expando_bag(token);
@@ -619,6 +661,28 @@ impl<'a> Interp<'a> {
                         });
                         return Ok(Value::Object(array));
                     }
+                }
+                // A function value owns `length` and `name` plus whatever its
+                // expando bag holds.
+                if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
+                    let bag = crate::function_expando_bag(handle);
+                    let mut names = vec!["length".to_owned(), "name".to_owned()];
+                    for key in self.object_own_names(bag)? {
+                        if !names.contains(&key) {
+                            names.push(key);
+                        }
+                    }
+                    let array = zun_gc::with_current_heap_mut(|heap| {
+                        let array = heap.alloc_array(names.len());
+                        for (index, name) in names.iter().enumerate() {
+                            let item = Value::Str(name.clone().into())
+                                .box_any(heap)
+                                .unwrap_or_else(zun_core::Any::null);
+                            let _ = heap.array_set(array, index, item);
+                        }
+                        array
+                    });
+                    return Ok(Value::Object(array));
                 }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

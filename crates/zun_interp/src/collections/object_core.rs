@@ -125,9 +125,14 @@ impl<'a> Interp<'a> {
                 }
                 // A class value lists the enumerable properties scripts defined on it.
                 let class_bag = args.first().and_then(Self::class_token_of);
-                let obj = match class_bag {
-                    Some(token) => Self::class_expando_bag(token),
-                    None => object(args.first().ok_or(RunError::BadToken)?)
+                let function_bag = match args.first().map(unbox_arg) {
+                    Some(Ok(Value::Function(handle))) => Some(crate::function_expando_bag(handle)),
+                    _ => None,
+                };
+                let obj = match (class_bag, function_bag) {
+                    (Some(token), _) => Self::class_expando_bag(token),
+                    (None, Some(bag)) => bag,
+                    (None, None) => object(args.first().ok_or(RunError::BadToken)?)
                         .ok_or(RunError::BadToken)?,
                 };
                 let entries = self.object_own_entries_impl(obj, false)?;
@@ -768,6 +773,38 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(prototype.unwrap_or_else(zun_core::Any::null)))
             }
             "objectJsonStringify" => self.json_stringify(args),
+            "objectRawJson" => {
+                let text = match args.first() {
+                    Some(Value::Str(text)) => text.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(zun_gc::with_current_heap_mut(|heap| {
+                    let obj = heap.alloc_dynamic();
+                    heap.dynamic_set_prototype(obj, Some(zun_core::Any::null()));
+                    let boxed = zun_core::Any::string(heap.intern_string(text));
+                    heap.dynamic_define_data(obj, "rawJSON", boxed, false, true, false);
+                    heap.dynamic_freeze(obj);
+                    heap.dynamic_mark_raw_json(obj);
+                    Value::Object(obj)
+                }))
+            }
+            "objectIsRawJson" => {
+                let raw = match args.first() {
+                    Some(Value::Object(obj)) => {
+                        zun_gc::with_current_heap(|heap| heap.dynamic_is_raw_json(*obj))
+                    }
+                    Some(Value::Any(any)) => any.as_object().is_some_and(|addr| {
+                        zun_gc::with_current_heap(|heap| {
+                            // SAFETY: the address came from a live boxed object.
+                            heap.dynamic_is_raw_json(unsafe {
+                                zun_gc::Obj::from_addr(addr as *mut u64)
+                            })
+                        })
+                    }),
+                    _ => false,
+                };
+                Ok(Value::Bool(raw))
+            }
             "objectPrototype" => {
                 let root = Self::object_prototype_singleton();
                 Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))

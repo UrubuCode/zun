@@ -32,7 +32,9 @@ impl<'a> Interp<'a> {
                         .collect::<Vec<_>>()
                 });
                 let mut call_args = Vec::with_capacity(1 + spread.len());
-                call_args.push(this_arg);
+                if self.handle_takes_this(target, 1 + spread.len()) {
+                    call_args.push(this_arg);
+                }
                 call_args.extend(spread);
                 self.invoke_function_value(target, call_args)
             }

@@ -32,6 +32,18 @@ impl Interp<'_> {
                 })
             });
             if let Some(Value::Function(handle)) = callee {
+                // A script-defined own `name` / `length` shadows the metadata.
+                let bag = crate::function_expando_bag(handle);
+                if let Some(own) =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get(bag, &name))
+                {
+                    if let Some(value) =
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(own, heap))
+                    {
+                        stack.push(value);
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 if let Some(meta) = self.function_meta(handle, &name) {
                     stack.push(meta);
                     return Ok(ArmFlow::Continue);
