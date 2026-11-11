@@ -176,6 +176,19 @@ impl Interp<'_> {
                 _ => {}
             }
         }
+        // A typed array / `ArrayBuffer` reached through `any` answers
+        // `length`/`byteLength`/`byteOffset`/`buffer` like the typed forms.
+        if let Value::Object(obj) = &concrete {
+            if matches!(
+                name.as_str(),
+                "length" | "byteLength" | "byteOffset" | "buffer" | "maxByteLength" | "resizable"
+            ) {
+                if let Some(answer) = crate::view_dyn::view_property(*obj, &name) {
+                    stack.push(answer);
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         // `size` of a Map / Set reached through `any`.
         if name == "size" {
             if let Value::Object(obj) = &concrete {
@@ -701,6 +714,29 @@ impl Interp<'_> {
                 return Ok(ArmFlow::Continue);
             }
         }
+        // A typed array reached through `any`: `v[i]` is the element
+        // (`undefined` out of range); `v.length` and friends by name.
+        {
+            let concrete = match &object_raw {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                    .unwrap_or(Value::Void),
+                other => other.clone(),
+            };
+            if let Value::Object(view) = &concrete {
+                if zun_gc::with_current_heap(|heap| heap.typed_array_element(*view).is_some()) {
+                    if let Some(at) = crate::view_dyn::element_index(&key) {
+                        stack.push(crate::view_dyn::read_element_or_undefined(*view, at));
+                        return Ok(ArmFlow::Continue);
+                    }
+                    if let Value::Str(name) = &key {
+                        if let Some(answer) = crate::view_dyn::view_property(*view, name) {
+                            stack.push(answer);
+                            return Ok(ArmFlow::Continue);
+                        }
+                    }
+                }
+            }
+        }
         if matches!(
             object_raw,
             Value::Int(..) | Value::Float(..) | Value::Bool(_)
@@ -1057,7 +1093,46 @@ impl Interp<'_> {
         } else {
             key
         };
-        let object = expando_receiver(pop(stack)?).as_object();
+        let object_raw = expando_receiver(pop(stack)?);
+        // A typed array reached through `any`: `v[i] = x` writes the
+        // element (coerced to the kind; out of range is dropped, as in JS).
+        {
+            let concrete = match &object_raw {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
+                other => Some(other.clone()),
+            };
+            if let (Some(Value::Object(view)), Some(at)) =
+                (concrete, crate::view_dyn::element_index(&key))
+            {
+                if zun_gc::with_current_heap(|heap| heap.typed_array_element(view).is_some()) {
+                    let element = match &value {
+                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                            .unwrap_or(Value::Void),
+                        other => other.clone(),
+                    };
+                    let element = match element {
+                        Value::Bool(flag) => {
+                            Value::Float(f64::from(u8::from(flag)), zun_il::NumKind::F64)
+                        }
+                        other => other,
+                    };
+                    if let Some(number) = match &element {
+                        Value::Int(..) | Value::Float(..) => Some(element.clone()),
+                        Value::Str(text) => Some(Value::Float(
+                            crate::collections::js_string_to_number(text),
+                            zun_il::NumKind::F64,
+                        )),
+                        _ => None,
+                    } {
+                        let _ = crate::view_dyn::write_js_element(view, at, &number);
+                    }
+                    // The assignment expression's value, as every store arm leaves it.
+                    stack.push(value);
+                    return Ok(ArmFlow::Next);
+                }
+            }
+        }
+        let object = object_raw.as_object();
         {
             let key_name: Option<String> = match &key {
                 Value::Str(text) => Some(text.to_string()),

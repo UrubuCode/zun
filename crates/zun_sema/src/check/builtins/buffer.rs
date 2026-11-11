@@ -560,10 +560,5 @@ impl Checker<'_> {
 /// The `nodeBuffer` native name for a Buffer reader/writer method, e.g.
 /// `readUInt16LE` -> `nodeBufferReadUInt16LE`.
 pub(in crate::check) fn buffer_accessor_native(method: &str) -> String {
-    let mut chars = method.chars();
-    let first = chars
-        .next()
-        .map(|c| c.to_ascii_uppercase())
-        .unwrap_or_default();
-    format!("nodeBuffer{first}{}", chars.as_str())
+    zun_natives::node_buffer_accessor_native(method)
 }

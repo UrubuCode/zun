@@ -685,6 +685,15 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Any(boxed));
                     }
                 }
+                // A typed array / `Buffer` / `ArrayBuffer` reached through `any`
+                // answers its methods through the natives the typed path uses
+                // (the shared `zun_natives::view_member` table). After the cheap
+                // string/array/Map/Set arms: the lookup only runs on their miss.
+                if let Some(result) = self.dynamic_view_call(namespace, &member, &call_args)? {
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    return Ok(Value::Any(boxed));
+                }
                 // A typed class instance reached through `any`: dispatch the
                 // named method (virtually) with the instance as receiver.
                 if !is_array
