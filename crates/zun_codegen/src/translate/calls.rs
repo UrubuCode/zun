@@ -192,6 +192,13 @@ impl Translator<'_> {
                 }
                 stack.push((r, kind));
             }
+        } else {
+            // A void callee pushes no native value, but the IL mirrors the
+            // interpreter (which pushes `Void`) and follows the call with a
+            // `Pop`. Push a throwaway placeholder so that `Pop` balances; it is
+            // never read (a void result has no uses in well-formed IL).
+            let placeholder = self.builder.ins().iconst(types::I32, 0);
+            stack.push((placeholder, JitKind::Bool));
         }
         // A direct/virtual callee may itself have propagated a throw
         // (through a bridged call); check and unwind/route if so.

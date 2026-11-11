@@ -269,14 +269,53 @@ impl<'a> JitHook<'a> {
             && backedge_targets.contains(&snapshot.target_pc)
     }
 
+    /// Whether the IL byte range `[start, end)` of `method_rid` allocates
+    /// (`NewObj`/`NewArray`) — such loops regress under OSR, so they stay
+    /// interpreted.
+    fn region_allocates(&self, method_rid: u32, start: usize, end: usize) -> bool {
+        let Some(method) = self.module.tables.method_defs.get(method_rid as usize - 1) else {
+            return false;
+        };
+        let Ok(body) = zun_module::read_body(&self.module.code, method.body_offset) else {
+            return false;
+        };
+        let Ok(instrs) = zun_il::decode_all(body.code) else {
+            return false;
+        };
+        let mut offset = 0usize;
+        for instr in &instrs {
+            if offset >= start
+                && offset < end
+                && matches!(
+                    instr.opcode,
+                    zun_il::Opcode::NewObj | zun_il::Opcode::NewArray
+                )
+            {
+                return true;
+            }
+            offset += instr.encoded_len();
+        }
+        false
+    }
+
     /// Run the conservative loop-OSR gate and compile the entry. Any failure
     /// yields `Rejected`, which is cached so it is never retried.
     fn build_osr_loop(&self, method_rid: u32, header_pc: usize) -> OsrLoop {
+        let Some((start, end)) = zun_codegen::loop_region(self.module, method_rid, header_pc)
+        else {
+            return OsrLoop::Rejected;
+        };
         if method_rid == 0
             || !self.is_osr_patchpoint_allowed(method_rid, header_pc)
-            || zun_codegen::loop_region(self.module, method_rid, header_pc).is_none()
             || !zun_codegen::loop_region_eligible(self.module, method_rid, header_pc)
         {
+            return OsrLoop::Rejected;
+        }
+        // A loop that allocates every iteration (NewObj/NewArray) is not a win
+        // under OSR: the native nursery fills and collects as often as the
+        // interpreter would, and the evacuating native collection is pricier, so
+        // the transfer can regress. Keep such loops interpreted.
+        if self.region_allocates(method_rid, start, end) {
             return OsrLoop::Rejected;
         }
         let mut jit = self.jit.borrow_mut();

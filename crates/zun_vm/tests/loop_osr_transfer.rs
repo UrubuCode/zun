@@ -69,42 +69,39 @@ fn oxc_module_top_level_for_loop_matches() {
     assert!(hook.osr_transfers() > 0, "loop OSR must have fired");
 }
 
-// ---- Object / array locals (GC stress) -------------------------------------
+// ---- Object / array input locals -------------------------------------------
 //
-// Note: a class with an explicit `constructor` is not yet JIT-eligible (a void
-// constructor call is followed by a `Pop`, which the native translator does not
-// model), so these classes use field initializers and plain field stores.
+// Object/array LOCALS are OSR-eligible, but a loop that ALLOCATES every
+// iteration (`new P()` / array literal in the body) is deliberately kept
+// interpreted: the native nursery fills and evacuates as often as the
+// interpreter would, so the transfer regresses rather than helps. These tests
+// cover the useful case — an object/array created BEFORE the loop and read
+// inside it — where the input local is rooted across the native loop.
 
 const P: &str = "class P { x: number = 0; y: number = 0; dist(): number { return this.x * this.x + this.y * this.y; } }\n";
 
 #[test]
-fn object_allocating_loop_matches_across_many_collections() {
+fn input_object_local_read_in_loop_matches() {
+    // `p` is created before the loop and only read inside it (no allocation in
+    // the body), so the loop OSRs with an Object input local.
     let src = format!(
-        "{P}function main() {{ let acc = 0; let i = 0; while (i < 120000) {{ const p = new P(); p.x = i; p.y = i + 1; acc = acc + p.dist(); i = i + 1; }} print(acc); }}"
+        "{P}function main() {{ const p = new P(); p.x = 3; p.y = 4; let acc = 0; let i = 0; while (i < 100000) {{ acc = acc + p.dist(); i = i + 1; }} print(acc); print(p.dist()); }}"
     );
     let (plain, hooked, transfers) = run_both(&src, 2);
     assert_eq!(plain, hooked);
-    assert!(transfers > 0, "object loop OSR must have fired");
+    assert!(transfers > 0, "object-input loop OSR must have fired");
 }
 
 #[test]
-fn input_object_local_survives_loop_and_is_read_after() {
+fn allocating_loop_stays_interpreted() {
+    // A loop that allocates each iteration must NOT OSR (it would regress), yet
+    // must still produce the same result.
     let src = format!(
-        "{P}function main() {{ const keep = new P(); keep.x = 3; keep.y = 4; let acc = 0; let i = 0; while (i < 100000) {{ const t = new P(); t.x = i; t.y = 1; acc = acc + t.dist() + keep.x; i = i + 1; }} print(acc); print(keep.dist()); }}"
+        "{P}function main() {{ let acc = 0; let i = 0; while (i < 2000) {{ const p = new P(); p.x = i; acc = acc + p.x; i = i + 1; }} print(acc); }}"
     );
     let (plain, hooked, transfers) = run_both(&src, 2);
     assert_eq!(plain, hooked);
-    assert!(transfers > 0, "loop OSR must have fired");
-}
-
-#[test]
-fn surviving_loop_object_is_returned_in_post_loop_locals() {
-    let src = format!(
-        "{P}function main() {{ let last = new P(); let i = 0; while (i < 100000) {{ last = new P(); last.x = i; last.y = i * 2; i = i + 1; }} print(last.x); print(last.y); print(last.dist()); let j = 0; let s = 0; while (j < 100000) {{ const q = new P(); q.x = j; s = s + q.x; j = j + 1; }} print(s); print(last.dist()); }}"
-    );
-    let (plain, hooked, transfers) = run_both(&src, 2);
-    assert_eq!(plain, hooked);
-    assert!(transfers > 0, "loop OSR must have fired");
+    assert_eq!(transfers, 0, "an allocating loop must stay interpreted");
 }
 
 #[test]
