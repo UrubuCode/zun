@@ -239,6 +239,23 @@ impl Checker<'_> {
                 });
             }
         }
+        // `Function.prototype` as a value: the shared prototype singleton.
+        if self.text(class_name) == "Function"
+            && fname == "prototype"
+            && !self.classes_by_name.contains_key("Function")
+            && cx.lookup("Function").is_none()
+        {
+            if let Some((id, _)) = zun_natives::resolve("collections", "functionPrototype") {
+                return Some(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: Vec::new(),
+                    },
+                    ty: Ty::Any,
+                    span,
+                });
+            }
+        }
         // `String.prototype` as a value: the shared prototype singleton.
         if self.text(class_name) == "String"
             && fname == "prototype"

@@ -213,46 +213,7 @@ impl Checker<'_> {
             }
             let target = self.check_expr(cx, &args[0]);
             let handler = self.check_expr(cx, &args[1]);
-            // A class descriptor target is boxed into a GC record (`classBox`)
-            // so the proxy can hold it and `new proxy(...)` can recover it.
-            let target = if matches!(target.kind, hir::ExprKind::CallBuiltin { id, .. }
-                if zun_natives::resolve("collections", "realmDescriptor")
-                    .map(|(rid, _)| rid) == Some(id))
-            {
-                let Some((box_id, _)) = zun_natives::resolve("collections", "classBox") else {
-                    self.error(span, "missing `classBox` intrinsic");
-                    return Some(self.poison(span));
-                };
-                let target_span = target.span;
-                hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin {
-                        id: box_id,
-                        args: vec![target],
-                    },
-                    ty: Ty::DynamicObject,
-                    span: target_span,
-                }
-            } else {
-                target
-            };
-            let (native_name, target) = if matches!(target.ty, Ty::Function(_)) {
-                let Some((box_id, _)) = zun_natives::resolve("collections", "functionBox") else {
-                    self.error(span, "missing `functionBox` intrinsic");
-                    return Some(self.poison(span));
-                };
-                let target_span = target.span;
-                let boxed = hir::Expr {
-                    kind: hir::ExprKind::CallBuiltin {
-                        id: box_id,
-                        args: vec![target],
-                    },
-                    ty: Ty::Any,
-                    span: target_span,
-                };
-                ("proxyNewCallable", boxed)
-            } else {
-                ("proxyNew", target)
-            };
+            let (native_name, target) = self.box_proxy_target(target, span);
             let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                 self.error(
                     span,
@@ -270,6 +231,55 @@ impl Checker<'_> {
             });
         }
         None
+    }
+
+    /// Prepare a `Proxy` target: a class descriptor is boxed into a GC record
+    /// (`classBox`) and a function into a `functionBox` record (built with
+    /// `proxyNewCallable`); data targets are used as they are. Returns the
+    /// native that builds the proxy and the prepared target.
+    pub(in crate::check) fn box_proxy_target(
+        &mut self,
+        target: hir::Expr,
+        span: Span,
+    ) -> (&'static str, hir::Expr) {
+        let target = if matches!(target.kind, hir::ExprKind::CallBuiltin { id, .. }
+            if zun_natives::resolve("collections", "realmDescriptor")
+                .map(|(rid, _)| rid) == Some(id))
+        {
+            let Some((box_id, _)) = zun_natives::resolve("collections", "classBox") else {
+                self.error(span, "missing `classBox` intrinsic");
+                return ("proxyNew", self.poison(span));
+            };
+            let target_span = target.span;
+            hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id: box_id,
+                    args: vec![target],
+                },
+                ty: Ty::DynamicObject,
+                span: target_span,
+            }
+        } else {
+            target
+        };
+        if matches!(target.ty, Ty::Function(_)) {
+            let Some((box_id, _)) = zun_natives::resolve("collections", "functionBox") else {
+                self.error(span, "missing `functionBox` intrinsic");
+                return ("proxyNew", self.poison(span));
+            };
+            let target_span = target.span;
+            let boxed = hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id: box_id,
+                    args: vec![target],
+                },
+                ty: Ty::Any,
+                span: target_span,
+            };
+            ("proxyNewCallable", boxed)
+        } else {
+            ("proxyNew", target)
+        }
     }
 
     /// The managed-collection globals (`Map`/`Set`/`WeakMap`/`WeakSet`/

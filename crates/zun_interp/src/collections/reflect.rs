@@ -97,6 +97,16 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectHas" => {
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if let Some(Value::Str(key)) = args.get(1) {
+                        let bag = Self::class_expando_bag(token);
+                        let found = zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, key))
+                            || self
+                                .user_class_rid(token)
+                                .is_some_and(|rid| self.class_has_own(rid, key));
+                        return Ok(Value::Bool(found));
+                    }
+                }
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let name = match args.get(1).ok_or(RunError::BadToken)? {
@@ -149,6 +159,16 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectDelete" => {
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if let Some(Value::Str(key)) = args.get(1) {
+                        let bag = Self::class_expando_bag(token);
+                        if zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, key)) {
+                            return Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_delete(bag, key)
+                            })));
+                        }
+                    }
+                }
                 if let Ok(Value::Any(descriptor)) = unbox_arg(args.first().ok_or(RunError::BadToken)?)
                 {
                     if let Some(rid) = descriptor
@@ -275,6 +295,65 @@ impl<'a> Interp<'a> {
                     }
                 }
                 self.reflect_set(args)
+            }
+            "reflectConstructNew" => {
+                let token = args
+                    .first()
+                    .and_then(Self::class_token_of)
+                    .ok_or_else(|| RunError::Native("TypeError: value is not a constructor".into()))?;
+                let array =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let values = self.read_array_values(array)?;
+                let built = if self.user_class_rid(token).is_some() {
+                    self.construct_class_from_descriptor(token, values)?
+                } else {
+                    let named = |this: &mut Self, name: &str| {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            let global = heap.global_object();
+                            heap.dynamic_get(global, name).and_then(|a| a.as_class_descriptor())
+                        })
+                        .is_some_and(|t| t == token)
+                            && {
+                                let _ = this;
+                                true
+                            }
+                    };
+                    let source = values.into_iter().next().unwrap_or(Value::Void);
+                    if named(self, "Map") {
+                        self.call_managed_collection("mapFromIterable", &[source])?
+                    } else if named(self, "Set") {
+                        self.call_managed_collection("setFromIterable", &[source])?
+                    } else {
+                        return Err(RunError::Native("TypeError: value is not a constructor".into()));
+                    }
+                };
+                // The result inherits `newTarget.prototype` when that is an object.
+                let new_target = args.get(2).cloned().unwrap_or(Value::Void);
+                let proto: Option<zun_gc::Obj> = match Self::class_token_of(&new_target) {
+                    Some(t) => match self.user_class_rid(t) {
+                        Some(rid) => Some(self.class_prototype_object(rid)),
+                        None => None,
+                    },
+                    None => match unbox_arg(&new_target) {
+                        Ok(Value::Function(handle)) => {
+                            let bag = crate::function_expando_bag(handle);
+                            zun_gc::with_current_heap(|heap| heap.dynamic_get(bag, "prototype"))
+                                .and_then(|a| a.as_object())
+                                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                        }
+                        _ => None,
+                    },
+                };
+                if let (Some(proto), Some(result)) = (proto, object(&built)) {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.ensure_instance_bag(result);
+                        heap.dynamic_set_prototype(
+                            result,
+                            Some(zun_core::Any::object(proto.addr() as usize)),
+                        )
+                    });
+                }
+                Ok(built)
             }
             "reflectConstruct" => {
                 let token = match args.first().ok_or(RunError::BadToken)? {

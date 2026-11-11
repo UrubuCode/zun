@@ -18,6 +18,10 @@ impl<'a> Interp<'a> {
                 let is_array = object(value)
                     .map(|obj| {
                         zun_gc::with_current_heap(|heap| {
+                            let mut obj = obj;
+                            while let Some(target) = heap.proxy_target(obj) {
+                                obj = target;
+                            }
                             heap.array_len(obj).is_some() && !heap.array_is_arguments(obj)
                         })
                     })
@@ -245,6 +249,9 @@ impl<'a> Interp<'a> {
                         None => Ok(Value::Void),
                     };
                 }
+                if zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some()) {
+                    return self.proxy_push_pop(target, is_push, items);
+                }
                 let length_value = zun_gc::with_current_heap(|heap| {
                     heap.dynamic_get(target, "length")
                         .and_then(|any| Value::unbox_any(any, heap))
@@ -366,11 +373,20 @@ impl<'a> Interp<'a> {
                 for index in 0..length {
                     // An absent index stays a hole so generic receivers keep `in` shape.
                     let element = self.dynamic_member_get(roots[0], &index.to_string())?;
-                    if matches!(element, Value::Void)
-                        && !zun_gc::with_current_heap(|heap| {
-                            heap.dynamic_has(roots[0], &index.to_string())
-                        })
-                    {
+                    let present = if zun_gc::with_current_heap(|heap| {
+                        heap.proxy_target(roots[0]).is_some()
+                    }) {
+                        matches!(element, Value::Void)
+                            .then(|| self.proxy_key_op(roots[0], &index.to_string(), false))
+                            .transpose()?
+                            .unwrap_or(true)
+                    } else {
+                        !matches!(element, Value::Void)
+                            || zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_has(roots[0], &index.to_string())
+                            })
+                    };
+                    if !present {
                         zun_gc::with_current_heap_mut(|heap| {
                             heap.array_push(roots[1], zun_core::Any::hole())
                         });
@@ -491,6 +507,19 @@ impl<'a> Interp<'a> {
                                 "Array.from: value is not array-like",
                             ))));
                         };
+                        // A proxy is read through its traps (`length`, then each index).
+                        if zun_gc::with_current_heap(|heap| heap.proxy_target(source).is_some()) {
+                            let list = self.call_managed_collection(
+                                "arrayFromArrayLike",
+                                &[Value::Object(source)],
+                            )?;
+                            if name == "arrayFrom" {
+                                return Ok(list);
+                            }
+                            let mut forwarded = args.to_vec();
+                            forwarded[0] = list;
+                            return self.call_managed_collection(name, &forwarded);
+                        }
                         // A typed array copies its numeric elements into a plain array.
                         if let Some(count) = crate::typed_arrays::element_len(source) {
                             let result =

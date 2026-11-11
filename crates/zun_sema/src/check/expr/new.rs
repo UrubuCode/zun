@@ -57,6 +57,27 @@ impl Checker<'_> {
             }
         }
         let callee = self.check_expr(cx, callee);
+        if callee.ty == Ty::Any {
+            // A dynamic callee may hold a proxy over a class: construct through
+            // it at run time (anything else throws a TypeError there).
+            let elements: Vec<Option<hir::Expr>> =
+                args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
+            let args_array = hir::Expr {
+                kind: hir::ExprKind::ArrayLiteral { elements },
+                ty: Ty::Array,
+                span,
+            };
+            if let Some((id, _)) = zun_natives::resolve("collections", "proxyConstruct") {
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![callee, args_array],
+                    },
+                    ty: Ty::Any,
+                    span,
+                };
+            }
+        }
         if matches!(callee.ty, Ty::Any | Ty::Function(_)) {
             // A dynamic callee reaches `new` as a plain value: only classes
             // are constructible, so anything else throws a TypeError

@@ -452,13 +452,29 @@ impl<'a> Interp<'a> {
     /// name (see [`ProxyRoute`]). A proxy with the trap routes through it; a
     /// proxy without it falls back to its target; a plain object operates on
     /// itself.
-    pub(crate) fn proxy_route(&self, obj: zun_gc::Obj, trap: &str) -> ProxyRoute {
-        match zun_gc::with_current_heap(|heap| heap.proxy_target(obj)) {
+    pub(crate) fn proxy_route(
+        &mut self,
+        obj: zun_gc::Obj,
+        trap: &str,
+    ) -> Result<ProxyRoute, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(obj)) {
+            return Err(self.revoked_proxy_error(trap));
+        }
+        Ok(match zun_gc::with_current_heap(|heap| heap.proxy_target(obj)) {
             Some(target) => match zun_gc::with_current_heap(|heap| heap.proxy_trap(obj, trap)) {
                 Some(callback) => ProxyRoute::Trap(callback, target),
                 None => ProxyRoute::Target(target),
             },
             None => ProxyRoute::NotProxy,
+        })
+    }
+
+    /// The `TypeError` every operation on a revoked proxy throws.
+    pub(crate) fn revoked_proxy_error(&mut self, op: &str) -> RunError {
+        let message = format!("Cannot perform '{op}' on a proxy that has been revoked");
+        match self.new_error_object("TypeError", &message) {
+            Some(object) => RunError::Thrown(Value::Object(object)),
+            None => RunError::Native(format!("TypeError: {message}")),
         }
     }
 }

@@ -230,6 +230,7 @@ impl Checker<'_> {
             if let Some((id, _)) = zun_natives::resolve("collections", "proxyRevocable") {
                 let target = self.check_expr(cx, &args[0]);
                 let handler = self.check_expr(cx, &args[1]);
+                let (_, target) = self.box_proxy_target(target, span);
                 return Some(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
                         id,

@@ -1218,6 +1218,38 @@ impl Interp<'_> {
                     let function = zun_gc::with_current_heap(|heap| {
                         crate::collections::unbox_function_box(function, heap)
                     });
+                    // A proxy reached through `any` is called through its `apply` trap
+                    // (or forwarded to the callable it wraps).
+                    if let Value::Object(proxy) = &function {
+                        if zun_gc::with_current_heap(|heap| heap.proxy_target(*proxy).is_some()) {
+                            let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                            let roots = [*proxy, array];
+                            let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                            for arg in &args {
+                                zun_gc::with_current_heap_mut(|heap| {
+                                    let boxed = arg.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                    heap.array_push(roots[1], boxed);
+                                });
+                            }
+                            let outcome = self.call_managed_collection(
+                                "proxyApply",
+                                &[Value::Object(roots[0]), Value::Null, Value::Object(roots[1])],
+                            );
+                            match outcome {
+                                Ok(result) => {
+                                    stack.push(result);
+                                    continue;
+                                }
+                                Err(RunError::Thrown(exception)) => {
+                                    if self.route_exception(&body, stack, pc, next - size, &exception) {
+                                        continue;
+                                    }
+                                    return Err(RunError::Thrown(exception));
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
+                    }
                     let Value::Function(handle) = function else {
                         // Calling a non-callable value is a catchable TypeError.
                         let what = match &function {
@@ -1229,6 +1261,16 @@ impl Interp<'_> {
                             Value::Any(any) if any.tag() == zun_core::AnyTag::ClassDescriptor => {
                                 "class"
                             }
+                            // A constructor record (a class value boxed into a GC
+                            // object) is a class; any other object is not callable.
+                            Value::Object(obj)
+                                if zun_gc::with_current_heap(|heap| {
+                                    heap.dynamic_get(*obj, "__classDesc").is_some()
+                                }) =>
+                            {
+                                "class"
+                            }
+                            Value::Object(_) => "object",
                             _ => "value",
                         };
                         if what == "value" {

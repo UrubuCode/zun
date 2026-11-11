@@ -147,6 +147,50 @@ pub(crate) const BUILTIN_STRING_ITER_NEXT: u32 = 19;
 pub(crate) const BUILTIN_ITER_SELF: u32 = 20;
 pub(crate) const BUILTIN_PROXY_REVOKE: u32 = 21;
 pub(crate) const BUILTIN_STRING_ITERATOR: u32 = 22;
+/// `get [Symbol.species]` of the built-in constructors: returns `this`.
+pub(crate) const BUILTIN_SPECIES_GETTER: u32 = 23;
+/// `Map.prototype[Symbol.iterator]` (the `entries` function) and
+/// `Set.prototype[Symbol.iterator]` (the `values` function).
+pub(crate) const BUILTIN_MAP_ITERATOR: u32 = 24;
+pub(crate) const BUILTIN_SET_ITERATOR: u32 = 25;
+/// First kind of the `Map.prototype` / `Set.prototype` method values; the kind
+/// selects a row of [`COLLECTION_METHODS`].
+pub(crate) const BUILTIN_COLLECTION_BASE: u32 = 64;
+/// `(class, js name, native, extra args, returns this)`.
+pub(crate) const COLLECTION_METHODS: [(&str, &str, &str, usize, bool); 9] = [
+    ("Map", "get", "mapGet", 1, false),
+    ("Map", "set", "mapSet", 2, true),
+    ("Map", "has", "mapHas", 1, false),
+    ("Map", "delete", "mapDelete", 1, false),
+    ("Map", "clear", "mapClear", 0, false),
+    ("Set", "add", "setAdd", 1, true),
+    ("Set", "has", "setHas", 1, false),
+    ("Set", "delete", "setDelete", 1, false),
+    ("Set", "clear", "setClear", 0, false),
+];
+/// First kind of the `DataView.prototype` accessor method values; the kind
+/// selects a row of [`DATA_VIEW_METHODS`].
+pub(crate) const BUILTIN_DV_BASE: u32 = 32;
+/// `(js name, native, element kind, is float)`; every accessor takes an optional
+/// little-endian flag except the single-byte widths.
+pub(crate) const DATA_VIEW_METHODS: [(&str, &str, zun_il::NumKind, bool); 16] = [
+    ("getInt8", "dataViewGetInt8", zun_il::NumKind::I8, false),
+    ("getUint8", "dataViewGetUint8", zun_il::NumKind::U8, false),
+    ("getInt16", "dataViewGetInt16", zun_il::NumKind::I16, false),
+    ("getUint16", "dataViewGetU16", zun_il::NumKind::U16, false),
+    ("getInt32", "dataViewGetInt32", zun_il::NumKind::I32, false),
+    ("getUint32", "dataViewGetU32", zun_il::NumKind::U32, false),
+    ("getFloat32", "dataViewGetFloat32", zun_il::NumKind::F32, true),
+    ("getFloat64", "dataViewGetF64", zun_il::NumKind::F64, true),
+    ("setInt8", "dataViewSetInt8", zun_il::NumKind::I8, false),
+    ("setUint8", "dataViewSetUint8", zun_il::NumKind::U8, false),
+    ("setInt16", "dataViewSetInt16", zun_il::NumKind::I16, false),
+    ("setUint16", "dataViewSetU16", zun_il::NumKind::U16, false),
+    ("setInt32", "dataViewSetInt32", zun_il::NumKind::I32, false),
+    ("setUint32", "dataViewSetU32", zun_il::NumKind::U32, false),
+    ("setFloat32", "dataViewSetFloat32", zun_il::NumKind::F32, true),
+    ("setFloat64", "dataViewSetF64", zun_il::NumKind::F64, true),
+];
 
 const OBJECT_PROTOTYPE_KEY: &str = "$Object.prototype";
 const REGEXP_PROTOTYPE_KEY: &str = "$RegExp.prototype";
@@ -229,6 +273,26 @@ impl Interp<'_> {
             );
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, "$String.prototype", any, false);
+            proto
+        })
+    }
+
+    /// The realm's shared `Function.prototype`: a plain dynamic object linked to
+    /// `Object.prototype`, the prototype of every built-in constructor value.
+    pub(crate) fn function_prototype_singleton() -> zun_gc::Obj {
+        let root = Self::object_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap
+                .dynamic_get(global, "$Function.prototype")
+                .and_then(|a| a.as_object())
+            {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, "$Function.prototype", any, false);
             proto
         })
     }
@@ -420,7 +484,30 @@ impl Interp<'_> {
                     );
                 }
             }
+            if let Some((kind, _)) = size_kind {
+                let class = if kind == BUILTIN_MAP_SIZE { "Map" } else { "Set" };
+                for (index, entry) in COLLECTION_METHODS.iter().enumerate() {
+                    if entry.0 == class {
+                        heap.dynamic_set_function(
+                            proto,
+                            entry.1.to_owned(),
+                            zun_core::FunctionHandle::new_builtin_method(
+                                BUILTIN_COLLECTION_BASE + index as u32,
+                            ),
+                        );
+                    }
+                }
+            }
             if let Some((kind, tag)) = size_kind {
+                heap.dynamic_set_symbol_function(
+                    proto,
+                    zun_core::WellKnownSymbol::Iterator.id(),
+                    zun_core::FunctionHandle::new_builtin_method(if kind == BUILTIN_MAP_SIZE {
+                        BUILTIN_MAP_ITERATOR
+                    } else {
+                        BUILTIN_SET_ITERATOR
+                    }),
+                );
                 heap.dynamic_define_accessor(
                     proto,
                     "size".to_owned(),
@@ -552,7 +639,27 @@ impl Interp<'_> {
                     None => Err(self.incompatible_receiver(what)),
                 }
             }
-            BUILTIN_ITER_SELF => Ok(this),
+            BUILTIN_ITER_SELF | BUILTIN_SPECIES_GETTER => Ok(this),
+            BUILTIN_MAP_ITERATOR | BUILTIN_SET_ITERATOR => {
+                let want_map = kind == BUILTIN_MAP_ITERATOR;
+                let what = if want_map {
+                    "Map.prototype.entries"
+                } else {
+                    "Set.prototype.values"
+                };
+                let source = this_obj
+                    .filter(|o| {
+                        zun_gc::with_current_heap(|heap| {
+                            if want_map {
+                                heap.map_len(*o).is_some()
+                            } else {
+                                heap.set_len(*o).is_some()
+                            }
+                        })
+                    })
+                    .ok_or_else(|| self.incompatible_receiver(what))?;
+                Ok(Value::Object(self.resolve_iterator(source)?))
+            }
             BUILTIN_STRING_ITERATOR => {
                 let text = match &this {
                     Value::Str(text) => Some(text.clone()),
@@ -566,6 +673,100 @@ impl Interp<'_> {
                     return Err(self.incompatible_receiver("String.prototype[Symbol.iterator]"));
                 };
                 self.call_managed_collection("stringIteratorNew", &[Value::Str(text)])
+            }
+            k if (BUILTIN_DV_BASE..BUILTIN_DV_BASE + DATA_VIEW_METHODS.len() as u32).contains(&k) => {
+                let (js_name, native, elem, is_float) =
+                    DATA_VIEW_METHODS[(k - BUILTIN_DV_BASE) as usize];
+                let view = this_obj
+                    .filter(|o| zun_gc::with_current_heap(|heap| heap.data_view_len(*o).is_some()))
+                    .ok_or_else(|| {
+                        self.incompatible_receiver(&format!("DataView.prototype.{js_name}"))
+                    })?;
+                let is_set = js_name.starts_with("set");
+                let number = |this: &mut Self, index: usize| -> Result<f64, RunError> {
+                    let raw = match _args.get(index) {
+                        Some(Value::Any(any)) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                .unwrap_or(Value::Void)
+                        }
+                        Some(other) => other.clone(),
+                        None => Value::Void,
+                    };
+                    this.to_number_value(raw)
+                };
+                let offset = number(self, 0)?;
+                let offset = if offset.is_nan() { 0.0 } else { offset.trunc() };
+                let mut call = vec![
+                    Value::Object(view),
+                    Value::Int(offset.max(0.0) as i64, zun_il::NumKind::U64),
+                ];
+                if is_set {
+                    let value = number(self, 1)?;
+                    call.push(if is_float {
+                        Value::Float(value, elem)
+                    } else {
+                        let wrapped = if value.is_finite() { value.trunc() as i128 as i64 } else { 0 };
+                        Value::Int(wrapped, elem)
+                    });
+                }
+                let wants_endian = !matches!(elem, zun_il::NumKind::I8 | zun_il::NumKind::U8);
+                if wants_endian {
+                    let flag = _args.get(if is_set { 2 } else { 1 }).cloned().unwrap_or(Value::Void);
+                    let flag = match flag {
+                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void),
+                        other => other,
+                    };
+                    call.push(Value::Bool(zun_gc::with_current_heap(|heap| {
+                        crate::collections::is_truthy(&flag, heap)
+                    })));
+                }
+                let result = self.call_managed_collection(native, &call)?;
+                Ok(match result {
+                    Value::Int(n, _) => Value::Float(n as f64, zun_il::NumKind::F64),
+                    Value::Bool(_) => Value::Void,
+                    other => other,
+                })
+            }
+            k if (BUILTIN_COLLECTION_BASE..BUILTIN_COLLECTION_BASE + COLLECTION_METHODS.len() as u32)
+                .contains(&k) =>
+            {
+                let (class, js_name, native, count, returns_this) =
+                    COLLECTION_METHODS[(k - BUILTIN_COLLECTION_BASE) as usize];
+                let is_map = class == "Map";
+                let receiver = this_obj
+                    .filter(|o| {
+                        zun_gc::with_current_heap(|heap| {
+                            if is_map {
+                                heap.map_len(*o).is_some()
+                            } else {
+                                heap.set_len(*o).is_some()
+                            }
+                        })
+                    })
+                    .ok_or_else(|| {
+                        self.incompatible_receiver(&format!("{class}.prototype.{js_name}"))
+                    })?;
+                let mut call = vec![Value::Object(receiver)];
+                for index in 0..count {
+                    let arg = _args.get(index).cloned().unwrap_or(Value::Void);
+                    let boxed = match arg {
+                        Value::Any(any) => any,
+                        other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void),
+                    };
+                    call.push(Value::Any(boxed));
+                }
+                let result = self.call_managed_collection(native, &call)?;
+                Ok(if returns_this {
+                    Value::Object(receiver)
+                } else {
+                    match result {
+                        Value::Bool(b) => Value::Bool(b),
+                        Value::Void => Value::Void,
+                        other => other,
+                    }
+                })
             }
             BUILTIN_PROXY_REVOKE => {
                 if let Some(address) = handle.environment() {
@@ -588,6 +789,29 @@ impl Interp<'_> {
             BUILTIN_ITER_SELF => "[Symbol.iterator]",
             BUILTIN_PROXY_REVOKE => "",
             BUILTIN_STRING_ITERATOR => "[Symbol.iterator]",
+            BUILTIN_SPECIES_GETTER => "get [Symbol.species]",
+            k if (BUILTIN_COLLECTION_BASE..BUILTIN_COLLECTION_BASE + COLLECTION_METHODS.len() as u32)
+                .contains(&k) =>
+            {
+                let entry = COLLECTION_METHODS[(k - BUILTIN_COLLECTION_BASE) as usize];
+                return Some(if name == "name" {
+                    Value::Str(entry.1.into())
+                } else {
+                    Value::Float(entry.3 as f64, zun_il::NumKind::F64)
+                });
+            }
+            BUILTIN_MAP_ITERATOR => "entries",
+            BUILTIN_SET_ITERATOR => "values",
+            k if (BUILTIN_DV_BASE..BUILTIN_DV_BASE + DATA_VIEW_METHODS.len() as u32).contains(&k) => {
+                let entry = DATA_VIEW_METHODS[(k - BUILTIN_DV_BASE) as usize];
+                if name == "name" {
+                    return Some(Value::Str(entry.0.into()));
+                }
+                let single = matches!(entry.2, zun_il::NumKind::I8 | zun_il::NumKind::U8);
+                let fixed = if entry.0.starts_with("set") { 2.0 } else { 1.0 };
+                let _ = single;
+                return Some(Value::Float(fixed, zun_il::NumKind::F64));
+            }
             _ => return None,
         };
         Some(if name == "name" {
@@ -755,6 +979,40 @@ impl Interp<'_> {
             .then(|| def.base.rid());
         }
         None
+    }
+
+    /// The class descriptor token carried by a value (a class value read
+    /// through `any`), user-defined or built-in.
+    pub(crate) fn class_token_of(value: &Value) -> Option<u32> {
+        match value {
+            Value::Any(any) => {
+                if let Some(token) = any.as_class_descriptor() {
+                    return Some(token);
+                }
+                match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
+                    Some(Value::Any(inner)) => inner.as_class_descriptor(),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The expando bag of a class value: a plain dynamic object, anchored on the
+    /// realm global, that holds the properties scripts define on a constructor
+    /// (`Reflect.defineProperty(Cls, ...)`) beyond its declared statics.
+    pub(crate) fn class_expando_bag(token: u32) -> zun_gc::Obj {
+        let key = format!("$classBag#{token}");
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(address) = heap.dynamic_get(global, &key).and_then(|a| a.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            }
+            let bag = heap.alloc_dynamic();
+            let any = zun_core::Any::object(bag.addr() as usize);
+            heap.dynamic_define(global, key, any, false);
+            bag
+        })
     }
 
     /// `Object.hasOwn(Class, name)`: whether the class value itself (not its

@@ -7,13 +7,15 @@ use super::{Heap, Obj};
 pub struct ProxyRecord {
     pub target: Obj,
     pub handler: Obj,
+    /// Set by `revoke()`: every operation on the proxy throws a `TypeError`.
+    pub revoked: bool,
 }
 
 impl Heap {
     pub fn alloc_proxy(&mut self, target: Obj, handler: Obj) -> Obj {
         let proxy = self.alloc(0, 0);
         self.proxies
-            .insert(proxy.addr() as usize, ProxyRecord { target, handler });
+            .insert(proxy.addr() as usize, ProxyRecord { target, handler, revoked: false });
         self.write_barrier(proxy, target.addr() as u64);
         self.write_barrier(proxy, handler.addr() as u64);
         proxy
@@ -29,10 +31,17 @@ impl Heap {
         let target = self.alloc_dynamic();
         let handler = self.alloc_dynamic();
         self.proxies
-            .insert(proxy.addr() as usize, ProxyRecord { target, handler });
+            .insert(proxy.addr() as usize, ProxyRecord { target, handler, revoked: true });
         self.write_barrier(proxy, target.addr() as u64);
         self.write_barrier(proxy, handler.addr() as u64);
         true
+    }
+
+    /// Whether `revoke()` has run for this proxy.
+    pub fn proxy_is_revoked(&self, proxy: Obj) -> bool {
+        self.proxies
+            .get(&(proxy.addr() as usize))
+            .is_some_and(|record| record.revoked)
     }
 
     pub fn proxy_target(&self, proxy: Obj) -> Option<Obj> {

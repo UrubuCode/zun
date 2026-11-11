@@ -736,6 +736,12 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "reflectSetPrototypeOf",
+            params: &[DynamicObject, Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "objectSetPrototypeOf",
             params: &[DynamicObject, Opaque],
             ret: Opaque,
@@ -1323,6 +1329,14 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Opaque,
             imp: unavailable,
         },
+        // `Reflect.construct(target, args, newTarget)`: built-in collection
+        // targets are built natively and given `newTarget.prototype`.
+        NativeFn {
+            name: "reflectConstructNew",
+            params: &[Opaque, Array, Opaque],
+            ret: Opaque,
+            imp: unavailable,
+        },
         NativeFn {
             name: "proxyConstruct",
             params: &[Proxy, Array],
@@ -1614,6 +1628,13 @@ pub const MODULE: crate::Module = crate::Module {
         // `RegExp.prototype` as a value: the shared prototype singleton.
         NativeFn {
             name: "regexpPrototype",
+            params: &[],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        // `Function.prototype` as a value: the shared prototype singleton.
+        NativeFn {
+            name: "functionPrototype",
             params: &[],
             ret: Opaque,
             imp: unavailable,

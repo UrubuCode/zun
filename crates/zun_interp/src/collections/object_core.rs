@@ -123,8 +123,13 @@ impl<'a> Interp<'a> {
                     }
                     _ => {}
                 }
-                let obj =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A class value lists the enumerable properties scripts defined on it.
+                let class_bag = args.first().and_then(Self::class_token_of);
+                let obj = match class_bag {
+                    Some(token) => Self::class_expando_bag(token),
+                    None => object(args.first().ok_or(RunError::BadToken)?)
+                        .ok_or(RunError::BadToken)?,
+                };
                 let entries = self.object_own_entries_impl(obj, false)?;
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(entries.len());
@@ -650,11 +655,24 @@ impl<'a> Interp<'a> {
                                 )));
                             }
                         }
+                        // A base-less class constructor inherits `Function.prototype`.
+                        let proto = Self::function_prototype_singleton();
+                        return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                    }
+                }
+                // A function value or a built-in constructor inherits from
+                // `Function.prototype`.
+                if let Ok(first) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    let is_builtin_ctor = matches!(&first, Value::Any(any)
+                        if any.as_class_descriptor().is_some_and(|t| self.user_class_rid(t).is_none()));
+                    if is_builtin_ctor || matches!(first, Value::Function(_)) {
+                        let proto = Self::function_prototype_singleton();
+                        return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
                     }
                 }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let obj = match self.proxy_route(proxy, "getPrototypeOf") {
+                let obj = match self.proxy_route(proxy, "getPrototypeOf")? {
                     ProxyRoute::Trap(callback, target) => {
                         let result =
                             self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
@@ -754,6 +772,10 @@ impl<'a> Interp<'a> {
                 let root = Self::object_prototype_singleton();
                 Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))
             }
+            "functionPrototype" => {
+                let proto = Self::function_prototype_singleton();
+                Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)))
+            }
             "stringPrototype" => {
                 let proto = Self::string_prototype_singleton();
                 Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)))
@@ -762,13 +784,24 @@ impl<'a> Interp<'a> {
                 let root = Self::regexp_prototype_singleton();
                 Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))
             }
-            "objectSetPrototypeOf" => {
+            "objectSetPrototypeOf" | "reflectSetPrototypeOf" => {
+                let reflect = name == "reflectSetPrototypeOf";
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let obj = match self.proxy_route(proxy, "setPrototypeOf") {
+                let obj = match self.proxy_route(proxy, "setPrototypeOf")? {
                     ProxyRoute::Trap(callback, target) => {
                         let prototype = args.get(1).ok_or(RunError::BadToken)?.clone();
-                        self.invoke_proxy_trap(callback, vec![Value::Object(target), prototype])?;
+                        let ok = self
+                            .invoke_proxy_trap(callback, vec![Value::Object(target), prototype])?;
+                        let ok = zun_gc::with_current_heap(|heap| is_truthy(&ok, heap));
+                        if reflect {
+                            return Ok(Value::Bool(ok));
+                        }
+                        if !ok {
+                            return Err(RunError::Native(
+                                "TypeError: 'setPrototypeOf' on proxy: trap returned falsish".into(),
+                            ));
+                        }
                         return Ok(Value::Object(proxy));
                     }
                     ProxyRoute::Target(target) => target,
@@ -779,6 +812,9 @@ impl<'a> Interp<'a> {
                     args.get(1).ok_or(RunError::BadToken)?,
                 );
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
+                if reflect {
+                    return Ok(Value::Bool(true));
+                }
                 Ok(Value::Object(obj))
             }
             _ => Err(RunError::BadToken),

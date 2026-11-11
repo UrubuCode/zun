@@ -258,9 +258,14 @@ impl<'a> Interp<'a> {
             }
             "objectDefineProperty" | "reflectDefineProperty" => {
                 let strict = name == "objectDefineProperty";
-                let proxy = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
-                    RunError::Native("TypeError: Object.defineProperty called on non-object".into())
-                })?;
+                let proxy = match args.first().and_then(Self::class_token_of) {
+                    Some(token) => Self::class_expando_bag(token),
+                    None => object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
+                        RunError::Native(
+                            "TypeError: Object.defineProperty called on non-object".into(),
+                        )
+                    })?,
+                };
                 let key_value =
                     match crate::property_ops::prop_key(args.get(1).ok_or(RunError::BadToken)?) {
                         Some(crate::property_ops::PropKey::Str(text)) => Value::Str(text.into()),
@@ -285,7 +290,7 @@ impl<'a> Interp<'a> {
                                 "TypeError: Property description must be an object".into(),
                             )
                         })?;
-                let obj = match self.proxy_route(proxy, "defineProperty") {
+                let obj = match self.proxy_route(proxy, "defineProperty")? {
                     ProxyRoute::Trap(callback, target) => {
                         let result = self.invoke_proxy_trap(
                             callback,
@@ -389,6 +394,76 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(roots[0]))
             }
             "objectGetOwnPropertyDescriptor" => {
+                // A property a script defined on a class value lives in its bag.
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    let bag = Self::class_expando_bag(token);
+                    match args.get(1).and_then(crate::property_ops::prop_key) {
+                        Some(crate::property_ops::PropKey::Str(key)) => {
+                            if zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, &key)) {
+                                return Ok(match self.build_descriptor(bag, &key)? {
+                                    Some(d) => Value::Object(d),
+                                    None => Value::Void,
+                                });
+                            }
+                        }
+                        Some(crate::property_ops::PropKey::Sym(symbol)) => {
+                            if let Some(d) = self.build_symbol_descriptor(bag, symbol) {
+                                return Ok(Value::Object(d));
+                            }
+                            if self.user_class_rid(token).is_some() {
+                                return Ok(Value::Void);
+                            }
+                        }
+                        None => {}
+                    }
+                }
+                // A built-in constructor owns an accessor `[Symbol.species]`
+                // (the collection / array / promise / regexp family only).
+                if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
+                    if let Some(token) = any.as_class_descriptor() {
+                        if self.user_class_rid(token).is_none() {
+                            let is_species = matches!(
+                                args.get(1).and_then(crate::property_ops::prop_key),
+                                Some(crate::property_ops::PropKey::Sym(symbol))
+                                    if symbol.get() == zun_core::WellKnownSymbol::Species.id().get()
+                            );
+                            let has_species = zun_gc::with_current_heap_mut(|heap| {
+                                let global = heap.global_object();
+                                ["Map", "Set", "Array", "Promise", "RegExp", "ArrayBuffer"]
+                                    .iter()
+                                    .any(|name| {
+                                        heap.dynamic_get(global, name)
+                                            .and_then(|a| a.as_class_descriptor())
+                                            == Some(token)
+                                    })
+                            });
+                            if is_species && has_species {
+                                let out = zun_gc::with_current_heap_mut(|heap| {
+                                    let out = heap.alloc_dynamic();
+                                    heap.dynamic_set_function(
+                                        out,
+                                        "get",
+                                        zun_core::FunctionHandle::new_builtin_method(
+                                            crate::property_ops::BUILTIN_SPECIES_GETTER,
+                                        ),
+                                    );
+                                    heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
+                                    heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(false));
+                                    heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(true));
+                                    out
+                                });
+                                return Ok(Value::Object(out));
+                            }
+                            if matches!(args.get(1), Some(Value::Any(_)))
+                                && args.get(1).and_then(crate::property_ops::prop_key).is_some_and(
+                                    |k| matches!(k, crate::property_ops::PropKey::Sym(_)),
+                                )
+                            {
+                                return Ok(Value::Void);
+                            }
+                        }
+                    }
+                }
                 if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
                     if let Some(rid) = any.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
                         if let Some(Value::Str(key)) = args.get(1) {
@@ -414,7 +489,7 @@ impl<'a> Interp<'a> {
                         _ => return Err(RunError::BadToken),
                     },
                 };
-                let obj = match self.proxy_route(proxy, "getOwnPropertyDescriptor") {
+                let obj = match self.proxy_route(proxy, "getOwnPropertyDescriptor")? {
                     ProxyRoute::Trap(callback, target) => {
                         let result = self.invoke_proxy_trap(
                             callback,
@@ -529,7 +604,7 @@ impl<'a> Interp<'a> {
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // `Reflect.ownKeys(proxy)` consults the `ownKeys` trap; the trap
                 // returns the key array directly.
-                let obj = match self.proxy_route(proxy, "ownKeys") {
+                let obj = match self.proxy_route(proxy, "ownKeys")? {
                     ProxyRoute::Trap(callback, target) => {
                         let result =
                             self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
@@ -653,7 +728,7 @@ impl<'a> Interp<'a> {
                 let Some(proxy) = object(arg) else {
                     return Ok(arg.clone());
                 };
-                let obj = match self.proxy_route(proxy, "preventExtensions") {
+                let obj = match self.proxy_route(proxy, "preventExtensions")? {
                     ProxyRoute::Trap(callback, target) => {
                         self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
                         return Ok(Value::Object(proxy));
@@ -673,7 +748,7 @@ impl<'a> Interp<'a> {
                 let Some(proxy) = object(arg) else {
                     return Ok(Value::Bool(false));
                 };
-                let obj = match self.proxy_route(proxy, "isExtensible") {
+                let obj = match self.proxy_route(proxy, "isExtensible")? {
                     ProxyRoute::Trap(callback, target) => {
                         let result =
                             self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
@@ -739,6 +814,13 @@ impl<'a> Interp<'a> {
                 // other object is `"object"`. `null` is `"object"` and
                 // `undefined`/absent is `"undefined"`, as in JavaScript.
                 let classify_object = |obj: zun_gc::Obj| {
+                    // A proxy is callable exactly when its (innermost) target is.
+                    let mut obj = obj;
+                    while let Some(inner) =
+                        zun_gc::with_current_heap(|heap| heap.proxy_target(obj))
+                    {
+                        obj = inner;
+                    }
                     if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) {
                         "bigint"
                     } else if zun_gc::with_current_heap(|heap| {

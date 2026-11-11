@@ -1067,7 +1067,7 @@ impl Heap {
             if handler.addr() != proxy.handler.addr() {
                 rewritten += 1;
             }
-            mapped_proxies.insert(mapped_address, proxies::ProxyRecord { target, handler });
+            mapped_proxies.insert(mapped_address, proxies::ProxyRecord { target, handler, revoked: proxy.revoked });
         }
         self.proxies = mapped_proxies;
         rewritten
