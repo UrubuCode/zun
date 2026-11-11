@@ -75,9 +75,11 @@ pub(super) fn convert_class_expression(
     // A class bound by a declarator takes the binding's name so that
     // `new Binding()` resolves statically (limitation: an inner
     // reference to a distinct class-expression name is not bound).
+    // A named class expression keeps its own name (so Inner.name and the inner
+    // self-binding work); the declarator then aliases the binding to it.
     let name_span = match (hint, class_expression.id.as_ref()) {
-        (Some(binding), _) => binding,
-        (None, Some(id)) => Span::new(id.span.start, id.span.end),
+        (_, Some(id)) => Span::new(id.span.start, id.span.end),
+        (Some(binding), None) => binding,
         (None, None) => Span::new(class_expression.span.start, class_expression.span.start + 5),
     };
     if let Some(id) = class_expression.id.as_ref() {

@@ -541,32 +541,47 @@ impl Checker<'_> {
         if !message.ty.is_error() && !self.is_assignable(message.ty, Ty::String) {
             self.error(message.span, format!("`{name}` message must be a string"));
         }
-        // The options object: arg1, or an empty dynamic object so the `.cause`
-        // read yields `undefined`.
-        let options = match args.get(1) {
-            Some(arg) => self.check_expr(cx, arg),
+        // `cause` = `options.cause` (a missing key reads back as `undefined`).
+        // A nullish options argument (`new Error("m", null)`) yields
+        // `undefined` through an optional-chain guard instead of a TypeError.
+        let cause = match args.get(1) {
+            Some(arg) => {
+                let guarded = ast::Expr::OptionalChain {
+                    object: Box::new(arg.clone()),
+                    body: Box::new(ast::Expr::Field {
+                        object: Box::new(ast::Expr::ChainRoot { depth: 0, span }),
+                        field: ast::synthetic_ident("cause"),
+                        span,
+                    }),
+                    span,
+                };
+                let checked = self.check_expr(cx, &guarded);
+                if checked.ty == Ty::Any || checked.ty.is_error() {
+                    checked
+                } else {
+                    hir::Expr {
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(checked),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    }
+                }
+            }
             None => hir::Expr {
-                kind: hir::ExprKind::DynamicObjectLiteral {
-                    entries: Vec::new(),
+                kind: hir::ExprKind::DynamicGet {
+                    object: Box::new(hir::Expr {
+                        kind: hir::ExprKind::DynamicObjectLiteral {
+                            entries: Vec::new(),
+                        },
+                        ty: Ty::DynamicObject,
+                        span,
+                    }),
+                    name: "cause".to_string(),
                 },
-                ty: Ty::DynamicObject,
+                ty: Ty::Any,
                 span,
             },
-        };
-        if !matches!(options.ty, Ty::DynamicObject | Ty::Any) && !options.ty.is_error() {
-            self.error(
-                options.span,
-                format!("`{name}` options argument must be an object"),
-            );
-        }
-        // `cause` = `options.cause` (a missing key reads back as `undefined`).
-        let cause = hir::Expr {
-            kind: hir::ExprKind::DynamicGet {
-                object: Box::new(options),
-                name: "cause".to_string(),
-            },
-            ty: Ty::Any,
-            span,
         };
         // Assemble the constructor arguments in field-slot order.
         let fields = self.full_fields(class_idx);

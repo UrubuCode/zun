@@ -187,6 +187,15 @@ impl Interp<'_> {
                 }
             }
         }
+        // Any other named read off a primitive string / number / boolean has no
+        // own properties here: it yields `undefined` rather than faulting.
+        if matches!(
+            concrete,
+            Value::Str(_) | Value::Int(..) | Value::Float(..) | Value::Bool(_)
+        ) {
+            stack.push(Value::Void);
+            return Ok(ArmFlow::Continue);
+        }
         // A RegExp object read through `any`: the flag accessors
         // and `source`/`flags`/`lastIndex`.
         if let Value::Object(regex) = &concrete {
