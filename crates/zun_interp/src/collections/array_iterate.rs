@@ -185,6 +185,8 @@ impl<'a> Interp<'a> {
                 let comparator = if name == "arraySortBy" {
                     match args.get(1).ok_or(RunError::BadToken)? {
                         Value::Function(handle) => Some(*handle),
+                        Value::Void => None,
+                        Value::Any(a) if a.tag() == zun_core::AnyTag::Void => None,
                         _ => return Err(RunError::BadToken),
                     }
                 } else {
