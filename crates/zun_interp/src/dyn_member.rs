@@ -1163,7 +1163,11 @@ impl Interp<'_> {
         // A typed array receiver: integer-indexed element write.
         if crate::typed_arrays::element_of(object).is_some() {
             match self.typed_view_index_set(object, &key, &value) {
-                Ok(true) => return Ok(ArmFlow::Continue),
+                Ok(true) => {
+                    // The assignment expression evaluates to the stored value.
+                    stack.push(value);
+                    return Ok(ArmFlow::Next);
+                }
                 Ok(false) => {}
                 Err(RunError::Thrown(exception)) => {
                     if self.route_exception(body, stack, pc, next - size, &exception) {

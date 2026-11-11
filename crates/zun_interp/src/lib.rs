@@ -728,7 +728,14 @@ impl Interp<'_> {
                 Opcode::NewArray => {
                     let length = pop(stack)?.as_int();
                     if length < 0 {
-                        return Err(RunError::Malformed("negative array length".into()));
+                        throw_native!(
+                            self,
+                            body,
+                            stack,
+                            pc,
+                            next - size,
+                            "RangeError: Invalid array length".to_string()
+                        );
                     }
                     let array =
                         zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length as usize));

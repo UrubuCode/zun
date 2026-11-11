@@ -297,6 +297,14 @@ fn check_impl(
     // name at run time, so if the module uses it, keep every mirror. Missing a
     // reader would silently corrupt a program, so this must only ever
     // over-include.
+    // Hidden computed-field key temps (`__ckN`) are only referenced from
+    // synthetic spans, so the source-text scan below cannot see their readers.
+    let computed_key_temps: Vec<String> = checker
+        .module_globals
+        .iter()
+        .filter(|name| name.starts_with("__ck"))
+        .cloned()
+        .collect();
     if checker.source.contains("eval(") || checker.source.contains("Function(") {
         checker.globals_read_in_functions = checker.module_globals.clone();
     } else {
@@ -325,6 +333,7 @@ fn check_impl(
             }
         }
     }
+    checker.globals_read_in_functions.extend(computed_key_temps);
     {
         let mut assigned: HashSet<String> = HashSet::new();
         for function in &program.functions {

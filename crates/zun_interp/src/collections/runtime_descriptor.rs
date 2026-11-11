@@ -87,7 +87,10 @@ impl<'a> Interp<'a> {
         // properties.
         if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(obj)) {
             let mut out: Vec<(String, Value)> = Vec::new();
-            for index in 0..len {
+            let present = zun_gc::with_current_heap(|heap| heap.array_present_indices(obj))
+                .unwrap_or_default();
+            let _ = len;
+            for index in present {
                 let element = zun_gc::with_current_heap(|heap| {
                     heap.array_get(obj, index)
                         .filter(|any| !any.is_hole())

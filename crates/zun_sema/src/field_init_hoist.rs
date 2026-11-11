@@ -37,6 +37,13 @@ fn find_word(source: &str, word: &str) -> Option<Span> {
     None
 }
 
+/// A synthetic hidden slot (`__cfN`) made by the OXC adapter for a computed
+/// class field key; its initializer defines the property on `this`, so it
+/// always has to run inside the constructor.
+fn is_computed_field_slot(field: &ast::ClassField) -> bool {
+    ast::synthetic_ident_text(field.name).is_some_and(|text| text.starts_with("__cf"))
+}
+
 fn needs_hoist(source: &str, init: &ast::Expr) -> bool {
     let span = init.span();
     let Some(text) = source.get(span.start as usize..span.end as usize) else {
@@ -76,18 +83,19 @@ pub(crate) fn hoist(source: &str, program: &ast::Program) -> Option<ast::Program
                     .any(|m| !m.is_static && name_is(source, &m.name, "constructor")))
             && class.fields.iter().any(|f| {
                 !f.is_static
-                    && !f.is_private
                     && f.decorators.is_empty()
-                    && f.initializer
-                        .as_deref()
-                        .is_some_and(|init| !is_void_default(init) && needs_hoist(source, init))
+                    && f.initializer.as_deref().is_some_and(|init| {
+                        !is_void_default(init)
+                            && (is_computed_field_slot(f)
+                                || (!f.is_private && needs_hoist(source, init)))
+                    })
             })
     };
     if !program.classes.iter().any(hoistable) {
         return None;
     }
-    let this_span = find_word(source, "this")?;
-    let ctor_span = find_word(source, "constructor")?;
+    let this_name = find_word(source, "this").map_or_else(|| ast::synthetic_ident("this"), |span| ast::Name { span });
+    let ctor_name = find_word(source, "constructor").map_or_else(|| ast::synthetic_ident("constructor"), |span| ast::Name { span });
     let mut out = program.clone();
     let mut changed = false;
     for class in &mut out.classes {
@@ -97,13 +105,17 @@ pub(crate) fn hoist(source: &str, program: &ast::Program) -> Option<ast::Program
         // Collect and neutralize the order-sensitive initializers.
         let mut statements: Vec<ast::Stmt> = Vec::new();
         for field in &mut class.fields {
-            if field.is_static || field.is_private || !field.decorators.is_empty() {
+            let computed_slot = is_computed_field_slot(field);
+            if field.is_static
+                || (field.is_private && !computed_slot)
+                || !field.decorators.is_empty()
+            {
                 continue;
             }
             let Some(init) = field.initializer.as_deref() else {
                 continue;
             };
-            if is_void_default(init) || !needs_hoist(source, init) {
+            if is_void_default(init) || !(computed_slot || needs_hoist(source, init)) {
                 continue;
             }
             let value = *field.initializer.take().expect("checked above");
@@ -116,12 +128,18 @@ pub(crate) fn hoist(source: &str, program: &ast::Program) -> Option<ast::Program
                 }),
                 span: field.name.span,
             }));
-            statements.push(ast::Stmt::Expr(ast::Expr::FieldAssign {
-                object: Box::new(ast::Expr::Ident(ast::Name { span: this_span })),
-                field: field.name,
-                value: Box::new(value),
-                span,
-            }));
+            if computed_slot {
+                // The initializer only defines the property on `this`; the
+                // hidden slot itself is never read.
+                statements.push(ast::Stmt::Expr(value));
+            } else {
+                statements.push(ast::Stmt::Expr(ast::Expr::FieldAssign {
+                    object: Box::new(ast::Expr::Ident(this_name)),
+                    field: field.name,
+                    value: Box::new(value),
+                    span,
+                }));
+            }
         }
         if statements.is_empty() {
             continue;
@@ -141,7 +159,7 @@ pub(crate) fn hoist(source: &str, program: &ast::Program) -> Option<ast::Program
             }
             None => {
                 class.methods.push(ast::Function {
-                    name: ast::Name { span: ctor_span },
+                    name: ctor_name,
                     type_params: Vec::new(),
                     decorators: Vec::new(),
                     params: Vec::new(),

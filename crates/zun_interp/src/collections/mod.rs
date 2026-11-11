@@ -818,6 +818,9 @@ pub(super) fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<S
         Value::Bool(value) => Some(value.to_string()),
         // A nested array joins recursively (`[[1, 2], 3].join()` is "1,2,3").
         Value::Object(obj) => {
+            if let Some(big) = heap.bigint_value(obj) {
+                return Some(big.to_string());
+            }
             let length = heap.array_len(obj)?;
             let parts: Vec<String> = (0..length)
                 .map(|index| {
