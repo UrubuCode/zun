@@ -215,6 +215,10 @@ impl Checker<'_> {
                 ("decodeURIComponent", false),
                 ("encodeURI", false),
                 ("decodeURI", false),
+                ("btoa", false),
+                ("atob", false),
+                ("escape", false),
+                ("unescape", false),
             ];
             for (name, is_object) in extra_globals {
                 if registry.iter().any(|(n, _)| n.as_str() == name) && name != "Reflect" {

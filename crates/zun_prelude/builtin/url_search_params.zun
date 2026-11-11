@@ -1,79 +1,96 @@
-// Nucleus `URLSearchParams` (WHATWG URL, prelude class).
+// `URLSearchParams` (WHATWG URL, prelude class).
 //
-//   new URLSearchParams(query)   leading "?" optional
-//   get / getAll / has / append / set / delete / toString
+//   new URLSearchParams(init?)   init: query string (leading "?" optional), an
+//                                array of pairs, a Map, a record, or another
+//                                URLSearchParams
+//   get / getAll / has / append / set / delete / sort / forEach / keys /
+//   values / entries / size / toString / [Symbol.iterator]
 //
-// Simplifications (documented, not defects):
-//   * The query is parsed lazily on first use (classes have no constructor
-//     bodies); the constructor accepts only a query string (no record / iterable init).
-//   * `get` returns "" (not null) for a missing name; use `has` to distinguish.
-//   * `forEach` (no function-typed parameters in prelude classes yet), `sort`,
-//     `size`, and `Symbol.iterator` are deferred.
-//   * Serialization follows application/x-www-form-urlencoded: space -> "+",
-//     bytes outside [A-Za-z0-9*-._] -> %XX over the UTF-8 encoding.
+// A `URLSearchParams` obtained from `URL.searchParams` is linked back to its
+// URL (`owner`): mutations rewrite the URL's query, and `URL.search` writes
+// refresh the list. Serialization follows application/x-www-form-urlencoded:
+// space -> "+", bytes outside [A-Za-z0-9*-._] -> %XX over the UTF-8 encoding.
 //
 // Self-contained over the `zun:core` native surface (string + nodeBuffer).
 
 import { string as upString, nodeBuffer as upBuffer } from "zun:core";
 
 class URLSearchParams {
-    query: string;
-    loaded: boolean = false;
-    names: Array = [];
-    values: Array = [];
+    ks: any = [];
+    vs: any = [];
+    owner: any = null;
 
-    // Parses `query` on first use (Zun classes have no constructor bodies: a
-    // `new` call just fills the fields in declaration order).
-    ensure(): void {
-        if (this.loaded) {
+    constructor(init?: any) {
+        if (init === undefined) {
             return;
         }
-        this.loaded = true;
-        let query = this.query;
-        let n: u64 = upString.length(query);
-        let start: u64 = 0;
-        if (n > 0) {
-            if (upString.charCodeAt(query, 0) == 63) {
-                start = 1;
-            }
+        if (typeof init === "string") {
+            this.parseQuery(init);
+            return;
         }
-        let i: u64 = start;
-        let partStart: u64 = start;
-        while (i <= n) {
-            let atEnd = i == n;
-            if (!atEnd) {
-                if (upString.charCodeAt(query, i) == 38) {
-                    atEnd = true;
+        if (init !== null && typeof init === "object") {
+            if (init instanceof URLSearchParams) {
+                const other: any = init;
+                for (let i = 0; i < other.ks.length; i++) {
+                    this.ks.push(other.ks[i]);
+                    this.vs.push(other.vs[i]);
                 }
+                return;
             }
-            if (atEnd) {
-                if (i > partStart) {
-                    this.parsePair(upString.substring(query, partStart, i));
+            const probe: any = init;
+            if (Array.isArray(probe) || probe instanceof Map || typeof probe[Symbol.iterator] === "function") {
+                for (const item of probe) {
+                    const pair: any = [];
+                    for (const part of item) {
+                        pair.push(part);
+                    }
+                    if (pair.length !== 2) {
+                        throw new TypeError("Each URLSearchParams pair must have exactly two items");
+                    }
+                    this.ks.push(String(pair[0]));
+                    this.vs.push(String(pair[1]));
                 }
-                partStart = i + 1;
+                return;
             }
-            i = i + 1;
+            const keys = Object.keys(probe);
+            for (let i = 0; i < keys.length; i++) {
+                this.ks.push(keys[i]);
+                this.vs.push(String(probe[keys[i]]));
+            }
+            return;
+        }
+        this.parseQuery(String(init));
+    }
+
+    // Replaces the list with the pairs parsed from `query`.
+    parseQuery(query: string): void {
+        this.ks = [];
+        this.vs = [];
+        let start = 0;
+        if (query.length > 0 && query.charAt(0) == "?") {
+            start = 1;
+        }
+        const parts = query.substring(start).split("&");
+        for (let i = 0; i < parts.length; i++) {
+            const part: string = parts[i];
+            if (part.length == 0) {
+                continue;
+            }
+            const eq = part.indexOf("=");
+            if (eq < 0) {
+                this.ks.push(URLSearchParams.decode(part));
+                this.vs.push("");
+            } else {
+                this.ks.push(URLSearchParams.decode(part.substring(0, eq)));
+                this.vs.push(URLSearchParams.decode(part.substring(eq + 1)));
+            }
         }
     }
 
-    parsePair(part: string): void {
-        let n: u64 = upString.length(part);
-        let eq: u64 = n;
-        let i: u64 = 0;
-        while (i < n) {
-            if (upString.charCodeAt(part, i) == 61) {
-                eq = i;
-                i = n;
-            } else {
-                i = i + 1;
-            }
-        }
-        if (eq == n) {
-            this.names.push(URLSearchParams.decode(part));
-            this.values.push("");
-        } else {
-            this.names.push(URLSearchParams.decode(upString.substring(part, 0, eq)));
-            this.values.push(URLSearchParams.decode(upString.substring(part, eq + 1, n)));
+    // Pushes the serialized list back into the owning URL, if any.
+    changed(): void {
+        if (this.owner !== null) {
+            this.owner.queryFromParams(this.toString());
         }
     }
 
@@ -193,110 +210,174 @@ class URLSearchParams {
 
     // --- API ---------------------------------------------------------------
 
-    get(name: string): string {
-        this.ensure();
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) == name) {
-                return this.values[i] as string;
-            }
-            i = i + 1;
-        }
-        return "";
+    get size(): number {
+        return this.ks.length;
     }
 
-    getAll(name: string): Array {
-        this.ensure();
-        let found: Array = [];
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) == name) {
-                found.push(this.values[i] as string);
+    get(name: any): any {
+        const key = String(name);
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
+                return this.vs[i];
             }
-            i = i + 1;
+        }
+        return null;
+    }
+
+    getAll(name: any): any {
+        const key = String(name);
+        const found: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
+                found.push(this.vs[i]);
+            }
         }
         return found;
     }
 
-    has(name: string): boolean {
-        this.ensure();
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) == name) {
-                return true;
+    has(name: any, value?: any): boolean {
+        const key = String(name);
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
+                if (value === undefined || this.vs[i] == String(value)) {
+                    return true;
+                }
             }
-            i = i + 1;
         }
         return false;
     }
 
-    append(name: string, value: string): void {
-        this.ensure();
-        this.names.push(name);
-        this.values.push(value);
+    append(name: any, value: any): void {
+        this.ks.push(String(name));
+        this.vs.push(String(value));
+        this.changed();
     }
 
-    // Removes every pair named `name`.
-    delete(name: string): void {
-        this.ensure();
-        let names: Array = [];
-        let values: Array = [];
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) != name) {
-                names.push(this.names[i] as string);
-                values.push(this.values[i] as string);
+    // Removes every pair named `name` (with the given value, when supplied).
+    delete(name: any, value?: any): void {
+        const key = String(name);
+        const names: any = [];
+        const values: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            let drop = this.ks[i] == key;
+            if (drop && value !== undefined) {
+                drop = this.vs[i] == String(value);
             }
-            i = i + 1;
+            if (!drop) {
+                names.push(this.ks[i]);
+                values.push(this.vs[i]);
+            }
         }
-        this.names = names;
-        this.values = values;
+        this.ks = names;
+        this.vs = values;
+        this.changed();
     }
 
     // Replaces the first pair named `name` (dropping the rest), or appends.
-    set(name: string, value: string): void {
-        this.ensure();
-        let names: Array = [];
-        let values: Array = [];
+    set(name: any, value: any): void {
+        const key = String(name);
+        const text = String(value);
+        const names: any = [];
+        const values: any = [];
         let placed = false;
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) == name) {
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
                 if (!placed) {
-                    names.push(name);
-                    values.push(value);
+                    names.push(key);
+                    values.push(text);
                     placed = true;
                 }
             } else {
-                names.push(this.names[i] as string);
-                values.push(this.values[i] as string);
+                names.push(this.ks[i]);
+                values.push(this.vs[i]);
             }
-            i = i + 1;
         }
         if (!placed) {
-            names.push(name);
-            values.push(value);
+            names.push(key);
+            values.push(text);
         }
-        this.names = names;
-        this.values = values;
+        this.ks = names;
+        this.vs = values;
+        this.changed();
+    }
+
+    // Stable sort by name, comparing UTF-16 code units.
+    sort(): void {
+        for (let i = 1; i < this.ks.length; i++) {
+            const n = this.ks[i];
+            const v = this.vs[i];
+            let j = i - 1;
+            while (j >= 0 && this.ks[j] > n) {
+                this.ks[j + 1] = this.ks[j];
+                this.vs[j + 1] = this.vs[j];
+                j = j - 1;
+            }
+            this.ks[j + 1] = n;
+            this.vs[j + 1] = v;
+        }
+        this.changed();
+    }
+
+    forEach(callback: any, thisArg?: any): void {
+        if (typeof callback !== "function") {
+            throw new TypeError("The callback provided as parameter 1 is not a function");
+        }
+        for (let i = 0; i < this.ks.length; i++) {
+            callback.call(thisArg, this.vs[i], this.ks[i], this);
+        }
+    }
+
+    // A plain-object iterator over a snapshot `items` list (iterator objects
+    // carry `next` and `[Symbol.iterator]`, so spread / for-of / Array.from work).
+    static listIterator(items: any): any {
+        let idx = 0;
+        const it: any = {
+            next: function (): any {
+                if (idx < items.length) {
+                    const v = items[idx];
+                    idx = idx + 1;
+                    return { value: v, done: false };
+                }
+                return { value: undefined, done: true };
+            },
+        };
+        it[Symbol.iterator] = function (): any {
+            return it;
+        };
+        return it;
+    }
+
+    pairList(): any {
+        const out: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            out.push([this.ks[i], this.vs[i]]);
+        }
+        return out;
+    }
+
+    keys(): any {
+        return URLSearchParams.listIterator(this.ks.slice());
+    }
+
+    values(): any {
+        return URLSearchParams.listIterator(this.vs.slice());
+    }
+
+    entries(): any {
+        return URLSearchParams.listIterator(this.pairList());
+    }
+
+    [Symbol.iterator](): any {
+        return URLSearchParams.listIterator(this.pairList());
     }
 
     toString(): string {
-        this.ensure();
         let out = "";
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
+        for (let i = 0; i < this.ks.length; i++) {
             if (i > 0) {
                 out = out + "&";
             }
-            out = out + URLSearchParams.encode(this.names[i] as string) + "=" + URLSearchParams.encode(this.values[i] as string);
-            i = i + 1;
+            out = out + URLSearchParams.encode(this.ks[i]) + "=" + URLSearchParams.encode(this.vs[i]);
         }
         return out;
     }

@@ -286,6 +286,24 @@ impl Heap {
                     }
                 }
             }
+            // An iterator keeps its source container alive through the side
+            // tables (its header slot is a raw address, not a typed reference).
+            {
+                let key = obj.addr() as usize;
+                let sources = [
+                    self.array_iterators.get(&key).map(|(source, _)| source.addr()),
+                    self.set_iterators.get(&key).map(|(source, _)| source.addr()),
+                    self.map_iterators.get(&key).map(|(source, _)| source.addr()),
+                ];
+                for source in sources.into_iter().flatten() {
+                    if let Some(&cidx) = self.by_addr.get(&(source as usize)) {
+                        if !self.records[cidx].marked {
+                            self.records[cidx].marked = true;
+                            work.push(cidx);
+                        }
+                    }
+                }
+            }
             if let Some(proxy) = self.proxies.get(&(obj.addr() as usize)) {
                 for child in [proxy.target, proxy.handler] {
                     if let Some(&cidx) = self.by_addr.get(&(child.addr() as usize)) {
@@ -398,6 +416,24 @@ impl Heap {
                         if !self.records[value_idx].marked {
                             self.records[value_idx].marked = true;
                             work.push(value_idx);
+                        }
+                    }
+                }
+            }
+            // An iterator keeps its source container alive through the side
+            // tables (its header slot is a raw address, not a typed reference).
+            {
+                let key = obj.addr() as usize;
+                let sources = [
+                    self.array_iterators.get(&key).map(|(source, _)| source.addr()),
+                    self.set_iterators.get(&key).map(|(source, _)| source.addr()),
+                    self.map_iterators.get(&key).map(|(source, _)| source.addr()),
+                ];
+                for source in sources.into_iter().flatten() {
+                    if let Some(&cidx) = self.by_addr.get(&(source as usize)) {
+                        if !self.records[cidx].marked {
+                            self.records[cidx].marked = true;
+                            work.push(cidx);
                         }
                     }
                 }

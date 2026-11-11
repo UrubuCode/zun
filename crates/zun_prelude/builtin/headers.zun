@@ -1,174 +1,430 @@
-// Nucleus `Headers` (Fetch, prelude class).
+// `Headers` and `FormData` (Fetch, prelude classes).
 //
-//   new Headers()                 empty
-//   Headers.fromLines(text)       parse "Name: Value" lines separated by "\n"
-//   get / has / set / append / delete / count / nameAt / valueAt / toLines
+//   new Headers(init?)   init: another Headers, an array of [name, value]
+//                        pairs, or a record
+//   get / has / set / append / delete / getSetCookie / forEach / keys / values /
+//   entries / [Symbol.iterator]
+//   Headers.fromLines(text)   parse "Name: Value" lines separated by "\n"
+//   count / nameAt / valueAt / toLines   raw insertion-order access
 //
-// Simplifications (documented, not defects):
-//   * Names are stored lower-cased (lookups are case-insensitive, and iteration
-//     yields lower-case names, as the web does).
-//   * `get` returns "" (not null) for a missing name; use `has` to distinguish.
-//   * `append` keeps repeated names as separate entries; `get` returns the
-//     first. No comma-joining. Iteration is by `count`/`nameAt`/`valueAt`
-//     (no function-typed parameters or Symbol.iterator in prelude classes yet).
-//   * Constructing from a record / array init is deferred.
+// Names are stored lower-cased and validated against the HTTP token grammar;
+// values lose surrounding HTTP whitespace and may not contain NUL, CR or LF.
+// Iteration is sorted by name with repeated names combined (", "), except
+// `set-cookie`, which is yielded as separate entries. `get` returns null for a
+// missing name.
 //
 // Self-contained over the `zun:core` string natives.
 
 import { string as hdrString } from "zun:core";
 
 class Headers {
-    names: Array = [];
-    values: Array = [];
+    ks: any = [];
+    vs: any = [];
+
+    constructor(init?: any) {
+        if (init === undefined || init === null) {
+            return;
+        }
+        if (typeof init !== "object" && typeof init !== "function") {
+            throw new TypeError("Headers init must be an object");
+        }
+        const probe: any = init;
+        if (probe instanceof Headers) {
+            for (let i = 0; i < probe.ks.length; i++) {
+                this.ks.push(probe.ks[i]);
+                this.vs.push(probe.vs[i]);
+            }
+            return;
+        }
+        if (Array.isArray(probe) || typeof probe[Symbol.iterator] === "function") {
+            for (const item of probe) {
+                const pair: any = [];
+                for (const part of item) {
+                    pair.push(part);
+                }
+                if (pair.length !== 2) {
+                    throw new TypeError("Each Headers pair must have exactly two items");
+                }
+                this.append(pair[0], pair[1]);
+            }
+            return;
+        }
+        const keys = Object.keys(probe);
+        for (let i = 0; i < keys.length; i++) {
+            this.append(keys[i], probe[keys[i]]);
+        }
+    }
+
+    // True when `name` is a non-empty HTTP token.
+    static isToken(name: string): boolean {
+        if (name.length == 0) {
+            return false;
+        }
+        const specials = "!#$%&'*+-.^_`|~";
+        for (let i = 0; i < name.length; i++) {
+            const c = name.charCodeAt(i);
+            const alnum = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+            if (!alnum && specials.indexOf(name.charAt(i)) < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static isHttpSpace(c: number): boolean {
+        return c == 9 || c == 10 || c == 13 || c == 32;
+    }
+
+    // Strips leading/trailing HTTP whitespace and rejects NUL, CR and LF.
+    static cleanValue(raw: any): string {
+        const text = String(raw);
+        let start = 0;
+        let end = text.length;
+        while (start < end && Headers.isHttpSpace(text.charCodeAt(start))) {
+            start++;
+        }
+        while (end > start && Headers.isHttpSpace(text.charCodeAt(end - 1))) {
+            end--;
+        }
+        const value = text.substring(start, end);
+        for (let i = 0; i < value.length; i++) {
+            const c = value.charCodeAt(i);
+            if (c == 0 || c == 10 || c == 13) {
+                throw new TypeError("Invalid header value");
+            }
+        }
+        return value;
+    }
+
+    static cleanName(raw: any): string {
+        const name = String(raw);
+        if (!Headers.isToken(name)) {
+            throw new TypeError("Invalid header name: " + name);
+        }
+        return name.toLowerCase();
+    }
 
     // Parses `Name: Value` lines (separated by "\n"); lines without a colon
     // are skipped.
     static fromLines(text: string): Headers {
         let headers = new Headers();
-        let n: u64 = hdrString.length(text);
-        let start: u64 = 0;
-        let i: u64 = 0;
-        while (i <= n) {
-            let atEnd = i == n;
-            if (!atEnd) {
-                if (hdrString.charCodeAt(text, i) == 10) {
-                    atEnd = true;
-                }
-            }
-            if (atEnd) {
-                if (i > start) {
-                    headers.appendLine(hdrString.substring(text, start, i));
-                }
-                start = i + 1;
-            }
-            i = i + 1;
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            headers.appendLine(lines[i]);
         }
         return headers;
     }
 
     appendLine(line: string): void {
-        let n: u64 = hdrString.length(line);
-        let colon: u64 = n;
-        let i: u64 = 0;
-        while (i < n) {
-            if (hdrString.charCodeAt(line, i) == 58) {
-                colon = i;
-                i = n;
-            } else {
-                i = i + 1;
-            }
-        }
-        if (colon == n) {
+        const colon = line.indexOf(":");
+        if (colon < 0) {
             return;
         }
-        let name = hdrString.trim(hdrString.substring(line, 0, colon));
-        let value = hdrString.trim(hdrString.substring(line, colon + 1, n));
-        this.append(name, value);
+        const name = line.substring(0, colon).trim();
+        if (name.length == 0) {
+            return;
+        }
+        this.append(name, line.substring(colon + 1).trim());
     }
 
     count(): u64 {
-        return this.names.length;
+        return this.ks.length;
     }
 
     nameAt(index: u64): string {
-        return this.names[index] as string;
+        return this.ks[index] as string;
     }
 
     valueAt(index: u64): string {
-        return this.values[index] as string;
+        return this.vs[index] as string;
     }
 
-    get(name: string): string {
-        let key = hdrString.toLowerCase(name);
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) == key) {
-                return this.values[i] as string;
+    get(name: any): any {
+        const key = Headers.cleanName(name);
+        let found = false;
+        let out = "";
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
+                if (found) {
+                    out = out + ", ";
+                }
+                out = out + this.vs[i];
+                found = true;
             }
-            i = i + 1;
         }
-        return "";
+        if (!found) {
+            return null;
+        }
+        return out;
     }
 
-    has(name: string): boolean {
-        let key = hdrString.toLowerCase(name);
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) == key) {
+    getSetCookie(): any {
+        const out: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == "set-cookie") {
+                out.push(this.vs[i]);
+            }
+        }
+        return out;
+    }
+
+    has(name: any): boolean {
+        const key = Headers.cleanName(name);
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
                 return true;
             }
-            i = i + 1;
         }
         return false;
     }
 
-    append(name: string, value: string): void {
-        this.names.push(hdrString.toLowerCase(name));
-        this.values.push(value);
+    append(name: any, value: any): void {
+        const key = Headers.cleanName(name);
+        const text = Headers.cleanValue(value);
+        this.ks.push(key);
+        this.vs.push(text);
     }
 
     // Removes every entry named `name`.
-    delete(name: string): void {
-        let key = hdrString.toLowerCase(name);
-        let names: Array = [];
-        let values: Array = [];
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) != key) {
-                names.push(this.names[i] as string);
-                values.push(this.values[i] as string);
+    delete(name: any): void {
+        const key = Headers.cleanName(name);
+        const names: any = [];
+        const values: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] != key) {
+                names.push(this.ks[i]);
+                values.push(this.vs[i]);
             }
-            i = i + 1;
         }
-        this.names = names;
-        this.values = values;
+        this.ks = names;
+        this.vs = values;
     }
 
     // Replaces the first entry named `name` (dropping the rest), or appends.
-    set(name: string, value: string): void {
-        let key = hdrString.toLowerCase(name);
-        let names: Array = [];
-        let values: Array = [];
+    set(name: any, value: any): void {
+        const key = Headers.cleanName(name);
+        const text = Headers.cleanValue(value);
+        const names: any = [];
+        const values: any = [];
         let placed = false;
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
-            if ((this.names[i] as string) == key) {
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
                 if (!placed) {
                     names.push(key);
-                    values.push(value);
+                    values.push(text);
                     placed = true;
                 }
             } else {
-                names.push(this.names[i] as string);
-                values.push(this.values[i] as string);
+                names.push(this.ks[i]);
+                values.push(this.vs[i]);
             }
-            i = i + 1;
         }
         if (!placed) {
             names.push(key);
-            values.push(value);
+            values.push(text);
         }
-        this.names = names;
-        this.values = values;
+        this.ks = names;
+        this.vs = values;
+    }
+
+    // The iteration view: [name, value] pairs sorted by name, repeated names
+    // combined except `set-cookie`.
+    sortedEntries(): any {
+        const unique: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            if (unique.indexOf(this.ks[i]) < 0) {
+                unique.push(this.ks[i]);
+            }
+        }
+        for (let i = 1; i < unique.length; i++) {
+            const n = unique[i];
+            let j = i - 1;
+            while (j >= 0 && unique[j] > n) {
+                unique[j + 1] = unique[j];
+                j = j - 1;
+            }
+            unique[j + 1] = n;
+        }
+        const out: any = [];
+        for (let u = 0; u < unique.length; u++) {
+            const name: string = unique[u];
+            if (name == "set-cookie") {
+                for (let i = 0; i < this.ks.length; i++) {
+                    if (this.ks[i] == name) {
+                        out.push([name, this.vs[i]]);
+                    }
+                }
+            } else {
+                out.push([name, this.get(name)]);
+            }
+        }
+        return out;
+    }
+
+    forEach(callback: any, thisArg?: any): void {
+        if (typeof callback !== "function") {
+            throw new TypeError("The callback provided as parameter 1 is not a function");
+        }
+        const entries: any = this.sortedEntries();
+        for (let i = 0; i < entries.length; i++) {
+            callback.call(thisArg, entries[i][1], entries[i][0], this);
+        }
+    }
+
+    keys(): any {
+        const entries: any = this.sortedEntries();
+        const out: any = [];
+        for (let i = 0; i < entries.length; i++) {
+            out.push(entries[i][0]);
+        }
+        return URLSearchParams.listIterator(out);
+    }
+
+    values(): any {
+        const entries: any = this.sortedEntries();
+        const out: any = [];
+        for (let i = 0; i < entries.length; i++) {
+            out.push(entries[i][1]);
+        }
+        return URLSearchParams.listIterator(out);
+    }
+
+    entries(): any {
+        return URLSearchParams.listIterator(this.sortedEntries());
+    }
+
+    [Symbol.iterator](): any {
+        return URLSearchParams.listIterator(this.sortedEntries());
     }
 
     // "Name: Value" lines joined by "\n" (the request-header wire form used by
     // `httpFetch`).
     toLines(): string {
         let out = "";
-        let n: u64 = this.names.length;
-        let i: u64 = 0;
-        while (i < n) {
+        for (let i = 0; i < this.ks.length; i++) {
             if (i > 0) {
                 out = out + "\n";
             }
-            out = out + (this.names[i] as string) + ": " + (this.values[i] as string);
-            i = i + 1;
+            out = out + (this.ks[i] as string) + ": " + (this.vs[i] as string);
         }
         return out;
+    }
+}
+
+// An ordered multimap of string (or blob-like object) values keyed by name.
+class FormData {
+    ks: any = [];
+    vs: any = [];
+
+    static coerce(value: any): any {
+        if (typeof value === "object" && value !== null) {
+            return value;
+        }
+        return String(value);
+    }
+
+    append(name: any, value: any, filename?: any): void {
+        this.ks.push(String(name));
+        this.vs.push(FormData.coerce(value));
+    }
+
+    delete(name: any): void {
+        const key = String(name);
+        const names: any = [];
+        const values: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] != key) {
+                names.push(this.ks[i]);
+                values.push(this.vs[i]);
+            }
+        }
+        this.ks = names;
+        this.vs = values;
+    }
+
+    get(name: any): any {
+        const key = String(name);
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
+                return this.vs[i];
+            }
+        }
+        return null;
+    }
+
+    getAll(name: any): any {
+        const key = String(name);
+        const out: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
+                out.push(this.vs[i]);
+            }
+        }
+        return out;
+    }
+
+    has(name: any): boolean {
+        const key = String(name);
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    set(name: any, value: any, filename?: any): void {
+        const key = String(name);
+        const text = FormData.coerce(value);
+        const names: any = [];
+        const values: any = [];
+        let placed = false;
+        for (let i = 0; i < this.ks.length; i++) {
+            if (this.ks[i] == key) {
+                if (!placed) {
+                    names.push(key);
+                    values.push(text);
+                    placed = true;
+                }
+            } else {
+                names.push(this.ks[i]);
+                values.push(this.vs[i]);
+            }
+        }
+        if (!placed) {
+            names.push(key);
+            values.push(text);
+        }
+        this.ks = names;
+        this.vs = values;
+    }
+
+    forEach(callback: any, thisArg?: any): void {
+        if (typeof callback !== "function") {
+            throw new TypeError("The callback provided as parameter 1 is not a function");
+        }
+        for (let i = 0; i < this.ks.length; i++) {
+            callback.call(thisArg, this.vs[i], this.ks[i], this);
+        }
+    }
+
+    keys(): any {
+        return URLSearchParams.listIterator(this.ks.slice());
+    }
+
+    values(): any {
+        return URLSearchParams.listIterator(this.vs.slice());
+    }
+
+    entries(): any {
+        const out: any = [];
+        for (let i = 0; i < this.ks.length; i++) {
+            out.push([this.ks[i], this.vs[i]]);
+        }
+        return URLSearchParams.listIterator(out);
+    }
+
+    [Symbol.iterator](): any {
+        return this.entries();
     }
 }

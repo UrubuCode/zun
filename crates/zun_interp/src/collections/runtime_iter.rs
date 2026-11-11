@@ -818,7 +818,14 @@ impl<'a> Interp<'a> {
                 .tables
                 .method_defs
                 .get((handle.method_rid() as usize).wrapping_sub(1))
-                .map(|method| self.module.strings.get(method.name).contains("@this"))
+                .map(|method| {
+                    let name = self.module.strings.get(method.name);
+                    // A declared class accessor (`get_x` / `set_x` instance
+                    // method) takes its receiver as the first parameter too.
+                    name.contains("@this")
+                        || (!method.is_static
+                            && (name.starts_with("get_") || name.starts_with("set_")))
+                })
                 .unwrap_or(false);
             if takes_this {
                 args.insert(0, Value::Object(receiver));

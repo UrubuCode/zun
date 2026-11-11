@@ -71,14 +71,14 @@ function structuredClone(value: any): any {
 }
 
 // Base64-encode a binary string (code points 0-255, as in the web `btoa`).
-function btoa(data: string): string {
-    let bytes = globalsBuffer.nodeBufferFromString(data, "latin1");
+function btoa(data?: any): string {
+    let bytes = globalsBuffer.nodeBufferFromString(String(data), "latin1");
     return globalsBuffer.nodeBufferToString(bytes, "base64", 0, bytes.length);
 }
 
 // Base64-decode to a binary string (inverse of `btoa`).
-function atob(data: string): string {
-    let bytes = globalsBuffer.nodeBufferFromString(data, "base64");
+function atob(data?: any): string {
+    let bytes = globalsBuffer.nodeBufferFromString(String(data), "base64");
     return globalsBuffer.nodeBufferToString(bytes, "latin1", 0, bytes.length);
 }
 
@@ -103,4 +103,152 @@ function __thisString(value: any): string {
         throw new TypeError("String.prototype method called on null or undefined");
     }
     return String(value);
+}
+
+// --- URI and legacy escaping globals (over `encodeURIComponent` / `decodeURIComponent`) ---
+
+function __hex2(code: number): string {
+    const digits = "0123456789ABCDEF";
+    return digits.charAt((code >> 4) & 15) + digits.charAt(code & 15);
+}
+
+// `encodeURI`: like `encodeURIComponent` but the reserved set `;/?:@&=+$,#` stays literal.
+function encodeURI(value?: any): string {
+    const s: string = String(value);
+    const keep = ";/?:@&=+$,#";
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+        const ch = s.charAt(i);
+        if (keep.indexOf(ch) >= 0) {
+            out += ch;
+            i += 1;
+        } else {
+            const c = s.charCodeAt(i);
+            let width = 1;
+            if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+                const d = s.charCodeAt(i + 1);
+                if (d >= 0xdc00 && d <= 0xdfff) {
+                    width = 2;
+                }
+            }
+            out += encodeURIComponent(s.substring(i, i + width));
+            i += width;
+        }
+    }
+    return out;
+}
+
+function __hexValue(c: number): number {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    return -1;
+}
+
+// `decodeURI`: like `decodeURIComponent` but escapes of reserved characters stay encoded.
+function decodeURI(value?: any): string {
+    const s: string = String(value);
+    const reserved = ";/?:@&=+$,#";
+    let out = "";
+    let run = "";
+    let i = 0;
+    while (i < s.length) {
+        if (s.charAt(i) == "%") {
+            const hi = i + 2 < s.length + 0 ? __hexValue(s.charCodeAt(i + 1)) : -1;
+            const lo = i + 2 < s.length + 0 ? __hexValue(s.charCodeAt(i + 2)) : -1;
+            if (hi >= 0 && lo >= 0 && hi * 16 + lo < 128 && reserved.indexOf(String.fromCharCode(hi * 16 + lo)) >= 0) {
+                if (run.length > 0) {
+                    out += decodeURIComponent(run);
+                    run = "";
+                }
+                out += s.substring(i, i + 3);
+            } else {
+                run += s.charAt(i);
+                if (i + 2 < s.length) {
+                    run += s.substring(i + 1, i + 3);
+                    i += 2;
+                }
+            }
+            i += 1;
+        } else {
+            if (run.length > 0) {
+                out += decodeURIComponent(run);
+                run = "";
+            }
+            out += s.charAt(i);
+            i += 1;
+        }
+    }
+    if (run.length > 0) {
+        out += decodeURIComponent(run);
+    }
+    return out;
+}
+
+// Legacy `escape`: Latin-1 as %XX, other code units as %uXXXX.
+function escape(value?: any): string {
+    const s: string = String(value);
+    const safe = "@*_+-./";
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+        const c = s.charCodeAt(i);
+        const ch = s.charAt(i);
+        if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || safe.indexOf(ch) >= 0) {
+            out += ch;
+        } else if (c < 256) {
+            out += "%" + __hex2(c);
+        } else {
+            out += "%u" + __hex2(c >> 8) + __hex2(c & 255);
+        }
+        i += 1;
+    }
+    return out;
+}
+
+function unescape(value?: any): string {
+    const s: string = String(value);
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+        const ch = s.charAt(i);
+        if (ch == "%") {
+            if (i + 5 < s.length + 0 && s.charAt(i + 1) == "u") {
+                const a = __hexValue(s.charCodeAt(i + 2));
+                const b = __hexValue(s.charCodeAt(i + 3));
+                const c = __hexValue(s.charCodeAt(i + 4));
+                const d = __hexValue(s.charCodeAt(i + 5));
+                if (a >= 0 && b >= 0 && c >= 0 && d >= 0) {
+                    out += String.fromCharCode(a * 4096 + b * 256 + c * 16 + d);
+                    i += 6;
+                    continue;
+                }
+            }
+            if (i + 2 < s.length) {
+                const a = __hexValue(s.charCodeAt(i + 1));
+                const b = __hexValue(s.charCodeAt(i + 2));
+                if (a >= 0 && b >= 0) {
+                    out += String.fromCharCode(a * 16 + b);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out += ch;
+        i += 1;
+    }
+    return out;
+}
+
+import { string as uriString } from "zun:core";
+
+// First-class forms of the two component coders (direct calls with one argument
+// are lowered to the same intrinsics by the checker).
+function encodeURIComponent(value?: any): string {
+    return uriString.encodeURIComponent(String(value));
+}
+
+function decodeURIComponent(value?: any): string {
+    return uriString.decodeURIComponent(String(value));
 }

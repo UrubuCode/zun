@@ -1,264 +1,802 @@
-// Nucleus `URL` (WHATWG URL, prelude class).
+// `URL` (WHATWG URL, prelude class).
 //
-//   new URL(input)   href, protocol, hostname, host, port, pathname, search,
-//                    hash, username, password, origin, searchParams
+//   new URL(input, base?)   parses `input` (resolved against `base` when
+//                           relative); invalid input throws a `TypeError`
+//   href, protocol, username, password, host, hostname, port, pathname,
+//   search, hash, origin, searchParams (all but `origin`/`searchParams` have
+//   setters), toString, toJSON, URL.canParse, URL.parse
 //
 // Simplifications (documented, not defects):
-//   * Only absolute `scheme://authority/...` URLs; the relative-URL `base`
-//     second argument is deferred.
-//   * Invalid input throws a `TypeError`, lazily: the URL is parsed on first
-//     property access (classes have no constructor bodies), not at `new`.
-//   * No IDNA/punycode, no IPv6 literal parsing, no path dot-segment
-//     normalization, no percent-encoding normalization of components.
-//   * The scheme and host are lower-cased; default ports (http 80, https 443,
-//     ftp 21, ws 80, wss 443) are dropped from `port`.
-//   * An empty path becomes "/". `searchParams` is a snapshot parsed from the
-//     query; mutating it does not rewrite `search`/`href`.
+//   * No IDNA/punycode and no IPv4/IPv6 canonicalization: hosts are
+//     percent-decoded, lower-cased and checked against the forbidden host code
+//     points; bracketed IPv6 literals are only shape-checked.
+//   * No Windows drive-letter quirks for `file:` URLs.
+//   * `searchParams` is live: it is linked to the URL through `owner`.
 //
-// Self-contained over the `zun:core` string natives.
+// Self-contained over the `zun:core` string natives; uses `URLSearchParams`.
 
 import { string as urlString } from "zun:core";
 
 class URL {
-    input: string;
-    loaded: boolean = false;
     scheme: string = "";
-    userinfo: string = "";
-    hostName: string = "";
+    user: string = "";
+    pass: string = "";
+    hasHost: boolean = false;
+    hostText: string = "";
     portText: string = "";
-    path: string = "/";
-    query: string = "";
-    fragment: string = "";
-    params: URLSearchParams = new URLSearchParams("");
+    opaque: boolean = false;
+    path: string = "";
+    query: any = null;
+    fragment: any = null;
+    params: any = null;
 
-    // Parses `input` on first use, so an invalid URL throws from the first
-    // property read rather than from `new` (classes have no constructor
-    // bodies: a `new` call just fills the fields in declaration order).
-    ensure(): void {
-        if (this.loaded) {
-            return;
-        }
-        this.loaded = true;
-        let input = this.input;
-        let n: u64 = urlString.length(input);
-        // scheme
-        let colon: u64 = n;
-        let i: u64 = 0;
-        while (i < n) {
-            let c: u32 = urlString.charCodeAt(input, i);
-            let ok = false;
-            if (c >= 97) {
-                if (c <= 122) {
-                    ok = true;
-                }
-            }
-            if (c >= 65) {
-                if (c <= 90) {
-                    ok = true;
-                }
-            }
-            if (i > 0) {
-                if (c >= 48) {
-                    if (c <= 57) {
-                        ok = true;
-                    }
-                }
-                if (c == 43) {
-                    ok = true;
-                }
-                if (c == 45) {
-                    ok = true;
-                }
-                if (c == 46) {
-                    ok = true;
-                }
-            }
-            if (c == 58) {
-                if (i > 0) {
-                    colon = i;
-                }
-                i = n;
+    constructor(input: any, base?: any) {
+        const text = String(input);
+        let baseUrl: any = null;
+        if (base !== undefined) {
+            if (base instanceof URL) {
+                baseUrl = base;
             } else {
-                if (!ok) {
-                    i = n;
-                } else {
-                    i = i + 1;
-                }
+                baseUrl = new URL(String(base));
             }
         }
-        if (colon == n) {
-            throw new TypeError("Invalid URL: " + input);
+        this.params = new URLSearchParams();
+        this.params.owner = this;
+        if (!this.parseWith(text, baseUrl)) {
+            throw new TypeError("Invalid URL: " + text);
         }
-        this.scheme = urlString.toLowerCase(urlString.substring(input, 0, colon));
-        if (colon + 3 > n) {
-            throw new TypeError("Invalid URL: " + input);
-        }
-        if (urlString.substring(input, colon + 1, colon + 3) != "//") {
-            throw new TypeError("Invalid URL: " + input);
-        }
-        let rest = urlString.substring(input, colon + 3, n);
-        // fragment
-        let hashAt: i32 = urlString.indexOf(rest, "#");
-        if (hashAt >= 0) {
-            let h = hashAt as u64;
-            let frag = urlString.substring(rest, h + 1, urlString.length(rest));
-            if (urlString.length(frag) > 0) {
-                this.fragment = "#" + frag;
-            }
-            rest = urlString.substring(rest, 0, h);
-        }
-        // query
-        let qAt: i32 = urlString.indexOf(rest, "?");
-        if (qAt >= 0) {
-            let q = qAt as u64;
-            let qs = urlString.substring(rest, q + 1, urlString.length(rest));
-            if (urlString.length(qs) > 0) {
-                this.query = "?" + qs;
-            }
-            rest = urlString.substring(rest, 0, q);
-        }
-        // authority / path
-        let slashAt: i32 = urlString.indexOf(rest, "/");
-        let authority = rest;
-        if (slashAt >= 0) {
-            let s = slashAt as u64;
-            authority = urlString.substring(rest, 0, s);
-            this.path = urlString.substring(rest, s, urlString.length(rest));
-        }
-        // userinfo
-        let atAt: i32 = urlString.lastIndexOf(authority, "@");
-        if (atAt >= 0) {
-            let a = atAt as u64;
-            this.userinfo = urlString.substring(authority, 0, a);
-            authority = urlString.substring(authority, a + 1, urlString.length(authority));
-        }
-        // port
-        let portAt: i32 = urlString.lastIndexOf(authority, ":");
-        if (portAt >= 0) {
-            let p = portAt as u64;
-            let portStr = urlString.substring(authority, p + 1, urlString.length(authority));
-            let pn: u64 = urlString.length(portStr);
-            let k: u64 = 0;
-            while (k < pn) {
-                let d: u32 = urlString.charCodeAt(portStr, k);
-                if (d < 48) {
-                    throw new TypeError("Invalid URL: " + input);
-                }
-                if (d > 57) {
-                    throw new TypeError("Invalid URL: " + input);
-                }
-                k = k + 1;
-            }
-            authority = urlString.substring(authority, 0, p);
-            if (pn > 0) {
-                if (!this.isDefaultPort(portStr)) {
-                    this.portText = portStr;
-                }
-            }
-        }
-        if (urlString.length(authority) == 0) {
-            throw new TypeError("Invalid URL: " + input);
-        }
-        this.hostName = urlString.toLowerCase(authority);
-        this.params = new URLSearchParams(this.query);
+        this.syncParams();
     }
 
-    isDefaultPort(port: string): boolean {
-        if (this.scheme == "http") {
-            return port == "80";
-        }
-        if (this.scheme == "ws") {
-            return port == "80";
-        }
-        if (this.scheme == "https") {
-            return port == "443";
-        }
-        if (this.scheme == "wss") {
-            return port == "443";
-        }
-        if (this.scheme == "ftp") {
-            return port == "21";
-        }
-        return false;
+    // --- character-level helpers -----------------------------------------------
+
+    static isSpecial(scheme: string): boolean {
+        return scheme == "http" || scheme == "https" || scheme == "ftp" || scheme == "ws" || scheme == "wss" || scheme == "file";
     }
 
-    get protocol(): string {
-        this.ensure();
-        return this.scheme + ":";
-    }
-
-    get hostname(): string {
-        this.ensure();
-        return this.hostName;
-    }
-
-    get port(): string {
-        this.ensure();
-        return this.portText;
-    }
-
-    get host(): string {
-        this.ensure();
-        if (urlString.length(this.portText) > 0) {
-            return this.hostName + ":" + this.portText;
+    static defaultPort(scheme: string): string {
+        if (scheme == "http" || scheme == "ws") {
+            return "80";
         }
-        return this.hostName;
-    }
-
-    get username(): string {
-        this.ensure();
-        let at: i32 = urlString.indexOf(this.userinfo, ":");
-        if (at >= 0) {
-            return urlString.substring(this.userinfo, 0, at as u64);
+        if (scheme == "https" || scheme == "wss") {
+            return "443";
         }
-        return this.userinfo;
-    }
-
-    get password(): string {
-        this.ensure();
-        let at: i32 = urlString.indexOf(this.userinfo, ":");
-        if (at >= 0) {
-            return urlString.substring(this.userinfo, (at as u64) + 1, urlString.length(this.userinfo));
+        if (scheme == "ftp") {
+            return "21";
         }
         return "";
     }
 
+    // Index of the ":" ending a valid scheme at the start of `s`, or -1.
+    static schemeEnd(s: string): number {
+        if (s.length == 0) {
+            return -1;
+        }
+        for (let i = 0; i < s.length; i++) {
+            const c = s.charCodeAt(i);
+            const alpha = (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+            if (c == 58) {
+                return i > 0 ? i : -1;
+            }
+            if (i == 0) {
+                if (!alpha) {
+                    return -1;
+                }
+            } else {
+                const ok = alpha || (c >= 48 && c <= 57) || c == 43 || c == 45 || c == 46;
+                if (!ok) {
+                    return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
+    static hexByte(c: number): string {
+        const digits = "0123456789ABCDEF";
+        return "%" + digits.charAt((c >> 4) & 15) + digits.charAt(c & 15);
+    }
+
+    // Percent-encodes one code point (one char, or a surrogate pair) as UTF-8.
+    static pctPiece(piece: string): string {
+        const c = piece.charCodeAt(0);
+        if (piece.length == 1) {
+            if (c < 128) {
+                return URL.hexByte(c);
+            }
+            if (c >= 0xd800 && c <= 0xdfff) {
+                return "%EF%BF%BD";
+            }
+        }
+        return urlString.encodeURIComponent(piece);
+    }
+
+    // Percent-encodes C0 controls, non-ASCII, DEL and every char in `set`.
+    static pct(s: string, set: string): string {
+        let out = "";
+        let i = 0;
+        while (i < s.length) {
+            const c = s.charCodeAt(i);
+            const ch = s.charAt(i);
+            if (c < 0x20 || c > 0x7e || set.indexOf(ch) >= 0) {
+                let width = 1;
+                if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+                    const d = s.charCodeAt(i + 1);
+                    if (d >= 0xdc00 && d <= 0xdfff) {
+                        width = 2;
+                    }
+                }
+                out += URL.pctPiece(s.substring(i, i + width));
+                i += width;
+            } else {
+                out += ch;
+                i += 1;
+            }
+        }
+        return out;
+    }
+
+    static pathSet(): string {
+        return " \"#<>?`{}";
+    }
+
+    static userSet(): string {
+        return " \"#<>?`{}/:;=@[\\]^|";
+    }
+
+    // Removes leading/trailing C0 controls and spaces, then all tab/newline.
+    static clean(input: string): string {
+        let start = 0;
+        let end = input.length;
+        while (start < end && input.charCodeAt(start) <= 32) {
+            start++;
+        }
+        while (end > start && input.charCodeAt(end - 1) <= 32) {
+            end--;
+        }
+        const trimmed = input.substring(start, end);
+        let out = "";
+        for (let i = 0; i < trimmed.length; i++) {
+            const c = trimmed.charCodeAt(i);
+            if (c != 9 && c != 10 && c != 13) {
+                out += trimmed.charAt(i);
+            }
+        }
+        return out;
+    }
+
+    // Backslashes become forward slashes (the special-scheme path separator).
+    static fwd(text: string): string {
+        let out = "";
+        for (let i = 0; i < text.length; i++) {
+            const ch = text.charAt(i);
+            out += ch == "\\" ? "/" : ch;
+        }
+        return out;
+    }
+
+    static isSlash(c: string, special: boolean): boolean {
+        return c == "/" || (special && c == "\\");
+    }
+
+    // Parses a host; null when it is invalid.
+    static parseHost(raw: string, special: boolean): any {
+        if (raw.charAt(0) == "[") {
+            if (raw.charAt(raw.length - 1) != "]") {
+                return null;
+            }
+            const inner = raw.substring(1, raw.length - 1);
+            if (inner.indexOf(":") < 0) {
+                return null;
+            }
+            for (let i = 0; i < inner.length; i++) {
+                const c = inner.charCodeAt(i);
+                const ok = (c >= 48 && c <= 58) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102) || c == 46;
+                if (!ok) {
+                    return null;
+                }
+            }
+            return raw.toLowerCase();
+        }
+        const forbidden = " #/:<>?@[\\]^|";
+        if (!special) {
+            for (let i = 0; i < raw.length; i++) {
+                const c = raw.charCodeAt(i);
+                if (c < 0x20 || c == 0x7f || (forbidden.indexOf(raw.charAt(i)) >= 0)) {
+                    return null;
+                }
+            }
+            return URL.pct(raw, "");
+        }
+        let decoded = raw;
+        try {
+            decoded = urlString.decodeURIComponent(raw);
+        } catch (e: any) {
+            decoded = raw;
+        }
+        decoded = decoded.toLowerCase();
+        if (decoded.length == 0) {
+            return null;
+        }
+        for (let i = 0; i < decoded.length; i++) {
+            const c = decoded.charCodeAt(i);
+            if (c <= 0x20 || c == 0x7f || c == 37 || forbidden.indexOf(decoded.charAt(i)) >= 0) {
+                return null;
+            }
+        }
+        return decoded;
+    }
+
+    // Normalises a path. `raw` starts with "/" (absolute) or is a relative path
+    // merged onto `stack` (the base path's directory segments).
+    static buildPath(raw: string, special: boolean, stack: any): string {
+        let text = raw;
+        if (special) {
+            text = URL.fwd(text);
+        }
+        if (text.charAt(0) == "/") {
+            text = text.substring(1);
+        }
+        const parts = text.split("/");
+        for (let i = 0; i < parts.length; i++) {
+            const p: string = parts[i];
+            const last = i == parts.length - 1;
+            const lower = p.toLowerCase();
+            const dot2 = lower == ".." || lower == ".%2e" || lower == "%2e." || lower == "%2e%2e";
+            const dot1 = lower == "." || lower == "%2e";
+            if (dot2) {
+                if (stack.length > 0) {
+                    stack.pop();
+                }
+                if (last) {
+                    stack.push("");
+                }
+            } else if (dot1) {
+                if (last) {
+                    stack.push("");
+                }
+            } else {
+                stack.push(URL.pct(p, URL.pathSet()));
+            }
+        }
+        return "/" + stack.join("/");
+    }
+
+    // --- parsing -----------------------------------------------------------------
+
+    // Parses `authority` (userinfo@host:port) into this URL's fields.
+    parseAuthority(authority: string, special: boolean, allowEmpty: boolean): boolean {
+        let auth = authority;
+        let user = "";
+        let pass = "";
+        const at = auth.lastIndexOf("@");
+        if (at >= 0) {
+            const cred = auth.substring(0, at);
+            auth = auth.substring(at + 1);
+            const colon = cred.indexOf(":");
+            if (colon >= 0) {
+                user = URL.pct(cred.substring(0, colon), URL.userSet());
+                pass = URL.pct(cred.substring(colon + 1), URL.userSet());
+            } else {
+                user = URL.pct(cred, URL.userSet());
+            }
+        }
+        let hostPart = auth;
+        let portPart = "";
+        const bracketEnd = auth.indexOf("]");
+        const colonAt = auth.lastIndexOf(":");
+        if (colonAt >= 0 && colonAt > bracketEnd) {
+            hostPart = auth.substring(0, colonAt);
+            portPart = auth.substring(colonAt + 1);
+        }
+        let port = "";
+        if (portPart.length > 0) {
+            for (let i = 0; i < portPart.length; i++) {
+                const c = portPart.charCodeAt(i);
+                if (c < 48 || c > 57) {
+                    return false;
+                }
+            }
+            const n = parseInt(portPart, 10);
+            if (n > 65535) {
+                return false;
+            }
+            port = String(n);
+            if (port == URL.defaultPort(this.scheme)) {
+                port = "";
+            }
+        }
+        if (hostPart.length == 0) {
+            if (special && !allowEmpty) {
+                return false;
+            }
+            if (user.length > 0 || pass.length > 0 || portPart.length > 0) {
+                return false;
+            }
+            this.hostText = "";
+        } else {
+            const host: any = URL.parseHost(hostPart, special);
+            if (host === null) {
+                return false;
+            }
+            this.hostText = String(host);
+        }
+        this.hasHost = true;
+        this.user = user;
+        this.pass = pass;
+        this.portText = port;
+        return true;
+    }
+
+    // Parses `input` against `base` (a URL or null) into this object.
+    parseWith(input: string, base: any): boolean {
+        const s = URL.clean(input);
+        let rest = s;
+        let scheme = "";
+        let hasScheme = false;
+        const end = URL.schemeEnd(s);
+        if (end > 0) {
+            scheme = s.substring(0, end).toLowerCase();
+            rest = s.substring(end + 1);
+            hasScheme = true;
+        }
+        let special = hasScheme ? URL.isSpecial(scheme) : false;
+        // A special scheme equal to the base's, not followed by a slash, is relative.
+        if (hasScheme && special && scheme != "file" && base !== null && base.scheme == scheme) {
+            if (rest.length == 0 || !URL.isSlash(rest.charAt(0), true)) {
+                hasScheme = false;
+            }
+        }
+        let frag: any = null;
+        const hashAt = rest.indexOf("#");
+        if (hashAt >= 0) {
+            frag = URL.pct(rest.substring(hashAt + 1), " \"<>`");
+            rest = rest.substring(0, hashAt);
+        }
+        let qry: any = null;
+        const qAt = rest.indexOf("?");
+        let querySet = " \"#<>";
+        if (qAt >= 0) {
+            qry = rest.substring(qAt + 1);
+            rest = rest.substring(0, qAt);
+        }
+        if (hasScheme) {
+            this.scheme = scheme;
+            this.user = "";
+            this.pass = "";
+            this.portText = "";
+            this.hasHost = false;
+            this.hostText = "";
+            this.opaque = false;
+            if (special) {
+                querySet = " \"#<>'";
+            }
+            if (qry !== null) {
+                qry = URL.pct(String(qry), querySet);
+            }
+            if (scheme == "file") {
+                const r = URL.fwd(rest);
+                this.hasHost = true;
+                let pathText = r;
+                if (r.substring(0, 2) == "//") {
+                    const slash = r.indexOf("/", 2);
+                    const authority = slash < 0 ? r.substring(2) : r.substring(2, slash);
+                    pathText = slash < 0 ? "" : r.substring(slash);
+                    if (authority.length > 0) {
+                        const host: any = URL.parseHost(authority, true);
+                        if (host === null) {
+                            return false;
+                        }
+                        this.hostText = String(host) == "localhost" ? "" : String(host);
+                    }
+                }
+                this.path = pathText.length == 0 ? "/" : URL.buildPath(pathText.charAt(0) == "/" ? pathText : "/" + pathText, true, []);
+            } else if (special) {
+                let i = 0;
+                while (i < rest.length && URL.isSlash(rest.charAt(i), true)) {
+                    i++;
+                }
+                let j = i;
+                while (j < rest.length && !URL.isSlash(rest.charAt(j), true)) {
+                    j++;
+                }
+                if (!this.parseAuthority(rest.substring(i, j), true, false)) {
+                    return false;
+                }
+                const pathText = rest.substring(j);
+                this.path = pathText.length == 0 ? "/" : URL.buildPath(pathText, true, []);
+            } else if (rest.substring(0, 2) == "//") {
+                const slash = rest.indexOf("/", 2);
+                const authority = slash < 0 ? rest.substring(2) : rest.substring(2, slash);
+                if (!this.parseAuthority(authority, false, true)) {
+                    return false;
+                }
+                const pathText = slash < 0 ? "" : rest.substring(slash);
+                this.path = pathText.length == 0 ? "" : URL.buildPath(pathText, false, []);
+            } else if (rest.charAt(0) == "/") {
+                this.path = URL.buildPath(rest, false, []);
+            } else {
+                this.opaque = true;
+                this.path = URL.pct(rest, "");
+            }
+            this.query = qry;
+            this.fragment = frag;
+            return true;
+        }
+        // Relative reference: needs a base.
+        if (base === null) {
+            return false;
+        }
+        if (base.opaque) {
+            if (rest.length == 0 && qry === null && frag !== null) {
+                this.copyFrom(base);
+                this.fragment = frag;
+                return true;
+            }
+            return false;
+        }
+        const baseSpecial = URL.isSpecial(base.scheme);
+        special = baseSpecial;
+        this.scheme = base.scheme;
+        this.user = base.user;
+        this.pass = base.pass;
+        this.hasHost = base.hasHost;
+        this.hostText = base.hostText;
+        this.portText = base.portText;
+        this.opaque = false;
+        if (special) {
+            querySet = " \"#<>'";
+        }
+        if (qry !== null) {
+            qry = URL.pct(String(qry), querySet);
+        }
+        const c0 = rest.charAt(0);
+        const c1 = rest.charAt(1);
+        if (URL.isSlash(c0, special) && URL.isSlash(c1, special)) {
+            let i = 2;
+            if (special) {
+                while (i < rest.length && URL.isSlash(rest.charAt(i), true)) {
+                    i++;
+                }
+            }
+            let j = i;
+            while (j < rest.length && !URL.isSlash(rest.charAt(j), special)) {
+                j++;
+            }
+            this.user = "";
+            this.pass = "";
+            this.portText = "";
+            if (!this.parseAuthority(rest.substring(i, j), special, this.scheme == "file")) {
+                return false;
+            }
+            const pathText = rest.substring(j);
+            this.path = pathText.length == 0 ? (special ? "/" : "") : URL.buildPath(pathText, special, []);
+            this.query = qry;
+        } else if (URL.isSlash(c0, special)) {
+            this.path = URL.buildPath(rest, special, []);
+            this.query = qry;
+        } else if (rest.length == 0) {
+            this.path = base.path;
+            this.query = qry === null ? base.query : qry;
+        } else {
+            const baseSegs: any = base.path.length > 0 ? base.path.substring(1).split("/") : [];
+            if (baseSegs.length > 0) {
+                baseSegs.pop();
+            }
+            this.path = URL.buildPath(rest, special, baseSegs);
+            this.query = qry;
+        }
+        this.fragment = frag;
+        return true;
+    }
+
+    copyFrom(other: any): void {
+        this.scheme = other.scheme;
+        this.user = other.user;
+        this.pass = other.pass;
+        this.hasHost = other.hasHost;
+        this.hostText = other.hostText;
+        this.portText = other.portText;
+        this.opaque = other.opaque;
+        this.path = other.path;
+        this.query = other.query;
+        this.fragment = other.fragment;
+    }
+
+    // Rebuilds the live `searchParams` list from the current query.
+    syncParams(): void {
+        this.params.parseQuery(this.query === null ? "" : String(this.query));
+    }
+
+    // Called by the linked `URLSearchParams` after it mutates.
+    queryFromParams(serialized: string): void {
+        this.query = serialized.length == 0 ? null : serialized;
+    }
+
+    static canParse(input: any, base?: any): boolean {
+        try {
+            if (base === undefined) {
+                new URL(input);
+            } else {
+                new URL(input, base);
+            }
+            return true;
+        } catch (e: any) {
+            return false;
+        }
+    }
+
+    static parse(input: any, base?: any): any {
+        try {
+            if (base === undefined) {
+                return new URL(input);
+            }
+            return new URL(input, base);
+        } catch (e: any) {
+            return null;
+        }
+    }
+
+    // --- accessors ---------------------------------------------------------------
+
+    get href(): string {
+        let out = this.scheme + ":";
+        if (this.hasHost) {
+            out += "//";
+            if (this.user.length > 0 || this.pass.length > 0) {
+                out += this.user;
+                if (this.pass.length > 0) {
+                    out += ":" + this.pass;
+                }
+                out += "@";
+            }
+            out += this.hostText;
+            if (this.portText.length > 0) {
+                out += ":" + this.portText;
+            }
+        } else if (!this.opaque && this.path.substring(0, 2) == "//") {
+            out += "/.";
+        }
+        out += this.path;
+        if (this.query !== null) {
+            out += "?" + this.query;
+        }
+        if (this.fragment !== null) {
+            out += "#" + this.fragment;
+        }
+        return out;
+    }
+
+    set href(value: any) {
+        const next = new URL(String(value));
+        this.copyFrom(next);
+        this.syncParams();
+    }
+
+    get protocol(): string {
+        return this.scheme + ":";
+    }
+
+    set protocol(value: any) {
+        let s = String(value);
+        const colon = s.indexOf(":");
+        if (colon >= 0) {
+            s = s.substring(0, colon);
+        }
+        if (s.length == 0 || URL.schemeEnd(s + ":") != s.length) {
+            return;
+        }
+        s = s.toLowerCase();
+        if (URL.isSpecial(s) != URL.isSpecial(this.scheme)) {
+            return;
+        }
+        if (s == "file" && (this.user.length > 0 || this.pass.length > 0 || this.portText.length > 0)) {
+            return;
+        }
+        this.scheme = s;
+        if (this.portText == URL.defaultPort(s)) {
+            this.portText = "";
+        }
+    }
+
+    get username(): string {
+        return this.user;
+    }
+
+    set username(value: any) {
+        if (!this.hasHost || this.hostText.length == 0 || this.scheme == "file") {
+            return;
+        }
+        this.user = URL.pct(String(value), URL.userSet());
+    }
+
+    get password(): string {
+        return this.pass;
+    }
+
+    set password(value: any) {
+        if (!this.hasHost || this.hostText.length == 0 || this.scheme == "file") {
+            return;
+        }
+        this.pass = URL.pct(String(value), URL.userSet());
+    }
+
+    get hostname(): string {
+        return this.hostText;
+    }
+
+    // Shared by the `host` and `hostname` setters.
+    applyHost(value: string, allowPort: boolean): void {
+        if (this.opaque || !this.hasHost) {
+            return;
+        }
+        const special = URL.isSpecial(this.scheme);
+        let s = value;
+        let end = s.length;
+        for (let i = 0; i < s.length; i++) {
+            if (URL.isSlash(s.charAt(i), special) || s.charAt(i) == "?" || s.charAt(i) == "#") {
+                end = i;
+                break;
+            }
+        }
+        s = s.substring(0, end);
+        let hostPart = s;
+        let portPart = "";
+        const bracketEnd = s.indexOf("]");
+        const colonAt = s.lastIndexOf(":");
+        if (colonAt >= 0 && colonAt > bracketEnd) {
+            if (!allowPort) {
+                return;
+            }
+            hostPart = s.substring(0, colonAt);
+            portPart = s.substring(colonAt + 1);
+        }
+        if (hostPart.length == 0) {
+            return;
+        }
+        const host: any = URL.parseHost(hostPart, special);
+        if (host === null) {
+            return;
+        }
+        this.hostText = String(host);
+        if (portPart.length > 0) {
+            this.port = portPart;
+        }
+    }
+
+    set hostname(value: any) {
+        this.applyHost(String(value), false);
+    }
+
+    get host(): string {
+        if (this.portText.length > 0) {
+            return this.hostText + ":" + this.portText;
+        }
+        return this.hostText;
+    }
+
+    set host(value: any) {
+        this.applyHost(String(value), true);
+    }
+
+    get port(): string {
+        return this.portText;
+    }
+
+    set port(value: any) {
+        if (!this.hasHost || this.hostText.length == 0 || this.scheme == "file") {
+            return;
+        }
+        const s = String(value);
+        if (s.length == 0) {
+            this.portText = "";
+            return;
+        }
+        let digits = "";
+        for (let i = 0; i < s.length; i++) {
+            const c = s.charCodeAt(i);
+            if (c < 48 || c > 57) {
+                break;
+            }
+            digits += s.charAt(i);
+        }
+        if (digits.length == 0) {
+            return;
+        }
+        const n = parseInt(digits, 10);
+        if (n > 65535) {
+            return;
+        }
+        const text = String(n);
+        this.portText = text == URL.defaultPort(this.scheme) ? "" : text;
+    }
+
     get pathname(): string {
-        this.ensure();
         return this.path;
     }
 
+    set pathname(value: any) {
+        if (this.opaque) {
+            return;
+        }
+        const special = URL.isSpecial(this.scheme);
+        let text = String(value);
+        if (special) {
+            text = URL.fwd(text);
+        }
+        if (text.length == 0) {
+            this.path = special ? "/" : "";
+            return;
+        }
+        if (text.charAt(0) != "/") {
+            text = "/" + text;
+        }
+        this.path = URL.buildPath(text, special, []);
+    }
+
     get search(): string {
-        this.ensure();
-        return this.query;
+        if (this.query === null || this.query == "") {
+            return "";
+        }
+        return "?" + this.query;
+    }
+
+    set search(value: any) {
+        let s = String(value);
+        if (s.length == 0) {
+            this.query = null;
+        } else {
+            if (s.charAt(0) == "?") {
+                s = s.substring(1);
+            }
+            const set = URL.isSpecial(this.scheme) ? " \"#<>'" : " \"#<>";
+            this.query = URL.pct(s, set);
+        }
+        this.syncParams();
     }
 
     get hash(): string {
-        this.ensure();
-        return this.fragment;
+        if (this.fragment === null || this.fragment == "") {
+            return "";
+        }
+        return "#" + this.fragment;
     }
 
-    get searchParams(): URLSearchParams {
-        this.ensure();
+    set hash(value: any) {
+        let s = String(value);
+        if (s.length == 0) {
+            this.fragment = null;
+            return;
+        }
+        if (s.charAt(0) == "#") {
+            s = s.substring(1);
+        }
+        this.fragment = URL.pct(s, " \"<>`");
+    }
+
+    get searchParams(): any {
         return this.params;
     }
 
     get origin(): string {
-        this.ensure();
-        return this.scheme + "://" + this.host;
-    }
-
-    get href(): string {
-        this.ensure();
-        let out = this.scheme + "://";
-        if (urlString.length(this.userinfo) > 0) {
-            out = out + this.userinfo + "@";
+        if (this.scheme == "blob") {
+            const inner: any = URL.parse(this.path);
+            if (inner !== null && (inner.scheme == "http" || inner.scheme == "https")) {
+                return inner.origin;
+            }
+            return "null";
         }
-        return out + this.host + this.path + this.query + this.fragment;
+        if (URL.isSpecial(this.scheme) && this.scheme != "file") {
+            return this.scheme + "://" + this.host;
+        }
+        return "null";
     }
 
     toString(): string {
-        this.ensure();
+        return this.href;
+    }
+
+    toJSON(): string {
         return this.href;
     }
 }
