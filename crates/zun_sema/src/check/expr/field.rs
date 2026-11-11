@@ -184,6 +184,60 @@ impl Checker<'_> {
         field: &ast::Name,
         span: Span,
     ) -> Option<hir::Expr> {
+        // `super.member` inside a static method: resolved against the base
+        // class's statics, with the current `this` as the receiver of a getter.
+        if self.text(class_name) == "super" && cx.this_class.is_none() {
+            if let Some(base) = self
+                .cur_static_class
+                .and_then(|c| self.classes[c as usize].base)
+            {
+                if let Some((field_slot, ty)) = self.static_field_of(base, fname) {
+                    return Some(hir::Expr {
+                        kind: hir::ExprKind::StaticFieldGet {
+                            class: self.static_field_owner(base, fname),
+                            field_slot,
+                        },
+                        ty,
+                        span,
+                    });
+                }
+                if let Some(func) = self.method_of(base, &format!("get_{fname}")) {
+                    let hidden_class = self.static_this.contains_key(&func);
+                    if self.signatures[func as usize].is_static
+                        && self.signatures[func as usize].params.len() == hidden_class as usize
+                    {
+                        let ty = self.signatures[func as usize].return_ty;
+                        let mut getter_args = Vec::new();
+                        if hidden_class {
+                            let this_slot = cx.lookup("this")?;
+                            getter_args.push(hir::Expr {
+                                ty: cx.locals[this_slot as usize],
+                                kind: hir::ExprKind::Local(this_slot),
+                                span,
+                            });
+                        }
+                        return Some(hir::Expr {
+                            kind: hir::ExprKind::StaticCall {
+                                func,
+                                args: getter_args,
+                            },
+                            ty,
+                            span,
+                        });
+                    }
+                }
+                if let Some(func) = self.method_of(base, fname) {
+                    if self.static_this.contains_key(&func) {
+                        return Some(hir::Expr {
+                            kind: hir::ExprKind::FunctionRef { func },
+                            ty: Ty::Function(func),
+                            span,
+                        });
+                    }
+                    return Some(self.method_value_expr(base, fname, span));
+                }
+            }
+        }
         if let Some(expr) = self.field_class_singletons(cx, class_name, fname, field, span) {
             return Some(expr);
         }

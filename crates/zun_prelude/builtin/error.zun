@@ -21,6 +21,17 @@
 
 import { captureStackTrace } from "zun:core";
 
+// True when `options` is an object that carries a `cause` key (own or inherited).
+function __zunErrorHasCause(options: any): boolean {
+    if (options === undefined || options === null) {
+        return false;
+    }
+    if (typeof options !== "object") {
+        return false;
+    }
+    return "cause" in options;
+}
+
 class Error {
     message: string;
     stackFrames: string = captureStackTrace();
@@ -38,10 +49,15 @@ class Error {
     // override wins over the class-provided default name.
     nameOverride: string = "";
 
+    // True once an own `cause` property was installed (the options object had
+    // the key); distinguishes `{ cause: undefined }` from no options at all.
+    hasCause: boolean = false;
+
     constructor(message: string, options?: any) {
         this.message = message;
-        if (options !== undefined) {
+        if (__zunErrorHasCause(options)) {
             this.cause = options.cause;
+            this.hasCause = true;
         }
     }
 
@@ -123,6 +139,9 @@ class AggregateError extends Error {
 
     constructor(errors: any, message?: string, options?: any) {
         super(message === undefined ? "" : message, options);
+        if (errors === undefined || errors === null || typeof errors === "number" || typeof errors === "boolean") {
+            throw new TypeError("object is not iterable");
+        }
         this.errors = [...errors];
     }
 

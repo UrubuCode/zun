@@ -890,9 +890,13 @@ impl Interp<'_> {
                     return Some((mrid, hidden));
                 }
             }
-            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
-                && !def.base.is_null())
-            .then(|| def.base.rid());
+            current = self
+                .class_static_proto_override(r)
+                .or_else(|| {
+                    (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                        && !def.base.is_null())
+                    .then(|| def.base.rid())
+                });
         }
         None
     }
@@ -1161,9 +1165,13 @@ impl Interp<'_> {
                     mrid, None,
                 ))));
             }
-            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
-                && !def.base.is_null())
-            .then(|| def.base.rid());
+            current = self
+                .class_static_proto_override(r)
+                .or_else(|| {
+                    (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                        && !def.base.is_null())
+                    .then(|| def.base.rid())
+                });
         }
         if name == "length" {
             // A class's `length` is its constructor's declared parameter count
@@ -1965,6 +1973,11 @@ impl Interp<'_> {
             if !field.is_static {
                 continue;
             }
+            // A `static { ... }` block is lowered to a synthetic field named by its
+            // source text; it is not a property.
+            if self.module.strings.get(field.name).starts_with("static {") {
+                continue;
+            }
             let set = zun_gc::with_current_heap(|heap| {
                 heap.static_get(rid, frid).is_some() || heap.static_get_function(rid, frid).is_some()
             });
@@ -2099,5 +2112,20 @@ impl Interp<'_> {
             }
             out
         }))
+    }
+}
+
+impl Interp<'_> {
+    /// The class a script re-parented the static side of `rid` to with
+    /// `Object.setPrototypeOf(Class, Other)`, when one was recorded.
+    pub(crate) fn class_static_proto_override(&self, rid: u32) -> Option<u32> {
+        let key = format!("$classBag#{}", zun_natives::USER_CLASS_FLAG | rid);
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            let address = heap.dynamic_get(global, &key)?.as_object()?;
+            let bag = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            heap.dynamic_prototype(bag)?.as_class_descriptor()
+        })
+        .and_then(|token| self.user_class_rid(token))
     }
 }

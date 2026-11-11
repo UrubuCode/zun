@@ -583,6 +583,49 @@ impl Checker<'_> {
                 span,
             },
         };
+        // `hasCause`: whether the options object carries the `cause` key. An
+        // object literal with static keys answers at compile time; a plain
+        // identifier is probed at run time; any other (possibly impure)
+        // expression keeps the field default (`cause !== undefined` still
+        // reports presence).
+        let mut has_cause: Option<hir::Expr> = match args.get(1) {
+            Some(ast::Expr::ObjectLiteral { properties, .. }) => {
+                let mut keys = Vec::new();
+                let mut simple = true;
+                for member in properties {
+                    match member {
+                        ast::ObjectMember::Property(p) => match &p.key {
+                            ast::PropertyKey::Ident(n) => keys.push(self.text(n).to_string()),
+                            ast::PropertyKey::String { value, .. } => keys.push(value.clone()),
+                            _ => simple = false,
+                        },
+                        _ => simple = false,
+                    }
+                }
+                simple.then(|| hir::Expr {
+                    kind: hir::ExprKind::Boolean(keys.iter().any(|k| k == "cause")),
+                    ty: Ty::Boolean,
+                    span,
+                })
+            }
+            Some(arg @ ast::Expr::Ident(_)) => {
+                match self.by_name.get("__zunErrorHasCause").copied() {
+                    Some(func) => {
+                        let options = self.check_expr(cx, arg);
+                        Some(hir::Expr {
+                            kind: hir::ExprKind::Call {
+                                func,
+                                args: vec![Self::box_to_any(options)],
+                            },
+                            ty: Ty::Boolean,
+                            span,
+                        })
+                    }
+                    None => None,
+                }
+            }
+            _ => None,
+        };
         // Assemble the constructor arguments in field-slot order.
         let fields = self.full_fields(class_idx);
         let initializers = self.full_initializers(class_idx);
@@ -593,6 +636,7 @@ impl Checker<'_> {
             let arg = match fname.as_str() {
                 "message" => message.take().unwrap_or_else(|| self.poison(span)),
                 "cause" => cause.take().unwrap_or_else(|| self.poison(span)),
+                "hasCause" if has_cause.is_some() => has_cause.take().unwrap(),
                 _ => match initializers.get(slot).and_then(|init| init.as_ref()) {
                     Some(init) => {
                         let init = init.clone();

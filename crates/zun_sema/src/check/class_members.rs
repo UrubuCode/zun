@@ -46,7 +46,9 @@ impl Checker<'_> {
                 {
                     continue;
                 }
+                let previous_static_init = self.static_init_class.replace(class_idx as u32);
                 let mut value = self.check_expr(cx, &init);
+                self.static_init_class = previous_static_init;
                 coerce_numeric_literal(&mut value, field_ty);
                 if field_ty == Ty::Any {
                     value = Self::box_to_any(value);

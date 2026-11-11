@@ -248,6 +248,7 @@ fn check_impl(
         symbol_call_guard: false,
         static_this: HashMap::new(),
         cur_static_class: None,
+        static_init_class: None,
         closure_self_name: None,
         routed_methods: HashMap::new(),
         hooked_classes: HashSet::new(),
@@ -534,6 +535,7 @@ struct Checker<'a> {
     static_this: HashMap<u32, u32>,
     /// Declaring class of the static method currently being checked (for `super`).
     cur_static_class: Option<u32>,
+    static_init_class: Option<u32>,
     /// Name a closure being bound by `let name = <closure>` may call itself by.
     closure_self_name: Option<String>,
     /// Instance methods whose runtime decorator returns a function (method

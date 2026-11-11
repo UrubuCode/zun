@@ -287,11 +287,17 @@ impl<'a> Interp<'a> {
         if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
             zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).ok_or(RunError::BadToken)
         } else {
-            Ok(self
+            let mut names: Vec<String> = self
                 .object_own_entries(obj)?
                 .into_iter()
                 .map(|(name, _)| name)
-                .collect())
+                .collect();
+            for (name, _) in self.error_hidden_own(obj) {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            Ok(names)
         }
     }
 
@@ -432,8 +438,16 @@ impl<'a> Interp<'a> {
             // Typed object: a declared field is a writable, enumerable data
             // property (the fixed layout is non-configurable).
             let entries = self.object_own_entries(obj)?;
-            let Some((_, value)) = entries.into_iter().find(|(name, _)| name == key) else {
-                return Ok(None);
+            let (value, enumerable) = match entries.into_iter().find(|(name, _)| name == key) {
+                Some((_, value)) => (value, true),
+                None => match self
+                    .error_hidden_own(obj)
+                    .into_iter()
+                    .find(|(name, _)| name == key)
+                {
+                    Some((_, value)) => (value, false),
+                    None => return Ok(None),
+                },
             };
             let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .unwrap_or_else(zun_core::Any::null);
@@ -441,8 +455,18 @@ impl<'a> Interp<'a> {
             zun_gc::with_current_heap_mut(|heap| {
                 heap.dynamic_set(out, "value".to_owned(), boxed);
                 heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(true));
-                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(true));
-                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(false));
+                heap.dynamic_set(
+                    out,
+                    "enumerable".to_owned(),
+                    zun_core::Any::bool(enumerable),
+                );
+                // Error own data properties are configurable; fixed-layout
+                // fields are not.
+                heap.dynamic_set(
+                    out,
+                    "configurable".to_owned(),
+                    zun_core::Any::bool(!enumerable),
+                );
             });
             Ok(Some(out))
         }

@@ -786,6 +786,27 @@ impl<'a> Interp<'a> {
             }
             "objectSetPrototypeOf" | "reflectSetPrototypeOf" => {
                 let reflect = name == "reflectSetPrototypeOf";
+                // Re-parenting the static side of a user class to another class:
+                // recorded on the class's expando bag and consulted by static
+                // lookup.
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if self.user_class_rid(token).is_some() {
+                        if let Some(parent) = args.get(1).and_then(Self::class_token_of) {
+                            let bag = Self::class_expando_bag(token);
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set_prototype(
+                                    bag,
+                                    Some(zun_core::Any::class_descriptor(parent)),
+                                )
+                            });
+                            return Ok(if reflect {
+                                Value::Bool(true)
+                            } else {
+                                args[0].clone()
+                            });
+                        }
+                    }
+                }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let obj = match self.proxy_route(proxy, "setPrototypeOf")? {

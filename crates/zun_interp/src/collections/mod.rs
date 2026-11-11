@@ -30,6 +30,7 @@ mod string_num;
 mod bigint;
 mod buffer;
 mod class_decorator;
+mod error_own;
 mod generator;
 mod runtime_async;
 mod runtime_class_proxy;

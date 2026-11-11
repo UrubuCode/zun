@@ -150,6 +150,9 @@ impl<'a> Interp<'a> {
                     {
                         return Ok(Value::Bool(true));
                     }
+                    if self.error_hidden_own(object).iter().any(|(key, _)| key == &name) {
+                        return Ok(Value::Bool(true));
+                    }
                     let found = self.instance_method_rid(object, &name).is_some()
                         || self
                             .instance_method_rid(object, &format!("get_{name}"))
@@ -304,6 +307,39 @@ impl<'a> Interp<'a> {
                 let array =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let values = self.read_array_values(array)?;
+                // `Reflect.construct(Map|Set, args, UserSubclass)`: build a real
+                // instance of the subclass (it owns the native storage and the
+                // subclass methods) instead of a raw collection with a swapped
+                // prototype.
+                if self.user_class_rid(token).is_none() {
+                    if let Some(sub) = args
+                        .get(2)
+                        .and_then(Self::class_token_of)
+                        .and_then(|t| self.user_class_rid(t))
+                    {
+                        let wanted = zun_gc::with_current_heap_mut(|heap| {
+                            let global = heap.global_object();
+                            ["Map", "Set"].into_iter().find(|name| {
+                                heap.dynamic_get(global, name)
+                                    .and_then(|a| a.as_class_descriptor())
+                                    == Some(token)
+                            })
+                        });
+                        if let Some(wanted) = wanted {
+                            let base_name = if wanted == "Map" {
+                                "__BuiltinMap"
+                            } else {
+                                "__BuiltinSet"
+                            };
+                            if self.class_chain_has_name(sub, base_name) {
+                                return self.construct_class_from_descriptor(
+                                    zun_natives::USER_CLASS_FLAG | sub,
+                                    values,
+                                );
+                            }
+                        }
+                    }
+                }
                 let built = if self.user_class_rid(token).is_some() {
                     self.construct_class_from_descriptor(token, values)?
                 } else {

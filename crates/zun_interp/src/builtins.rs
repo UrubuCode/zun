@@ -91,6 +91,7 @@ impl Interp<'_> {
             Value::Str("".into()),
             Value::Void,
             Value::Str("".into()),
+            Value::Bool(false),
         ];
         if field_count != values.len() {
             return None;

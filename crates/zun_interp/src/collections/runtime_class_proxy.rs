@@ -57,6 +57,7 @@ impl<'a> Interp<'a> {
                 }
                 obj
             });
+            self.init_builtin_collection_field(obj);
             let mut call_args = Vec::with_capacity(values.len() + 1);
             call_args.push(Value::Object(obj));
             call_args.extend(values);

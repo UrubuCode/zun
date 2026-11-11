@@ -229,6 +229,7 @@ impl<'a> Interp<'a> {
                     self.object_own_entries(obj)?
                         .iter()
                         .any(|(name, _)| name == &key)
+                        || self.error_hidden_own(obj).iter().any(|(name, _)| name == &key)
                 };
                 Ok(Value::Bool(has))
             }
@@ -900,7 +901,13 @@ impl<'a> Interp<'a> {
                             .get((obj.type_rid() as usize).wrapping_sub(1))
                             .map(|def| self.module.strings.get(def.name))
                             .filter(|name| *name == "__AsyncGenerator")
-                            .map(|_| "AsyncGenerator".to_string());
+                            .map(|_| "AsyncGenerator".to_string())
+                            .or_else(|| {
+                                (!zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                    && obj.type_rid() != 0
+                                    && self.is_error_instance(obj))
+                                .then(|| "Error".to_string())
+                            });
                         if let Some(custom) = custom.or(class_tag) {
                             custom
                         } else {
