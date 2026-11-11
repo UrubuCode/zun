@@ -43,6 +43,8 @@ pub use number::{js_to_exponential, js_to_fixed, js_to_precision, js_to_radix_st
 mod string;
 pub use string::normalize_form as string_normalize_form;
 mod promise;
+mod view_members;
+pub use view_members::{node_buffer_accessor_native, view_member, ViewArg, ViewMember, LENGTH_SENTINEL};
 mod serde;
 mod time;
 mod timers;

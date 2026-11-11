@@ -4077,3 +4077,120 @@ fn property_syntax_lowers_to_getter_and_setter_methods() {
     let result = run(&module, &mut output).expect("run property accessors");
     assert!(matches!(result, Value::Float(41.0, zun_il::NumKind::F64)));
 }
+
+/// Compile `source` and return the lines its `print` calls produced.
+fn view_dyn_lines(source: &str) -> Vec<String> {
+    let module = zun_compiler::compile(source).expect("compile any-typed view program");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run any-typed view program");
+    output.lines
+}
+
+#[test]
+fn buffer_members_are_reachable_through_any() {
+    let lines = view_dyn_lines(
+        r#"function probe(v: any): void {
+            print(String(v.length));
+            print(String(v[0]));
+            print(String(v.toString("utf8")));
+            print(String(v.toString()));
+            print(String(v.slice(1, 3).toString("utf8")));
+            print(String(v.indexOf("n")));
+            print(String(v.toString("hex", 1)));
+        }
+        function main() { probe(Buffer.from("ping", "utf8")); }"#,
+    );
+    assert_eq!(lines, vec!["4", "112", "ping", "ping", "in", "2", "696e67"]);
+}
+
+#[test]
+fn buffer_accessors_through_any_apply_defaults_and_argument_order() {
+    let lines = view_dyn_lines(
+        r#"function probe(v: any): void {
+            v.writeUInt16LE(258, 0);
+            print(String(v.readUInt16LE(0)));
+            print(String(v.readUInt8(1)));
+            print(String(v.readUInt8()));
+            v.writeUInt8(7);
+            print(String(v[0]));
+            print(String(v.equals(Buffer.from([7, 1, 3]))));
+        }
+        function main() { probe(Buffer.from([1, 2, 3])); }"#,
+    );
+    assert_eq!(lines, vec!["258", "1", "2", "7", "true"]);
+}
+
+#[test]
+fn typed_array_members_are_reachable_through_any_for_every_kind() {
+    for kind in ["Uint8Array", "Int16Array", "Float64Array"] {
+        let source = format!(
+            r#"function probe(v: any): void {{
+                print(String(v.length));
+                v[1] = 7;
+                print(String(v[1]));
+                print(String(v[99]));
+                v.fill(3, 2);
+                print(String(v.join("-")));
+                print(String(v.indexOf(7)));
+                print(String(v.includes(3)));
+                print(String(v.subarray(1).length));
+                print(String(v.byteLength));
+                print(String(v.byteOffset));
+                v.set([5, 5], 0);
+                print(String(v.map((x: number) => x + 1).join(",")));
+            }}
+            function main() {{ probe(new {kind}(4)); }}"#
+        );
+        let lines = view_dyn_lines(&source);
+        let width = match kind {
+            "Uint8Array" => "4",
+            "Int16Array" => "8",
+            _ => "32",
+        };
+        assert_eq!(
+            lines,
+            vec!["4", "7", "undefined", "0-7-3-3", "1", "true", "3", width, "0", "6,6,4,4"],
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn array_buffer_byte_length_is_reachable_through_any() {
+    let lines = view_dyn_lines(
+        r#"function probe(v: any): void { print(String(v.byteLength)); }
+        function main() { probe(new ArrayBuffer(8)); }"#,
+    );
+    assert_eq!(lines, vec!["8"]);
+}
+
+#[test]
+fn typed_array_element_store_through_any_writes_the_view() {
+    let lines = view_dyn_lines(
+        r#"function store(v: any): void { v[0] = 300; v[1] = 5; v[9] = 1; }
+        function main() {
+            const u = new Uint8Array(2);
+            store(u);
+            print(String(u[0]));
+            print(String(u[1]));
+            print(String(u.length));
+        }"#,
+    );
+    assert_eq!(lines, vec!["44", "5", "2"]);
+}
+
+#[test]
+fn any_receivers_of_other_builtins_still_dispatch() {
+    let lines = view_dyn_lines(
+        r#"function probe(s: any, a: any, m: any, t: any): void {
+            print(String(s.toUpperCase()));
+            print(String(a.length) + String(a[1]));
+            print(String(m.get("k")));
+            print(String(t.has(2)));
+        }
+        function main() {
+            probe("abc", [1, 2, 3], new Map<string, number>([["k", 4]]), new Set<number>([2]));
+        }"#,
+    );
+    assert_eq!(lines, vec!["ABC", "32", "4", "true"]);
+}
