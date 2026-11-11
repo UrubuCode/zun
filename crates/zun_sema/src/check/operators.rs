@@ -104,6 +104,20 @@ impl Checker<'_> {
                 };
             }
             Ty::Error => return self.poison(span),
+            Ty::Instance(_) | Ty::Function(_) => {
+                let Some((id, _)) = zun_natives::resolve("collections", "reflectHas") else {
+                    self.error(span, "missing `reflectHas` intrinsic");
+                    return self.poison(span);
+                };
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![Self::box_to_any(object), key],
+                    },
+                    ty: Ty::Boolean,
+                    span,
+                };
+            }
             Ty::BufferView(_) | Ty::Buffer => {
                 let Some((id, _)) = zun_natives::resolve("collections", "reflectHas") else {
                     self.error(span, "missing `reflectHas` intrinsic");
@@ -472,11 +486,24 @@ impl Checker<'_> {
     ) -> hir::Expr {
         let value = self.check_expr(cx, value);
         let ast::Expr::Ident(class_name) = class else {
-            self.error(
-                class.span(),
-                "right operand of `instanceof` must be a class name",
-            );
-            return self.poison(span);
+            // A non-identifier right operand (`x instanceof (y as any)`) is a
+            // run-time value: dispatch dynamically.
+            let rhs = self.check_expr(cx, class);
+            if value.ty.is_error() || rhs.ty.is_error() {
+                return self.poison(span);
+            }
+            let Some((id, _)) = zun_natives::resolve("typeinfo", "instanceofDynamic") else {
+                self.error(span, "missing `instanceofDynamic` intrinsic".to_string());
+                return self.poison(span);
+            };
+            return hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![Self::box_to_any(value), Self::box_to_any(rhs)],
+                },
+                ty: Ty::Boolean,
+                span,
+            };
         };
         let name = self.text(class_name).to_string();
         if !self.classes_by_name.contains_key(&name)
