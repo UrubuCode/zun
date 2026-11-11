@@ -131,19 +131,28 @@ impl Interp<'_> {
         };
         let value = unbox_arg(value)?;
         let converted = if is_bigint_kind(kind) {
-            let big = match &value {
-                Value::Object(o) => zun_gc::with_current_heap(|h| h.bigint_value(*o).cloned()),
-                Value::Bool(b) => Some(zun_core::BigInt::from_u64(u64::from(*b))),
-                _ => None,
-            };
-            let Some(big) = big else {
-                return Err(self.view_error(
-                    "TypeError",
-                    "Cannot convert a value to a BigInt",
-                ));
-            };
-            let bits = big.as_uint_n(64).to_u64().unwrap_or(0);
-            Value::Int(bits as i64, NumKind::I64)
+            // Zun has native 64-bit integers, so a plain int or float writes
+            // directly into a BigInt64/BigUint64 view; a BigInt object and
+            // bool also convert, matching JS.
+            if let Value::Int(bits, _) = value {
+                Value::Int(bits, NumKind::I64)
+            } else if let Value::Float(n, _) = value {
+                Value::Int(n as i64, NumKind::I64)
+            } else {
+                let big = match &value {
+                    Value::Object(o) => zun_gc::with_current_heap(|h| h.bigint_value(*o).cloned()),
+                    Value::Bool(b) => Some(zun_core::BigInt::from_u64(u64::from(*b))),
+                    _ => None,
+                };
+                let Some(big) = big else {
+                    return Err(self.view_error(
+                        "TypeError",
+                        "Cannot convert a value to a BigInt",
+                    ));
+                };
+                let bits = big.as_uint_n(64).to_u64().unwrap_or(0);
+                Value::Int(bits as i64, NumKind::I64)
+            }
         } else {
             if matches!(&value, Value::Object(o) if zun_gc::with_current_heap(|h| h.bigint_value(*o).is_some()))
             {
@@ -475,6 +484,8 @@ impl Interp<'_> {
         let detached = zun_gc::with_current_heap(|h| h.buffer_detached(buffer)).unwrap_or(false);
         let len = zun_gc::with_current_heap(|h| h.buffer_len(buffer)).unwrap_or(0);
         match member {
+            // Zun-specific no-argument accessor method.
+            "byteLength" => return Ok(Some(num(len as f64))),
             "slice" => {
                 if detached {
                     return Err(self.view_error("TypeError", "Cannot perform ArrayBuffer.prototype.slice on a detached ArrayBuffer"));
@@ -524,6 +535,23 @@ impl Interp<'_> {
         member: &str,
         args: &[Value],
     ) -> Result<Option<Value>, RunError> {
+        // Zun-specific no-argument accessor methods (`v.byteLength()` etc.),
+        // distinct from the JS property reads handled in `typed_view_get`.
+        match member {
+            "byteLength" => {
+                let n = zun_gc::with_current_heap(|h| h.data_view_byte_len(view)).unwrap_or(0);
+                return Ok(Some(num(n as f64)));
+            }
+            "byteOffset" => {
+                let n = zun_gc::with_current_heap(|h| h.data_view_byte_offset(view)).unwrap_or(0);
+                return Ok(Some(num(n as f64)));
+            }
+            "buffer" => {
+                let b = zun_gc::with_current_heap(|h| h.data_view_buffer(view));
+                return Ok(b.map(Value::Object));
+            }
+            _ => {}
+        }
         let (is_set, kind) = if let Some(rest) = member.strip_prefix("get") {
             (false, rest)
         } else if let Some(rest) = member.strip_prefix("set") {
@@ -531,6 +559,9 @@ impl Interp<'_> {
         } else {
             return Ok(None);
         };
+        // `signed_name` ending in `n` marks Zun's native 64-bit integer forms
+        // (`getInt64`/`setUint64`), which read and write plain ints rather than
+        // the JS `BigInt64`/`BigUint64` that hand back a BigInt object.
         let (width, signed_name): (usize, &str) = match kind {
             "Int8" => (1, "i8"),
             "Uint8" => (1, "u8"),
@@ -542,6 +573,8 @@ impl Interp<'_> {
             "Float64" => (8, "f64"),
             "BigInt64" => (8, "i64"),
             "BigUint64" => (8, "u64"),
+            "Int64" => (8, "i64n"),
+            "Uint64" => (8, "u64n"),
             _ => return Ok(None),
         };
         let offset = self.view_to_index(args.first(), "offset")?;
@@ -571,6 +604,7 @@ impl Interp<'_> {
                     "f64" => n.to_bits(),
                     "i8" | "u8" => wrap_bits(n, 8) as u64,
                     "i16" | "u16" => wrap_bits(n, 16) as u64,
+                    "i64n" | "u64n" => n as i64 as u64,
                     _ => wrap_bits(n, 32) as u64,
                 })
             }
@@ -610,6 +644,8 @@ impl Interp<'_> {
             "u32" => num(f64::from(bits as u32)),
             "f32" => num(f64::from(f32::from_bits(bits as u32))),
             "f64" => num(f64::from_bits(bits)),
+            "i64n" => Value::Int(bits as i64, zun_il::NumKind::I64),
+            "u64n" => Value::Int(bits as i64, zun_il::NumKind::U64),
             "i64" => Value::Object(zun_gc::with_current_heap_mut(|h| {
                 h.alloc_bigint(zun_core::BigInt::from_i64(bits as i64))
             })),

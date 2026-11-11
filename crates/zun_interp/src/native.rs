@@ -12,7 +12,18 @@ pub(crate) fn to_native_arg(v: &Value) -> zun_natives::NativeArg<'_> {
         Value::Object(object) => {
             zun_natives::NativeArg::Any(zun_core::Any::object(object.addr() as usize))
         }
-        Value::Any(value) => zun_natives::NativeArg::Any(*value),
+        Value::Any(value) => {
+            // A boxed scalar must render as its number/boolean, not as an
+            // opaque `[any:Tag]` carrier. Unbox through the current heap and
+            // forward the concrete scalar; strings and heap objects keep the
+            // `Any` carrier (their text cannot outlive this borrow).
+            match zun_gc::with_current_heap(|heap| Value::unbox_any(*value, heap)) {
+                Some(Value::Int(n, _)) => zun_natives::NativeArg::Int(n),
+                Some(Value::Float(n, _)) => zun_natives::NativeArg::Float(n),
+                Some(Value::Bool(b)) => zun_natives::NativeArg::Bool(b),
+                _ => zun_natives::NativeArg::Any(*value),
+            }
+        }
         Value::Function(function) => zun_natives::NativeArg::Function(*function),
         Value::Void => zun_natives::NativeArg::Void,
         Value::Null => zun_natives::NativeArg::Void,
