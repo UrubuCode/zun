@@ -139,7 +139,7 @@ impl<'a> Interp<'a> {
                 // callback re-entry regardless of whether it is an object.
                 let accumulator = zun_gc::with_current_heap_mut(|heap| {
                     let holder = heap.alloc_array(1);
-                    if let Some(boxed) = initial.box_any(heap) {
+                    if let Some(boxed) = initial.box_any_cell(heap) {
                         heap.array_set(holder, 0, boxed);
                     }
                     holder
@@ -168,7 +168,7 @@ impl<'a> Interp<'a> {
                         Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
                     ];
                     let next = self.invoke_callback(callback, callback_args)?;
-                    let boxed = zun_gc::with_current_heap_mut(|heap| next.box_any(heap))
+                    let boxed = zun_gc::with_current_heap_mut(|heap| next.box_any_cell(heap))
                         .ok_or(RunError::BadToken)?;
                     zun_gc::with_current_heap_mut(|heap| heap.array_set(roots[1], 0, boxed));
                 }

@@ -249,7 +249,14 @@ impl Interp<'_> {
             .copied()
         {
             Some(handle) => Ok(Self::function_box(handle)),
-            None => Ok(Value::Any(zun_core::Any::null())),
+            None => {
+                // Undecorated class: resolve a plain static method straight
+                // from metadata (a hidden-receiver static needs `.call(Class)`).
+                if let Some((mrid, false)) = self.class_static_method(class, &name) {
+                    return Ok(Self::function_box(zun_core::FunctionHandle::new(mrid, None)));
+                }
+                Ok(Value::Any(zun_core::Any::null()))
+            }
         }
     }
 

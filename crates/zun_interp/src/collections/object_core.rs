@@ -626,6 +626,32 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(obj))
             }
             "objectGetPrototypeOf" => {
+                // A user class value: its prototype is the base class value.
+                if let Ok(Value::Any(descriptor)) = unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                {
+                    if let Some(rid) = descriptor
+                        .as_class_descriptor()
+                        .and_then(|t| self.user_class_rid(t))
+                    {
+                        let base = self
+                            .module
+                            .tables
+                            .type_defs
+                            .get((rid as usize).wrapping_sub(1))
+                            .and_then(|def| {
+                                (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                                    && !def.base.is_null())
+                                .then(|| def.base.rid())
+                            });
+                        if let Some(base) = base {
+                            if self.user_class_rid(zun_natives::USER_CLASS_FLAG | base).is_some() {
+                                return Ok(Value::Any(zun_core::Any::class_descriptor(
+                                    zun_natives::USER_CLASS_FLAG | base,
+                                )));
+                            }
+                        }
+                    }
+                }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let obj = match self.proxy_route(proxy, "getPrototypeOf") {

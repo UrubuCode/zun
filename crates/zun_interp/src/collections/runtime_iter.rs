@@ -789,7 +789,34 @@ impl<'a> Interp<'a> {
             .get((rid as usize).wrapping_sub(1))?;
         let method_name = self.module.strings.get(method.name);
         if !method_name.starts_with("[symbol]") {
-            return None;
+            // A plain method / static method / accessor reached as a value:
+            // derive `name` and `length` from the method metadata.
+            if name == "name" {
+                if method_name.starts_with('<') {
+                    return None;
+                }
+                let plain = method_name.split("@this").next().unwrap_or(method_name);
+                return Some(Value::Str(
+                    if let Some(rest) = plain.strip_prefix("get_") {
+                        format!("get {rest}")
+                    } else if let Some(rest) = plain.strip_prefix("set_") {
+                        format!("set {rest}")
+                    } else {
+                        plain.to_string()
+                    }
+                    .into(),
+                ));
+            }
+            let body = read_body(&self.module.code, method.body_offset).ok()?;
+            let mut receiver = usize::from(method_name.contains("@this"));
+            if !method.is_static && !method_name.starts_with('<') {
+                receiver = 1;
+            }
+            if method_name.ends_with("@rest>") {
+                receiver += 1;
+            }
+            let length = (body.param_count as usize).saturating_sub(receiver);
+            return Some(Value::Float(length as f64, zun_il::NumKind::F64));
         }
         if name == "name" {
             let symbol = self

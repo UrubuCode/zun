@@ -496,7 +496,9 @@ impl<'a> Interp<'a> {
                         "Map constructor requires an iterable of [key, value] pairs".into(),
                     ));
                 }
-                let source = object(arg).ok_or(RunError::BadToken)?;
+                let source = object(arg).ok_or_else(|| {
+                    RunError::Native("TypeError: value is not iterable".to_string())
+                })?;
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_map());
                 // A Map source contributes its entries directly; snapshot them
                 // into rooted key/value arrays (the mapForEach idiom).

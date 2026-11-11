@@ -385,6 +385,147 @@ impl Interp<'_> {
         None
     }
 
+    /// `delete Class.name` / `Reflect.deleteProperty(Class, name)`: drop the
+    /// class's own initialized static field slot so reads fall through to the
+    /// base chain. Intrinsic `prototype` is non-configurable.
+    pub(crate) fn class_delete_own(&mut self, rid: u32, name: &str) -> bool {
+        if name == "prototype" {
+            return false;
+        }
+        let Some(def) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .cloned()
+        else {
+            return true;
+        };
+        for frid in def.field_start..def.field_end {
+            let matches = self
+                .module
+                .tables
+                .field_defs
+                .get((frid as usize).wrapping_sub(1))
+                .is_some_and(|f| f.is_static && self.module.strings.get(f.name) == name);
+            if matches {
+                zun_gc::with_current_heap_mut(|heap| heap.static_remove(rid, frid));
+            }
+        }
+        true
+    }
+
+    /// A static read whose own slot is unset (deleted, or never initialised on
+    /// this class): the same-named static of the nearest base class that has
+    /// one, as the prototype chain of constructors would answer.
+    pub(crate) fn static_inherited_read(&self, owner: u32, field: u32) -> Option<Value> {
+        let name = self
+            .module
+            .strings
+            .get(self.module.tables.field_defs.get((field as usize).wrapping_sub(1))?.name)
+            .to_owned();
+        let kind = self
+            .module
+            .tables
+            .field_defs
+            .get((field as usize).wrapping_sub(1))?
+            .kind;
+        let mut current = self
+            .module
+            .tables
+            .type_defs
+            .get((owner as usize).wrapping_sub(1))
+            .and_then(|def| {
+                (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                    && !def.base.is_null())
+                .then(|| def.base.rid())
+            });
+        for _ in 0..256 {
+            let r = current?;
+            let def = self.module.tables.type_defs.get((r as usize).wrapping_sub(1))?;
+            for frid in def.field_start..def.field_end {
+                let Some(f) = self.module.tables.field_defs.get((frid as usize).wrapping_sub(1))
+                else {
+                    continue;
+                };
+                if f.is_static && self.module.strings.get(f.name) == name {
+                    let hit = zun_gc::with_current_heap(|heap| {
+                        if let Some(any) = heap.static_get(r, frid) {
+                            let value = Value::unbox_any(any, heap).unwrap_or(Value::Void);
+                            Some(crate::value::retag_static_numeric(value, kind))
+                        } else {
+                            heap.static_get_function(r, frid).map(Value::Function)
+                        }
+                    });
+                    if hit.is_some() {
+                        return hit;
+                    }
+                }
+            }
+            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                && !def.base.is_null())
+            .then(|| def.base.rid());
+        }
+        None
+    }
+
+    /// `Object.hasOwn(Class, name)`: whether the class value itself (not its
+    /// bases) owns the static field, static method or accessor `name`, or one
+    /// of the intrinsic function properties.
+    pub(crate) fn class_has_own(&self, rid: u32, name: &str) -> bool {
+        if matches!(name, "name" | "length" | "prototype") {
+            return true;
+        }
+        let Some(def) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+        else {
+            return false;
+        };
+        for frid in def.field_start..def.field_end {
+            let Some(field) = self
+                .module
+                .tables
+                .field_defs
+                .get((frid as usize).wrapping_sub(1))
+            else {
+                continue;
+            };
+            if field.is_static
+                && self.module.strings.get(field.name) == name
+                && zun_gc::with_current_heap(|heap| {
+                    heap.static_get(rid, frid).is_some()
+                        || heap.static_get_function(rid, frid).is_some()
+                })
+            {
+                return true;
+            }
+        }
+        let getter = format!("get_{name}");
+        let setter = format!("set_{name}");
+        for mrid in def.method_start..def.method_end {
+            let Some(method) = self
+                .module
+                .tables
+                .method_defs
+                .get((mrid as usize).wrapping_sub(1))
+            else {
+                continue;
+            };
+            if !method.is_static {
+                continue;
+            }
+            let raw = self.module.strings.get(method.name);
+            let plain = raw.strip_suffix("@this").unwrap_or(raw);
+            if plain == name || plain == getter || plain == setter {
+                return true;
+            }
+        }
+        false
+    }
+
     /// `Class.name` read through a class value: a static field, a static
     /// getter or a static method found on the class or its bases, else the
     /// class's own name for `name`.
@@ -477,6 +618,23 @@ impl Interp<'_> {
             current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
                 && !def.base.is_null())
             .then(|| def.base.rid());
+        }
+        if name == "length" {
+            // A class's `length` is its constructor's declared parameter count
+            // (excluding the receiver); 0 without an explicit constructor.
+            let count = self
+                .class_constructor(rid)
+                .and_then(|mrid| {
+                    let method = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get((mrid as usize).wrapping_sub(1))?;
+                    let body = zun_module::read_body(&self.module.code, method.body_offset).ok()?;
+                    Some((body.param_count as usize).saturating_sub(1))
+                })
+                .unwrap_or(0);
+            return Ok(Some(Value::Float(count as f64, zun_il::NumKind::F64)));
         }
         if name == "name" {
             let def = self

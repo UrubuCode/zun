@@ -576,6 +576,7 @@ impl Interp<'_> {
                             heap.static_get_function(owner, field).map(Value::Function)
                         }
                     })
+                    .or_else(|| self.static_inherited_read(owner, field))
                     .unwrap_or(Value::Void);
                     stack.push(value);
                 }

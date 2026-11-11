@@ -484,6 +484,19 @@ impl Interp<'_> {
                 });
                 if let Some((len, level)) = level_len {
                     let wanted = any.as_int().map(|n| n as f64).or_else(|| any.as_float());
+                    if let Some(bad) = wanted.filter(|w| {
+                        !(w.is_finite() && *w >= 0.0 && w.fract() == 0.0 && *w <= 4294967295.0)
+                    }) {
+                        let _ = bad;
+                        throw_native_arm!(
+                            self,
+                            body,
+                            stack,
+                            pc,
+                            next - size,
+                            "RangeError: Invalid array length".to_string()
+                        );
+                    }
                     if let Some(wanted) = wanted {
                         let wanted = wanted as usize;
                         if wanted != len {

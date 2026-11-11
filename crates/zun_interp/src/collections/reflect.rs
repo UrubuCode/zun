@@ -149,6 +149,18 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectDelete" => {
+                if let Ok(Value::Any(descriptor)) = unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                {
+                    if let Some(rid) = descriptor
+                        .as_class_descriptor()
+                        .and_then(|t| self.user_class_rid(t))
+                    {
+                        if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                        {
+                            return Ok(Value::Bool(self.class_delete_own(rid, &key)));
+                        }
+                    }
+                }
                 // A boxed string (modelled as the primitive): its indices and
                 // `length` are non-configurable, any other key is deletable.
                 if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {

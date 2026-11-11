@@ -182,6 +182,19 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(same_value(&left, &right)))
             }
             "objectHasOwn" => {
+                // A user class value owns its statics (not its bases').
+                if let Ok(Value::Any(descriptor)) = unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                {
+                    if let Some(rid) = descriptor
+                        .as_class_descriptor()
+                        .and_then(|t| self.user_class_rid(t))
+                    {
+                        if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                        {
+                            return Ok(Value::Bool(self.class_has_own(rid, &key)));
+                        }
+                    }
+                }
                 // A function value owns `name` and `length`; `prototype` is only
                 // modelled for constructible functions, which are not tracked here.
                 if let Ok(Value::Function(_)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
@@ -494,6 +507,31 @@ impl<'a> Interp<'a> {
                     ProxyRoute::Trap(callback, target) => {
                         let result =
                             self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
+                        // CreateListFromArrayLike: the result must be an
+                        // array-like object whose entries are strings/symbols.
+                        let list = object(&result).and_then(|list| {
+                            zun_gc::with_current_heap(|heap| heap.array_len(list)).map(|n| (list, n))
+                        });
+                        let Some((list, count)) = list else {
+                            return Err(RunError::Native(
+                                "TypeError: proxy ownKeys trap result is not a list".to_string(),
+                            ));
+                        };
+                        for index in 0..count {
+                            let entry = zun_gc::with_current_heap(|heap| heap.array_get(list, index))
+                                .ok_or(RunError::BadToken)?;
+                            let ok = entry.as_symbol().is_some()
+                                || matches!(
+                                    unbox_arg(&Value::Any(entry)),
+                                    Ok(Value::Str(_))
+                                );
+                            if !ok {
+                                return Err(RunError::Native(
+                                    "TypeError: proxy ownKeys trap result entry is not a string or symbol"
+                                        .to_string(),
+                                ));
+                            }
+                        }
                         return Ok(result);
                     }
                     ProxyRoute::Target(target) => target,
