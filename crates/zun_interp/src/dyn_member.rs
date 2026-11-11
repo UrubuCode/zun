@@ -136,6 +136,27 @@ impl Interp<'_> {
                 return Ok(ArmFlow::Continue);
             }
         }
+        // `view.constructor` of a typed array / ArrayBuffer / DataView.
+        if name == "constructor" {
+            if let Value::Object(obj) = &concrete {
+                let class_name = zun_gc::with_current_heap(|heap| {
+                    if let Some(kind) = heap.typed_array_element(*obj) {
+                        Some(kind.js_name())
+                    } else if heap.buffer_len(*obj).is_some() {
+                        Some("ArrayBuffer")
+                    } else if heap.data_view_buffer(*obj).is_some() {
+                        Some("DataView")
+                    } else {
+                        None
+                    }
+                });
+                if let Some(class_name) = class_name {
+                    let record = Self::builtin_constructor_record(class_name);
+                    stack.push(Value::Object(record));
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         if name == "constructor" {
             if let Value::Object(obj) = &concrete {
                 if let Some(record) = self.constructor_record(*obj) {
@@ -155,6 +176,17 @@ impl Interp<'_> {
             if let Some(class_name) = wrapper {
                 let record = Self::builtin_constructor_record(class_name);
                 stack.push(Value::Object(record));
+                return Ok(ArmFlow::Continue);
+            }
+        }
+        // Typed array / ArrayBuffer / DataView properties.
+        if let Value::Object(view) = &concrete {
+            if let Some(found) = self.typed_view_get(*view, &name) {
+                let boxed = zun_gc::with_current_heap_mut(|heap| found.box_any(heap));
+                stack.push(match boxed {
+                    Some(any) => Value::Any(any),
+                    None => found,
+                });
                 return Ok(ArmFlow::Continue);
             }
         }
@@ -259,6 +291,12 @@ impl Interp<'_> {
                             return Err(RunError::Thrown(exception));
                         }
                         Err(error) => return Err(error),
+                    }
+                }
+                if name == "BYTES_PER_ELEMENT" && !user_class {
+                    if let Some(kind) = self.typed_ctor_kind(token) {
+                        stack.push(Value::Float(kind.size() as f64, zun_il::NumKind::F64));
+                        return Ok(ArmFlow::Continue);
                     }
                 }
                 stack.push(if name == "prototype" && user_class {
@@ -687,6 +725,23 @@ impl Interp<'_> {
                 }
             }
         }
+        // A typed array receiver: integer-indexed element read.
+        {
+            let concrete = match &object_raw {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                    .unwrap_or(Value::Void),
+                other => other.clone(),
+            };
+            if let Value::Object(view) = &concrete {
+                if let Some(answer) = self.typed_view_index_get(*view, &key) {
+                    stack.push(match zun_gc::with_current_heap_mut(|heap| answer.box_any(heap)) {
+                        Some(any) => Value::Any(any),
+                        None => answer,
+                    });
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         // A string receiver: `str[i]` is the character, `str.length` its length.
         {
             let concrete = match &object_raw {
@@ -1093,6 +1148,20 @@ impl Interp<'_> {
             key
         };
         let object = expando_receiver(pop(stack)?).as_object();
+        // A typed array receiver: integer-indexed element write.
+        if crate::typed_arrays::element_of(object).is_some() {
+            match self.typed_view_index_set(object, &key, &value) {
+                Ok(true) => return Ok(ArmFlow::Continue),
+                Ok(false) => {}
+                Err(RunError::Thrown(exception)) => {
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
+                        return Ok(ArmFlow::Continue);
+                    }
+                    return Err(RunError::Thrown(exception));
+                }
+                Err(error) => return Err(error),
+            }
+        }
         {
             let key_name: Option<String> = match &key {
                 Value::Str(text) => Some(text.to_string()),

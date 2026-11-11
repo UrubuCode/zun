@@ -254,3 +254,128 @@ impl Checker<'_> {
         Err(receiver)
     }
 }
+
+impl Checker<'_> {
+    /// Whether a method call on a typed-array / `DataView` / `ArrayBuffer`
+    /// receiver has no statically typed lowering and must be resolved by name
+    /// at run time instead (`subarray(1)`, `at`, `reverse`, `entries`, ...).
+    fn view_call_is_dynamic(receiver: Ty, mname: &str, argc: usize) -> bool {
+        match receiver {
+            Ty::BufferView(hir::BufferViewKind::DataView) => true,
+            Ty::BufferView(kind) => {
+                let u8_buffer = kind == hir::BufferViewKind::U8;
+                if u8_buffer {
+                    let node = matches!(
+                        mname,
+                        "toString"
+                            | "write"
+                            | "equals"
+                            | "copy"
+                            | "lastIndexOf"
+                            | "swap16"
+                            | "swap32"
+                            | "swap64"
+                    ) || mname.starts_with("read")
+                        || mname.starts_with("write");
+                    if node {
+                        return false;
+                    }
+                }
+                match mname {
+                    "length" | "byteLength" | "byteOffset" | "buffer" => argc != 0,
+                    "get" => argc != 1,
+                    "subarray" => argc != 2,
+                    "fill" => true,
+                    "set" | "slice" | "copyWithin" | "indexOf" | "includes" | "join"
+                    | "forEach" | "map" | "filter" | "reduce" | "reduceRight" | "find"
+                    | "findIndex" | "some" | "every" => false,
+                    _ => true,
+                }
+            }
+            Ty::Buffer => {
+                !matches!(
+                    mname,
+                    "byteLength"
+                        | "slice"
+                        | "maxByteLength"
+                        | "resizable"
+                        | "detached"
+                        | "resize"
+                        | "transfer"
+                        | "transferToFixedLength"
+                ) || (mname == "slice" && argc != 2)
+            }
+            _ => false,
+        }
+    }
+
+    /// Dynamic member call on a buffer-view receiver: the same by-name
+    /// `dynamicCallN` dispatch an `any` receiver gets.
+    pub(in crate::check) fn mcall_view_dynamic_forced(
+        &mut self,
+        cx: &mut FunctionCx,
+        receiver: hir::Expr,
+        mname: &str,
+        method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if args.len() > 6
+            || args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+
+        {
+            return Err(receiver);
+        }
+        let native_name = [
+            "dynamicCall0",
+            "dynamicCall1",
+            "dynamicCall2",
+            "dynamicCall3",
+            "dynamicCall4",
+            "dynamicCall5",
+            "dynamicCall6",
+        ][args.len()];
+        let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
+            self.error(span, format!("missing collection intrinsic `{native_name}`"));
+            return Ok(self.poison(span));
+        };
+        let mut call_args = vec![
+            Self::box_to_any(receiver),
+            hir::Expr {
+                kind: hir::ExprKind::String(mname.to_string()),
+                ty: Ty::String,
+                span: method.span,
+            },
+        ];
+        for arg in args {
+            let value = self.check_expr(cx, arg);
+            call_args.push(value);
+        }
+        Ok(hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: call_args,
+            },
+            ty: Ty::Any,
+            span,
+        })
+    }
+}
+
+impl Checker<'_> {
+    /// [`Self::mcall_view_dynamic_forced`] when the call has no typed form.
+    pub(in crate::check) fn mcall_view_dynamic(
+        &mut self,
+        cx: &mut FunctionCx,
+        receiver: hir::Expr,
+        mname: &str,
+        method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if !Self::view_call_is_dynamic(receiver.ty, mname, args.len()) {
+            return Err(receiver);
+        }
+        self.mcall_view_dynamic_forced(cx, receiver, mname, method, args, span)
+    }
+}

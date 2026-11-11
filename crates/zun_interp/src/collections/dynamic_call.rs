@@ -406,6 +406,12 @@ impl<'a> Interp<'a> {
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // A typed array / ArrayBuffer / DataView reached through `any`.
+                if let Some(result) = self.typed_view_call(namespace, &member, &call_args)? {
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    return Ok(Value::Any(boxed));
+                }
                 // A Proxy reached through `any`: the member is read through its
                 // `get` trap and called with the proxy as `this`.
                 if zun_gc::with_current_heap(|heap| heap.proxy_target(namespace).is_some()) {

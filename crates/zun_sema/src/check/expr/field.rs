@@ -922,6 +922,17 @@ impl Checker<'_> {
                     span,
                 }
             }
+            // Any other named read off a byte-buffer view or `ArrayBuffer`
+            // (`byteOffset`, `BYTES_PER_ELEMENT`, `resizable`, ...) is
+            // resolved by name at run time.
+            Ty::BufferView(_) | Ty::Buffer => hir::Expr {
+                kind: hir::ExprKind::DynamicGet {
+                    object: Box::new(Self::box_to_any(object)),
+                    name: fname,
+                },
+                ty: Ty::Any,
+                span,
+            },
             other => {
                 self.error(object.span, format!("type {other:?} has no fields"));
                 self.poison(span)

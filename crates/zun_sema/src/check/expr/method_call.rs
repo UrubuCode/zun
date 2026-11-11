@@ -67,6 +67,35 @@ impl Checker<'_> {
                 span: receiver_span,
             };
         }
+        // A typed-array / DataView / ArrayBuffer receiver takes the statically
+        // typed lowering when its arguments fit; otherwise the checker's
+        // diagnostics from that attempt are discarded and the call is resolved
+        // by name at run time, as for an `any` receiver.
+        if matches!(receiver.ty, Ty::BufferView(_) | Ty::Buffer) {
+            let before = self.diagnostics.len();
+            let backup = receiver.clone();
+            let typed = self.check_method_call_tail(cx, receiver, mname.clone(), method, args, span);
+            if self.diagnostics.len() == before {
+                return typed;
+            }
+            self.diagnostics.truncate(before);
+            return match self.mcall_view_dynamic_forced(cx, backup, &mname, method, args, span) {
+                Ok(e) => e,
+                Err(_) => self.poison(span),
+            };
+        }
+        self.check_method_call_tail(cx, receiver, mname, method, args, span)
+    }
+
+    fn check_method_call_tail(
+        &mut self,
+        cx: &mut FunctionCx,
+        receiver: hir::Expr,
+        mname: String,
+        method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
         let receiver = match self.mcall_array_mutators(cx, receiver, &mname, method, args, span) {
             Ok(e) => return e,
             Err(r) => r,
@@ -120,6 +149,10 @@ impl Checker<'_> {
                 Ok(e) => return e,
                 Err(r) => r,
             };
+        let receiver = match self.mcall_view_dynamic(cx, receiver, &mname, method, args, span) {
+            Ok(e) => return e,
+            Err(r) => r,
+        };
         let receiver = match self.mcall_buffer_views(cx, receiver, &mname, method, args, span) {
             Ok(e) => return e,
             Err(r) => r,

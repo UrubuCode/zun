@@ -197,12 +197,26 @@ impl<'a> Interp<'a> {
         // The typed-array intrinsics are generated from the master table in
         // `zun_core`, so every kind the checker accepts runs on Tier 0.
         if let Some(result) = crate::typed_arrays::call(name, args) {
+            // A view constructor the buffer cannot back (misaligned or
+            // out-of-range window) is a RangeError, not a malformed call.
+            if matches!(result, Err(RunError::BadToken)) && name.ends_with("ArrayNew") {
+                return match self.new_error_object("RangeError", "Invalid typed array length") {
+                    Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                    None => result,
+                };
+            }
             return result;
         }
         if let Some(result) = crate::node_buffer::call(name, args) {
             return result;
         }
         if let Some(result) = self.call_typed_array_ext(name, args) {
+            if matches!(result, Err(RunError::BadToken)) && name == "typedArrayTrackingNew" {
+                return match self.new_error_object("RangeError", "Invalid typed array length") {
+                    Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                    None => result,
+                };
+            }
             return result;
         }
         if let Some(result) = self.call_decorator_native(name, args) {

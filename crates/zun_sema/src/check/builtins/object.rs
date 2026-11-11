@@ -560,7 +560,14 @@ impl Checker<'_> {
         // A managed collection target is handed to the natives as a dynamic receiver.
         if matches!(
             checked[0].ty,
-            Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_) | Ty::RegExp | Ty::Function(_)
+            Ty::Array
+                | Ty::Map
+                | Ty::Set
+                | Ty::Instance(_)
+                | Ty::RegExp
+                | Ty::Function(_)
+                | Ty::BufferView(_)
+                | Ty::Buffer
         ) {
             let target = checked.remove(0);
             checked.insert(0, Self::box_to_any(target));

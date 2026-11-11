@@ -221,6 +221,21 @@ impl<'a> Interp<'a> {
                 // `new proxy(...args)`: `handler.construct(target, argsArray,
                 // newTarget)` when present (the descriptor stands in for both
                 // `target` and `newTarget`), else default-construct the class.
+                // A builtin buffer constructor value (`new ctor(...)` with a
+                // typed array / ArrayBuffer / DataView descriptor in `ctor`).
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if token & zun_natives::USER_CLASS_FLAG == 0 {
+                        let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                            .ok_or(RunError::BadToken)?;
+                        let values = self.read_array_values(array)?;
+                        if let Some(result) = self.construct_builtin_buffer(token, &values) {
+                            let built = result?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| built.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
                 let proxy = args.first().and_then(object);
                 let proxy = match proxy {
                     Some(p) if zun_gc::with_current_heap(|heap| heap.proxy_target(p).is_some()) => p,

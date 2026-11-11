@@ -34,6 +34,7 @@ mod stack;
 mod state;
 mod string_dyn;
 mod typed_arrays;
+mod typed_dyn;
 mod unwind;
 pub mod value;
 

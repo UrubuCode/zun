@@ -418,6 +418,25 @@ impl<'a> Interp<'a> {
                         None => {}
                     }
                 }
+                // `<TypedArray>.BYTES_PER_ELEMENT`: a read-only, non-enumerable,
+                // non-configurable data property of the constructor.
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if token & zun_natives::USER_CLASS_FLAG == 0
+                        && matches!(args.get(1), Some(Value::Str(k)) if k.as_ref() == "BYTES_PER_ELEMENT")
+                    {
+                        if let Some(kind) = self.typed_ctor_kind(token) {
+                            let out = zun_gc::with_current_heap_mut(|heap| {
+                                let out = heap.alloc_dynamic();
+                                heap.dynamic_set(out, "value".to_owned(), zun_core::Any::float(kind.size() as f64));
+                                heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(false));
+                                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(false));
+                                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(false));
+                                out
+                            });
+                            return Ok(Value::Object(out));
+                        }
+                    }
+                }
                 // A built-in constructor owns an accessor `[Symbol.species]`
                 // (the collection / array / promise / regexp family only).
                 if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {

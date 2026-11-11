@@ -491,9 +491,13 @@ impl Checker<'_> {
                     return self.poison(span);
                 }
                 let source = self.check_expr(cx, &args[0]);
-                if !matches!(source.ty, Ty::Array | Ty::BufferView(_)) && !source.ty.is_error() {
-                    self.error(source.span, "`from` source must be an array or typed array");
-                }
+                // Any other source (an iterable, a string, an array-like
+                // object) is drained into an array first.
+                let source = if matches!(source.ty, Ty::Array | Ty::BufferView(_)) {
+                    source
+                } else {
+                    self.spread_source_to_array(source)
+                };
                 match args.get(1) {
                     Some(map_arg) => {
                         let map_fn = self.check_expr(cx, map_arg);

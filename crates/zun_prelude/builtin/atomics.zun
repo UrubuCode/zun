@@ -1,0 +1,151 @@
+// Nucleus `Atomics` (ES2017 shared-memory operations), prelude class.
+//
+// Zun runs one agent, so every operation is a plain read-modify-write over the
+// typed array and `wait` can never block: it answers "not-equal" or
+// "timed-out". The element kind is read from the receiver at run time; all
+// operations answer the previous value.
+
+class Atomics {
+    static __index(ta: any, index: any, wide: any): any {
+        if (ta === null || ta === undefined || ta.constructor === undefined) {
+            throw new TypeError("[object Object] is not an integer shared typed array.");
+        }
+        const name: any = ta.constructor.name;
+        if (name === "Float32Array" || name === "Float64Array" || name === "Uint8ClampedArray") {
+            throw new TypeError("[object Array] is not an integer shared typed array.");
+        }
+        if (
+            name !== "Int8Array" && name !== "Uint8Array" && name !== "Int16Array" &&
+            name !== "Uint16Array" && name !== "Int32Array" && name !== "Uint32Array" &&
+            name !== "BigInt64Array" && name !== "BigUint64Array"
+        ) {
+            throw new TypeError("[object Object] is not an integer shared typed array.");
+        }
+        if (wide && name !== "Int32Array" && name !== "BigInt64Array") {
+            throw new TypeError("[object Array] is not an int32 or BigInt64 typed array.");
+        }
+        let i: any = Number(index);
+        if (i !== i) {
+            i = 0;
+        }
+        i = Math.trunc(i);
+        if (i < 0 || i >= ta.length) {
+            throw new RangeError("Invalid atomic access index");
+        }
+        return i;
+    }
+
+    static __big(ta: any): any {
+        const name: any = ta.constructor.name;
+        return name === "BigInt64Array" || name === "BigUint64Array";
+    }
+
+    static __operand(ta: any, value: any): any {
+        if (Atomics.__big(ta)) {
+            if (typeof value !== "bigint") {
+                throw new TypeError("Cannot convert " + String(value) + " to a BigInt");
+            }
+            return value;
+        }
+        if (typeof value === "bigint") {
+            throw new TypeError("Cannot convert a BigInt value to a number");
+        }
+        let n: any = Number(value);
+        if (n !== n) {
+            n = 0;
+        }
+        return Math.trunc(n);
+    }
+
+    static load(ta: any, index: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        return ta[i];
+    }
+
+    static store(ta: any, index: any, value: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        const v: any = Atomics.__operand(ta, value);
+        ta[i] = v;
+        return v;
+    }
+
+    static add(ta: any, index: any, value: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        const v: any = Atomics.__operand(ta, value);
+        const old: any = ta[i];
+        ta[i] = old + v;
+        return old;
+    }
+
+    static sub(ta: any, index: any, value: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        const v: any = Atomics.__operand(ta, value);
+        const old: any = ta[i];
+        ta[i] = old - v;
+        return old;
+    }
+
+    static and(ta: any, index: any, value: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        const v: any = Atomics.__operand(ta, value);
+        const old: any = ta[i];
+        ta[i] = old & v;
+        return old;
+    }
+
+    static or(ta: any, index: any, value: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        const v: any = Atomics.__operand(ta, value);
+        const old: any = ta[i];
+        ta[i] = old | v;
+        return old;
+    }
+
+    static xor(ta: any, index: any, value: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        const v: any = Atomics.__operand(ta, value);
+        const old: any = ta[i];
+        ta[i] = old ^ v;
+        return old;
+    }
+
+    static exchange(ta: any, index: any, value: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        const v: any = Atomics.__operand(ta, value);
+        const old: any = ta[i];
+        ta[i] = v;
+        return old;
+    }
+
+    static compareExchange(ta: any, index: any, expected: any, replacement: any): any {
+        const i: any = Atomics.__index(ta, index, false);
+        const e: any = Atomics.__operand(ta, expected);
+        const r: any = Atomics.__operand(ta, replacement);
+        const old: any = ta[i];
+        // The expected value is compared after the element kind's conversion.
+        const probe: any = ta.slice(i, i + 1);
+        probe[0] = e;
+        if (old === probe[0]) {
+            ta[i] = r;
+        }
+        return old;
+    }
+
+    static wait(ta: any, index: any, value: any, timeout: any): any {
+        const i: any = Atomics.__index(ta, index, true);
+        if (ta[i] !== value) {
+            return "not-equal";
+        }
+        return "timed-out";
+    }
+
+    static notify(ta: any, index: any, count: any): any {
+        Atomics.__index(ta, index, true);
+        return 0;
+    }
+
+    static isLockFree(size: any): any {
+        const n: any = Number(size);
+        return n === 1 || n === 2 || n === 4 || n === 8;
+    }
+}

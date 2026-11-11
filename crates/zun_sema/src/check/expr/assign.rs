@@ -206,13 +206,39 @@ impl Checker<'_> {
                 index = self.coerce_array_index(index);
             }
             if !index.ty.is_int() && !index.ty.is_error() {
-                self.error(index.span, "buffer index must be an integer");
+                let value = self.check_expr(cx, value);
+                return hir::Expr {
+                    kind: hir::ExprKind::DynamicSetValue {
+                        object: Box::new(Self::box_to_any(object)),
+                        key: Box::new(Self::box_to_any(index)),
+                        value: Box::new(Self::box_to_any(value)),
+                    },
+                    ty: Ty::Any,
+                    span,
+                };
             }
             if let Some((native, _ret, params)) = crate::typed_arrays::method(kind, "set") {
                 // params = [index, element]; the element type is the kind's.
                 let elem_ty = params.get(1).copied().unwrap_or(Ty::Int(IntKind::U8));
                 let mut value = self.check_expr(cx, value);
                 let value_ty = value.ty;
+                // A value the element type cannot take (a BigInt into a
+                // `BigInt64Array`, a string, ...) is converted at run time.
+                if !value.ty.is_error()
+                    && !self.is_assignable(value.ty, elem_ty)
+                    && !(elem_ty.is_int() && value.ty == Ty::F64)
+                    && !matches!(value.ty, Ty::Int(_) | Ty::Float(_))
+                {
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicSetValue {
+                            object: Box::new(Self::box_to_any(object)),
+                            key: Box::new(Self::box_to_any(index)),
+                            value: Box::new(Self::box_to_any(value)),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 coerce_numeric_literal(&mut value, elem_ty);
                 // A JS `number` stored into an integer element is
                 // converted (NaN -> 0, truncation) like a typed-array set.

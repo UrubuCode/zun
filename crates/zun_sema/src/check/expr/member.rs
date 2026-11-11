@@ -342,7 +342,16 @@ impl Checker<'_> {
                 index = self.coerce_array_index(index);
             }
             if !index.ty.is_int() && !index.ty.is_error() {
-                self.error(index.span, "buffer index must be an integer");
+                // A non-integer key (`view["1"]`, `view[any]`) follows
+                // ToPropertyKey at run time.
+                return hir::Expr {
+                    kind: hir::ExprKind::DynamicGetValue {
+                        object: Box::new(Self::box_to_any(object)),
+                        key: Box::new(Self::box_to_any(index)),
+                    },
+                    ty: Ty::Any,
+                    span,
+                };
             }
             if let Some((native, ret, _)) = crate::typed_arrays::method(kind, "get") {
                 if let Some((id, _)) = zun_natives::resolve("buffer", native) {

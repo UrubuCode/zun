@@ -104,6 +104,20 @@ impl Checker<'_> {
                 };
             }
             Ty::Error => return self.poison(span),
+            Ty::BufferView(_) | Ty::Buffer => {
+                let Some((id, _)) = zun_natives::resolve("collections", "reflectHas") else {
+                    self.error(span, "missing `reflectHas` intrinsic");
+                    return self.poison(span);
+                };
+                return hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![Self::box_to_any(object), Self::box_to_any(key)],
+                    },
+                    ty: Ty::Boolean,
+                    span,
+                };
+            }
             other => {
                 self.error(
                     object.span,

@@ -313,7 +313,7 @@ impl Checker<'_> {
                     || t == Ty::Array
                     || t == Ty::Void
                     || t == Ty::Symbol
-                    || matches!(t, Ty::Int(_))
+                    || matches!(t, Ty::Int(_) | Ty::Float(_) | Ty::BufferView(_) | Ty::Buffer)
             };
             let numeric_ty = |t: Ty| t.is_int() || t.is_float();
             // Route through the runtime `addAny` (ECMAScript
