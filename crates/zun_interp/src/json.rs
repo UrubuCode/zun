@@ -360,6 +360,25 @@ impl Interp<'_> {
                 if let Some(next) = as_obj(&value) {
                     ctx.slot_set(slot, next);
                 }
+            } else if let Some(handle) = {
+                let name = zun_gc::with_current_heap(|heap| {
+                    if heap.map_entries(obj).is_some() {
+                        Some("Map")
+                    } else if heap.set_values(obj).is_some() {
+                        Some("Set")
+                    } else {
+                        None
+                    }
+                });
+                name.and_then(|n| self.builtin_prototype_by_name(n)).and_then(|proto| {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(proto, "toJSON"))
+                })
+            } {
+                let this = Value::Object(ctx.slot_get(slot));
+                value = self.json_call_with_this(handle, this, vec![key_value.clone()])?;
+                if let Some(next) = as_obj(&value) {
+                    ctx.slot_set(slot, next);
+                }
             } else if !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
                 // A typed class instance (e.g. `Date`) with a `toJSON` method.
                 if let Some(rid) = self.instance_method_rid(obj, "toJSON") {

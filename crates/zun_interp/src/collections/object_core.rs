@@ -671,6 +671,24 @@ impl<'a> Interp<'a> {
                     )));
                 }
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
+                if prototype.is_none() {
+                    let builtin = zun_gc::with_current_heap(|heap| {
+                        if heap.array_len(obj).is_some() {
+                            Some("Array")
+                        } else if heap.map_entries(obj).is_some() {
+                            Some("Map")
+                        } else if heap.set_values(obj).is_some() {
+                            Some("Set")
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(name) = builtin {
+                        if let Some(proto) = self.builtin_prototype_by_name(name) {
+                            return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                        }
+                    }
+                }
                 if prototype.is_none()
                     && zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some())
                 {

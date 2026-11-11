@@ -240,6 +240,7 @@ impl Interp<'_> {
         )> = Vec::new();
         // Key -> position in `accessors`, so pairing a getter/setter is O(1)
         // while the `Vec` still preserves first-seen prototype property order.
+        let mut plain_methods: Vec<(String, zun_core::FunctionHandle)> = Vec::new();
         let mut accessor_index: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         if let Some(def) = self
@@ -266,6 +267,16 @@ impl Interp<'_> {
                 } else if let Some(prop) = name.strip_prefix("set_") {
                     (prop, false)
                 } else {
+                    let ident = name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                        && !name.is_empty();
+                    if ident && method.body_offset != u32::MAX {
+                        plain_methods.push((
+                            name.to_owned(),
+                            zun_core::FunctionHandle::new(method_rid, None),
+                        ));
+                    }
                     continue;
                 };
                 let handle = zun_core::FunctionHandle::new(method_rid, None);
@@ -305,6 +316,32 @@ impl Interp<'_> {
             for (name, get, set) in accessors {
                 heap.dynamic_define_accessor(proto, name, get, set, false, true);
             }
+            heap.dynamic_define(
+                proto,
+                "constructor".to_owned(),
+                zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid),
+                false,
+            );
+            for (name, handle) in plain_methods {
+                heap.dynamic_set_function(proto, name, handle);
+            }
+            proto
+        })
+    }
+
+    /// The lazily-created real `Builtin.prototype` object of a builtin class
+    /// descriptor `token`: a plain dynamic object anchored (non-enumerable) on
+    /// the realm global so it is rooted and identity-stable.
+    pub(crate) fn builtin_prototype_object(&self, token: u32) -> zun_gc::Obj {
+        let key = format!("$builtinProto#{token}");
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(address) = heap.dynamic_get(global, &key).and_then(|a| a.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, key, any, false);
             proto
         })
     }
@@ -1361,5 +1398,192 @@ impl Interp<'_> {
             return Ok(true);
         }
         Ok(false)
+    }
+}
+
+impl Interp<'_> {
+    /// The real `Name.prototype` object of the global builtin class `name`
+    /// (`Map`, `Set`, `Array`, ...), when the realm exposes it as a descriptor.
+    pub(crate) fn builtin_prototype_by_name(&self, name: &str) -> Option<zun_gc::Obj> {
+        let descriptor = zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            heap.dynamic_get(global, name)
+        })?;
+        let token = descriptor.as_class_descriptor()?;
+        Some(self.builtin_prototype_object(token))
+    }
+}
+
+/// One own property of a user class constructor (see
+/// [`Interp::class_own_props`]).
+pub(crate) enum ClassOwn {
+    /// An initialised static field.
+    Field(u32, u32),
+    /// A static method.
+    Method(zun_core::FunctionHandle),
+    /// A static accessor pair.
+    Accessor(Option<zun_core::FunctionHandle>, Option<zun_core::FunctionHandle>),
+}
+
+impl Interp<'_> {
+    /// Own static members of the user class `rid` in declaration order:
+    /// initialised fields, methods and accessors (hidden `@this` helpers and
+    /// the constructor are skipped).
+    pub(crate) fn class_own_props(&self, rid: u32) -> Vec<(String, ClassOwn)> {
+        let mut out: Vec<(String, ClassOwn)> = Vec::new();
+        let Some(def) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+        else {
+            return out;
+        };
+        for frid in def.field_start..def.field_end {
+            let Some(field) = self
+                .module
+                .tables
+                .field_defs
+                .get((frid as usize).wrapping_sub(1))
+            else {
+                continue;
+            };
+            if !field.is_static {
+                continue;
+            }
+            let set = zun_gc::with_current_heap(|heap| {
+                heap.static_get(rid, frid).is_some() || heap.static_get_function(rid, frid).is_some()
+            });
+            if set {
+                out.push((
+                    self.module.strings.get(field.name).to_owned(),
+                    ClassOwn::Field(rid, frid),
+                ));
+            }
+        }
+        for mrid in def.method_start..def.method_end {
+            let Some(method) = self
+                .module
+                .tables
+                .method_defs
+                .get((mrid as usize).wrapping_sub(1))
+            else {
+                continue;
+            };
+            if !method.is_static || method.body_offset == u32::MAX {
+                continue;
+            }
+            let name = self.module.strings.get(method.name);
+            let handle = zun_core::FunctionHandle::new(mrid, None);
+            let (prop, is_get) = if let Some(p) = name.strip_prefix("get_") {
+                (p, Some(true))
+            } else if let Some(p) = name.strip_prefix("set_") {
+                (p, Some(false))
+            } else {
+                (name, None)
+            };
+            let ident = !prop.is_empty()
+                && prop
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+            if !ident {
+                continue;
+            }
+            match is_get {
+                None => out.push((name.to_owned(), ClassOwn::Method(handle))),
+                Some(get) => {
+                    if let Some((_, ClassOwn::Accessor(g, s))) =
+                        out.iter_mut().find(|(n, _)| n == prop)
+                    {
+                        if get {
+                            *g = Some(handle);
+                        } else {
+                            *s = Some(handle);
+                        }
+                    } else if get {
+                        out.push((prop.to_owned(), ClassOwn::Accessor(Some(handle), None)));
+                    } else {
+                        out.push((prop.to_owned(), ClassOwn::Accessor(None, Some(handle))));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `Object.getOwnPropertyNames(Class)` for a user class descriptor.
+    pub(crate) fn class_own_names(&self, rid: u32) -> Vec<String> {
+        let mut names = vec!["length".to_owned(), "name".to_owned(), "prototype".to_owned()];
+        names.extend(self.class_own_props(rid).into_iter().map(|(n, _)| n));
+        names
+    }
+
+    /// `Object.getOwnPropertyDescriptor(Class, key)` for a user class.
+    pub(crate) fn class_own_descriptor(&self, rid: u32, key: &str) -> Option<zun_gc::Obj> {
+        if key == "prototype" {
+            let proto = self.class_prototype_object(rid);
+            return Some(zun_gc::with_current_heap_mut(|heap| {
+                let out = heap.alloc_dynamic();
+                heap.dynamic_set(
+                    out,
+                    "value".to_owned(),
+                    zun_core::Any::object(proto.addr() as usize),
+                );
+                for (n, f) in [("writable", false), ("enumerable", false), ("configurable", false)]
+                {
+                    heap.dynamic_set(out, n.to_owned(), zun_core::Any::bool(f));
+                }
+                out
+            }));
+        }
+        let (_, own) = self
+            .class_own_props(rid)
+            .into_iter()
+            .find(|(n, _)| n == key)?;
+        Some(zun_gc::with_current_heap_mut(|heap| {
+            let out = heap.alloc_dynamic();
+            let flag = |heap: &mut zun_gc::Heap, n: &str, f: bool| {
+                heap.dynamic_set(out, n.to_owned(), zun_core::Any::bool(f));
+            };
+            match own {
+                ClassOwn::Field(r, frid) => {
+                    if let Some(any) = heap.static_get(r, frid) {
+                        heap.dynamic_set(out, "value".to_owned(), any);
+                    } else if let Some(handle) = heap.static_get_function(r, frid) {
+                        heap.dynamic_set_function(out, "value", handle);
+                    }
+                    flag(heap, "writable", true);
+                    flag(heap, "enumerable", true);
+                    flag(heap, "configurable", true);
+                }
+                ClassOwn::Method(handle) => {
+                    heap.dynamic_set_function(out, "value", handle);
+                    flag(heap, "writable", true);
+                    flag(heap, "enumerable", false);
+                    flag(heap, "configurable", true);
+                }
+                ClassOwn::Accessor(get, set) => {
+                    match get {
+                        Some(h) => {
+                            heap.dynamic_set_function(out, "get", h);
+                        }
+                        None => {
+                            heap.dynamic_set(out, "get".to_owned(), zun_core::Any::void());
+                        }
+                    }
+                    match set {
+                        Some(h) => {
+                            heap.dynamic_set_function(out, "set", h);
+                        }
+                        None => {
+                            heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
+                        }
+                    }
+                    flag(heap, "enumerable", false);
+                    flag(heap, "configurable", true);
+                }
+            }
+            out
+        }))
     }
 }

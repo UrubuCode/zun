@@ -265,7 +265,8 @@ impl Interp<'_> {
                     let proto = self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))
                 } else if name == "prototype" {
-                    Value::Any(*descriptor)
+                    let proto = self.builtin_prototype_object(token);
+                    Value::Any(zun_core::Any::object(proto.addr() as usize))
                 } else {
                     Value::Void
                 });

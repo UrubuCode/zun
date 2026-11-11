@@ -389,6 +389,16 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(roots[0]))
             }
             "objectGetOwnPropertyDescriptor" => {
+                if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
+                    if let Some(rid) = any.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
+                        if let Some(Value::Str(key)) = args.get(1) {
+                            return Ok(match self.class_own_descriptor(rid, key) {
+                                Some(d) => Value::Object(d),
+                                None => Value::Void,
+                            });
+                        }
+                    }
+                }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
@@ -499,6 +509,22 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(out))
             }
             "objectGetOwnPropertyNames" => {
+                if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
+                    if let Some(rid) = any.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
+                        let names = self.class_own_names(rid);
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(names.len());
+                            for (index, name) in names.iter().enumerate() {
+                                let item = Value::Str(name.clone().into())
+                                    .box_any(heap)
+                                    .unwrap_or_else(zun_core::Any::null);
+                                let _ = heap.array_set(array, index, item);
+                            }
+                            array
+                        });
+                        return Ok(Value::Object(array));
+                    }
+                }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 // `Reflect.ownKeys(proxy)` consults the `ownKeys` trap; the trap
