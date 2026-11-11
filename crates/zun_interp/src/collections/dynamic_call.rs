@@ -338,6 +338,8 @@ impl<'a> Interp<'a> {
                                         || name.ends_with("@this")
                                 })
                                 .unwrap_or(false);
+                        let takes_this = takes_this
+                            || handle.builtin_method().is_some_and(|kind| kind >= 16);
                         if takes_this {
                             rest.insert(0, this_arg);
                         }

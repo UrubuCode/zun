@@ -16,6 +16,33 @@ impl<'a> Interp<'a> {
                 let proxy = zun_gc::with_current_heap_mut(|heap| heap.alloc_proxy(target, handler));
                 Ok(Value::Object(proxy))
             }
+            "proxyRevocable" => {
+                let target =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let handler =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let roots = [target, handler];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let proxy = heap.alloc_proxy(roots[0], roots[1]);
+                    let result = heap.alloc_dynamic();
+                    heap.dynamic_set(
+                        result,
+                        "proxy",
+                        zun_core::Any::object(proxy.addr() as usize),
+                    );
+                    heap.dynamic_set_function(
+                        result,
+                        "revoke".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method_with_env(
+                            crate::property_ops::BUILTIN_PROXY_REVOKE,
+                            proxy.addr() as usize,
+                        ),
+                    );
+                    result
+                });
+                Ok(Value::Object(result))
+            }
             "proxyGet" => {
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

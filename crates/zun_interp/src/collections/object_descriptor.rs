@@ -830,7 +830,11 @@ impl<'a> Interp<'a> {
                                         "Array"
                                     }
                                 } else if heap.array_iterator_done(obj).is_some() {
-                                    "Array Iterator"
+                                    if heap.array_iterator_mode(obj) == Some(3) {
+                                        "String Iterator"
+                                    } else {
+                                        "Array Iterator"
+                                    }
                                 } else if heap.generator_state(obj).is_some() {
                                     "Generator"
                                 } else if heap.regex_source(obj).is_some() {

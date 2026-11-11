@@ -19,6 +19,22 @@ impl Heap {
         proxy
     }
 
+    /// `revoke()`: the proxy keeps its identity but now stands over a fresh
+    /// empty target and handler (no trap fires, nothing of the old target is
+    /// reachable through it).
+    pub fn proxy_revoke(&mut self, proxy: Obj) -> bool {
+        if !self.proxies.contains_key(&(proxy.addr() as usize)) {
+            return false;
+        }
+        let target = self.alloc_dynamic();
+        let handler = self.alloc_dynamic();
+        self.proxies
+            .insert(proxy.addr() as usize, ProxyRecord { target, handler });
+        self.write_barrier(proxy, target.addr() as u64);
+        self.write_barrier(proxy, handler.addr() as u64);
+        true
+    }
+
     pub fn proxy_target(&self, proxy: Obj) -> Option<Obj> {
         self.proxies
             .get(&(proxy.addr() as usize))

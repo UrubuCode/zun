@@ -670,9 +670,13 @@ impl<'a> Interp<'a> {
                         class_proto.addr() as usize
                     )));
                 }
+                if let Some(mode) = zun_gc::with_current_heap(|heap| heap.array_iterator_mode(obj)) {
+                    let proto = Self::iterator_prototype_object(if mode == 3 { 2 } else { 1 });
+                    return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                }
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
                 if prototype.is_none() {
-                    let builtin = zun_gc::with_current_heap(|heap| {
+                    let builtin =zun_gc::with_current_heap(|heap| {
                         if heap.array_len(obj).is_some() {
                             Some("Array")
                         } else if heap.map_entries(obj).is_some() {
@@ -749,6 +753,10 @@ impl<'a> Interp<'a> {
             "objectPrototype" => {
                 let root = Self::object_prototype_singleton();
                 Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))
+            }
+            "stringPrototype" => {
+                let proto = Self::string_prototype_singleton();
+                Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)))
             }
             "regexpPrototype" => {
                 let root = Self::regexp_prototype_singleton();

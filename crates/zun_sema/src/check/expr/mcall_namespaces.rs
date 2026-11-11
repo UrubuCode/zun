@@ -221,6 +221,25 @@ impl Checker<'_> {
                 span,
             });
         }
+        // `Proxy.revocable(target, handler)` -> `{ proxy, revoke }`.
+        if class_name == "Proxy"
+            && self.text(method) == "revocable"
+            && !self.classes_by_name.contains_key("Proxy")
+            && args.len() == 2
+        {
+            if let Some((id, _)) = zun_natives::resolve("collections", "proxyRevocable") {
+                let target = self.check_expr(cx, &args[0]);
+                let handler = self.check_expr(cx, &args[1]);
+                return Some(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![target, handler],
+                    },
+                    ty: Ty::DynamicObject,
+                    span,
+                });
+            }
+        }
         // `BigInt.asIntN(bits, value)` / `BigInt.asUintN(bits,
         // value)`. The `BigInt` class exists (instance helpers), so
         // recognition keys on the receiver name and method pair; any

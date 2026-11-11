@@ -140,6 +140,14 @@ impl Desc {
     }
 }
 
+pub(crate) const BUILTIN_MAP_SIZE: u32 = 16;
+pub(crate) const BUILTIN_SET_SIZE: u32 = 17;
+pub(crate) const BUILTIN_ARRAY_ITER_NEXT: u32 = 18;
+pub(crate) const BUILTIN_STRING_ITER_NEXT: u32 = 19;
+pub(crate) const BUILTIN_ITER_SELF: u32 = 20;
+pub(crate) const BUILTIN_PROXY_REVOKE: u32 = 21;
+pub(crate) const BUILTIN_STRING_ITERATOR: u32 = 22;
+
 const OBJECT_PROTOTYPE_KEY: &str = "$Object.prototype";
 const REGEXP_PROTOTYPE_KEY: &str = "$RegExp.prototype";
 
@@ -196,6 +204,31 @@ impl Interp<'_> {
             }
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, REGEXP_PROTOTYPE_KEY, any, false);
+            proto
+        })
+    }
+
+    /// The realm's shared `String.prototype`: a dynamic object linked to
+    /// `Object.prototype` owning `[Symbol.iterator]`.
+    pub(crate) fn string_prototype_singleton() -> zun_gc::Obj {
+        let root = Self::object_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap
+                .dynamic_get(global, "$String.prototype")
+                .and_then(|a| a.as_object())
+            {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
+            heap.dynamic_set_symbol_function(
+                proto,
+                zun_core::WellKnownSymbol::Iterator.id(),
+                zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
+            );
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, "$String.prototype", any, false);
             proto
         })
     }
@@ -302,6 +335,12 @@ impl Interp<'_> {
             .get(&rid)
             .expect("prototype key cached above")
             .clone();
+        let is_string_class = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .is_some_and(|def| self.module.strings.get(def.name) == "String");
         zun_gc::with_current_heap_mut(|heap| {
             let proto = heap.alloc_dynamic();
             let any = zun_core::Any::object(proto.addr() as usize);
@@ -325,6 +364,13 @@ impl Interp<'_> {
             for (name, handle) in plain_methods {
                 heap.dynamic_set_function(proto, name, handle);
             }
+            if is_string_class {
+                heap.dynamic_set_symbol_function(
+                    proto,
+                    zun_core::WellKnownSymbol::Iterator.id(),
+                    zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
+                );
+            }
             proto
         })
     }
@@ -342,7 +388,212 @@ impl Interp<'_> {
             let proto = heap.alloc_dynamic();
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, key, any, false);
+            // `Map.prototype.size` / `Set.prototype.size`: accessor properties
+            // whose getters are real built-in function values.
+            let is_class = |heap: &zun_gc::Heap, name: &str| {
+                heap.dynamic_get(global, name)
+                    .and_then(|a| a.as_class_descriptor())
+                    == Some(token)
+            };
+            let size_kind = if is_class(heap, "Map") {
+                Some((BUILTIN_MAP_SIZE, "Map"))
+            } else if is_class(heap, "Set") {
+                Some((BUILTIN_SET_SIZE, "Set"))
+            } else {
+                None
+            };
+            if is_class(heap, "String") {
+                heap.dynamic_set_symbol_function(
+                    proto,
+                    zun_core::WellKnownSymbol::Iterator.id(),
+                    zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
+                );
+            }
+            for weak in ["WeakMap", "WeakSet", "WeakRef"] {
+                if is_class(heap, weak) {
+                    let tag = zun_core::Any::string(heap.intern_string(weak));
+                    heap.dynamic_define_symbol(
+                        proto,
+                        zun_core::WellKnownSymbol::ToStringTag.id(),
+                        tag,
+                        false,
+                    );
+                }
+            }
+            if let Some((kind, tag)) = size_kind {
+                heap.dynamic_define_accessor(
+                    proto,
+                    "size".to_owned(),
+                    Some(zun_core::FunctionHandle::new_builtin_method(kind)),
+                    None,
+                    false,
+                    true,
+                );
+                let tag = zun_core::Any::string(heap.intern_string(tag));
+                heap.dynamic_define_symbol(
+                    proto,
+                    zun_core::WellKnownSymbol::ToStringTag.id(),
+                    tag,
+                    false,
+                );
+            }
             proto
+        })
+    }
+
+    /// The shared iterator prototype objects: `kind` 0 is `%IteratorPrototype%`,
+    /// 1 `%ArrayIteratorPrototype%`, 2 `%StringIteratorPrototype%`. Created on
+    /// first use, anchored (non-enumerable) on the realm global.
+    pub(crate) fn iterator_prototype_object(kind: u8) -> zun_gc::Obj {
+        let base = if kind == 0 {
+            None
+        } else {
+            Some(Self::iterator_prototype_object(0))
+        };
+        let root = Self::object_prototype_singleton();
+        let key = format!("$iteratorProto#{kind}");
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(address) = heap.dynamic_get(global, &key).and_then(|a| a.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, key, any, false);
+            let link = base.unwrap_or(root);
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(link.addr() as usize)));
+            match kind {
+                0 => {
+                    heap.dynamic_set_symbol_function(
+                        proto,
+                        zun_core::WellKnownSymbol::Iterator.id(),
+                        zun_core::FunctionHandle::new_builtin_method(BUILTIN_ITER_SELF),
+                    );
+                }
+                1 | 2 => {
+                    let (next, tag) = if kind == 1 {
+                        (BUILTIN_ARRAY_ITER_NEXT, "Array Iterator")
+                    } else {
+                        (BUILTIN_STRING_ITER_NEXT, "String Iterator")
+                    };
+                    heap.dynamic_set_function(
+                        proto,
+                        "next".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method(next),
+                    );
+                    let tag = zun_core::Any::string(heap.intern_string(tag));
+                    heap.dynamic_define_symbol(
+                        proto,
+                        zun_core::WellKnownSymbol::ToStringTag.id(),
+                        tag,
+                        false,
+                    );
+                }
+                _ => {}
+            }
+            proto
+        })
+    }
+
+    fn incompatible_receiver(&mut self, what: &str) -> RunError {
+        let message = format!("Method {what} called on incompatible receiver");
+        match self.new_error_object("TypeError", &message) {
+            Some(object) => RunError::Thrown(Value::Object(object)),
+            None => RunError::Native(format!("TypeError: {message}")),
+        }
+    }
+
+    /// Run a built-in method value (kind >= 16) with its receiver and
+    /// arguments. A receiver of the wrong brand throws a `TypeError`.
+    pub(crate) fn invoke_builtin_with_this(
+        &mut self,
+        handle: zun_core::FunctionHandle,
+        this: Value,
+        _args: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        let kind = handle.builtin_method().unwrap_or(0);
+        let this_obj = match &this {
+            Value::Object(obj) => Some(*obj),
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                .and_then(|v| match v {
+                    Value::Object(obj) => Some(obj),
+                    _ => None,
+                }),
+            _ => None,
+        };
+        match kind {
+            BUILTIN_MAP_SIZE => {
+                let len = this_obj
+                    .and_then(|o| zun_gc::with_current_heap(|heap| heap.map_len(o)))
+                    .ok_or_else(|| self.incompatible_receiver("get Map.prototype.size"))?;
+                Ok(Value::Float(len as f64, zun_il::NumKind::F64))
+            }
+            BUILTIN_SET_SIZE => {
+                let len = this_obj
+                    .and_then(|o| zun_gc::with_current_heap(|heap| heap.set_len(o)))
+                    .ok_or_else(|| self.incompatible_receiver("get Set.prototype.size"))?;
+                Ok(Value::Float(len as f64, zun_il::NumKind::F64))
+            }
+            BUILTIN_ARRAY_ITER_NEXT | BUILTIN_STRING_ITER_NEXT => {
+                let want_string = kind == BUILTIN_STRING_ITER_NEXT;
+                let what = if want_string {
+                    "String Iterator.prototype.next"
+                } else {
+                    "Array Iterator.prototype.next"
+                };
+                let it = this_obj
+                    .filter(|o| {
+                        zun_gc::with_current_heap(|heap| heap.array_iterator_mode(*o))
+                            .is_some_and(|mode| (mode == 3) == want_string)
+                    })
+                    .ok_or_else(|| self.incompatible_receiver(what))?;
+                match self.builtin_iterator_result(it)? {
+                    Some(result) => Ok(result),
+                    None => Err(self.incompatible_receiver(what)),
+                }
+            }
+            BUILTIN_ITER_SELF => Ok(this),
+            BUILTIN_STRING_ITERATOR => {
+                let text = match &this {
+                    Value::Str(text) => Some(text.clone()),
+                    Value::Any(any) => match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
+                        Some(Value::Str(text)) => Some(text),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(text) = text else {
+                    return Err(self.incompatible_receiver("String.prototype[Symbol.iterator]"));
+                };
+                self.call_managed_collection("stringIteratorNew", &[Value::Str(text)])
+            }
+            BUILTIN_PROXY_REVOKE => {
+                if let Some(address) = handle.environment() {
+                    let proxy = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                    zun_gc::with_current_heap_mut(|heap| heap.proxy_revoke(proxy));
+                }
+                Ok(Value::Void)
+            }
+            _ => Err(RunError::Native(
+                "TypeError: RegExp.prototype method called on an incompatible receiver".into(),
+            )),
+        }
+    }
+
+    /// `name` / `length` of a built-in method value (kind >= 16).
+    pub(crate) fn builtin_method_meta(kind: u32, name: &str) -> Option<Value> {
+        let label = match kind {
+            BUILTIN_MAP_SIZE | BUILTIN_SET_SIZE => "get size",
+            BUILTIN_ARRAY_ITER_NEXT | BUILTIN_STRING_ITER_NEXT => "next",
+            BUILTIN_ITER_SELF => "[Symbol.iterator]",
+            BUILTIN_PROXY_REVOKE => "",
+            BUILTIN_STRING_ITERATOR => "[Symbol.iterator]",
+            _ => return None,
+        };
+        Some(if name == "name" {
+            Value::Str(label.into())
+        } else {
+            Value::Float(0.0, zun_il::NumKind::F64)
         })
     }
 
@@ -814,6 +1065,11 @@ impl Interp<'_> {
             !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none()
         }) && self.instance_class_prototype(obj).is_some()
         {
+            zun_gc::with_current_heap_mut(|heap| heap.ensure_instance_bag(obj));
+        } else if zun_gc::with_current_heap(|heap| {
+            heap.map_len(obj).is_some() || heap.set_len(obj).is_some()
+        }) {
+            // A Map / Set takes expando properties in an instance bag too.
             zun_gc::with_current_heap_mut(|heap| heap.ensure_instance_bag(obj));
         }
         let name = match key {

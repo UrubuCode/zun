@@ -44,6 +44,21 @@ impl<'a> Interp<'a> {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_map_iterator(source))
                 .ok_or(RunError::BadToken);
         }
+        // A `new String("..")` wrapper iterates its primitive by code point.
+        if self.json_class_name(source) == "StringObject" {
+            if let Some(Value::Str(text)) = self
+                .instance_member_get(source, "value")?
+                .map(|inner| match inner {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other,
+                })
+            {
+                let made = self
+                    .call_managed_collection("stringIteratorNew", &[Value::Str(text)])?;
+                return object(&made).ok_or(RunError::BadToken);
+            }
+        }
         let handle =
             zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(source, iterator_id))
                 .or_else(|| {
@@ -778,6 +793,9 @@ impl<'a> Interp<'a> {
                 Value::Float(1.0, zun_il::NumKind::F64)
             });
         }
+        if let Some(kind) = handle.builtin_method() {
+            return Self::builtin_method_meta(kind, name);
+        }
         if handle.is_bound() || handle.generator_method().is_some() {
             return None;
         }
@@ -839,6 +857,10 @@ impl<'a> Interp<'a> {
         receiver: zun_gc::Obj,
         mut args: Vec<Value>,
     ) -> Vec<Value> {
+        if handle.builtin_method().is_some_and(|kind| kind >= 16) {
+            args.insert(0, Value::Object(receiver));
+            return args;
+        }
         if !handle.is_bound() {
             let takes_this = self
                 .module
@@ -869,6 +891,12 @@ impl<'a> Interp<'a> {
         handle: zun_core::FunctionHandle,
         call_args: Vec<Value>,
     ) -> Result<Value, RunError> {
+        if let Some(kind) = handle.builtin_method().filter(|kind| *kind >= 16) {
+            let mut call_args = call_args;
+            let this = if call_args.is_empty() { Value::Void } else { call_args.remove(0) };
+            let _ = kind;
+            return self.invoke_builtin_with_this(handle, this, call_args);
+        }
         if handle.builtin_method().is_some() {
             return Err(RunError::Native(
                 "TypeError: RegExp.prototype method called on an incompatible receiver".into(),

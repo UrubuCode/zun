@@ -231,6 +231,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "deleteStrict",
         "objectPrototype",
         "regexpPrototype",
+        "stringPrototype",
         "objectJsonStringify",
         "proxyNew",
         "proxyGet",
@@ -363,6 +364,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "numberCoerceStrict",
         "mathApply",
         "bigIntUshr",
+        "proxyRevocable",
     ]
     .into_iter()
     .find(|&name| {

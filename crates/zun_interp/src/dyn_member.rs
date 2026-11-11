@@ -845,6 +845,18 @@ impl Interp<'_> {
                     });
                     match own {
                         Some(found) => found,
+                        None if symbol == zun_core::WellKnownSymbol::ToStringTag.id()
+                            && zun_gc::with_current_heap(|heap| heap.array_iterator_mode(object).is_some()) =>
+                        {
+                            let text = if zun_gc::with_current_heap(|heap| heap.array_iterator_mode(object)) == Some(3) {
+                                "String Iterator"
+                            } else {
+                                "Array Iterator"
+                            };
+                            Value::Any(zun_gc::with_current_heap_mut(|heap| {
+                                zun_core::Any::string(heap.intern_string(text))
+                            }))
+                        }
                         // Built-in iterables expose `[Symbol.iterator]` as a
                         // callable that produces their iterator.
                         None if symbol == zun_core::WellKnownSymbol::Iterator.id()

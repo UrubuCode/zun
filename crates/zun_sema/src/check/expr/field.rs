@@ -239,6 +239,22 @@ impl Checker<'_> {
                 });
             }
         }
+        // `String.prototype` as a value: the shared prototype singleton.
+        if self.text(class_name) == "String"
+            && fname == "prototype"
+            && cx.lookup("String").is_none()
+        {
+            if let Some((id, _)) = zun_natives::resolve("collections", "stringPrototype") {
+                return Some(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: Vec::new(),
+                    },
+                    ty: Ty::Any,
+                    span,
+                });
+            }
+        }
         if self.text(class_name) == "Math" && !self.classes_by_name.contains_key("Math") {
             let constant = match fname {
                 "PI" => Some(std::f64::consts::PI),

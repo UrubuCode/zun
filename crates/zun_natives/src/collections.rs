@@ -1618,6 +1618,20 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Opaque,
             imp: unavailable,
         },
+        // `String.prototype` as a value: the shared prototype singleton.
+        NativeFn {
+            name: "stringPrototype",
+            params: &[],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        // `Proxy.revocable(target, handler)`: `{ proxy, revoke }`.
+        NativeFn {
+            name: "proxyRevocable",
+            params: &[DynamicObject, DynamicObject],
+            ret: DynamicObject,
+            imp: unavailable,
+        },
     ],
 };
 
