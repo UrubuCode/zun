@@ -40,6 +40,7 @@ enum ObjKind {
     Map,
     Set,
     Date,
+    RegExp,
     Dynamic,
     /// A typed class instance, carrying its metadata type token.
     Instance(u32),
@@ -243,6 +244,20 @@ impl Interp<'_> {
                     self.ser_value(&value, out, memo)?;
                 }
             }
+            ObjKind::RegExp => {
+                let (source, flags) = zun_gc::with_current_heap(|heap| {
+                    (
+                        heap.regex_source(obj).map(str::to_string),
+                        heap.regex_flags(obj).map(str::to_string),
+                    )
+                });
+                let (Some(source), Some(flags)) = (source, flags) else {
+                    return Err(RunError::BadToken);
+                };
+                out.push(Tag::RegExp.to_u8());
+                write_bytes(out, source.as_bytes());
+                write_bytes(out, flags.as_bytes());
+            }
             ObjKind::Date => {
                 let (valid, millis) = zun_gc::with_current_heap(|heap| {
                     (heap.date_is_valid(obj), heap.date_millis(obj))
@@ -353,6 +368,8 @@ impl Interp<'_> {
                 Some(ObjKind::Map)
             } else if heap.set_len(obj).is_some() {
                 Some(ObjKind::Set)
+            } else if heap.regex_source(obj).is_some() {
+                Some(ObjKind::RegExp)
             } else if heap.date_is_valid(obj).is_some() {
                 Some(ObjKind::Date)
             } else if heap.is_dynamic_object(obj) {
@@ -493,6 +510,16 @@ impl Interp<'_> {
                     heap.alloc_typed_array(buffer, 0, length, element)
                 })
                 .ok_or_else(bad)?;
+                memo.push(Value::Object(obj));
+                Ok(Value::Object(obj))
+            }
+            Tag::RegExp => {
+                let source = reader.read_str().ok_or_else(bad)?;
+                let flags = reader.read_str().ok_or_else(bad)?;
+                let obj = zun_gc::with_current_heap_mut(|heap| {
+                    heap.alloc_regex_with_flags(source, flags)
+                })
+                .map_err(|_| bad())?;
                 memo.push(Value::Object(obj));
                 Ok(Value::Object(obj))
             }

@@ -94,6 +94,9 @@ pub enum Tag {
     DataView = 19,
     /// An array hole (only valid as an array element): no payload.
     Hole = 20,
+    /// A `RegExp` (memoized): a length-prefixed source string then a
+    /// length-prefixed flags string. `lastIndex` is not preserved (it resets to 0).
+    RegExp = 21,
 }
 
 impl Tag {
@@ -122,6 +125,7 @@ impl Tag {
             18 => Self::ObjectSym,
             19 => Self::DataView,
             20 => Self::Hole,
+            21 => Self::RegExp,
             _ => return None,
         })
     }
