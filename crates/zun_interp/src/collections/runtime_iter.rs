@@ -858,6 +858,8 @@ impl<'a> Interp<'a> {
             return self.invoke_promise_settler(promise, mode, call_args);
         }
         let (method_rid, final_args) = self.resolve_call_target(handle, call_args)?;
+        // A rest-parameter callee takes its trailing arguments as one array.
+        let final_args = self.pack_rest_call_args(method_rid, final_args);
         // Calling a generator function value creates the generator object.
         if self.method_contains_yield(method_rid) {
             return self.create_generator(method_rid, &final_args);
