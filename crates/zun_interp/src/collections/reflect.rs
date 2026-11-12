@@ -102,6 +102,32 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectHas" => {
+                // A symbol key: walk the prototype chain for an own or
+                // inherited symbol-keyed property, mirroring `symbolHas`.
+                if let Some(crate::property_ops::PropKey::Sym(symbol)) =
+                    args.get(1).and_then(crate::property_ops::prop_key)
+                {
+                    let mut cursor = object(args.first().ok_or(RunError::BadToken)?);
+                    let mut depth = 0;
+                    while let Some(current) = cursor {
+                        let found = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol(current, symbol).is_some()
+                                || heap.dynamic_get_symbol_function(current, symbol).is_some()
+                                || heap.dynamic_symbol_getter(current, symbol).is_some()
+                        });
+                        if found {
+                            return Ok(Value::Bool(true));
+                        }
+                        cursor = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(current))
+                            .and_then(|proto| proto.as_object())
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                        depth += 1;
+                        if depth > 64 {
+                            break;
+                        }
+                    }
+                    return Ok(Value::Bool(false));
+                }
                 if let Some(token) = args.first().and_then(Self::class_token_of) {
                     if let Some(Value::Str(key)) = args.get(1) {
                         let bag = Self::class_expando_bag(token);
@@ -175,6 +201,19 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectDelete" => {
+                // A symbol key: a symbol-keyed data property is configurable,
+                // so deletion always reports success; remove it from the
+                // object's symbol store when present.
+                if let Some(crate::property_ops::PropKey::Sym(symbol)) =
+                    args.get(1).and_then(crate::property_ops::prop_key)
+                {
+                    if let Some(target) = object(args.first().ok_or(RunError::BadToken)?) {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_delete_symbol(target, symbol)
+                        });
+                    }
+                    return Ok(Value::Bool(true));
+                }
                 if let Some(token) = args.first().and_then(Self::class_token_of) {
                     if let Some(Value::Str(key)) = args.get(1) {
                         let bag = Self::class_expando_bag(token);

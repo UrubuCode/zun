@@ -543,7 +543,24 @@ impl<'a> Interp<'a> {
                     other => match crate::property_ops::prop_key(other) {
                         Some(crate::property_ops::PropKey::Str(text)) => text,
                         Some(crate::property_ops::PropKey::Sym(symbol)) => {
-                            return Ok(match self.build_symbol_descriptor(proxy, symbol) {
+                            // A symbol key routes through the same proxy surface
+                            // as a string key: a `getOwnPropertyDescriptor` trap
+                            // sees the symbol, otherwise the descriptor is read
+                            // from the proxied target (or the object itself).
+                            let key_value = other.clone();
+                            let obj =
+                                match self.proxy_route(proxy, "getOwnPropertyDescriptor")? {
+                                    ProxyRoute::Trap(callback, target) => {
+                                        let result = self.invoke_proxy_trap(
+                                            callback,
+                                            vec![Value::Object(target), key_value],
+                                        )?;
+                                        return Ok(result);
+                                    }
+                                    ProxyRoute::Target(target) => target,
+                                    ProxyRoute::NotProxy => proxy,
+                                };
+                            return Ok(match self.build_symbol_descriptor(obj, symbol) {
                                 Some(descriptor) => Value::Object(descriptor),
                                 None => Value::Void,
                             });
