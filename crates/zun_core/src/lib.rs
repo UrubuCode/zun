@@ -46,7 +46,7 @@ pub use regexp::{
     byte_of_utf16, expand_substitution, EngineKind, MatchFull, RegexError, RegexValue,
 };
 pub use symbols::{SymbolId, SymbolRegistry, WellKnownSymbol};
-pub use typed_elements::{clamp_to_u8, same};
+pub use typed_elements::{clamp_to_u8, same, to_int_wrapping};
 pub use views::ByteView;
 pub use views::DataView;
 pub use views::TypedArrayView;

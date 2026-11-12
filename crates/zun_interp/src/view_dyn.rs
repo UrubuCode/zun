@@ -61,8 +61,7 @@ pub(crate) fn write_js_element(view: Obj, index: usize, value: &Value) -> Option
     let element = zun_gc::with_current_heap(|heap| heap.typed_array_element(view))?;
     let value = match (value, element) {
         (Value::Float(n, _), kind) if !matches!(kind, T::F32 | T::F64 | T::U8Clamped) => {
-            let wrapped = if n.is_finite() { n.trunc().rem_euclid(18446744073709551616.0) as u64 as i64 } else { 0 };
-            Value::Int(wrapped, NumKind::I64)
+            Value::Int(zun_core::to_int_wrapping(*n), NumKind::I64)
         }
         (other, _) => other.clone(),
     };

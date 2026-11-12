@@ -322,6 +322,33 @@ impl Translator<'_> {
                     self.builder.ins().fcvt_from_uint(to_ty, wide)
                 }
             }
+            (true, false) if to_ty.bits() < 64 => {
+                // float -> narrow int: ECMAScript ToInt8/16/32 and ToUint8/16/32
+                // (same result as `zun_core::to_int_wrapping`). Saturating alone
+                // is wrong: `Infinity` would become the type's maximum and
+                // `1e10` would lose its low bits. Never traps.
+                let x = if from_ty == types::F64 { v } else { self.builder.ins().fpromote(types::F64, v) };
+                let zero = self.builder.ins().f64const(0.0);
+                // `x - x` is 0.0 for every finite x and NaN for NaN/+-Infinity.
+                let diff = self.builder.ins().fsub(x, x);
+                let finite = self.builder.ins().fcmp(FloatCC::Equal, diff, zero);
+                // Reduce |x| modulo 2^64 exactly (power-of-two scaling, trunc
+                // and the subtraction are all exact), then convert unsigned.
+                let magnitude = self.builder.ins().fabs(x);
+                let inv = self.builder.ins().f64const(1.0 / 18446744073709551616.0);
+                let two64 = self.builder.ins().f64const(18446744073709551616.0);
+                let scaled = self.builder.ins().fmul(magnitude, inv);
+                let whole = self.builder.ins().trunc(scaled);
+                let drop = self.builder.ins().fmul(whole, two64);
+                let reduced = self.builder.ins().fsub(magnitude, drop);
+                let low = self.builder.ins().fcvt_to_uint_sat(types::I64, reduced);
+                let negated = self.builder.ins().ineg(low);
+                let is_neg = self.builder.ins().fcmp(FloatCC::LessThan, x, zero);
+                let signed = self.builder.ins().select(is_neg, negated, low);
+                let zero_int = self.builder.ins().iconst(types::I64, 0);
+                let wrapped = self.builder.ins().select(finite, signed, zero_int);
+                self.builder.ins().ireduce(to_ty, wrapped)
+            }
             (true, false) => {
                 // float -> int, saturating (never traps; JS-like), then narrow.
                 let wide_ty = if to_ty.bits() < 32 { types::I32 } else { to_ty };

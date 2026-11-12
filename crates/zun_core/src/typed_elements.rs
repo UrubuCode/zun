@@ -165,3 +165,47 @@ pub fn clamp_to_u8(value: f64) -> u8 {
     // Ties to even is exactly ToUint8Clamp's rule: 0.5 → 0, 1.5 → 2.
     value.round_ties_even() as u8
 }
+
+/// ECMAScript `ToUint32` widened to 64 bits: truncate toward zero and reduce
+/// modulo 2^64, with NaN and both infinities going to 0. The result's low
+/// 8/16/32 bits are exactly `ToUint8`/`ToUint16`/`ToUint32` (and, read as
+/// signed, `ToInt8`/`ToInt16`/`ToInt32`) of `value`, so every integer element
+/// store narrows this one value. A plain `as i64` cast is wrong here: it
+/// saturates, so `Infinity` becomes `i64::MAX` (low byte 255) and `1e20`
+/// loses its low bits.
+pub fn to_int_wrapping(value: f64) -> i64 {
+    if value.is_finite() {
+        // Reduce the magnitude (`%` on doubles is exact), then negate in
+        // two's complement. `rem_euclid` on the signed value would round
+        // `2^64 - 200` to `2^64` and lose the low bits of small negatives.
+        let low = (value.abs() % 18446744073709551616.0) as u64;
+        if value < 0.0 { low.wrapping_neg() as i64 } else { low as i64 }
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_int_wrapping;
+
+    #[test]
+    fn non_finite_values_wrap_to_zero() {
+        assert_eq!(to_int_wrapping(f64::INFINITY), 0);
+        assert_eq!(to_int_wrapping(f64::NEG_INFINITY), 0);
+        assert_eq!(to_int_wrapping(f64::NAN), 0);
+    }
+
+    #[test]
+    fn finite_values_truncate_and_wrap() {
+        assert_eq!(to_int_wrapping(300.0) as u8, 44);
+        assert_eq!(to_int_wrapping(-1.0) as u8, 255);
+        assert_eq!(to_int_wrapping(-0.5), 0);
+        assert_eq!(to_int_wrapping(-1e20) as u8, 0);
+        assert_eq!(to_int_wrapping(3.7), 3);
+        assert_eq!(to_int_wrapping(1e10) as u8, 0);
+        assert_eq!(to_int_wrapping(1e20) as u8, 0);
+        assert_eq!(to_int_wrapping(200.0) as i8, -56);
+        assert_eq!(to_int_wrapping(-200.0) as i8, 56);
+    }
+}

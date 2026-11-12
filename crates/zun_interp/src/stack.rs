@@ -457,6 +457,11 @@ pub(crate) fn convert(v: &Value, target: zun_il::NumKind) -> Result<Value, RunEr
     Ok(if target.is_int() {
         let truncated = match v {
             Value::Int(n, _) => *n,
+            // 64-bit targets keep the saturating cast; narrower ones follow
+            // ECMAScript ToInt32-style wrapping (`Infinity` and `NaN` -> 0).
+            Value::Float(n, _) if target.int_parts().is_some_and(|(bits, _)| bits < 64) => {
+                zun_core::to_int_wrapping(*n)
+            }
             Value::Float(n, _) => *n as i64,
             _ => 0,
         };
