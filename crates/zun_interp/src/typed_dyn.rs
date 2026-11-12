@@ -7,21 +7,11 @@
 //! The element kind is read from the view at run time, so one handler per
 //! operation serves every kind.
 
-use super::collections::unbox_arg;
+use super::collections::{object, unbox_arg};
 use super::value::Value;
 use super::{Interp, RunError};
 use zun_core::TypedElement;
 use zun_il::NumKind;
-
-fn obj_of(value: &Value) -> Option<zun_gc::Obj> {
-    match value {
-        Value::Object(object) => Some(*object),
-        Value::Any(any) => any
-            .as_object()
-            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-        _ => None,
-    }
-}
 
 fn num(value: f64) -> Value {
     Value::Float(value, NumKind::F64)
@@ -252,7 +242,7 @@ impl Interp<'_> {
         match name {
             "ArrayBuffer" | "SharedArrayBuffer" => {
                 let length = self.view_to_index(args.first(), "array buffer length")?;
-                let max = match args.get(1).and_then(obj_of) {
+                let max = match args.get(1).and_then(object) {
                     Some(options) => {
                         let any = zun_gc::with_current_heap(|h| h.dynamic_get(options, "maxByteLength"));
                         match any {
@@ -294,7 +284,7 @@ impl Interp<'_> {
             "DataView" => {
                 let buffer = args
                     .first()
-                    .and_then(obj_of)
+                    .and_then(object)
                     .filter(|b| zun_gc::with_current_heap(|h| h.buffer_len(*b).is_some()));
                 let Some(buffer) = buffer else {
                     return Err(self.view_error(
@@ -339,7 +329,7 @@ impl Interp<'_> {
     ) -> Result<Value, RunError> {
         let size = kind.size();
         let first = args.first().cloned().unwrap_or(Value::Void);
-        let Some(source) = obj_of(&first) else {
+        let Some(source) = object(&first) else {
             // A length (ToIndex of any primitive).
             let length = self.view_to_index(Some(&first), "typed array length")?;
             if length.saturating_mul(size) > (1usize << 32) {
@@ -414,7 +404,7 @@ impl Interp<'_> {
         }
         // An iterable or array-like object.
         let drained = self.call_managed_collection("arrayFrom", &[Value::Object(source)])?;
-        let array = obj_of(&drained).ok_or(RunError::BadToken)?;
+        let array = object(&drained).ok_or(RunError::BadToken)?;
         let items = self.read_array_values(array)?;
         let view = self.view_new_like(kind, &items)?;
         Ok(Value::Object(view))
@@ -771,7 +761,7 @@ impl Interp<'_> {
                     return Err(self.view_error("RangeError", "offset is out of bounds"));
                 }
                 let offset = offset_n as usize;
-                let items: Vec<Value> = match obj_of(&source) {
+                let items: Vec<Value> = match object(&source) {
                     Some(src) if crate::typed_arrays::element_len(src).is_some() => {
                         self.view_collect(src)
                     }
@@ -783,7 +773,7 @@ impl Interp<'_> {
                                     "arrayFromArrayLike",
                                     &[Value::Object(src)],
                                 )?;
-                                obj_of(&drained).ok_or(RunError::BadToken)?
+                                object(&drained).ok_or(RunError::BadToken)?
                             }
                         };
                         self.read_array_values(array)?

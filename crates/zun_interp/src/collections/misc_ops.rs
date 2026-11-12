@@ -101,14 +101,14 @@ impl<'a> Interp<'a> {
                         "stringIteratorNew",
                         std::slice::from_ref(&value),
                     )?,
-                    other => match as_object_ref(&other) {
+                    other => match object(&other) {
                         Some(source) => Value::Object(self.resolve_iterator(source)?),
                         None => {
                             return Err(RunError::Native("TypeError: value is not iterable".into()))
                         }
                     },
                 };
-                let obj = as_object_ref(&iterator).ok_or(RunError::BadToken)?;
+                let obj = object(&iterator).ok_or(RunError::BadToken)?;
                 Ok(Value::Any(zun_core::Any::object(obj.addr() as usize)))
             }
             "asyncIterOpen" => {
@@ -116,7 +116,7 @@ impl<'a> Interp<'a> {
                 // method (own symbol slot or a class symbol method); `undefined`
                 // otherwise so the prelude falls back to the sync iterator.
                 let Some(source) =
-                    as_object_ref(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?)
+                    object(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?)
                 else {
                     return Ok(Value::Void);
                 };
@@ -136,7 +136,7 @@ impl<'a> Interp<'a> {
                 };
                 let call_args = self.with_this_arg(handle, roots[0], Vec::new());
                 let result = self.invoke_function_value(handle, call_args)?;
-                match as_object_ref(&unbox_arg(&result)?) {
+                match object(&unbox_arg(&result)?) {
                     Some(obj) => Ok(Value::Any(zun_core::Any::object(obj.addr() as usize))),
                     None => Err(RunError::Native(format!(
                         "TypeError: [Symbol.asyncIterator]() did not return an object ({result:?})"

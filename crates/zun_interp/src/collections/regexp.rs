@@ -223,9 +223,7 @@ impl<'a> Interp<'a> {
                 if name == "regexpFlags" {
                     // The `flags` accessor reports canonical (alphabetical
                     // by spec order) `dgimsuvy`.
-                    let ordered: String =
-                        "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect();
-                    return Ok(Value::Str(ordered.into()));
+                    return Ok(Value::Str(zun_core::ordered_flags(&flags).into()));
                 }
                 let flag = match args.get(1) {
                     Some(Value::Str(text)) => match &**text {

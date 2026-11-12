@@ -14,13 +14,9 @@
 //! function), dispatched on by the interpreter floor. A handle is a `number`
 //! (`F64`) — the scheduler [`TaskId`] it names.
 
-use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
+use crate::{NativeFn, NativeTy::*};
 
-fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Err(NativeError(
-        "timer intrinsic requires an interpreter heap and scheduler".into(),
-    ))
-}
+unavailable_stub!(unavailable, "timer intrinsic requires an interpreter heap and scheduler");
 
 /// The `timers` namespace. Appended last in [`crate::MODULES`] so every existing
 /// dispatch id stays stable.

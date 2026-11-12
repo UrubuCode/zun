@@ -84,8 +84,28 @@ impl<'a> Interp<'a> {
                     self.class_symbol_methods
                         .get(&(source.type_rid(), iterator_id.get()))
                         .copied()
+                })
+                .or_else(|| {
+                    super::iterator_helpers::symbol_function_in_chain(source, iterator_id)
                 });
         let Some(handle) = handle else {
+            // An object inheriting from an array iterates the inherited elements
+            // (`Array.prototype[Symbol.iterator]` reads `length` through the chain).
+            let mut cursor = source;
+            for _ in 0..64 {
+                let Some(parent) = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_prototype(cursor)
+                        .and_then(|any| any.as_object())
+                        .map(|a| unsafe { zun_gc::Obj::from_addr(a as *mut u64) })
+                }) else {
+                    break;
+                };
+                if zun_gc::with_current_heap(|heap| heap.array_len(parent).is_some()) {
+                    return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(parent))
+                        .ok_or(RunError::BadToken);
+                }
+                cursor = parent;
+            }
             return Err(RunError::Native("TypeError: value is not iterable".into()));
         };
         let call_args = self.with_this_arg(handle, source, Vec::new());
@@ -136,7 +156,13 @@ impl<'a> Interp<'a> {
                 .unwrap_or(Value::Void);
             return Ok((value, false));
         }
-        let next = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "next"));
+        if zun_gc::with_current_heap(|heap| heap.dynamic_has(it, "$ih")) {
+            return self.iter_step(it);
+        }
+        let mut next = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "next"));
+        if next.is_none() {
+            next = self.iter_method(it, "next")?;
+        }
         let Some(next) = next else {
             return Err(RunError::Native(
                 "TypeError: iterator has no next() method".into(),

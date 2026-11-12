@@ -6,7 +6,9 @@
 //! `ToIntegerOrInfinity` / `ToString` exactly as the specification describes.
 //! Indices are UTF-16 code units.
 
-use super::collections::{is_truthy, js_string_to_number, unbox_arg};
+use super::collections::{
+    array_join_text, is_truthy, js_string_to_number, regex_to_string, unbox_arg,
+};
 use super::value::Value;
 use super::{Interp, RunError};
 use zun_core::string_ops::{
@@ -27,7 +29,12 @@ fn number(value: f64) -> Value {
 
 impl<'a> Interp<'a> {
     /// ECMAScript ToNumber over any value (objects run OrdinaryToPrimitive).
-    pub(super) fn dyn_to_number(&mut self, value: &Value) -> Result<f64, RunError> {
+    ///
+    /// The single ToNumber implementation: an array coerces through its
+    /// comma-joined text, any other object through `valueOf`/`toString`, and
+    /// the resulting primitive is converted by the same rules (so a `valueOf`
+    /// returning `null` is `0`).
+    pub(crate) fn dyn_to_number(&mut self, value: &Value) -> Result<f64, RunError> {
         Ok(match unbox_arg(value)? {
             Value::Int(n, _) => n as f64,
             Value::Float(n, _) => n,
@@ -35,6 +42,9 @@ impl<'a> Interp<'a> {
             Value::Null => 0.0,
             Value::Void => f64::NAN,
             Value::Str(text) => js_string_to_number(&text),
+            Value::Object(obj) if array_join_text(obj).is_some() => {
+                js_string_to_number(&array_join_text(obj).unwrap_or_default())
+            }
             Value::Object(obj) => match self.ordinary_to_primitive(obj, "number")? {
                 Some(Value::Str(text)) => js_string_to_number(&text),
                 Some(Value::Int(n, _)) => n as f64,
@@ -58,10 +68,9 @@ impl<'a> Interp<'a> {
         }
         Ok(match unbox_arg(value)? {
             Value::Object(obj) => {
-                if let Some(text) = zun_gc::with_current_heap(|heap| {
-                    heap.regex_source(obj)
-                        .map(|source| format!("/{source}/{}", heap.regex_flags(obj).unwrap_or("")))
-                }) {
+                if let Some(text) =
+                    zun_gc::with_current_heap(|heap| regex_to_string(heap, obj))
+                {
                     return Ok(text);
                 }
                 // An array stringifies as its comma-joined elements.
@@ -203,16 +212,8 @@ impl<'a> Interp<'a> {
                         ));
                     }
                 }
-                // Arrays count as their joined text (`[2]` is 2).
-                let count_number = match unbox_arg(&a0)? {
-                    Value::Object(obj) if crate::collections::array_join_text(obj).is_some() => {
-                        js_string_to_number(
-                            &crate::collections::array_join_text(obj).unwrap_or_default(),
-                        )
-                    }
-                    _ => self.dyn_to_number(&a0)?,
-                };
-                let count = integer_or_infinity(count_number);
+                // `dyn_to_number` counts an array as its joined text (`[2]` is 2).
+                let count = integer_or_infinity(self.dyn_to_number(&a0)?);
                 if count < 0.0 || count.is_infinite() {
                     return Err(RunError::Native(format!(
                         "RangeError: Invalid count value: {}",

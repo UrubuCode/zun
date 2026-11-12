@@ -203,29 +203,6 @@ fn try_region_op_allowed(op: Opcode) -> bool {
 /// A typed catch binds the exception to a concrete object local the typed JIT
 /// represents; a catch-all binds it to `any`, which the `local_kinds` gate
 /// already rejects.
-/// Whether a user class `throw_rid` is an instance of `catch_rid` — the same
-/// type or a subclass — by walking the `TypeDef` base chain. Used to prove a
-/// `throw new T()` is unconditionally caught by `catch (e: C)` in this frame.
-/// The walk is bounded so a malformed cyclic hierarchy cannot loop forever.
-fn jit_type_caught_by(module: &Module, throw_rid: u32, catch_rid: u32) -> bool {
-    let mut current = throw_rid;
-    for _ in 0..64 {
-        if current == catch_rid {
-            return true;
-        }
-        let Some(ty) = module.tables.type_defs.get(current as usize - 1) else {
-            return false;
-        };
-        // A non-`TypeDef` (external/`TypeRef`) or null base ends the chain: the
-        // hierarchy above it is not verifiable here, so it is not a match.
-        if ty.base.table() != Some(zun_metadata::TableKind::TypeDef) || ty.base.rid() == 0 {
-            return false;
-        }
-        current = ty.base.rid();
-    }
-    false
-}
-
 fn exception_regions_jit_safe(
     module: &Module,
     body: &zun_module::MethodBody<'_>,
@@ -255,7 +232,7 @@ fn exception_regions_jit_safe(
             // escapes to an outer/cross-frame handler).
             match prev_newobj_type {
                 Some(throw_rid)
-                    if in_try && jit_type_caught_by(module, throw_rid, catch_type.rid()) => {}
+                    if in_try && zun_module::type_is_caught(module, throw_rid, catch_type.rid()) => {}
                 _ => return false,
             }
         }
@@ -307,7 +284,6 @@ fn string_builtin(instr: &zun_il::Instruction) -> bool {
                 | "trimEnd"
                 | "toLowerCase"
                 | "toUpperCase"
-                | "repeat"
                 | "reverse"
                 | "padStart"
                 | "padEnd"
@@ -560,7 +536,6 @@ fn callvirt_is_non_overridden(
                             | "trimEnd"
                             | "toLowerCase"
                             | "toUpperCase"
-                            | "repeat"
                             | "reverse"
                             | "padStart"
                             | "padEnd"
@@ -999,89 +974,6 @@ fn any_map_get_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBod
                 Opcode::Nop | Opcode::LoadLocal | Opcode::CallBuiltin | Opcode::Ret
             )
         })
-}
-
-/// Methods that may raise a *catchable* exception (`RunError::Thrown`), computed
-/// as a call-graph fixpoint. A method throws directly if it contains `throw`,
-/// `rethrow`, `castclass`, or any `CallBuiltin` (many native builtins raise type
-/// errors), or if it has no body (an extern/native target, conservatively
-/// assumed to throw). It throws transitively if it calls a may-throw method.
-///
-/// The JIT→interpreter bridge no longer needs this for eligibility (the
-/// exceptional-return channel propagates throws), but it is kept for the
-/// upcoming same-frame-catch routing of bridged throws (calls inside `try`).
-#[allow(dead_code)]
-pub(crate) fn methods_that_may_throw(module: &Module) -> HashSet<u32> {
-    let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
-    for (index, method) in module.tables.method_defs.iter().enumerate() {
-        methods_by_name
-            .entry(method.name)
-            .or_default()
-            .push(index as u32 + 1);
-    }
-    let count = module.tables.method_defs.len();
-    let mut direct = vec![false; count + 1];
-    let mut edges: Vec<Vec<u32>> = vec![Vec::new(); count + 1];
-    for (index, method) in module.tables.method_defs.iter().enumerate() {
-        let rid = index as u32 + 1;
-        if method.body_offset == u32::MAX {
-            direct[rid as usize] = true; // extern/native: assume it can throw
-            continue;
-        }
-        let Ok(body) = read_body(&module.code, method.body_offset) else {
-            direct[rid as usize] = true;
-            continue;
-        };
-        let Ok(instrs) = decode_all(body.code) else {
-            direct[rid as usize] = true;
-            continue;
-        };
-        for instr in &instrs {
-            match instr.opcode {
-                Opcode::Throw | Opcode::Rethrow | Opcode::CastClass | Opcode::CallBuiltin => {
-                    direct[rid as usize] = true;
-                }
-                Opcode::Call | Opcode::CallVirt => {
-                    if let Operand::Token(token) = instr.operand {
-                        if instr.opcode == Opcode::CallVirt {
-                            if let Some(method) =
-                                module.tables.method_defs.get(token.rid() as usize - 1)
-                            {
-                                edges[rid as usize].extend(
-                                    methods_by_name
-                                        .get(&method.name)
-                                        .into_iter()
-                                        .flatten()
-                                        .copied(),
-                                );
-                            }
-                        } else {
-                            edges[rid as usize].push(token.rid());
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    let mut may_throw: HashSet<u32> = (1..=count as u32)
-        .filter(|&rid| direct[rid as usize])
-        .collect();
-    loop {
-        let before = may_throw.len();
-        for rid in 1..=count as u32 {
-            if may_throw.contains(&rid) {
-                continue;
-            }
-            if edges[rid as usize].iter().any(|c| may_throw.contains(c)) {
-                may_throw.insert(rid);
-            }
-        }
-        if may_throw.len() == before {
-            break;
-        }
-    }
-    may_throw
 }
 
 /// Whether a method's signature can cross the bridge's packed-value ABI: every

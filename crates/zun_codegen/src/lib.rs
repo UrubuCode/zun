@@ -329,7 +329,6 @@ impl Jit {
             "zun_jit_string_to_upper_case",
             zun_jit_string_to_upper_case as *const u8,
         );
-        builder.symbol("zun_jit_string_repeat", zun_jit_string_repeat as *const u8);
         builder.symbol(
             "zun_jit_string_reverse",
             zun_jit_string_reverse as *const u8,
@@ -1214,12 +1213,7 @@ impl Jit {
                 found: locals.len(),
             });
         }
-        let native_roots: Vec<zun_gc::Obj> = locals
-            .iter()
-            .zip(&entry.sig.param_kinds)
-            .filter(|&(_, &kind)| kind == JitKind::Object)
-            .map(|(&arg, _)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
-            .collect();
+        let native_roots = any_abi::collect_native_roots(&entry.sig.param_kinds, locals, false)?;
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let ptr = self.module.get_finalized_function(entry.shim_id);
@@ -1258,12 +1252,7 @@ impl Jit {
                 },
             });
         }
-        let native_roots: Vec<zun_gc::Obj> = locals
-            .iter()
-            .zip(&entry.sig.param_kinds)
-            .filter(|&(_, &kind)| matches!(kind, JitKind::Object | JitKind::Array))
-            .map(|(&arg, _)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
-            .collect();
+        let native_roots = any_abi::collect_native_roots(&entry.sig.param_kinds, locals, false)?;
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let ptr = self.module.get_finalized_function(entry.shim_id);
@@ -1403,12 +1392,7 @@ impl Jit {
                 found: args.len(),
             });
         }
-        let native_roots: Vec<zun_gc::Obj> = args
-            .iter()
-            .zip(param_kinds)
-            .filter(|&(&_arg, kind)| kind == JitKind::Object)
-            .map(|(&arg, _kind)| unsafe { zun_gc::Obj::from_addr(arg as *mut u64) })
-            .collect();
+        let native_roots = any_abi::collect_native_roots(&param_kinds, args, false)?;
         // Keep managed arguments visible for the complete native call. The VM
         // hook also registers its Value-level roots; this scope protects direct
         // callers of the public packed entry point as well.
@@ -1449,22 +1433,7 @@ impl Jit {
                 found: args.len(),
             });
         }
-        let mut native_roots = Vec::new();
-        let mut cursor = 0;
-        for &kind in &signature.param_kinds {
-            if kind == JitKind::Object {
-                native_roots.push(unsafe { zun_gc::Obj::from_addr(args[cursor] as *mut u64) });
-            } else if kind == JitKind::Other {
-                if let Some(value) =
-                    zun_core::Any::from_raw_parts(args[cursor] as u8, args[cursor + 1])
-                {
-                    if let Some(object) = value.as_object() {
-                        native_roots.push(unsafe { zun_gc::Obj::from_addr(object as *mut u64) });
-                    }
-                }
-            }
-            cursor += any_abi::abi_word_count(kind);
-        }
+        let native_roots = any_abi::collect_native_roots(&signature.param_kinds, args, true)?;
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let id = *self
@@ -1502,23 +1471,7 @@ impl Jit {
                 found: args.len(),
             });
         }
-        let mut native_roots = Vec::new();
-        let mut word = 0;
-        for kind in signature.param_kinds {
-            if kind == JitKind::Object {
-                native_roots.push(unsafe { zun_gc::Obj::from_addr(args[word] as *mut u64) });
-            } else if kind == JitKind::Other {
-                let tag = args[word];
-                let payload = args[word + 1];
-                let Some(value) = zun_core::Any::from_raw_parts(tag as u8, payload) else {
-                    return Err(JitError::InvalidAnyTag(tag));
-                };
-                if value.tag() == zun_core::AnyTag::Object {
-                    native_roots.push(unsafe { zun_gc::Obj::from_addr(payload as *mut u64) });
-                }
-            }
-            word += any_abi::abi_word_count(kind);
-        }
+        let native_roots = any_abi::collect_native_roots(&signature.param_kinds, args, true)?;
         let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let id = *self

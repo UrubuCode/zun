@@ -15,13 +15,9 @@
 //!
 //! The wire format is defined once in `zun_core::serde`.
 
-use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
+use crate::{NativeFn, NativeTy::*};
 
-fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Err(NativeError(
-        "serialize/deserialize require an interpreter heap".into(),
-    ))
-}
+unavailable_stub!(unavailable, "serialize/deserialize require an interpreter heap");
 
 /// The ser/de primitive. Appended LAST in the module registry so every
 /// existing dispatch id stays stable.

@@ -176,13 +176,8 @@ impl<'a> Interp<'a> {
                     Value::Object(obj)
                         if zun_gc::with_current_heap(|heap| heap.regex_source(obj).is_some()) =>
                     {
-                        zun_gc::with_current_heap(|heap| {
-                            let source = heap.regex_source(obj).unwrap_or_default();
-                            let flags = heap.regex_flags(obj).unwrap_or_default();
-                            let ordered: String =
-                                "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect();
-                            format!("/{source}/{ordered}")
-                        })
+                        zun_gc::with_current_heap(|heap| regex_to_string(heap, obj))
+                            .unwrap_or_default()
                     }
                     Value::Object(obj) => {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {

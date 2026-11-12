@@ -1,10 +1,6 @@
-use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
+use crate::{NativeFn, NativeTy::*};
 
-fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Err(NativeError(
-        "Promise intrinsic requires an interpreter heap".into(),
-    ))
-}
+unavailable_stub!(unavailable, "Promise intrinsic requires an interpreter heap");
 
 pub const MODULE: crate::Module = crate::Module {
     name: "promise",

@@ -466,8 +466,14 @@ impl<'a> Interp<'a> {
                 let readonly = matches!(args.get(2), Some(Value::Bool(true)));
                 zun_gc::with_current_heap_mut(|heap| {
                     let global = heap.global_object();
-                    heap.dynamic_define(global, name, value, !readonly);
+                    heap.dynamic_define(global, name.clone(), value, !readonly);
                 });
+                if name == "Iterator" {
+                    if let Some(address) = value.as_object() {
+                        let namespace = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                        Self::install_iterator_global(namespace);
+                    }
+                }
                 // An assignment expression evaluates to the assigned value.
                 Ok(Value::Any(value))
             }
@@ -705,6 +711,21 @@ impl<'a> Interp<'a> {
                 }
                 if let Some(mode) = zun_gc::with_current_heap(|heap| heap.array_iterator_mode(obj)) {
                     let proto = Self::iterator_prototype_object(if mode == 3 { 2 } else { 1 });
+                    return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                }
+                let setmap_kind = zun_gc::with_current_heap(|heap| {
+                    if heap.generator_state(obj).is_some() {
+                        Some(7u8)
+                    } else if heap.set_iterator_done(obj).is_some() {
+                        Some(5u8)
+                    } else if heap.map_iterator_done(obj).is_some() {
+                        Some(6u8)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(kind) = setmap_kind {
+                    let proto = Self::iterator_prototype_object(kind);
                     return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
                 }
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));

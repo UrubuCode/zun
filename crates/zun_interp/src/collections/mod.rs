@@ -14,6 +14,7 @@ mod array_iterate;
 mod array_mutate;
 mod dynamic_call;
 mod iterators;
+pub(crate) mod iterator_helpers;
 mod mapset;
 mod misc_ops;
 
@@ -67,7 +68,7 @@ pub(super) enum ProxyRoute {
 /// Resolve a value to a heap object, following an `Any` payload. Promoted from
 /// the preamble closure of `call_managed_collection_inner` so extracted helper
 /// submodules can share it.
-pub(super) fn object(value: &Value) -> Option<zun_gc::Obj> {
+pub(crate) fn object(value: &Value) -> Option<zun_gc::Obj> {
     match value {
         Value::Object(object) => Some(*object),
         Value::Any(any) => any
@@ -248,13 +249,7 @@ impl<'a> Interp<'a> {
                 | "objectHasOwn"
                 | "deleteStrict"
         ) {
-            let regex_target = match args.first() {
-                Some(Value::Object(object)) => Some(*object),
-                Some(Value::Any(any)) => any
-                    .as_object()
-                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-                _ => None,
-            };
+            let regex_target = args.first().and_then(object);
             if let Some(target) = regex_target {
                 zun_gc::with_current_heap_mut(|heap| {
                     if heap.regex_source(target).is_some() {
@@ -707,17 +702,6 @@ pub(super) fn real_now_millis(output: &mut dyn super::Output) -> i64 {
     }
 }
 
-/// A value's object reference, unwrapping an object-tagged `Any`.
-pub(super) fn as_object_ref(value: &Value) -> Option<zun_gc::Obj> {
-    match value {
-        Value::Object(object) => Some(*object),
-        Value::Any(any) => any
-            .as_object()
-            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-        _ => None,
-    }
-}
-
 /// Unwrap a `functionBox` wrapper back to its callable. Function values cannot
 /// be boxed into `Any`, so a function carried through an `Any`-boxing argument
 /// lane (the bound-function record's `__args` array) is wrapped in a dynamic
@@ -927,23 +911,14 @@ pub(crate) fn array_join_text(obj: zun_gc::Obj) -> Option<String> {
     })
 }
 
-pub(super) fn to_number(value: &Value, heap: &zun_gc::Heap) -> f64 {
-    let concrete = match value {
-        Value::Any(any) => Value::unbox_any(*any, heap).unwrap_or(Value::Void),
-        other => other.clone(),
-    };
-    match concrete {
-        Value::Int(number, _) => number as f64,
-        Value::Float(number, _) => number,
-        Value::Bool(flag) => {
-            if flag {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        _ => f64::NAN,
-    }
+/// A regexp object's string form, `/source/flags`, with the flags in canonical
+/// order; `None` when `obj` is not a regexp. The one assembly every
+/// stringification path (`String(re)`, `re.toString()`, template literals)
+/// goes through.
+pub(crate) fn regex_to_string(heap: &zun_gc::Heap, obj: zun_gc::Obj) -> Option<String> {
+    let source = heap.regex_source(obj)?;
+    let flags = zun_core::ordered_flags(heap.regex_flags(obj).unwrap_or(""));
+    Some(format!("/{source}/{flags}"))
 }
 
 /// ECMAScript strict equality (`===`); with `zero_aware` it is SameValueZero

@@ -494,7 +494,7 @@ impl<'a> Interp<'a> {
                                     handle,
                                     vec![Value::Any(left), Value::Any(right)],
                                 )?;
-                                !(zun_gc::with_current_heap(|heap| to_number(&outcome, heap)) > 0.0)
+                                !(self.dyn_to_number(&outcome)? > 0.0)
                             }
                             None => {
                                 let (a, b) = zun_gc::with_current_heap(|heap| {

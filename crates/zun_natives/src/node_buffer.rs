@@ -12,13 +12,9 @@
 //! This module is appended **last** in the registry (`lib.rs` `MODULES`), so
 //! adding it keeps every existing dispatch id stable.
 
-use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
+use crate::{NativeFn, NativeTy::*};
 
-fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Err(NativeError(
-        "managed Buffer intrinsic requires an interpreter heap".into(),
-    ))
-}
+unavailable_stub!(unavailable, "managed Buffer intrinsic requires an interpreter heap");
 
 pub const MODULE: crate::Module = crate::Module {
     name: "nodeBuffer",

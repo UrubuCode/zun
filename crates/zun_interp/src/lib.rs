@@ -1237,13 +1237,18 @@ impl Interp<'_> {
                             let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                             for arg in &args {
                                 zun_gc::with_current_heap_mut(|heap| {
-                                    let boxed = arg.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                    let boxed =
+                                        arg.box_any(heap).unwrap_or_else(zun_core::Any::void);
                                     heap.array_push(roots[1], boxed);
                                 });
                             }
                             let outcome = self.call_managed_collection(
                                 "proxyApply",
-                                &[Value::Object(roots[0]), Value::Null, Value::Object(roots[1])],
+                                &[
+                                    Value::Object(roots[0]),
+                                    Value::Null,
+                                    Value::Object(roots[1]),
+                                ],
                             );
                             match outcome {
                                 Ok(result) => {
@@ -1251,7 +1256,13 @@ impl Interp<'_> {
                                     continue;
                                 }
                                 Err(RunError::Thrown(exception)) => {
-                                    if self.route_exception(&body, stack, pc, next - size, &exception) {
+                                    if self.route_exception(
+                                        &body,
+                                        stack,
+                                        pc,
+                                        next - size,
+                                        &exception,
+                                    ) {
                                         continue;
                                     }
                                     return Err(RunError::Thrown(exception));
@@ -1449,7 +1460,6 @@ impl Interp<'_> {
                     // here, where every live object reference is reachable from
                     // the current frame plus the ancestor root chain (no JIT
                     // frame is executing at this point).
-                    self.allocs += 1;
                     self.poll_gc(stack, locals, parent);
                     let token = operand_token(&instr.operand);
                     let (field_start, field_count) = self.type_field_range(token)?;
@@ -1715,6 +1725,20 @@ impl Interp<'_> {
                         &mut self.field_transforms,
                         relocation,
                     );
+                    decorators::rewrite_class_tables(
+                        &mut self.class_symbol_methods,
+                        &mut self.class_field_defaults,
+                        relocation,
+                    );
+                    for frame in [self.suspended.as_mut(), self.resume_frame.as_mut()]
+                        .into_iter()
+                        .flatten()
+                    {
+                        frame.rewrite_managed_references(relocation);
+                    }
+                    if let Some(value) = self.yielded.as_mut() {
+                        value.rewrite_managed_reference(relocation);
+                    }
                     self.async_state.rewrite_after_move(relocation);
                     if let Some(hook) = hook {
                         hook.rewrite_managed_roots(relocation);
@@ -1739,6 +1763,20 @@ impl Interp<'_> {
                         &mut self.field_transforms,
                         relocation,
                     );
+                    decorators::rewrite_class_tables(
+                        &mut self.class_symbol_methods,
+                        &mut self.class_field_defaults,
+                        relocation,
+                    );
+                    for frame in [self.suspended.as_mut(), self.resume_frame.as_mut()]
+                        .into_iter()
+                        .flatten()
+                    {
+                        frame.rewrite_managed_references(relocation);
+                    }
+                    if let Some(value) = self.yielded.as_mut() {
+                        value.rewrite_managed_reference(relocation);
+                    }
                     self.async_state.rewrite_after_move(relocation);
                     if let Some(hook) = hook {
                         hook.rewrite_managed_roots(relocation);
@@ -1779,10 +1817,14 @@ impl Interp<'_> {
     /// Backedges and allocation sites are both safe because the current frame
     /// and its caller chain are fully materialized for precise root scanning.
     fn poll_gc(&mut self, stack: &mut [Value], locals: &mut [Value], parent: Option<&RootLink>) {
-        if self.allocs < self.gc_interval {
+        // The budget is read from the heap, which counts every managed
+        // allocation. Counting `newobj` here instead meant that a program
+        // allocating only dynamic objects, arrays, strings or promises never
+        // reached the budget and so never collected at all.
+        let allocations = zun_gc::with_current_heap(|heap| heap.allocations_since_collection());
+        if allocations < self.gc_interval as usize {
             return;
         }
-        self.allocs = 0;
         let young_before = zun_gc::with_current_heap(|heap| heap.generation_counts().0);
         let full = self.minor_collections >= 7;
         let reclaimed = self.collect(stack, locals, parent, full);
@@ -1803,11 +1845,21 @@ mod method_tests;
 /// hidden `__fnbag:<method>:<env>` key, so `fn['x'] = v` on a function value
 /// behaves like a property write on a JS function object.
 pub(crate) fn function_expando_bag(handle: zun_core::FunctionHandle) -> zun_gc::Obj {
+    // The key identifies the captured environment by its identity hash, never
+    // by its address. A collection reuses an address once its object dies and
+    // changes it when it evacuates the object, so an address-keyed bag would
+    // both alias a dead closure's properties onto a new closure and lose the
+    // bag whenever the environment moved. Identity hashes are per-object,
+    // monotonic, and survive a move.
+    let environment = handle
+        .environment()
+        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }.identity_hash())
+        .unwrap_or(0);
     let key = format!(
         "__fnbag:{}:{}:{}",
         handle.method_rid(),
         handle.is_bound(),
-        handle.environment().unwrap_or(0)
+        environment
     );
     zun_gc::with_current_heap_mut(|heap| {
         let statics = heap.statics_object();

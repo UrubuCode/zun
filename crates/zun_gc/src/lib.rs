@@ -157,6 +157,10 @@ pub struct Heap {
     nursery_bytes: usize,
     /// Allocation budget that requests a minor collection at a safepoint.
     nursery_budget: usize,
+    /// Objects allocated since the last collection. Counted here, at the one
+    /// allocation point, so a safepoint's decision to collect cannot be missed
+    /// by an allocation site that forgot to report itself.
+    allocations: usize,
     /// Interned strings, referenced from field slots by index.
     strings: Vec<zun_core::ZStr>,
     /// Symbols belong to this heap/isolate and never share identity globally.
@@ -228,8 +232,15 @@ pub struct Heap {
     proxies: HashMap<usize, proxies::ProxyRecord>,
     /// Record index by object address, for tracing child references.
     by_addr: HashMap<usize, usize>,
-    /// Dead record indices available for reuse, keyed by field count.
+    /// Dead record indices available for reuse, keyed by field count. A
+    /// record reused from here keeps its address, so it may only be reused
+    /// while that storage is still exclusively its own.
     free: HashMap<usize, Vec<usize>>,
+    /// Dead record indices whose storage has been released (their `addr` is
+    /// null). A record reused from here is given a freshly bump-allocated
+    /// address, which is what keeps `records` bounded by the peak live count
+    /// instead of by the number of objects ever allocated.
+    free_records: Vec<usize>,
     /// Monotonic identity hashes. Zero is reserved as the uninitialized value.
     next_identity_hash: u64,
     /// Old objects that have received a reference to a young object.
@@ -529,12 +540,24 @@ impl Heap {
         if let Some(callback) = on_relocation.as_mut() {
             callback(&relocation);
         }
-        for record in self.records.iter_mut().filter(|record| !record.alive) {
-            record.addr = std::ptr::null_mut();
-        }
+        let dead: Vec<usize> = self
+            .records
+            .iter()
+            .enumerate()
+            .filter(|(_, record)| !record.alive && !record.addr.is_null())
+            .map(|(idx, _)| idx)
+            .collect();
+        // Every live object was copied into `new_chunks`, so both the old
+        // tenured chunks and the whole nursery are now free storage. Dead
+        // records lose their address and become reusable at a fresh one; the
+        // address-preserving free list cannot survive this.
         self.free.clear();
+        for idx in dead {
+            self.release_record_storage(idx);
+        }
         self.chunks = new_chunks;
         self.cursor = new_cursor;
+        self.reset_nursery();
         CompactionResult {
             moved_objects,
             rewritten_references,
@@ -888,10 +911,10 @@ impl Heap {
                     let mapped_environment = map(environment);
                     if mapped_environment != environment {
                         rewritten += 1;
-                        finalizer.callback = Some(zun_core::FunctionHandle::new(
-                            callback.method_rid(),
-                            Some(mapped_environment),
-                        ));
+                        // `relocate_environment`, not `new`: it preserves the
+                        // bound discriminant, so a bound callback stays bound.
+                        finalizer.callback =
+                            Some(callback.relocate_environment(Some(mapped_environment)));
                     }
                 }
             }
@@ -909,10 +932,8 @@ impl Heap {
                     let mapped_environment = map(environment);
                     if mapped_environment != environment {
                         rewritten += 1;
-                        record.callback = Some(zun_core::FunctionHandle::new(
-                            callback.method_rid(),
-                            Some(mapped_environment),
-                        ));
+                        record.callback =
+                            Some(callback.relocate_environment(Some(mapped_environment)));
                     }
                 }
             }
@@ -928,10 +949,7 @@ impl Heap {
                 let mapped_environment = map(environment);
                 if mapped_environment != environment {
                     rewritten += 1;
-                    cleanup = zun_core::FunctionHandle::new(
-                        cleanup.method_rid(),
-                        Some(mapped_environment),
-                    );
+                    cleanup = cleanup.relocate_environment(Some(mapped_environment));
                 }
             }
             mapped_registries.insert(mapped_owner, cleanup);
@@ -1067,7 +1085,14 @@ impl Heap {
             if handler.addr() != proxy.handler.addr() {
                 rewritten += 1;
             }
-            mapped_proxies.insert(mapped_address, proxies::ProxyRecord { target, handler, revoked: proxy.revoked });
+            mapped_proxies.insert(
+                mapped_address,
+                proxies::ProxyRecord {
+                    target,
+                    handler,
+                    revoked: proxy.revoked,
+                },
+            );
         }
         self.proxies = mapped_proxies;
         rewritten

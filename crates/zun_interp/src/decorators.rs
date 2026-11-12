@@ -5,6 +5,14 @@
 //! Every function value kept in these side tables may carry a closure
 //! environment (a managed object), so the tables are rooted and rewritten by
 //! [`Interp::append_decorator_roots`] / [`Interp::rewrite_decorator_tables`].
+//!
+//! Those two also cover the class side tables that are not decorator
+//! residuals at all - `class_symbol_methods` (the symbol-keyed methods the
+//! iterator protocol resolves through) and `class_field_defaults` (first-class
+//! field defaults). They live here because this is the one pair of functions
+//! that roots *and* rewrites interpreter-owned managed values: a table added
+//! to only one of them is a use-after-free waiting for the first collection
+//! that moves or frees its target.
 
 use super::{Interp, RunError, Value};
 use zun_core::FunctionHandle;
@@ -26,15 +34,9 @@ fn number(value: &Value) -> Result<i64, RunError> {
     }
 }
 
+/// `value` as a heap object, or `BadToken` when it is not one.
 fn object(value: &Value) -> Result<Obj, RunError> {
-    match value {
-        Value::Object(object) => Ok(*object),
-        Value::Any(any) => any
-            .as_object()
-            .map(|address| unsafe { Obj::from_addr(address as *mut u64) })
-            .ok_or(RunError::BadToken),
-        _ => Err(RunError::BadToken),
-    }
+    crate::collections::object(value).ok_or(RunError::BadToken)
 }
 
 fn string(value: &Value) -> Result<String, RunError> {
@@ -79,6 +81,12 @@ impl Interp<'_> {
         for (_, _, handle) in &self.field_transforms {
             root_handle(*handle, roots);
         }
+        for handle in self.class_symbol_methods.values() {
+            root_handle(*handle, roots);
+        }
+        for value in self.class_field_defaults.values() {
+            super::roots::collect_frame_roots(std::slice::from_ref(value), &[], roots);
+        }
     }
 
     /// Rewrite the closure environments held by the decorator side tables
@@ -89,6 +97,10 @@ impl Interp<'_> {
             &mut self.class_named_methods,
             &mut self.instance_initializers,
             &mut self.field_transforms,
+            relocation,
+        ) + rewrite_class_tables(
+            &mut self.class_symbol_methods,
+            &mut self.class_field_defaults,
             relocation,
         )
     }
@@ -253,7 +265,9 @@ impl Interp<'_> {
                 // Undecorated class: resolve a plain static method straight
                 // from metadata (a hidden-receiver static needs `.call(Class)`).
                 if let Some((mrid, false)) = self.class_static_method(class, &name) {
-                    return Ok(Self::function_box(zun_core::FunctionHandle::new(mrid, None)));
+                    return Ok(Self::function_box(zun_core::FunctionHandle::new(
+                        mrid, None,
+                    )));
                 }
                 Ok(Value::Any(zun_core::Any::null()))
             }
@@ -340,7 +354,10 @@ impl Interp<'_> {
 /// closures that already borrow other `Interp` fields.
 pub(super) fn rewrite_decorator_fields(
     initializers: &mut [FunctionHandle],
-    named_methods: &mut std::collections::HashMap<u32, std::collections::HashMap<String, FunctionHandle>>,
+    named_methods: &mut std::collections::HashMap<
+        u32,
+        std::collections::HashMap<String, FunctionHandle>,
+    >,
     instance_initializers: &mut [(u32, FunctionHandle)],
     field_transforms: &mut [(u32, u32, FunctionHandle)],
     relocation: &zun_gc::RelocationMap,
@@ -359,6 +376,27 @@ pub(super) fn rewrite_decorator_fields(
     }
     for (_, _, handle) in field_transforms.iter_mut() {
         rewritten += rewrite_handle(handle, relocation);
+    }
+    rewritten
+}
+
+/// Rewrite the managed values held by the class side tables. Taken as fields
+/// rather than through `&mut self` for the same reason as
+/// [`rewrite_decorator_fields`]: the collection callback already holds the
+/// interpreter's frame storage borrowed.
+pub(super) fn rewrite_class_tables(
+    symbol_methods: &mut std::collections::HashMap<(u32, u64), FunctionHandle>,
+    field_defaults: &mut std::collections::HashMap<(u32, u32), Value>,
+    relocation: &zun_gc::RelocationMap,
+) -> usize {
+    let mut rewritten = 0;
+    for handle in symbol_methods.values_mut() {
+        rewritten += rewrite_handle(handle, relocation);
+    }
+    for value in field_defaults.values_mut() {
+        if value.rewrite_managed_reference(relocation) {
+            rewritten += 1;
+        }
     }
     rewritten
 }

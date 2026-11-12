@@ -89,15 +89,9 @@ pub extern "C" fn zun_jit_string_index_of(value: i64, needle: i64) -> i32 {
         };
         let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
         let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
-        if needle_units.is_empty() {
-            0
-        } else {
-            value_units
-                .windows(needle_units.len())
-                .position(|window| window == needle_units.as_slice())
-                .map(|index| index as i32)
-                .unwrap_or(-1)
-        }
+        zun_core::string_ops::find_from(&value_units, &needle_units, 0)
+            .map(|index| index as i32)
+            .unwrap_or(-1)
     })
 }
 
@@ -112,15 +106,9 @@ pub extern "C" fn zun_jit_string_last_index_of(value: i64, needle: i64) -> i32 {
         };
         let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
         let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
-        if needle_units.is_empty() {
-            value_units.len() as i32
-        } else {
-            value_units
-                .windows(needle_units.len())
-                .rposition(|window| window == needle_units.as_slice())
-                .map(|index| index as i32)
-                .unwrap_or(-1)
-        }
+        zun_core::string_ops::last_index_from(&value_units, &needle_units, value_units.len())
+            .map(|index| index as i32)
+            .unwrap_or(-1)
     })
 }
 
@@ -135,20 +123,7 @@ pub extern "C" fn zun_jit_string_count(value: i64, needle: i64) -> i32 {
         };
         let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
         let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
-        if needle_units.is_empty() {
-            return 0;
-        }
-        let mut total = 0i32;
-        let mut start = 0usize;
-        while start + needle_units.len() <= value_units.len() {
-            if value_units[start..start + needle_units.len()] == needle_units {
-                total += 1;
-                start += needle_units.len();
-            } else {
-                start += 1;
-            }
-        }
-        total
+        zun_core::string_ops::count_units(&value_units, &needle_units) as i32
     })
 }
 
@@ -197,14 +172,11 @@ pub extern "C" fn zun_jit_string_substring(handle: i64, start: i64, end: i64) ->
             return 0;
         };
         let units: Vec<u16> = zun_core::wtf16::encode(&value).collect();
-        let start = (start as usize).min(units.len());
-        let end = (end as usize).min(units.len());
-        let (start, end) = if start <= end {
-            (start, end)
-        } else {
-            (end, start)
-        };
-        let result = zun_core::wtf16::from_units(&units[start..end]);
+        let result = zun_core::wtf16::from_units(zun_core::string_ops::substring_units(
+            &units,
+            start as usize,
+            end as usize,
+        ));
         heap.intern_string(std::rc::Rc::from(result)).into()
     })
 }
@@ -266,19 +238,9 @@ pub extern "C" fn zun_jit_string_to_upper_case(handle: i64) -> i64 {
     })
 }
 
-#[inline]
-pub extern "C" fn zun_jit_string_repeat(handle: i64, count: i64) -> i64 {
-    if count < 0 {
-        return 0;
-    }
-    zun_gc::with_current_heap_mut(|heap| {
-        let Some(value) = heap.try_string(handle as u32).cloned() else {
-            return 0;
-        };
-        heap.intern_string(std::rc::Rc::from(value.repeat(count as usize)))
-            .into()
-    })
-}
+// `repeat` has no thunk: Tier 0 throws a RangeError when the result would
+// exceed `zun_core::string_ops::REPEAT_MAX`, and a thunk cannot raise it, so
+// eligibility rejects `repeat` and such methods stay on the interpreter.
 
 #[inline]
 pub extern "C" fn zun_jit_string_reverse(handle: i64) -> i64 {
@@ -304,29 +266,22 @@ fn jit_pad_string(handle: i64, target: i64, fill: i64, at_start: bool) -> i64 {
         let Some(fill) = heap.try_string(fill as u32).cloned() else {
             return 0;
         };
+        // An empty fill leaves the receiver unchanged (same as Tier 0).
         if fill.is_empty() {
-            return 0;
-        }
-        let value_len = zun_core::wtf16::len16(&value);
-        let target = target as usize;
-        if target <= value_len {
             return handle;
         }
-        let padding_units = target - value_len;
-        let mut padding = String::new();
-        while zun_core::wtf16::len16(&padding) < padding_units {
-            padding.push_str(&fill);
+        let units: Vec<u16> = zun_core::wtf16::encode(&value).collect();
+        let target = target as usize;
+        if target <= units.len() {
+            return handle;
         }
-        let padding = zun_core::wtf16::from_units(
-            &zun_core::wtf16::encode(&padding)
-                .take(padding_units)
-                .collect::<Vec<_>>(),
-        );
-        let result = if at_start {
-            format!("{padding}{value}")
-        } else {
-            format!("{value}{padding}")
-        };
+        let fill_units: Vec<u16> = zun_core::wtf16::encode(&fill).collect();
+        let result = zun_core::wtf16::from_units(&zun_core::string_ops::pad_units(
+            &units,
+            target,
+            &fill_units,
+            at_start,
+        ));
         heap.intern_string(std::rc::Rc::from(result)).into()
     })
 }
@@ -353,10 +308,10 @@ pub extern "C" fn zun_jit_string_replace(handle: i64, needle: i64, replacement: 
         let Some(replacement) = heap.try_string(replacement as u32).cloned() else {
             return 0;
         };
-        heap.intern_string(std::rc::Rc::from(value.replacen(
-            needle.as_ref(),
-            replacement.as_ref(),
-            1,
+        heap.intern_string(std::rc::Rc::from(zun_core::string_ops::replace_first(
+            &value,
+            &needle,
+            &replacement,
         )))
         .into()
     })

@@ -6,6 +6,7 @@
 //! fails to run. Generating the dispatch from the same table the checker
 //! reads removes that possibility.
 
+use super::collections::object;
 use super::value::Value;
 use super::RunError;
 use zun_il::NumKind;
@@ -184,16 +185,6 @@ pub(crate) fn element_len(view: zun_gc::Obj) -> Option<usize> {
 /// The element kind of a typed-array view, or `None` for a non-view.
 pub(crate) fn element_of(view: zun_gc::Obj) -> Option<zun_core::TypedElement> {
     zun_gc::with_current_heap(|heap| heap.typed_array_element(view))
-}
-
-fn object(value: &Value) -> Option<zun_gc::Obj> {
-    match value {
-        Value::Object(object) => Some(*object),
-        Value::Any(any) => any
-            .as_object()
-            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-        _ => None,
-    }
 }
 
 fn index(value: Option<&Value>) -> Result<usize, RunError> {

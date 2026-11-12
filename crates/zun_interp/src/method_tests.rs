@@ -4214,3 +4214,83 @@ fn rest_parameter_function_called_through_an_any_member_packs_its_arguments() {
     run(&module, &mut output).expect("rest call through any member");
     assert_eq!(output.lines, vec!["n=5 -> a b 5 true lit"]);
 }
+
+// ---- ToNumber / regex stringification parity (checked against Node) ----
+
+#[test]
+fn to_number_runs_value_of_and_maps_null_to_zero() {
+    // Node: Number({valueOf(){return null}}) === 0.
+    let source = "function main(): string {\n\
+               let o: any = { valueOf() { return null; } };\n\
+               return String(Number(o));\n\
+             }";
+    assert_eq!(typeof_of(source), "0");
+}
+
+#[test]
+fn to_number_of_arrays_uses_joined_text() {
+    // Node: Number([5]) === 5, Number([]) === 0, Number([1,2]) is NaN.
+    let number_of = |literal: &str| {
+        typeof_of(&format!(
+            "function main(): string {{ let a: any = {literal}; return String(Number(a)); }}"
+        ))
+    };
+    assert_eq!(number_of("[5]"), "5");
+    assert_eq!(number_of("[]"), "0");
+    assert_eq!(number_of("[1, 2]"), "NaN");
+}
+
+#[test]
+fn array_at_coerces_its_index_with_to_number() {
+    // Node: [1,2,3].at("1") === 2 and [1,2,3].at(null) === 1.
+    let source = "function main(): string {\n\
+               let a: any = [1, 2, 3];\n\
+               let one: any = \"1\";\n\
+               let none: any = null;\n\
+               return String(a.at(one)) + \",\" + String(a.at(none));\n\
+             }";
+    assert_eq!(typeof_of(source), "2,1");
+}
+
+#[test]
+fn array_flat_coerces_its_depth_with_to_number() {
+    // Node: [1,[2,[3]]].flat("1") is [1,2,[3]] (depth 1, not 0).
+    let source = "function main(): string {\n\
+               let a: any = [1, [2, [3]]];\n\
+               let depth: any = \"1\";\n\
+               let flat: any = a.flat(depth);\n\
+               return String(flat.length) + \",\" + String(Array.isArray(flat[2]));\n\
+             }";
+    assert_eq!(typeof_of(source), "3,true");
+}
+
+#[test]
+fn array_sort_comparator_result_goes_through_to_number() {
+    // Node: [3,1,2].sort((a, b) => String(a - b)) is [1,2,3]; a string
+    // comparator result is ToNumber'd rather than treated as NaN.
+    let source = "function main(): string {\n\
+               let a: any = [3, 1, 2];\n\
+               a.sort((x: any, y: any): any => String(x - y));\n\
+               return a.join(\",\");\n\
+             }";
+    assert_eq!(typeof_of(source), "1,2,3");
+    let source = "function main(): string {\n\
+               let a: any = [3, 1, 2];\n\
+               let sorted: any = a.toSorted((x: any, y: any): any => String(x - y));\n\
+               return sorted.join(\",\");\n\
+             }";
+    assert_eq!(typeof_of(source), "1,2,3");
+}
+
+#[test]
+fn regex_string_form_orders_flags_like_the_flags_getter() {
+    // Node: String(new RegExp("a", "ysg")) === "/a/gsy" === "/a/" + re.flags.
+    let source = "function main(): string {\n\
+               let re: any = new RegExp(\"a\", \"ysg\");\n\
+               let flags: any = re.flags;\n\
+               return String(re) + \"|\" + flags + \"|\" + `${re}`;\n\
+             }";
+    assert_eq!(typeof_of(source), "/a/gsy|gsy|/a/gsy");
+}
+
+}

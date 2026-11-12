@@ -328,14 +328,11 @@ impl Checker<'_> {
         pad_empty_flags: bool,
     ) -> hir::Expr {
         if args.len() < min_args || args.len() > max_args {
-            self.error(
-                span,
-                format!(
-                    "`{name}` expects {min_args} to {max_args} constructor argument(s), found {}",
-                    args.len()
-                ),
-            );
-            return self.poison(span);
+            // An argument count outside the typed overload is not a static
+            // error: the constructor is built at run time through its class
+            // descriptor, which applies the spec's argument rules and throws
+            // the appropriate TypeError (e.g. `new WeakRef()` with no target).
+            return self.new_buffer_dynamic(cx, name, args, span);
         }
         let Some((id, _)) = zun_natives::resolve(module, native) else {
             self.error(span, format!("missing intrinsic `{native}`"));

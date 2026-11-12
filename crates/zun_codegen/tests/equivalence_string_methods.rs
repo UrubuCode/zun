@@ -582,3 +582,128 @@ fn typed_string_conversions_use_native_lowering_when_receiver_is_string() {
         1
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tier 0 / Tier 1 equivalence for the string thunks that share their semantics
+// with `zun_core::string_ops`. An entry point with string literals is not
+// JIT-eligible, so the strings enter as parameters of a `do*` method that is
+// compiled natively and compared with the interpreter result.
+// ---------------------------------------------------------------------------
+
+const STRING_SRC: &str = "import { replace, padStart, padEnd, indexOf, lastIndexOf, count, substring, repeat } from \"zun:core\";\n\
+     class String {\n\
+       extern replace(needle: string, replacement: string): string;\n\
+       extern padStart(target: u64, fill: string): string;\n\
+       extern padEnd(target: u64, fill: string): string;\n\
+       extern indexOf(needle: string): int;\n\
+       extern lastIndexOf(needle: string): int;\n\
+       extern count(needle: string): int;\n\
+       extern substring(start: u64, end: u64): string;\n\
+       extern repeat(count: u64): string;\n\
+     }\n\
+     function doReplace(value: string, needle: string, text: string): string { return value.replace(needle, text); }\n\
+     function doPadStart(value: string, target: u64, fill: string): string { return value.padStart(target, fill); }\n\
+     function doPadEnd(value: string, target: u64, fill: string): string { return value.padEnd(target, fill); }\n\
+     function doIndexOf(value: string, needle: string): int { return value.indexOf(needle); }\n\
+     function doLastIndexOf(value: string, needle: string): int { return value.lastIndexOf(needle); }\n\
+     function doCount(value: string, needle: string): int { return value.count(needle); }\n\
+     function doSubstring(value: string, start: u64, end: u64): string { return value.substring(start, end); }\n\
+     function doRepeat(value: string, count: u64): string { return value.repeat(count); }\n\
+     function main(): int { return 0; }";
+
+fn check(method: &str, args: &[CallArg], ret: CallRet) {
+    assert_string_call_equivalent(STRING_SRC, method, args, ret);
+}
+
+#[test]
+fn replace_expands_substitution_patterns() {
+    use CallArg::Str;
+    // `$&` inserts the match, `$$` is a literal dollar, `` $` `` / `$'` insert context.
+    check("doReplace", &[Str("abc"), Str("b"), Str("[$&]")], CallRet::Str);
+    check("doReplace", &[Str("abc"), Str("b"), Str("$$")], CallRet::Str);
+    check("doReplace", &[Str("abc"), Str("b"), Str("<$`|$'>")], CallRet::Str);
+    // No match, empty needle, and a plain replacement.
+    check("doReplace", &[Str("abc"), Str("z"), Str("[$&]")], CallRet::Str);
+    check("doReplace", &[Str("abc"), Str(""), Str("[$&]")], CallRet::Str);
+    check("doReplace", &[Str("zun vm"), Str("vm"), Str("runtime")], CallRet::Str);
+}
+
+#[test]
+fn pad_empty_fill_returns_receiver_and_truncates_fill() {
+    use CallArg::{Str, U64};
+    for method in ["doPadStart", "doPadEnd"] {
+        check(method, &[Str("abc"), U64(6), Str("")], CallRet::Str);
+        check(method, &[Str("abc"), U64(2), Str("")], CallRet::Str);
+        check(method, &[Str("abc"), U64(7), Str("xyz12")], CallRet::Str);
+        check(method, &[Str("abc"), U64(2), Str("x")], CallRet::Str);
+        check(method, &[Str("abc"), U64(3), Str("x")], CallRet::Str);
+        check(method, &[Str("abc"), U64(5), Str("0")], CallRet::Str);
+        check(method, &[Str("\u{1F600}"), U64(4), Str("ab")], CallRet::Str);
+    }
+}
+
+#[test]
+fn repeat_stays_tier0_because_a_thunk_cannot_throw_range_error() {
+    use CallArg::{Str, U64};
+    let module = compile(STRING_SRC);
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "doRepeat")
+        .expect("doRepeat") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(
+        !jit.is_compiled(rid),
+        "`repeat` must stay Tier 0: its RangeError cannot be raised from a thunk"
+    );
+    // Tier 0 results for count 0, 1 and a count past REPEAT_MAX.
+    assert_eq!(
+        interp_call(&module, "doRepeat", &[Str("ab"), U64(0)], CallRet::Str),
+        Ok(CallOut::Str(String::new()))
+    );
+    assert_eq!(
+        interp_call(&module, "doRepeat", &[Str("ab"), U64(1)], CallRet::Str),
+        Ok(CallOut::Str("ab".to_string()))
+    );
+    let error = interp_call(
+        &module,
+        "doRepeat",
+        &[Str("ab"), U64(1 << 40)],
+        CallRet::Str,
+    )
+    .expect_err("an over-long repeat must throw");
+    assert!(error.contains("RangeError"), "{error}");
+}
+
+#[test]
+fn index_of_last_index_of_and_count_edge_needles() {
+    use CallArg::Str;
+    for (value, needle) in [
+        ("abcabc", "zz"),
+        ("abcabc", ""),
+        ("abcabc", "bc"),
+        ("abc", "abcabc"),
+        ("", ""),
+        ("", "a"),
+        ("aaaaa", "aa"),
+        ("\u{1F600}zun", "zun"),
+    ] {
+        check("doIndexOf", &[Str(value), Str(needle)], CallRet::Int);
+        check("doLastIndexOf", &[Str(value), Str(needle)], CallRet::Int);
+        check("doCount", &[Str(value), Str(needle)], CallRet::Int);
+    }
+}
+
+#[test]
+fn substring_swapped_and_out_of_range_arguments() {
+    use CallArg::{Str, U64};
+    check("doSubstring", &[Str("abcdef"), U64(4), U64(1)], CallRet::Str);
+    check("doSubstring", &[Str("abcdef"), U64(1), U64(4)], CallRet::Str);
+    check("doSubstring", &[Str("abcdef"), U64(4), U64(99)], CallRet::Str);
+    check("doSubstring", &[Str("abcdef"), U64(99), U64(2)], CallRet::Str);
+    check("doSubstring", &[Str("abcdef"), U64(99), U64(99)], CallRet::Str);
+    check("doSubstring", &[Str("abcdef"), U64(3), U64(3)], CallRet::Str);
+    check("doSubstring", &[Str("\u{1F600}zun"), U64(2), U64(5)], CallRet::Str);
+}

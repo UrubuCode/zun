@@ -563,6 +563,9 @@ impl Checker<'_> {
             Ty::Array
                 | Ty::Map
                 | Ty::Set
+                | Ty::WeakMap
+                | Ty::WeakSet
+                | Ty::WeakRef
                 | Ty::Instance(_)
                 | Ty::RegExp
                 | Ty::Function(_)

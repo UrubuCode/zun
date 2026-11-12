@@ -90,20 +90,9 @@ fn count(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErro
     };
     let value_units: Vec<u16> = zun_core::wtf16::encode(value).collect();
     let needle_units: Vec<u16> = zun_core::wtf16::encode(needle).collect();
-    if needle_units.is_empty() {
-        return Ok(NativeValue::Int(0));
-    }
-    let mut total = 0i64;
-    let mut start = 0usize;
-    while start + needle_units.len() <= value_units.len() {
-        if value_units[start..start + needle_units.len()] == needle_units {
-            total += 1;
-            start += needle_units.len();
-        } else {
-            start += 1;
-        }
-    }
-    Ok(NativeValue::Int(total))
+    Ok(NativeValue::Int(
+        zun_core::string_ops::count_units(&value_units, &needle_units) as i64,
+    ))
 }
 
 fn index_of(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
@@ -152,21 +141,11 @@ fn replace(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeEr
             Some(NativeArg::Str(needle)),
             Some(NativeArg::Str(replacement)),
         ) => {
-            let Some(start) = value.find(needle) else {
-                return Ok(NativeValue::Str(value.to_string()));
-            };
-            let end = start + needle.len();
-            let mut out = String::from(&value[..start]);
-            zun_core::expand_substitution(
+            Ok(NativeValue::Str(zun_core::string_ops::replace_first(
+                value,
+                needle,
                 replacement,
-                &[Some(needle)],
-                &[None],
-                &value[..start],
-                &value[end..],
-                &mut out,
-            );
-            out.push_str(&value[end..]);
-            Ok(NativeValue::Str(out))
+            )))
         }
         _ => Err(NativeError(
             "replace: expected a string, search string, and replacement".to_string(),

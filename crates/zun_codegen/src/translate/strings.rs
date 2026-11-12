@@ -273,27 +273,6 @@ impl Translator<'_> {
                 stack.push((result, JitKind::String));
                 return Ok(true);
             }
-            Some("repeat") => {
-                let (count, count_kind) = stack.pop().ok_or("repeat count")?;
-                let (receiver, receiver_kind) = stack.pop().ok_or("repeat receiver")?;
-                if receiver_kind != JitKind::String
-                    || !matches!(count_kind, JitKind::Num(kind) if kind.int_parts().is_some())
-                {
-                    return Err("repeat expects a string and integer count".into());
-                }
-                self.builder.declare_value_needs_stack_map(receiver);
-                let count = match clif_ty(count_kind) {
-                    types::I64 => count,
-                    ty if ty.is_int() => self.builder.ins().uextend(types::I64, count),
-                    _ => return Err("repeat count must be an integer".into()),
-                };
-                let helper = self.string_repeat_fref();
-                let call = self.builder.ins().call(helper, &[receiver, count]);
-                let result = self.builder.inst_results(call)[0];
-                self.builder.declare_value_needs_stack_map(result);
-                stack.push((result, JitKind::String));
-                return Ok(true);
-            }
             Some("reverse") => {
                 let (receiver, receiver_kind) = stack.pop().ok_or("reverse receiver")?;
                 if receiver_kind != JitKind::String {
@@ -518,18 +497,6 @@ impl Translator<'_> {
             .module
             .declare_function(symbol, Linkage::Import, &sig)
             .expect("declare string case helper");
-        self.module.declare_func_in_func(id, self.builder.func)
-    }
-
-    pub(crate) fn string_repeat_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
-        let mut sig = Signature::new(self.builder.func.signature.call_conv);
-        sig.params.push(AbiParam::new(types::I64));
-        sig.params.push(AbiParam::new(types::I64));
-        sig.returns.push(AbiParam::new(types::I64));
-        let id = self
-            .module
-            .declare_function("zun_jit_string_repeat", Linkage::Import, &sig)
-            .expect("declare zun_jit_string_repeat");
         self.module.declare_func_in_func(id, self.builder.func)
     }
 

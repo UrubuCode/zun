@@ -9,20 +9,11 @@
 //! only Buffer-specific work is encoding/decoding and the fixed-width
 //! readers/writers, assembled here from single-byte access.
 
+use super::collections::object;
 use super::value::Value;
 use super::RunError;
 use zun_gc::Obj;
 use zun_il::NumKind;
-
-fn object(value: &Value) -> Option<Obj> {
-    match value {
-        Value::Object(object) => Some(*object),
-        Value::Any(any) => any
-            .as_object()
-            .map(|address| unsafe { Obj::from_addr(address as *mut u64) }),
-        _ => None,
-    }
-}
 
 fn as_usize(value: Option<&Value>) -> Option<usize> {
     match value? {
