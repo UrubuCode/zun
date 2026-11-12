@@ -1414,7 +1414,12 @@ impl Interp<'_> {
                 }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
-                    match builtins::call_builtin(self, id, stack) {
+                    match builtins::call_builtin(self, id, stack).map_err(|error| match error {
+                        RunError::BadToken => RunError::Native(
+                            "TypeError: invalid argument to built-in function".into(),
+                        ),
+                        other => other,
+                    }) {
                         Ok(()) => {}
                         Err(RunError::Native(message)) => {
                             // A native failure naming a prelude error class

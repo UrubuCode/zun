@@ -25,7 +25,7 @@ impl<'a> Interp<'a> {
         mut values: Vec<Value>,
     ) -> Result<Value, RunError> {
         if token & zun_natives::USER_CLASS_FLAG == 0 {
-            return Err(RunError::BadToken);
+            return Err(RunError::Native("TypeError: value is not a constructor".into()));
         }
         let token = zun_metadata::Token::new(
             zun_metadata::TableKind::TypeDef,

@@ -535,7 +535,25 @@ impl Checker<'_> {
                 span,
             };
         }
-        let Some(&target) = self.classes_by_name.get(&name) else {
+        // `x instanceof String|Number|Boolean` tests against the prelude
+        // wrapper class (`new String(..)` builds a `StringObject`).
+        let wrapper_name = match name.as_str() {
+            "String" => Some("StringObject"),
+            "Number" => Some("NumberObject"),
+            "Boolean" => Some("BooleanObject"),
+            _ => None,
+        };
+        let wrapper_target = match wrapper_name {
+            Some(w)
+                if !self.classes_by_name.contains_key(&name)
+                    && !cx.scopes.iter().any(|s| s.contains_key(name.as_str())) =>
+            {
+                self.classes_by_name.get(w).copied()
+            }
+            _ => None,
+        };
+        let Some(target) = wrapper_target.or_else(|| self.classes_by_name.get(&name).copied())
+        else {
             // Not a class name: the right operand may be a dynamic object
             // carrying a `[Symbol.hasInstance]` method. If the identifier
             // resolves to an `any`/dynamic value, dispatch through that method

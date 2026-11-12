@@ -333,8 +333,11 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Bool(false));
                     }
                 }
-                let rhs =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let rhs = object(args.get(1).ok_or(RunError::BadToken)?).ok_or_else(|| {
+                    RunError::Native(
+                        "TypeError: Right-hand side of 'instanceof' is not callable".into(),
+                    )
+                })?;
                 // A constructor record (`Error`, `Array` ... read through `any`): the
                 // class it names decides membership.
                 let (record_desc, record_name) = zun_gc::with_current_heap(|heap| {

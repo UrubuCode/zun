@@ -1610,14 +1610,20 @@ impl Interp<'_> {
                         configurable,
                     )
                 } else {
-                    heap.dynamic_force_define_data(
+                    let ok = heap.dynamic_force_define_data(
                         obj,
                         name.to_owned(),
                         desc.value.unwrap_or(value),
                         desc.writable.unwrap_or(writable),
                         enumerable,
                         configurable,
-                    )
+                    );
+                    // Redefining a method: the new function value replaces the
+                    // old one in the function side table.
+                    if let (true, Some(function)) = (ok, desc.value_fn) {
+                        heap.dynamic_set_function(obj, name.to_owned(), function);
+                    }
+                    ok
                 }
             }
             zun_core::PropertyDescriptor::Accessor { get, set, .. } => {

@@ -10,7 +10,14 @@ impl<'a> Interp<'a> {
         match name {
             "bufferNew" => {
                 let length = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Int(value, _) => *value as usize,
+                    Value::Int(value, _) => {
+                        if *value < 0 || *value > (1i64 << 32) {
+                            return Err(RunError::Native(
+                                "RangeError: Array buffer allocation failed".into(),
+                            ));
+                        }
+                        *value as usize
+                    }
                     _ => return Err(RunError::BadToken),
                 };
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_buffer(length));

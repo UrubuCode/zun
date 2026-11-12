@@ -737,7 +737,7 @@ fn normalize(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, Native
         "NFKD" => DecomposingNormalizerBorrowed::new_nfkd().normalize(value),
         other => {
             return Err(NativeError(format!(
-                "normalize: form must be one of NFC, NFD, NFKC, NFKD, found `{other}`"
+                "RangeError: The normalization form should be one of NFC, NFD, NFKC, NFKD (found `{other}`)"
             )))
         }
     };

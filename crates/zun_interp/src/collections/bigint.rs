@@ -14,7 +14,7 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 let value = zun_core::BigInt::parse(text)
-                    .map_err(|error| RunError::Native(error.into()))?;
+                    .map_err(|error| RunError::Native(format!("SyntaxError: {}", error)))?;
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
                 Ok(Value::Object(object))
             }
@@ -25,7 +25,7 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 let value = zun_core::BigInt::from_f64(number)
-                    .map_err(|error| RunError::Native(error.into()))?;
+                    .map_err(|error| RunError::Native(format!("RangeError: {}", error)))?;
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
                 Ok(Value::Object(object))
             }
@@ -47,13 +47,13 @@ impl<'a> Interp<'a> {
                 let value = match name {
                     "bigIntPow" => left
                         .pow(&right)
-                        .map_err(|error| RunError::Native(error.into()))?,
+                        .map_err(|error| RunError::Native(format!("RangeError: {}", error)))?,
                     "bigIntAnd" => left.bitand(&right),
                     "bigIntOr" => left.bitor(&right),
                     "bigIntXor" => left.bitxor(&right),
                     "bigIntShl" | "bigIntShr" => {
                         let amount = right.to_u64().ok_or_else(|| {
-                            RunError::Native("BigInt shift amount too large".into())
+                            RunError::Native("RangeError: BigInt shift amount too large".into())
                         })?;
                         // A negative shift count flips the direction (spec).
                         let shift_left = (name == "bigIntShl") != right.is_negative();
@@ -85,7 +85,7 @@ impl<'a> Interp<'a> {
                 };
                 if bits < 0 {
                     return Err(RunError::Native(
-                        "BigInt bit width must be non-negative".into(),
+                        "RangeError: BigInt bit width must be non-negative".into(),
                     ));
                 }
                 let object =
@@ -142,7 +142,7 @@ impl<'a> Interp<'a> {
                         "bigIntMul" => left.mul(&right),
                         "bigIntDiv" | "bigIntRem" => {
                             let Some((quotient, remainder)) = left.div_rem(&right) else {
-                                return Err(RunError::Native("BigInt division by zero".into()));
+                                return Err(RunError::Native("RangeError: BigInt division by zero".into()));
                             };
                             if name == "bigIntDiv" {
                                 quotient

@@ -426,10 +426,27 @@ fn convert_class_statement(
     class_declaration: &oxc_ast::ast::Class<'_>,
     statements: &mut Vec<Stmt>,
 ) -> Result<(), String> {
-    let class =
+    let mut class =
         convert_class_declaration(source, class_declaration).map_err(|errors| errors.join("; "))?;
+    class.local = true;
+    let class_name = source
+        .get(class.name.span.start as usize..class.name.span.end as usize)
+        .unwrap_or_default()
+        .to_string();
+    let class_span = class.span;
     HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
     statements.extend(CLASS_TRAILING.with(|cells| std::mem::take(&mut *cells.borrow_mut())));
+    // Declaration-site marker: sema runs the class's static initializers here
+    // (see `Checker::check_stmt`), so a throwing static initializer is raised
+    // where the class is declared, inside any enclosing `try`/function.
+    statements.push(Stmt::Expr(Expr::Call {
+        callee: crate::ast::synthetic_ident(crate::ast::CLASS_SITE_MARKER),
+        args: vec![Expr::String {
+            value: class_name,
+            span: class_span,
+        }],
+        span: class_span,
+    }));
     Ok(())
 }
 

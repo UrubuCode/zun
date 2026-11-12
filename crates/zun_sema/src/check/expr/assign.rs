@@ -141,6 +141,33 @@ impl Checker<'_> {
                 if self.module_globals.contains(&text) {
                     return self.global_set_expr(&text, value, span);
                 }
+                // Assignment to an undeclared / not-yet-declared (TDZ) name:
+                // evaluate the value, then raise a run-time ReferenceError.
+                let known_declaration = self.by_name.contains_key(&text)
+                    || self.classes_by_name.contains_key(&text)
+                    || self.realm_globals.contains_key(&text);
+                if known_declaration {
+                    self.error(target.span, format!("unknown variable `{text}`"));
+                    return self.poison(span);
+                }
+                if let Some((id, _)) = zun_natives::resolve("collections", "globalRead") {
+                    let throw = hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![Self::string_literal(text.clone(), span)],
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::Sequence {
+                            effect: Box::new(value),
+                            value: Box::new(throw),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 self.error(target.span, format!("unknown variable `{text}`"));
                 self.poison(span)
             }

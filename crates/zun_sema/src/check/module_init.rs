@@ -59,6 +59,11 @@ impl Checker<'_> {
         let mut early = Vec::new();
         self.pending_static_classes.clear();
         for class_idx in 0..self.classes.len() {
+            // A nested-block / function-local class runs its static initializers
+            // at its declaration-site marker instead.
+            if self.classes[class_idx].local {
+                continue;
+            }
             match last_start {
                 Some(last) if self.classes[class_idx].span_start < last => {
                     self.pending_static_classes.push_back(class_idx as u32)

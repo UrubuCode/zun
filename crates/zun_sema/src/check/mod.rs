@@ -464,6 +464,9 @@ struct Signature {
 struct ClassInfo {
     /// Byte offset where the class declaration starts.
     span_start: u32,
+    /// Declared in a nested block or function body: its static initializers run
+    /// at the declaration-site marker rather than in the module body.
+    local: bool,
     base: Option<u32>,
     base_name: Option<String>,
     /// The `extends` value is a runtime value rather than a known class, so the

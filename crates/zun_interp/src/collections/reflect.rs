@@ -76,6 +76,11 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 let mut cursor = object(args.first().ok_or(RunError::BadToken)?);
+                if cursor.is_none() {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot use 'in' operator to search in a non-object".into(),
+                    ));
+                }
                 let mut depth = 0;
                 while let Some(current) = cursor {
                     let found = zun_gc::with_current_heap(|heap| {
@@ -107,8 +112,11 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Bool(found));
                     }
                 }
-                let object =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
+                    RunError::Native(
+                        "TypeError: Cannot use 'in' operator to search in a non-object".into(),
+                    )
+                })?;
                 if let Ok(key) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
                     if let Some(hit) = self.typed_view_has(object, &key) {
                         return Ok(Value::Bool(hit));

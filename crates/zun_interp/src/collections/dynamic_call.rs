@@ -375,7 +375,11 @@ impl<'a> Interp<'a> {
                                         || name.ends_with("@this")
                                 })
                                 .unwrap_or(false);
+                        // A class instance method (`Class.prototype.m`) takes its
+                        // receiver as the implicit first argument.
                         let takes_this = takes_this
+                            || (!handle.is_bound()
+                                && self.types.virtual_slot(handle.method_rid()).is_some())
                             || handle.builtin_method().is_some_and(|kind| kind >= 16);
                         if takes_this {
                             rest.insert(0, this_arg);

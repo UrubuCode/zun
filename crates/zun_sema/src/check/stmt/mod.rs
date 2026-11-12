@@ -13,6 +13,30 @@ impl Checker<'_> {
         match stmt {
             ast::Stmt::Destructure { .. } => self.check_destructure_stmt(cx, stmt),
             ast::Stmt::Let { .. } => self.check_let_stmt(cx, stmt),
+            ast::Stmt::Expr(ast::Expr::Call { callee, args, span })
+                if self.text(callee) == ast::CLASS_SITE_MARKER =>
+            {
+                // Declaration site of a nested-block / function-local class: run
+                // its static initializers here (in an always-true `if`, which
+                // carries a statement list).
+                let class_name = match args.first() {
+                    Some(ast::Expr::String { value, .. }) => value.clone(),
+                    _ => String::new(),
+                };
+                let body = match self.classes_by_name.get(&class_name).copied() {
+                    Some(class_idx) => self.class_static_initializers(cx, class_idx),
+                    None => Vec::new(),
+                };
+                hir::Stmt::If {
+                    cond: hir::Expr {
+                        kind: hir::ExprKind::Boolean(true),
+                        ty: Ty::Boolean,
+                        span: *span,
+                    },
+                    then_body: body,
+                    else_body: Vec::new(),
+                }
+            }
             ast::Stmt::Expr(e) => hir::Stmt::Expr(self.check_expr(cx, e)),
             ast::Stmt::If { .. } => self.check_if_stmt(cx, stmt),
             ast::Stmt::While { .. } => self.check_while_stmt(cx, stmt),

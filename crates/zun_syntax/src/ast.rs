@@ -143,6 +143,10 @@ pub struct Class {
     /// in source order. Kept apart from `methods` because they carry a key
     /// expression rather than a static name and are not vtable slots.
     pub symbol_methods: Vec<ClassSymbolMethod>,
+    /// Whether the declaration sits in a nested block or function body. Such a
+    /// class runs its static initializers at its declaration site (a marker
+    /// statement), not at module start.
+    pub local: bool,
     /// Span of the whole declaration.
     pub span: Span,
 }
@@ -1101,3 +1105,8 @@ pub fn synthetic_ident_text(name: Name) -> Option<String> {
         .get((name.span.start - NAMED_SYNTHETIC_BASE) as usize)
         .cloned()
 }
+
+/// Callee name of the declaration-site marker statement the OXC adapter emits
+/// for a class declared in a nested block or function body: `__zunClassSite("C")`.
+/// Sema lowers it to the class's static initializers.
+pub const CLASS_SITE_MARKER: &str = "__zunClassSite";

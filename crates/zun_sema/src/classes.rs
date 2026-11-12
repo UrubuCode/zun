@@ -38,6 +38,7 @@ impl<'a> Checker<'a> {
             let base_name = c.base.as_ref().map(|b| self.text(b).to_string());
             self.classes.push(ClassInfo {
                 span_start: c.span.start,
+                local: c.local,
                 base: None,
                 base_name,
                 dynamic_base: false,
