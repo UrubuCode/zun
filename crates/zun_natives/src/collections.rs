@@ -1,10 +1,6 @@
-use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
+use crate::{NativeFn, NativeTy::*};
 
-fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Err(NativeError(
-        "managed collection intrinsic requires an interpreter heap".into(),
-    ))
-}
+unavailable_stub!(unavailable, "managed collection intrinsic requires an interpreter heap");
 
 /// Signatures for collection operations. The interpreter supplies the managed
 /// heap context; these declarations keep module resolution and type checking

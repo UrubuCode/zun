@@ -1,10 +1,6 @@
-use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
+use crate::{NativeFn, NativeTy::*};
 
-fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Err(NativeError(
-        "managed array intrinsic requires an interpreter heap".into(),
-    ))
-}
+unavailable_stub!(unavailable, "managed array intrinsic requires an interpreter heap");
 
 /// Extended `Array.prototype` / `Array.*` surface (NUCLEUS #7). Appended as a
 /// dedicated module placed LAST in the registry so every existing dispatch id

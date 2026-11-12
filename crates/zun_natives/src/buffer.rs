@@ -1,10 +1,6 @@
-use crate::{NativeArg, NativeError, NativeFn, NativeTy::*, NativeValue, Sink};
+use crate::{NativeFn, NativeTy::*};
 
-fn unavailable(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    Err(NativeError(
-        "managed buffer intrinsic requires an interpreter heap".into(),
-    ))
-}
+unavailable_stub!(unavailable, "managed buffer intrinsic requires an interpreter heap");
 
 /// Byte-buffer intrinsics backed by the GC-owned contiguous buffer.
 /// Generates the `zun:buffer` module. The typed-array intrinsics — five per

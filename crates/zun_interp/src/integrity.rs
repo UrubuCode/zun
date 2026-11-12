@@ -5,6 +5,7 @@
 //! `RunError::Native("TypeError: ...")`, which the call sites turn into a
 //! catchable thrown error object.
 
+use super::collections::object;
 use super::errors::RunError;
 use super::value::Value;
 use super::Interp;
@@ -41,16 +42,6 @@ pub(crate) fn array_refusal(level: u8, op: ArrayOp) -> Option<&'static str> {
     }
 }
 
-fn as_object(value: &Value) -> Option<zun_gc::Obj> {
-    match value {
-        Value::Object(object) => Some(*object),
-        Value::Any(any) => any
-            .as_object()
-            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-        _ => None,
-    }
-}
-
 impl Interp<'_> {
     /// Refuse (with a `TypeError`) a mutation `op` on `array` when its
     /// integrity level forbids it. Non-arrays pass.
@@ -71,7 +62,7 @@ impl Interp<'_> {
             "arraySortBy" | "arraySortDefault" | "arrayReverse" => &[ArrayOp::Write],
             _ => return Ok(()),
         };
-        let Some(array) = args.first().and_then(as_object) else {
+        let Some(array) = args.first().and_then(object) else {
             return Ok(());
         };
         let level = zun_gc::with_current_heap(|heap| heap.array_integrity(array));
@@ -83,7 +74,7 @@ impl Interp<'_> {
             // Only the halves that actually do something are refused.
             let inserts = args
                 .get(3)
-                .and_then(as_object)
+                .and_then(object)
                 .and_then(|items| zun_gc::with_current_heap(|heap| heap.array_len(items)))
                 .unwrap_or(0);
             let start = match args.get(1) {

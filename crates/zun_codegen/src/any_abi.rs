@@ -18,6 +18,67 @@ pub const fn abi_word_count(kind: JitKind) -> usize {
     }
 }
 
+/// Whether a kind's packed word is the address of a GC-managed heap object that
+/// must be rooted (via `zun_gc::Obj::from_addr`) while native code runs.
+///
+/// This is the single source of truth for "is this `JitKind` a GC reference" in
+/// the Rust entry points (`call_packed*`, `call_osr*`). Per kind:
+/// - `Object`, `Array`: heap object addresses, moved/freed by the collector.
+/// - `String`: an index into the append-only `Heap::strings` table, which is
+///   neither collected nor moved, so no rooting is needed.
+/// - `Function`: a one-word method rid (closures are excluded by eligibility).
+/// - `Num`, `Bool`: scalars.
+/// - `Other`: the two-word `Any` carrier, handled by [`collect_native_roots`].
+///
+/// When adding a `JitKind`, decide it here; the match is deliberately exhaustive.
+#[inline]
+pub const fn is_gc_reference(kind: JitKind) -> bool {
+    match kind {
+        JitKind::Object | JitKind::Array => true,
+        JitKind::Num(_)
+        | JitKind::Bool
+        | JitKind::String
+        | JitKind::Function
+        | JitKind::Other => false,
+    }
+}
+
+/// Collect the GC roots held by packed argument words for a native call.
+///
+/// With `carrier_any == true`, `words` use the ABI layout (`Other` occupies two
+/// words, see [`abi_word_count`]) and an `Any` carrier with an invalid tag is
+/// rejected with [`crate::JitError::InvalidAnyTag`]; an `Object`-tagged carrier
+/// contributes its payload. With `carrier_any == false` every kind occupies one
+/// word (OSR local slots and `call_packed`) and `Other` carries nothing.
+/// Null (zero) addresses are never rooted.
+pub(crate) fn collect_native_roots(
+    kinds: &[JitKind],
+    words: &[u64],
+    carrier_any: bool,
+) -> Result<Vec<zun_gc::Obj>, crate::JitError> {
+    let mut roots = Vec::new();
+    let mut cursor = 0usize;
+    for &kind in kinds {
+        let Some(&word) = words.get(cursor) else {
+            break;
+        };
+        if is_gc_reference(kind) {
+            if word != 0 {
+                roots.push(unsafe { zun_gc::Obj::from_addr(word as *mut u64) });
+            }
+        } else if carrier_any && matches!(kind, JitKind::Other) {
+            let payload = words.get(cursor + 1).copied().unwrap_or(0);
+            let carrier = JitAnyAbi::from_raw_words(word, payload);
+            if carrier.into_any().is_none() {
+                return Err(crate::JitError::InvalidAnyTag(word));
+            }
+            carrier.append_managed_root(&mut roots);
+        }
+        cursor += if carrier_any { abi_word_count(kind) } else { 1 };
+    }
+    Ok(roots)
+}
+
 /// C-ABI representation of [`zun_core::Any`].
 ///
 /// The tag and payload are intentionally separate machine words. Keeping this
@@ -92,6 +153,78 @@ mod tests {
     fn any_carrier_width_is_two_words() {
         assert_eq!(abi_word_count(JitKind::Other), 2);
         assert_eq!(abi_word_count(JitKind::Num(NumKind::I64)), 1);
+    }
+
+    #[test]
+    fn gc_reference_predicate_covers_object_and_array_only() {
+        use super::is_gc_reference;
+        assert!(is_gc_reference(JitKind::Object));
+        assert!(is_gc_reference(JitKind::Array));
+        for kind in [
+            JitKind::String,
+            JitKind::Function,
+            JitKind::Other,
+            JitKind::Bool,
+            JitKind::Num(NumKind::F64),
+        ] {
+            assert!(!is_gc_reference(kind));
+        }
+    }
+
+    #[test]
+    fn root_set_includes_arrays_and_object_tagged_carriers() {
+        use super::collect_native_roots;
+        let kinds = [
+            JitKind::Num(NumKind::I64),
+            JitKind::Array,
+            JitKind::String,
+            JitKind::Other,
+            JitKind::Object,
+        ];
+        let carrier = JitAnyAbi::from_any(zun_core::Any::object(0x3000));
+        let words = [7, 0x1000, 0x55, carrier.tag, carrier.payload, 0x2000];
+        let roots = collect_native_roots(&kinds, &words, true).unwrap();
+        let addrs: Vec<usize> = roots.iter().map(|o| o.addr() as usize).collect();
+        assert_eq!(addrs, vec![0x1000, 0x3000, 0x2000]);
+
+        // One word per kind (OSR locals): `Other` carries nothing.
+        let packed = [7, 0x1000, 0x55, 0, 0x2000];
+        let roots = collect_native_roots(&kinds, &packed, false).unwrap();
+        let addrs: Vec<usize> = roots.iter().map(|o| o.addr() as usize).collect();
+        assert_eq!(addrs, vec![0x1000, 0x2000]);
+
+        // Invalid carrier tag is an error on the carrier layout.
+        let bad = [7, 0x1000, 0x55, 255, 0, 0x2000];
+        assert!(matches!(
+            collect_native_roots(&kinds, &bad, true),
+            Err(crate::JitError::InvalidAnyTag(255))
+        ));
+    }
+
+    #[test]
+    fn collection_keeps_rooted_array_argument_alive() {
+        use super::collect_native_roots;
+        let mut heap = zun_gc::Heap::new();
+        let array = heap.alloc_array(0);
+        heap.array_push(array, zun_core::Any::int(41));
+        heap.array_push(array, zun_core::Any::int(42));
+        let garbage_a = heap.alloc(1, 0);
+        let garbage_b = heap.alloc(1, 0);
+        let _ = (garbage_a, garbage_b);
+        let handle = heap.intern_string("kept");
+
+        let kinds = [JitKind::Array, JitKind::String];
+        let words = [array.addr() as u64, u64::from(handle)];
+        let roots = collect_native_roots(&kinds, &words, false).unwrap();
+        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        let freed = unsafe {
+            heap.collect_with_native_roots(&[], &|_| std::rc::Rc::from(Vec::new()))
+        };
+        assert_eq!(freed, 2, "only the two unrooted objects are reclaimed");
+        assert_eq!(heap.live_count(), 1);
+        assert_eq!(heap.array_len(array), Some(2));
+        assert_eq!(heap.array_get(array, 1), Some(zun_core::Any::int(42)));
+        assert_eq!(heap.try_string(handle).map(|s| s.to_string()), Some("kept".into()));
     }
 
     #[test]

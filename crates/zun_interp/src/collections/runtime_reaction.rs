@@ -46,8 +46,8 @@ impl<'a> Interp<'a> {
         let Some(reaction) = self.async_state.reactions.remove(&cid) else {
             return Ok(());
         };
-        let source = as_object_ref(&reaction.source).ok_or(RunError::BadToken)?;
-        let target = as_object_ref(&reaction.target).ok_or(RunError::BadToken)?;
+        let source = object(&reaction.source).ok_or(RunError::BadToken)?;
+        let target = object(&reaction.target).ok_or(RunError::BadToken)?;
         // Root source and target across any callback re-entry; the scope keeps
         // the array current if a collection relocates them.
         let roots = [source, target];
@@ -100,7 +100,7 @@ impl<'a> Interp<'a> {
                         Ok(result) => {
                             // A cleanup that returns a Promise or thenable delays the
                             // pass-through until that value settles.
-                            let waits = as_object_ref(&unbox_arg(&result).unwrap_or(Value::Void))
+                            let waits = object(&unbox_arg(&result).unwrap_or(Value::Void))
                                 .filter(|obj| {
                                     zun_gc::with_current_heap(|heap| {
                                         heap.promise_state(*obj).is_some()
@@ -163,7 +163,7 @@ impl<'a> Interp<'a> {
                             self.settle_promise_reject(roots[1], error);
                         }
                     }
-                } else if let Some(original) = as_object_ref(&original) {
+                } else if let Some(original) = object(&original) {
                     match self.promise_settlement_of(original)? {
                         PromiseSettlement::Resolved(value) => {
                             self.settle_promise_resolve(roots[1], value);
@@ -191,7 +191,7 @@ impl<'a> Interp<'a> {
                 }
             }
             ReactionKind::AsyncStep { generator } => {
-                let generator = as_object_ref(&generator).ok_or(RunError::BadToken)?;
+                let generator = object(&generator).ok_or(RunError::BadToken)?;
                 let input = match crate::settled_await_value(roots[0]) {
                     Ok(Some(value)) => Ok(value),
                     Ok(None) => return Ok(()),
@@ -203,7 +203,7 @@ impl<'a> Interp<'a> {
             ReactionKind::ThenableJob { thenable, then } => {
                 if matches!(then, Value::Void) {
                     // Native Promise adoption: pass its settlement through.
-                    if let Some(source) = as_object_ref(&thenable) {
+                    if let Some(source) = object(&thenable) {
                         self.attach_reaction(
                             source,
                             roots[1],
@@ -234,7 +234,7 @@ impl<'a> Interp<'a> {
                     let resolve = self.make_promise_settler(roots[1], SETTLE_RESOLVE);
                     let reject = self.make_promise_settler(roots[1], SETTLE_REJECT);
                     let then_args = vec![Value::Function(resolve), Value::Function(reject)];
-                    let then_args = match as_object_ref(&thenable) {
+                    let then_args = match object(&thenable) {
                         Some(receiver) => self.with_this_arg(then, receiver, then_args),
                         None => then_args,
                     };
@@ -342,13 +342,13 @@ impl<'a> Interp<'a> {
     /// used as-is, any other value is wrapped in an already-resolved Promise
     /// (`Promise.resolve` semantics) so every input drives a reaction.
     pub(crate) fn as_input_promise(&mut self, value: &Value) -> zun_gc::Obj {
-        if let Some(obj) = as_object_ref(value) {
+        if let Some(obj) = object(value) {
             if zun_gc::with_current_heap(|heap| heap.promise_state(obj)).is_some() {
                 return obj;
             }
         }
         // A thenable object is adopted (its `then` runs as a microtask job).
-        if let Some(obj) = as_object_ref(value) {
+        if let Some(obj) = object(value) {
             let thenable = zun_gc::with_current_heap(|heap| {
                 heap.dynamic_get_function(obj, "then").is_some()
                     || (!heap.is_dynamic_object(obj)
@@ -431,16 +431,16 @@ impl<'a> Interp<'a> {
             let agg = &self.async_state.aggregates[aggregate];
             (agg.kind, agg.target.clone(), agg.holder.clone())
         };
-        let target = as_object_ref(&target).expect("aggregate target is an object");
+        let target = object(&target).expect("aggregate target is an object");
         match kind {
             CombinatorKind::All | CombinatorKind::AllSettled => {
-                let array = as_object_ref(&holder).expect("all/allSettled holder is an array");
+                let array = object(&holder).expect("all/allSettled holder is an array");
                 let boxed = zun_core::Any::object(array.addr() as usize);
                 self.settle_promise_resolve(target, boxed);
             }
             CombinatorKind::Race => {}
             CombinatorKind::Any => {
-                let errors = as_object_ref(&holder).expect("any holder is an array");
+                let errors = object(&holder).expect("any holder is an array");
                 let reason = self.build_aggregate_error(errors, "All promises were rejected");
                 self.settle_promise_reject_value(
                     target,
@@ -501,7 +501,7 @@ impl<'a> Interp<'a> {
             CombinatorKind::All => match settlement {
                 PromiseSettlement::Resolved(value) => {
                     let holder =
-                        as_object_ref(&self.async_state.aggregates[aggregate].holder).unwrap();
+                        object(&self.async_state.aggregates[aggregate].holder).unwrap();
                     zun_gc::with_current_heap_mut(|heap| heap.array_set(holder, index, value));
                     let remaining = {
                         let agg = &mut self.async_state.aggregates[aggregate];
@@ -512,8 +512,8 @@ impl<'a> Interp<'a> {
                         let (target, holder) = {
                             let agg = &self.async_state.aggregates[aggregate];
                             (
-                                as_object_ref(&agg.target).unwrap(),
-                                as_object_ref(&agg.holder).unwrap(),
+                                object(&agg.target).unwrap(),
+                                object(&agg.holder).unwrap(),
                             )
                         };
                         let boxed = zun_core::Any::object(holder.addr() as usize);
@@ -523,7 +523,7 @@ impl<'a> Interp<'a> {
                 }
                 PromiseSettlement::Rejected(error, reason) => {
                     let target =
-                        as_object_ref(&self.async_state.aggregates[aggregate].target).unwrap();
+                        object(&self.async_state.aggregates[aggregate].target).unwrap();
                     match reason {
                         Some(reason) => {
                             self.settle_promise_reject_value(target, reason, error);
@@ -567,7 +567,7 @@ impl<'a> Interp<'a> {
                     }
                     PromiseSettlement::Pending => return,
                 };
-                let holder = as_object_ref(&self.async_state.aggregates[aggregate].holder).unwrap();
+                let holder = object(&self.async_state.aggregates[aggregate].holder).unwrap();
                 zun_gc::with_current_heap_mut(|heap| heap.array_set(holder, index, descriptor));
                 let remaining = {
                     let agg = &mut self.async_state.aggregates[aggregate];
@@ -578,8 +578,8 @@ impl<'a> Interp<'a> {
                     let (target, holder) = {
                         let agg = &self.async_state.aggregates[aggregate];
                         (
-                            as_object_ref(&agg.target).unwrap(),
-                            as_object_ref(&agg.holder).unwrap(),
+                            object(&agg.target).unwrap(),
+                            object(&agg.holder).unwrap(),
                         )
                     };
                     let boxed = zun_core::Any::object(holder.addr() as usize);
@@ -588,7 +588,7 @@ impl<'a> Interp<'a> {
                 }
             }
             CombinatorKind::Race => {
-                let target = as_object_ref(&self.async_state.aggregates[aggregate].target).unwrap();
+                let target = object(&self.async_state.aggregates[aggregate].target).unwrap();
                 match settlement {
                     PromiseSettlement::Resolved(value) => {
                         self.settle_promise_resolve(target, value);
@@ -606,7 +606,7 @@ impl<'a> Interp<'a> {
             CombinatorKind::Any => match settlement {
                 PromiseSettlement::Resolved(value) => {
                     let target =
-                        as_object_ref(&self.async_state.aggregates[aggregate].target).unwrap();
+                        object(&self.async_state.aggregates[aggregate].target).unwrap();
                     self.settle_promise_resolve(target, value);
                     self.async_state.aggregates[aggregate].settled = true;
                 }
@@ -615,7 +615,7 @@ impl<'a> Interp<'a> {
                     // errors array (a first-class reason as-is, else the string
                     // message boxed).
                     let holder =
-                        as_object_ref(&self.async_state.aggregates[aggregate].holder).unwrap();
+                        object(&self.async_state.aggregates[aggregate].holder).unwrap();
                     let reason = reason.unwrap_or_else(|| {
                         zun_gc::with_current_heap_mut(|heap| {
                             Value::Str(zun_core::ZStr::from(error.as_str()))
@@ -633,8 +633,8 @@ impl<'a> Interp<'a> {
                         let (target, holder) = {
                             let agg = &self.async_state.aggregates[aggregate];
                             (
-                                as_object_ref(&agg.target).unwrap(),
-                                as_object_ref(&agg.holder).unwrap(),
+                                object(&agg.target).unwrap(),
+                                object(&agg.holder).unwrap(),
                             )
                         };
                         // All inputs rejected: reject with an `AggregateError`

@@ -215,7 +215,7 @@ impl<'a> Interp<'a> {
                                 )?;
                                 // `<= 0` keeps order; a non-numeric (`NaN`)
                                 // result is treated as `0` (stable, no swap).
-                                !(zun_gc::with_current_heap(|heap| to_number(&outcome, heap)) > 0.0)
+                                !(self.dyn_to_number(&outcome)? > 0.0)
                             }
                             None => {
                                 let (a, b) = zun_gc::with_current_heap(|heap| {
@@ -311,9 +311,7 @@ impl<'a> Interp<'a> {
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
                     .ok_or(RunError::BadToken)?;
-                let raw = zun_gc::with_current_heap(|heap| {
-                    to_number(args.get(1).unwrap_or(&Value::Void), heap)
-                });
+                let raw = self.dyn_to_number(args.get(1).unwrap_or(&Value::Void))?;
                 let mut index = raw.trunc();
                 if index < 0.0 {
                     index += length as f64;
@@ -369,9 +367,7 @@ impl<'a> Interp<'a> {
             "arrayFlat" => {
                 let source =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let depth_raw = zun_gc::with_current_heap(|heap| {
-                    to_number(args.get(1).unwrap_or(&Value::Void), heap)
-                });
+                let depth_raw = self.dyn_to_number(args.get(1).unwrap_or(&Value::Void))?;
                 let depth = if depth_raw.is_nan() || depth_raw < 0.0 {
                     0
                 } else {

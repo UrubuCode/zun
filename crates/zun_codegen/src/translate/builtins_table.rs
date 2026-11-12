@@ -134,13 +134,6 @@ fn builtin_desc_scalar(name: Option<&str>) -> Option<BuiltinDesc> {
             JitKind::String,
             types::I64,
         ),
-        Some("repeat") => (
-            "zun_jit_string_repeat",
-            2,
-            types::I64,
-            JitKind::String,
-            types::I64,
-        ),
         Some("reverse") => (
             "zun_jit_string_reverse",
             1,

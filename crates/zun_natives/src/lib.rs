@@ -15,6 +15,26 @@
 //! can never collide. Extension modules such as `zun_node` will be organized
 //! the same way.
 
+/// Defines a stub [`Imp`] named `$name` that always fails with `$message`.
+///
+/// Used by modules whose intrinsics are serviced by the interpreter on the
+/// managed floor (they need its heap, scheduler or re-entry), so the native-table
+/// entry only fixes the signature and dispatch id. A macro rather than a function
+/// because [`Imp`] is a plain `fn` pointer: a function returning a closure would
+/// need a capture for the message, and a capture-free `fn` item cannot carry a
+/// per-subsystem message. The macro stamps out one `fn` item per call site.
+/// Defined before the `mod` declarations so it is in textual scope for them.
+macro_rules! unavailable_stub {
+    ($name:ident, $message:expr) => {
+        fn $name(
+            _: &[$crate::NativeArg],
+            _: &mut dyn $crate::Sink,
+        ) -> Result<$crate::NativeValue, $crate::NativeError> {
+            Err($crate::NativeError($message.into()))
+        }
+    };
+}
+
 mod array_ext;
 mod array_methods;
 pub use array_methods::{array_method, ArrayHandling, ArrayMethod};

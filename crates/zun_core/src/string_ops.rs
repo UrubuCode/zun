@@ -72,6 +72,46 @@ pub fn last_index_from(haystack: &[u16], needle: &[u16], from: usize) -> Option<
         .find(|&at| haystack[at..at + needle.len()] == *needle)
 }
 
+/// Number of non-overlapping occurrences of `needle` in `haystack`, scanning
+/// left to right. An empty needle counts zero.
+pub fn count_units(haystack: &[u16], needle: &[u16]) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut total = 0;
+    let mut start = 0;
+    while start + needle.len() <= haystack.len() {
+        if haystack[start..start + needle.len()] == *needle {
+            total += 1;
+            start += needle.len();
+        } else {
+            start += 1;
+        }
+    }
+    total
+}
+
+/// `replace` with a string pattern: the first occurrence of `needle` in
+/// `value` is replaced by `replacement` with `$`-pattern expansion (`$&`,
+/// `$$`, `` $` ``, `$'`). No match returns `value` unchanged.
+pub fn replace_first(value: &str, needle: &str, replacement: &str) -> String {
+    let Some(start) = value.find(needle) else {
+        return value.to_string();
+    };
+    let end = start + needle.len();
+    let mut out = String::from(&value[..start]);
+    crate::expand_substitution(
+        replacement,
+        &[Some(needle)],
+        &[None],
+        &value[..start],
+        &value[end..],
+        &mut out,
+    );
+    out.push_str(&value[end..]);
+    out
+}
+
 /// `substring`: both ends already clamped-or-not into range here, then ordered.
 pub fn substring_units(units: &[u16], start: usize, end: usize) -> &[u16] {
     let start = start.min(units.len());

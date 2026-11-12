@@ -43,7 +43,8 @@ pub use module_bound_function::ModuleBoundFunction;
 pub use ordered_map::OrderedMap;
 pub use promise_value::{ManagedPromise, ManagedPromiseState};
 pub use regexp::{
-    byte_of_utf16, expand_substitution, EngineKind, MatchFull, RegexError, RegexValue,
+    byte_of_utf16, expand_substitution, ordered_flags, EngineKind, MatchFull, RegexError,
+    RegexValue,
 };
 pub use symbols::{SymbolId, SymbolRegistry, WellKnownSymbol};
 pub use typed_elements::{clamp_to_u8, same};

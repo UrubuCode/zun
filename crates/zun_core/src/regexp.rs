@@ -92,6 +92,13 @@ pub struct MatchFull {
     pub group_spans16: Vec<Option<(usize, usize)>>,
 }
 
+/// Regexp flags in the canonical order `RegExp.prototype.flags` reports
+/// (`dgimsuvy`), dropping anything that is not a known flag. The one place
+/// that order is spelled out.
+pub fn ordered_flags(flags: &str) -> String {
+    "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect()
+}
+
 /// UTF-8 byte offset of UTF-16 index `index` (clamped to the end; an index
 /// inside a surrogate pair maps to the end of that character).
 pub fn byte_of_utf16(input: &str, index: usize) -> usize {
@@ -1074,7 +1081,16 @@ impl RegexValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{EngineKind, RegexValue};
+    use super::{ordered_flags, EngineKind, RegexValue};
+
+    #[test]
+    fn flags_are_reported_in_canonical_order() {
+        assert_eq!(ordered_flags("ysg"), "gsy");
+        let all = ordered_flags("yvusmigdx");
+        assert_eq!(all.len(), 8, "unknown flags are dropped");
+        assert!(all.chars().zip(all.chars().skip(1)).all(|(a, b)| a < b));
+        assert_eq!(ordered_flags(""), "");
+    }
 
     #[test]
     fn compiles_and_matches_in_the_runtime_floor() {

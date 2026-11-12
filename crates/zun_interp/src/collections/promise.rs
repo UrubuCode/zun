@@ -247,7 +247,7 @@ impl<'a> Interp<'a> {
                 } else {
                     None
                 };
-                let extra = match args.get(2).and_then(as_object_ref) {
+                let extra = match args.get(2).and_then(object) {
                     Some(array) => self.read_array_values(array)?,
                     None => Vec::new(),
                 };

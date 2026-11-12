@@ -386,7 +386,9 @@ fn primitive_string_case_conversion_uses_the_managed_string_abi() {
 }
 
 #[test]
-fn primitive_string_repeat_uses_the_managed_string_abi() {
+fn primitive_string_repeat_stays_tier0() {
+    // `repeat` throws a RangeError past `REPEAT_MAX` in Tier 0 and a JIT thunk
+    // cannot raise it, so eligibility rejects the method (see `eligible.rs`).
     let module = compile(
         "import { repeat } from \"zun:core\"; class String { extern repeat(count: u64): string; } function measure(value: string): string { return value.repeat(3); } function main(): int { return 0; }",
     );
@@ -398,14 +400,7 @@ fn primitive_string_repeat_uses_the_managed_string_abi() {
         .expect("measure method") as u32
         + 1;
     let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
-    assert!(jit.is_compiled(rid));
-
-    let mut heap = zun_gc::Heap::new();
-    let value = heap.intern_string(std::rc::Rc::from("zun"));
-    let handle = jit
-        .call_packed_with_heap(rid, &[value as u64], &mut heap)
-        .expect("repeat call");
-    assert_eq!(heap.string(handle as u32).as_ref(), "zunzunzun");
+    assert!(!jit.is_compiled(rid), "repeat must stay Tier 0");
 }
 
 #[test]

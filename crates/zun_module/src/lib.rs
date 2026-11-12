@@ -43,12 +43,14 @@
 //! deduplicated heaps).
 
 pub mod body;
+mod catch;
 mod link;
 mod serial;
 
 pub use body::{
     read_body, write_body, write_body_with_handlers, ExceptionHandler, HandlerKind, MethodBody,
 };
+pub use catch::type_is_caught;
 pub use link::{LinkError, LinkedMethods};
 
 use zun_metadata::{BlobHeap, StringHeap, Tables, Token};

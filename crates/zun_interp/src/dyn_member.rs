@@ -267,13 +267,7 @@ impl Interp<'_> {
                 let flag_of = |c: char| Some(Value::Bool(flags.contains(c)));
                 let answer = match name.as_str() {
                     "source" => Some(Value::Str(source.into())),
-                    "flags" => Some(Value::Str(
-                        "dgimsuvy"
-                            .chars()
-                            .filter(|c| flags.contains(*c))
-                            .collect::<String>()
-                            .into(),
-                    )),
+                    "flags" => Some(Value::Str(zun_core::ordered_flags(&flags).into())),
                     "global" => flag_of('g'),
                     "ignoreCase" => flag_of('i'),
                     "multiline" => flag_of('m'),

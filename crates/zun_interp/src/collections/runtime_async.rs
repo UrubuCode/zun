@@ -11,7 +11,7 @@ impl<'a> Interp<'a> {
     /// settles exactly when the returned Promise does — the proper async
     /// chaining the old eager path could not express.
     pub(crate) fn settle_target_with(&mut self, target: zun_gc::Obj, value: Value) {
-        if let Some(obj) = as_object_ref(&value) {
+        if let Some(obj) = object(&value) {
             // A promise resolved with itself rejects with a TypeError.
             if obj == target {
                 let message = "Chaining cycle detected for promise #<Promise>";
@@ -153,7 +153,7 @@ impl<'a> Interp<'a> {
     /// kind 0 = the body awaits `value`, 1 = it yielded `value`, 2 = it finished
     /// with `value`. A body exception propagates as a thrown value.
     pub(crate) fn async_gen_resume(&mut self, args: &[Value]) -> Result<Value, RunError> {
-        let generator = as_object_ref(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?)
+        let generator = object(&unbox_arg(args.first().ok_or(RunError::BadToken)?)?)
             .ok_or(RunError::BadToken)?;
         let mode = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
             Value::Int(n, _) => n,
@@ -193,7 +193,7 @@ impl<'a> Interp<'a> {
                 crate::unwind::ASYNC_AWAIT.with(|flag| flag.set(false));
                 let result = self.generator_return(roots[0], value)?;
                 let flagged = crate::unwind::ASYNC_AWAIT.with(|flag| flag.replace(false));
-                let result_obj = as_object_ref(&unbox_arg(&result)?).ok_or(RunError::BadToken)?;
+                let result_obj = object(&unbox_arg(&result)?).ok_or(RunError::BadToken)?;
                 let (inner, finished) = zun_gc::with_current_heap(|heap| {
                     let inner = heap
                         .dynamic_get(result_obj, "value")
@@ -385,7 +385,7 @@ impl<'a> Interp<'a> {
                 // `await value`: a Promise is awaited directly; anything else
                 // (a plain value or a thenable) is first resolved into a fresh
                 // Promise so it takes the same one-tick path.
-                let awaited = match as_object_ref(&value) {
+                let awaited = match object(&value) {
                     Some(obj)
                         if zun_gc::with_current_heap(|heap| heap.promise_state(obj)).is_some() =>
                     {

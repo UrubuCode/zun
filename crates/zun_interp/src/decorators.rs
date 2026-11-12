@@ -26,15 +26,9 @@ fn number(value: &Value) -> Result<i64, RunError> {
     }
 }
 
+/// `value` as a heap object, or `BadToken` when it is not one.
 fn object(value: &Value) -> Result<Obj, RunError> {
-    match value {
-        Value::Object(object) => Ok(*object),
-        Value::Any(any) => any
-            .as_object()
-            .map(|address| unsafe { Obj::from_addr(address as *mut u64) })
-            .ok_or(RunError::BadToken),
-        _ => Err(RunError::BadToken),
-    }
+    crate::collections::object(value).ok_or(RunError::BadToken)
 }
 
 fn string(value: &Value) -> Result<String, RunError> {

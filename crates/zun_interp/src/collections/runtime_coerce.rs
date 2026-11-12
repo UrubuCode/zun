@@ -502,35 +502,10 @@ impl<'a> Interp<'a> {
         Ok(())
     }
 
+    /// Owned-value spelling of [`Interp::dyn_to_number`], the one ToNumber.
+    #[inline]
     pub(crate) fn to_number_value(&mut self, value: Value) -> Result<f64, RunError> {
-        Ok(match value {
-            Value::Int(number, _) => number as f64,
-            Value::Float(number, _) => number,
-            Value::Bool(flag) => {
-                if flag {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Value::Null => 0.0,
-            Value::Void => f64::NAN,
-            Value::Str(text) => js_string_to_number(&text),
-            Value::Object(obj) if array_join_text(obj).is_some() => {
-                js_string_to_number(&array_join_text(obj).unwrap_or_default())
-            }
-            Value::Object(obj) => {
-                if let Some(prim) = self.ordinary_to_primitive(obj, "number")? {
-                    match prim {
-                        Value::Str(text) => js_string_to_number(&text),
-                        other => zun_gc::with_current_heap(|heap| to_number(&other, heap)),
-                    }
-                } else {
-                    f64::NAN
-                }
-            }
-            _ => f64::NAN,
-        })
+        self.dyn_to_number(&value)
     }
 
     pub(crate) fn ordinary_to_primitive(

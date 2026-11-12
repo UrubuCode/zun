@@ -232,26 +232,6 @@ pub(crate) fn bridge_config() -> zun_codegen::BridgeConfig {
     }
 }
 
-/// Whether a thrown object of `throw_rid` is caught by `catch_rid` (same type or
-/// a subclass), walking the module's `TypeDef` base chain. Bounded against a
-/// malformed cyclic hierarchy.
-fn type_is_caught(module: &Module, throw_rid: u32, catch_rid: u32) -> bool {
-    let mut current = throw_rid;
-    for _ in 0..64 {
-        if current == catch_rid {
-            return true;
-        }
-        let Some(ty) = module.tables.type_defs.get(current as usize - 1) else {
-            return false;
-        };
-        if ty.base.table() != Some(zun_metadata::TableKind::TypeDef) || ty.base.rid() == 0 {
-            return false;
-        }
-        current = ty.base.rid();
-    }
-    false
-}
-
 /// Route a pending exception against a same-frame catch of type `catch_type_rid`.
 /// Returns the thrown object handle and CLEARS the pending slot when the throw is
 /// caught by that type (the JIT then branches to the catch with the object);
@@ -268,7 +248,7 @@ pub(crate) extern "C" fn zun_jit_route_pending(catch_type_rid: i64) -> i64 {
         return 0;
     };
     let module = unsafe { &*context.module };
-    if type_is_caught(module, type_rid, catch_type_rid as u32) {
+    if zun_module::type_is_caught(module, type_rid, catch_type_rid as u32) {
         PENDING_EXCEPTION.with(|slot| slot.set(0));
         handle as i64
     } else {
