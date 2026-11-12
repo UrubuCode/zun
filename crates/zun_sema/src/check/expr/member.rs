@@ -380,6 +380,19 @@ impl Checker<'_> {
                 span,
             };
         }
+        // A symbol key (`arr[Symbol.iterator]`) is a property lookup, not a
+        // numeric index: route it to the dynamic key path, which resolves the
+        // array's symbol-keyed members (e.g. its iterator).
+        if object.ty == Ty::Array && index.ty == Ty::Symbol {
+            return hir::Expr {
+                kind: hir::ExprKind::DynamicGetValue {
+                    object: Box::new(object),
+                    key: Box::new(Self::box_to_any(index)),
+                },
+                ty: Ty::Any,
+                span,
+            };
+        }
         if object.ty != Ty::Array && !object.ty.is_error() {
             self.error(object.span, "indexing requires an Array");
         }
