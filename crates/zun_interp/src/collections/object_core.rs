@@ -713,6 +713,21 @@ impl<'a> Interp<'a> {
                     let proto = Self::iterator_prototype_object(if mode == 3 { 2 } else { 1 });
                     return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
                 }
+                let setmap_kind = zun_gc::with_current_heap(|heap| {
+                    if heap.generator_state(obj).is_some() {
+                        Some(7u8)
+                    } else if heap.set_iterator_done(obj).is_some() {
+                        Some(5u8)
+                    } else if heap.map_iterator_done(obj).is_some() {
+                        Some(6u8)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(kind) = setmap_kind {
+                    let proto = Self::iterator_prototype_object(kind);
+                    return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                }
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
                 if prototype.is_none() {
                     if let Some(kind) =

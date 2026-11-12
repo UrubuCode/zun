@@ -2,7 +2,7 @@
 //! `Reflect.defineProperty`, `Reflect.set` and the strict `delete` operator,
 //! including the integrity levels of arrays and typed arrays.
 
-use super::collections::same_value;
+use super::collections::{object, same_value};
 use super::errors::RunError;
 use super::integrity::{array_refusal, ArrayOp};
 use super::value::Value;
@@ -15,23 +15,13 @@ pub(crate) enum PropKey {
     Sym(zun_core::SymbolId),
 }
 
-fn as_object(value: &Value) -> Option<zun_gc::Obj> {
-    match value {
-        Value::Object(object) => Some(*object),
-        Value::Any(any) => any
-            .as_object()
-            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-        _ => None,
-    }
-}
-
 /// The object a descriptor argument reads its fields from: a plain object, or
 /// a function (boxed or direct), whose expando bag holds its own properties.
 pub(crate) fn descriptor_object(value: &Value) -> Option<zun_gc::Obj> {
     if let Value::Function(handle) = value {
         return Some(super::function_expando_bag(*handle));
     }
-    let obj = as_object(value)?;
+    let obj = object(value)?;
     match zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "__boxedFn")) {
         Some(handle) => Some(super::function_expando_bag(handle)),
         None => Some(obj),
@@ -160,6 +150,11 @@ pub(crate) const BUILTIN_SPECIES_GETTER: u32 = 23;
 /// `Set.prototype[Symbol.iterator]` (the `values` function).
 pub(crate) const BUILTIN_MAP_ITERATOR: u32 = 24;
 pub(crate) const BUILTIN_SET_ITERATOR: u32 = 25;
+/// `next` of the shared Set / Map iterator prototypes.
+pub(crate) const BUILTIN_SETMAP_ITER_NEXT: u32 = 26;
+/// `next` / `return` / `throw` of `%GeneratorPrototype%` (27, 28, 29).
+pub(crate) const BUILTIN_GEN_NEXT: u32 = 27;
+pub(crate) const BUILTIN_GEN_THROW: u32 = 29;
 /// First kind of the `Map.prototype` / `Set.prototype` method values; the kind
 /// selects a row of [`COLLECTION_METHODS`].
 pub(crate) const BUILTIN_COLLECTION_BASE: u32 = 64;
@@ -660,6 +655,40 @@ impl Interp<'_> {
                         false,
                     );
                 }
+                7 => {
+                    for (offset, name) in ["next", "return", "throw"].iter().enumerate() {
+                        heap.dynamic_set_function(
+                            proto,
+                            (*name).to_owned(),
+                            zun_core::FunctionHandle::new_builtin_method(
+                                BUILTIN_GEN_NEXT + offset as u32,
+                            ),
+                        );
+                    }
+                    let tag = zun_core::Any::string(heap.intern_string("Generator"));
+                    heap.dynamic_define_symbol(
+                        proto,
+                        zun_core::WellKnownSymbol::ToStringTag.id(),
+                        tag,
+                        false,
+                    );
+                }
+                5 | 6 => {
+                    heap.dynamic_set_function(
+                        proto,
+                        "next".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method(BUILTIN_SETMAP_ITER_NEXT),
+                    );
+                    let tag = zun_core::Any::string(
+                        heap.intern_string(if kind == 5 { "Set Iterator" } else { "Map Iterator" }),
+                    );
+                    heap.dynamic_define_symbol(
+                        proto,
+                        zun_core::WellKnownSymbol::ToStringTag.id(),
+                        tag,
+                        false,
+                    );
+                }
                 3 | 4 => {
                     use super::collections::iterator_helpers as ih;
                     let (next, ret) = if kind == 3 {
@@ -806,6 +835,25 @@ impl Interp<'_> {
                     BUILTIN_TA_BYTE_OFFSET => num(heap.typed_array_byte_offset(o)),
                     _ => num(heap.typed_array_len(o)),
                 }))
+            }
+            BUILTIN_SETMAP_ITER_NEXT => {
+                let it = this_obj
+                    .filter(|o| {
+                        zun_gc::with_current_heap(|heap| {
+                            heap.set_iterator_done(*o).is_some() || heap.map_iterator_done(*o).is_some()
+                        })
+                    })
+                    .ok_or_else(|| self.incompatible_receiver("Set/Map Iterator.prototype.next"))?;
+                match self.builtin_iterator_result(it)? {
+                    Some(result) => Ok(result),
+                    None => Err(self.incompatible_receiver("Set/Map Iterator.prototype.next")),
+                }
+            }
+            BUILTIN_GEN_NEXT..=BUILTIN_GEN_THROW => {
+                let generator = this_obj
+                    .filter(|o| zun_gc::with_current_heap(|heap| heap.generator_state(*o).is_some()))
+                    .ok_or_else(|| self.incompatible_receiver("Generator.prototype method"))?;
+                self.call_generator_method(kind - BUILTIN_GEN_NEXT, generator, &_args)
             }
             BUILTIN_ITER_SELF | BUILTIN_SPECIES_GETTER => Ok(this),
             k if (super::collections::iterator_helpers::BUILTIN_ITER_HELPER_BASE
@@ -959,7 +1007,9 @@ impl Interp<'_> {
     pub(crate) fn builtin_method_meta(kind: u32, name: &str) -> Option<Value> {
         let label = match kind {
             BUILTIN_MAP_SIZE | BUILTIN_SET_SIZE => "get size",
-            BUILTIN_ARRAY_ITER_NEXT | BUILTIN_STRING_ITER_NEXT => "next",
+            BUILTIN_ARRAY_ITER_NEXT | BUILTIN_STRING_ITER_NEXT | BUILTIN_SETMAP_ITER_NEXT | BUILTIN_GEN_NEXT => "next",
+            28 => "return",
+            BUILTIN_GEN_THROW => "throw",
             BUILTIN_ITER_SELF => "[Symbol.iterator]",
             BUILTIN_PROXY_REVOKE => "",
             BUILTIN_STRING_ITERATOR => "[Symbol.iterator]",
@@ -1806,7 +1856,7 @@ impl Interp<'_> {
     /// `Reflect.set(target, key, value)`: a boolean success. Honors
     /// writability, extensibility, array integrity, and runs accessor setters.
     pub(crate) fn reflect_set(&mut self, args: &[Value]) -> Result<Value, RunError> {
-        let Some(target) = args.first().and_then(as_object) else {
+        let Some(target) = args.first().and_then(object) else {
             return Ok(Value::Bool(false));
         };
         let Some(key) = args.get(1).and_then(prop_key) else {
@@ -2013,7 +2063,7 @@ impl Interp<'_> {
         args: &[Value],
         strict: bool,
     ) -> Result<Value, RunError> {
-        let Some(target) = args.first().and_then(as_object) else {
+        let Some(target) = args.first().and_then(object) else {
             return Err(RunError::Native(
                 "TypeError: Object.defineProperty called on non-object".into(),
             ));
@@ -2021,7 +2071,7 @@ impl Interp<'_> {
         let key = match args.get(1).and_then(prop_key) {
             Some(key) => key,
             // An object key is coerced with ToPropertyKey (ToPrimitive, string hint).
-            None => match args.get(1).and_then(as_object) {
+            None => match args.get(1).and_then(object) {
                 Some(key_object) => match self.ordinary_to_primitive(key_object, "string")? {
                     Some(Value::Str(text)) => PropKey::Str(text.to_string()),
                     _ => PropKey::Str("[object Object]".to_owned()),
@@ -2055,7 +2105,7 @@ impl Interp<'_> {
     /// The strict-mode `delete obj.key` operator: a `TypeError` when the
     /// property is non-configurable, otherwise `true`.
     pub(crate) fn delete_strict(&mut self, args: &[Value]) -> Result<Value, RunError> {
-        let Some(target) = args.first().and_then(as_object) else {
+        let Some(target) = args.first().and_then(object) else {
             return Ok(Value::Bool(true));
         };
         let key = args.get(1).and_then(prop_key);
