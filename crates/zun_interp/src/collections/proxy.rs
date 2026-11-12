@@ -16,6 +16,33 @@ impl<'a> Interp<'a> {
                 let proxy = zun_gc::with_current_heap_mut(|heap| heap.alloc_proxy(target, handler));
                 Ok(Value::Object(proxy))
             }
+            "proxyRevocable" => {
+                let target =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let handler =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let roots = [target, handler];
+                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                let result = zun_gc::with_current_heap_mut(|heap| {
+                    let proxy = heap.alloc_proxy(roots[0], roots[1]);
+                    let result = heap.alloc_dynamic();
+                    heap.dynamic_set(
+                        result,
+                        "proxy",
+                        zun_core::Any::object(proxy.addr() as usize),
+                    );
+                    heap.dynamic_set_function(
+                        result,
+                        "revoke".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method_with_env(
+                            crate::property_ops::BUILTIN_PROXY_REVOKE,
+                            proxy.addr() as usize,
+                        ),
+                    );
+                    result
+                });
+                Ok(Value::Object(result))
+            }
             "proxyGet" => {
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -23,6 +50,9 @@ impl<'a> Interp<'a> {
                     Value::Str(key) => key.clone(),
                     _ => return Err(RunError::BadToken),
                 };
+                if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+                    return Err(self.revoked_proxy_error("get"));
+                }
                 let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
                 else {
                     return Err(RunError::BadToken);
@@ -56,6 +86,9 @@ impl<'a> Interp<'a> {
                 };
                 let value =
                     any(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+                    return Err(self.revoked_proxy_error("set"));
+                }
                 let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
                 else {
                     return Err(RunError::BadToken);
@@ -86,6 +119,9 @@ impl<'a> Interp<'a> {
                     Value::Str(key) => key.clone(),
                     _ => return Err(RunError::BadToken),
                 };
+                if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+                    return Err(self.revoked_proxy_error(if name == "proxyHas" { "has" } else { "deleteProperty" }));
+                }
                 let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
                 else {
                     return Err(RunError::BadToken);
@@ -141,6 +177,9 @@ impl<'a> Interp<'a> {
                 let this_arg = args.get(1).ok_or(RunError::BadToken)?.clone();
                 let array =
                     object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+                    return Err(self.revoked_proxy_error("apply"));
+                }
                 let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
                 else {
                     return Err(RunError::BadToken);
@@ -155,6 +194,13 @@ impl<'a> Interp<'a> {
                     let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
+                }
+                // A nested proxy forwards the call to the proxy it wraps.
+                if zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some()) {
+                    return self.col_proxy(
+                        "proxyApply",
+                        &[Value::Object(target), this_arg, Value::Object(array)],
+                    );
                 }
                 // No `apply` trap: invoke the underlying boxed function with the
                 // spread arguments. The `thisArg` is not prepended (a callable
@@ -175,12 +221,46 @@ impl<'a> Interp<'a> {
                 // `new proxy(...args)`: `handler.construct(target, argsArray,
                 // newTarget)` when present (the descriptor stands in for both
                 // `target` and `newTarget`), else default-construct the class.
-                let proxy =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A builtin buffer constructor value (`new ctor(...)` with a
+                // typed array / ArrayBuffer / DataView descriptor in `ctor`).
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if token & zun_natives::USER_CLASS_FLAG == 0 {
+                        let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                            .ok_or(RunError::BadToken)?;
+                        let values = self.read_array_values(array)?;
+                        if let Some(result) = self.construct_builtin_buffer(token, &values) {
+                            let built = result?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| built.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
+                let proxy = args.first().and_then(object);
+                let proxy = match proxy {
+                    Some(p) if zun_gc::with_current_heap(|heap| heap.proxy_target(p).is_some()) => p,
+                    _ => {
+                        return Err(RunError::Native(
+                            "TypeError: value is not a constructor".into(),
+                        ))
+                    }
+                };
                 let array =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+                    return Err(self.revoked_proxy_error("construct"));
+                }
                 let target = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
                     .ok_or(RunError::BadToken)?;
+                // A proxy over another proxy without a `construct` trap forwards.
+                if zun_gc::with_current_heap(|heap| {
+                    heap.proxy_target(target).is_some() && heap.proxy_trap(proxy, "construct").is_none()
+                }) {
+                    return self.col_proxy(
+                        "proxyConstruct",
+                        &[Value::Object(target), Value::Object(array)],
+                    );
+                }
                 let descriptor =
                     zun_gc::with_current_heap(|heap| heap.dynamic_get(target, "__classDesc"))
                         .ok_or(RunError::BadToken)?;

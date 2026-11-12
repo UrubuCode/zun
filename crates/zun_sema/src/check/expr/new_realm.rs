@@ -63,8 +63,34 @@ impl Checker<'_> {
                 pad_empty_flags,
             )),
             CtorLowering::ArrayNew => Some(self.new_ctor_array_new(cx, args, span)),
-            CtorLowering::ArrayBuffer => Some(self.check_array_buffer_new(cx, args, span)),
+            CtorLowering::ArrayBuffer => {
+                let before = self.diagnostics.len();
+                let typed = self.check_array_buffer_new(cx, args, span);
+                if self.diagnostics.len() == before {
+                    return Some(typed);
+                }
+                self.diagnostics.truncate(before);
+                Some(self.new_buffer_dynamic(cx, name, args, span))
+            }
             CtorLowering::BufferView { native, kind } => {
+                if !matches!(kind, hir::BufferViewKind::DataView)
+                    && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+                    && !self.typed_ctor_fits_static(cx, args)
+                {
+                    return Some(self.new_buffer_dynamic(cx, name, args, span));
+                }
+                if matches!(kind, hir::BufferViewKind::DataView) {
+                    if !self.typed_ctor_fits_static(cx, args) || !self.first_arg_is_buffer(cx, args) {
+                        return Some(self.new_buffer_dynamic(cx, name, args, span));
+                    }
+                    let before = self.diagnostics.len();
+                    let typed = self.new_ctor_buffer_view(cx, name, args, span, native, kind);
+                    if self.diagnostics.len() == before {
+                        return Some(typed);
+                    }
+                    self.diagnostics.truncate(before);
+                    return Some(self.new_buffer_dynamic(cx, name, args, span));
+                }
                 Some(self.new_ctor_buffer_view(cx, name, args, span, native, kind))
             }
             // The registry owns this name's annotation and descriptor
@@ -580,5 +606,79 @@ impl Checker<'_> {
             });
         }
         Err(length)
+    }
+}
+
+impl Checker<'_> {
+    /// `new <TypedArray | DataView | ArrayBuffer>(...)` resolved at run time
+    /// through the constructor's class descriptor: the argument list is
+    /// coerced by ECMAScript's rules (ToIndex, iterables, array-likes, ...)
+    /// rather than by the static overloads.
+    pub(in crate::check) fn new_buffer_dynamic(
+        &mut self,
+        cx: &mut FunctionCx,
+        name: &str,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
+        let Some(token) = self.realm_globals.get(name).map(|binding| binding.token) else {
+            return self.poison(span);
+        };
+        let elements: Vec<Option<hir::Expr>> = args
+            .iter()
+            .map(|a| Some(Self::box_to_any(self.check_expr(cx, a))))
+            .collect();
+        let args_array = hir::Expr {
+            kind: hir::ExprKind::ArrayLiteral { elements },
+            ty: Ty::Array,
+            span,
+        };
+        let Some((id, _)) = zun_natives::resolve("collections", "proxyConstruct") else {
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![self.realm_descriptor_expr(token, span), args_array],
+            },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
+    /// Whether a typed-array constructor call fits one of the statically
+    /// typed overloads; anything else is built at run time.
+    fn typed_ctor_fits_static(&mut self, cx: &mut FunctionCx, args: &[ast::Expr]) -> bool {
+        let before = self.diagnostics.len();
+        let checked: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
+        self.diagnostics.truncate(before);
+        let literal_int = |e: &hir::Expr| {
+            matches!(e.kind, hir::ExprKind::Number(n) if n.fract() == 0.0 && n >= 0.0)
+        };
+        let int_like = |e: &hir::Expr| e.ty.is_int() || literal_int(e);
+        match checked.as_slice() {
+            [only] => {
+                int_like(only)
+                    || matches!(only.ty, Ty::Array | Ty::BufferView(_) | Ty::Buffer)
+            }
+            [buffer, offset] => buffer.ty == Ty::Buffer && int_like(offset),
+            [buffer, offset, length] => {
+                buffer.ty == Ty::Buffer && int_like(offset) && int_like(length)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Checker<'_> {
+    /// Whether the first constructor argument is statically an `ArrayBuffer`.
+    fn first_arg_is_buffer(&mut self, cx: &mut FunctionCx, args: &[ast::Expr]) -> bool {
+        let Some(first) = args.first() else {
+            return false;
+        };
+        let before = self.diagnostics.len();
+        let checked = self.check_expr(cx, first);
+        self.diagnostics.truncate(before);
+        checked.ty == Ty::Buffer
     }
 }

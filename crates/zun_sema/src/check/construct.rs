@@ -65,6 +65,18 @@ impl Checker<'_> {
             return self.poison(span);
         };
         let Some(base) = self.classes[this_class as usize].base else {
+            if self.classes[this_class as usize].dynamic_base {
+                // The runtime base is not modelled: evaluate the arguments for
+                // their effects and treat the call as a no-op.
+                for argument in args {
+                    self.check_expr(cx, argument);
+                }
+                return hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: Ty::Void,
+                    span,
+                };
+            }
             self.error(
                 span,
                 "`super` used in a class that has no base class (no `extends`)",
@@ -541,32 +553,90 @@ impl Checker<'_> {
         if !message.ty.is_error() && !self.is_assignable(message.ty, Ty::String) {
             self.error(message.span, format!("`{name}` message must be a string"));
         }
-        // The options object: arg1, or an empty dynamic object so the `.cause`
-        // read yields `undefined`.
-        let options = match args.get(1) {
-            Some(arg) => self.check_expr(cx, arg),
+        // `cause` = `options.cause` (a missing key reads back as `undefined`).
+        // A nullish options argument (`new Error("m", null)`) yields
+        // `undefined` through an optional-chain guard instead of a TypeError.
+        let cause = match args.get(1) {
+            Some(arg) => {
+                let guarded = ast::Expr::OptionalChain {
+                    object: Box::new(arg.clone()),
+                    body: Box::new(ast::Expr::Field {
+                        object: Box::new(ast::Expr::ChainRoot { depth: 0, span }),
+                        field: ast::synthetic_ident("cause"),
+                        span,
+                    }),
+                    span,
+                };
+                let checked = self.check_expr(cx, &guarded);
+                if checked.ty == Ty::Any || checked.ty.is_error() {
+                    checked
+                } else {
+                    hir::Expr {
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(checked),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    }
+                }
+            }
             None => hir::Expr {
-                kind: hir::ExprKind::DynamicObjectLiteral {
-                    entries: Vec::new(),
+                kind: hir::ExprKind::DynamicGet {
+                    object: Box::new(hir::Expr {
+                        kind: hir::ExprKind::DynamicObjectLiteral {
+                            entries: Vec::new(),
+                        },
+                        ty: Ty::DynamicObject,
+                        span,
+                    }),
+                    name: "cause".to_string(),
                 },
-                ty: Ty::DynamicObject,
+                ty: Ty::Any,
                 span,
             },
         };
-        if !matches!(options.ty, Ty::DynamicObject | Ty::Any) && !options.ty.is_error() {
-            self.error(
-                options.span,
-                format!("`{name}` options argument must be an object"),
-            );
-        }
-        // `cause` = `options.cause` (a missing key reads back as `undefined`).
-        let cause = hir::Expr {
-            kind: hir::ExprKind::DynamicGet {
-                object: Box::new(options),
-                name: "cause".to_string(),
-            },
-            ty: Ty::Any,
-            span,
+        // `hasCause`: whether the options object carries the `cause` key. An
+        // object literal with static keys answers at compile time; a plain
+        // identifier is probed at run time; any other (possibly impure)
+        // expression keeps the field default (`cause !== undefined` still
+        // reports presence).
+        let mut has_cause: Option<hir::Expr> = match args.get(1) {
+            Some(ast::Expr::ObjectLiteral { properties, .. }) => {
+                let mut keys = Vec::new();
+                let mut simple = true;
+                for member in properties {
+                    match member {
+                        ast::ObjectMember::Property(p) => match &p.key {
+                            ast::PropertyKey::Ident(n) => keys.push(self.text(n).to_string()),
+                            ast::PropertyKey::String { value, .. } => keys.push(value.clone()),
+                            _ => simple = false,
+                        },
+                        _ => simple = false,
+                    }
+                }
+                simple.then(|| hir::Expr {
+                    kind: hir::ExprKind::Boolean(keys.iter().any(|k| k == "cause")),
+                    ty: Ty::Boolean,
+                    span,
+                })
+            }
+            Some(arg @ ast::Expr::Ident(_)) => {
+                match self.by_name.get("__zunErrorHasCause").copied() {
+                    Some(func) => {
+                        let options = self.check_expr(cx, arg);
+                        Some(hir::Expr {
+                            kind: hir::ExprKind::Call {
+                                func,
+                                args: vec![Self::box_to_any(options)],
+                            },
+                            ty: Ty::Boolean,
+                            span,
+                        })
+                    }
+                    None => None,
+                }
+            }
+            _ => None,
         };
         // Assemble the constructor arguments in field-slot order.
         let fields = self.full_fields(class_idx);
@@ -578,6 +648,7 @@ impl Checker<'_> {
             let arg = match fname.as_str() {
                 "message" => message.take().unwrap_or_else(|| self.poison(span)),
                 "cause" => cause.take().unwrap_or_else(|| self.poison(span)),
+                "hasCause" if has_cause.is_some() => has_cause.take().unwrap(),
                 _ => match initializers.get(slot).and_then(|init| init.as_ref()) {
                     Some(init) => {
                         let init = init.clone();

@@ -105,7 +105,7 @@ impl Checker<'_> {
             && !self.realm_globals.contains_key(name)
             && cx
                 .lookup(name)
-                .is_some_and(|slot| cx.locals[slot as usize] == Ty::Proxy)
+                .is_some_and(|slot| matches!(cx.locals[slot as usize], Ty::Proxy | Ty::Any))
         {
             let callee = self.check_expr(cx, &ast::Expr::Ident(*class));
             let elements: Vec<Option<hir::Expr>> =

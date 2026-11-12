@@ -70,7 +70,7 @@ impl<'a> Interp<'a> {
                         let value = zun_core::Any::string(heap.intern_string(point.as_str()));
                         heap.array_set(array, index, value);
                     }
-                    heap.alloc_array_iterator(array)
+                    heap.alloc_array_iterator_mode(array, 3)
                 })
                 .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))

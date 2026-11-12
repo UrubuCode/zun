@@ -109,3 +109,13 @@ impl Heap {
         }
     }
 }
+
+impl Heap {
+    /// Indices of every non-hole element of an array, ascending, without
+    /// walking the holes of a sparse array.
+    pub fn array_present_indices(&self, object: Obj) -> Option<Vec<usize>> {
+        self.arrays
+            .get(&(object.addr() as usize))
+            .map(zun_core::ArrayStorage::present_indices)
+    }
+}

@@ -10,7 +10,14 @@ impl<'a> Interp<'a> {
         match name {
             "bufferNew" => {
                 let length = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Int(value, _) => *value as usize,
+                    Value::Int(value, _) => {
+                        if *value < 0 || *value > (1i64 << 32) {
+                            return Err(RunError::Native(
+                                "RangeError: Array buffer allocation failed".into(),
+                            ));
+                        }
+                        *value as usize
+                    }
                     _ => return Err(RunError::BadToken),
                 };
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_buffer(length));
@@ -225,7 +232,7 @@ impl<'a> Interp<'a> {
                 let view = zun_gc::with_current_heap_mut(|heap| {
                     heap.alloc_data_view(buffer, offset, length)
                 })
-                .ok_or(RunError::BadToken)?;
+                .ok_or_else(|| self.view_error("RangeError", "Invalid DataView length"))?;
                 Ok(Value::Object(view))
             }
             "dataViewTrackingNew" => {
@@ -238,7 +245,9 @@ impl<'a> Interp<'a> {
                 let view = zun_gc::with_current_heap_mut(|heap| {
                     heap.alloc_data_view_tracking(buffer, offset)
                 })
-                .ok_or(RunError::BadToken)?;
+                .ok_or_else(|| {
+                    self.view_error("RangeError", "Start offset is outside the bounds of the buffer")
+                })?;
                 Ok(Value::Object(view))
             }
             "dataViewLength" => {

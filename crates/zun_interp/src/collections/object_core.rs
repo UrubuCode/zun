@@ -123,8 +123,18 @@ impl<'a> Interp<'a> {
                     }
                     _ => {}
                 }
-                let obj =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A class value lists the enumerable properties scripts defined on it.
+                let class_bag = args.first().and_then(Self::class_token_of);
+                let function_bag = match args.first().map(unbox_arg) {
+                    Some(Ok(Value::Function(handle))) => Some(crate::function_expando_bag(handle)),
+                    _ => None,
+                };
+                let obj = match (class_bag, function_bag) {
+                    (Some(token), _) => Self::class_expando_bag(token),
+                    (None, Some(bag)) => bag,
+                    (None, None) => object(args.first().ok_or(RunError::BadToken)?)
+                        .ok_or(RunError::BadToken)?,
+                };
                 let entries = self.object_own_entries_impl(obj, false)?;
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(entries.len());
@@ -626,9 +636,58 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(obj))
             }
             "objectGetPrototypeOf" => {
+                // A user class value: its prototype is the base class value.
+                if let Ok(Value::Any(descriptor)) = unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                {
+                    if let Some(rid) = descriptor
+                        .as_class_descriptor()
+                        .and_then(|t| self.user_class_rid(t))
+                    {
+                        let base = self
+                            .module
+                            .tables
+                            .type_defs
+                            .get((rid as usize).wrapping_sub(1))
+                            .and_then(|def| {
+                                (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                                    && !def.base.is_null())
+                                .then(|| def.base.rid())
+                            });
+                        if let Some(base) = base {
+                            if self.user_class_rid(zun_natives::USER_CLASS_FLAG | base).is_some() {
+                                return Ok(Value::Any(zun_core::Any::class_descriptor(
+                                    zun_natives::USER_CLASS_FLAG | base,
+                                )));
+                            }
+                        }
+                        // A base-less class constructor inherits `Function.prototype`.
+                        let proto = Self::function_prototype_singleton();
+                        return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                    }
+                }
+                // A function value or a built-in constructor inherits from
+                // `Function.prototype`.
+                if let Ok(first) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    let is_builtin_ctor = matches!(&first, Value::Any(any)
+                        if any.as_class_descriptor().is_some_and(|t| self.user_class_rid(t).is_none()));
+                    if let Value::Any(any) = &first {
+                        if let Some(token) = any.as_class_descriptor() {
+                            if self.user_class_rid(token).is_none()
+                                && self.typed_ctor_kind(token).is_some()
+                            {
+                                let ctor = Self::typed_array_intrinsic_singleton();
+                                return Ok(Value::Any(zun_core::Any::object(ctor.addr() as usize)));
+                            }
+                        }
+                    }
+                    if is_builtin_ctor || matches!(first, Value::Function(_)) {
+                        let proto = Self::function_prototype_singleton();
+                        return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                    }
+                }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let obj = match self.proxy_route(proxy, "getPrototypeOf") {
+                let obj = match self.proxy_route(proxy, "getPrototypeOf")? {
                     ProxyRoute::Trap(callback, target) => {
                         let result =
                             self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
@@ -644,7 +703,36 @@ impl<'a> Interp<'a> {
                         class_proto.addr() as usize
                     )));
                 }
+                if let Some(mode) = zun_gc::with_current_heap(|heap| heap.array_iterator_mode(obj)) {
+                    let proto = Self::iterator_prototype_object(if mode == 3 { 2 } else { 1 });
+                    return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                }
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
+                if prototype.is_none() {
+                    if let Some(kind) =
+                        zun_gc::with_current_heap(|heap| heap.typed_array_element(obj))
+                    {
+                        if let Some(proto) = self.builtin_prototype_by_name(kind.js_name()) {
+                            return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                        }
+                    }
+                    let builtin =zun_gc::with_current_heap(|heap| {
+                        if heap.array_len(obj).is_some() {
+                            Some("Array")
+                        } else if heap.map_entries(obj).is_some() {
+                            Some("Map")
+                        } else if heap.set_values(obj).is_some() {
+                            Some("Set")
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(name) = builtin {
+                        if let Some(proto) = self.builtin_prototype_by_name(name) {
+                            return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                        }
+                    }
+                }
                 if prototype.is_none()
                     && zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some())
                 {
@@ -702,21 +790,93 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(prototype.unwrap_or_else(zun_core::Any::null)))
             }
             "objectJsonStringify" => self.json_stringify(args),
+            "objectRawJson" => {
+                let text = match args.first() {
+                    Some(Value::Str(text)) => text.clone(),
+                    _ => return Err(RunError::BadToken),
+                };
+                Ok(zun_gc::with_current_heap_mut(|heap| {
+                    let obj = heap.alloc_dynamic();
+                    heap.dynamic_set_prototype(obj, Some(zun_core::Any::null()));
+                    let boxed = zun_core::Any::string(heap.intern_string(text));
+                    heap.dynamic_define_data(obj, "rawJSON", boxed, false, true, false);
+                    heap.dynamic_freeze(obj);
+                    heap.dynamic_mark_raw_json(obj);
+                    Value::Object(obj)
+                }))
+            }
+            "objectIsRawJson" => {
+                let raw = match args.first() {
+                    Some(Value::Object(obj)) => {
+                        zun_gc::with_current_heap(|heap| heap.dynamic_is_raw_json(*obj))
+                    }
+                    Some(Value::Any(any)) => any.as_object().is_some_and(|addr| {
+                        zun_gc::with_current_heap(|heap| {
+                            // SAFETY: the address came from a live boxed object.
+                            heap.dynamic_is_raw_json(unsafe {
+                                zun_gc::Obj::from_addr(addr as *mut u64)
+                            })
+                        })
+                    }),
+                    _ => false,
+                };
+                Ok(Value::Bool(raw))
+            }
             "objectPrototype" => {
                 let root = Self::object_prototype_singleton();
                 Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))
+            }
+            "functionPrototype" => {
+                let proto = Self::function_prototype_singleton();
+                Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)))
+            }
+            "stringPrototype" => {
+                let proto = Self::string_prototype_singleton();
+                Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)))
             }
             "regexpPrototype" => {
                 let root = Self::regexp_prototype_singleton();
                 Ok(Value::Any(zun_core::Any::object(root.addr() as usize)))
             }
-            "objectSetPrototypeOf" => {
+            "objectSetPrototypeOf" | "reflectSetPrototypeOf" => {
+                let reflect = name == "reflectSetPrototypeOf";
+                // Re-parenting the static side of a user class to another class:
+                // recorded on the class's expando bag and consulted by static
+                // lookup.
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if self.user_class_rid(token).is_some() {
+                        if let Some(parent) = args.get(1).and_then(Self::class_token_of) {
+                            let bag = Self::class_expando_bag(token);
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set_prototype(
+                                    bag,
+                                    Some(zun_core::Any::class_descriptor(parent)),
+                                )
+                            });
+                            return Ok(if reflect {
+                                Value::Bool(true)
+                            } else {
+                                args[0].clone()
+                            });
+                        }
+                    }
+                }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let obj = match self.proxy_route(proxy, "setPrototypeOf") {
+                let obj = match self.proxy_route(proxy, "setPrototypeOf")? {
                     ProxyRoute::Trap(callback, target) => {
                         let prototype = args.get(1).ok_or(RunError::BadToken)?.clone();
-                        self.invoke_proxy_trap(callback, vec![Value::Object(target), prototype])?;
+                        let ok = self
+                            .invoke_proxy_trap(callback, vec![Value::Object(target), prototype])?;
+                        let ok = zun_gc::with_current_heap(|heap| is_truthy(&ok, heap));
+                        if reflect {
+                            return Ok(Value::Bool(ok));
+                        }
+                        if !ok {
+                            return Err(RunError::Native(
+                                "TypeError: 'setPrototypeOf' on proxy: trap returned falsish".into(),
+                            ));
+                        }
                         return Ok(Value::Object(proxy));
                     }
                     ProxyRoute::Target(target) => target,
@@ -727,6 +887,9 @@ impl<'a> Interp<'a> {
                     args.get(1).ok_or(RunError::BadToken)?,
                 );
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
+                if reflect {
+                    return Ok(Value::Bool(true));
+                }
                 Ok(Value::Object(obj))
             }
             _ => Err(RunError::BadToken),

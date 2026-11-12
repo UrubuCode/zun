@@ -17,7 +17,7 @@ impl<'a> Interp<'a> {
                 let callee = zun_gc::with_current_heap(|heap| unbox_function_box(callee, heap));
                 let target = match callee {
                     Value::Function(handle) => handle,
-                    _ => return Err(RunError::BadToken),
+                    _ => return Err(RunError::Native("TypeError: value is not a function".into())),
                 };
                 let this_arg = args.get(1).ok_or(RunError::BadToken)?.clone();
                 let array =
@@ -32,7 +32,9 @@ impl<'a> Interp<'a> {
                         .collect::<Vec<_>>()
                 });
                 let mut call_args = Vec::with_capacity(1 + spread.len());
-                call_args.push(this_arg);
+                if self.handle_takes_this(target, 1 + spread.len()) {
+                    call_args.push(this_arg);
+                }
                 call_args.extend(spread);
                 self.invoke_function_value(target, call_args)
             }
@@ -43,7 +45,7 @@ impl<'a> Interp<'a> {
                 let callee = zun_gc::with_current_heap(|heap| unbox_function_box(callee, heap));
                 let target = match callee {
                     Value::Function(handle) => handle,
-                    _ => return Err(RunError::BadToken),
+                    _ => return Err(RunError::Native("TypeError: value is not a function".into())),
                 };
                 let array =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

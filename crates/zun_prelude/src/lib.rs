@@ -155,6 +155,9 @@ pub const ASYNC: &str = include_str!("../builtin/async.zun");
 /// Wrapper bases for `class X extends <Built-in>` (`builtin/builtin_bases.zun`).
 pub const BUILTIN_BASES: &str = include_str!("../builtin/builtin_bases.zun");
 
+/// `Atomics` (`builtin/atomics.zun`): single-agent shared-memory operations.
+pub const ATOMICS: &str = include_str!("../builtin/atomics.zun");
+
 pub const REALM: &str = include_str!("../builtin/realm.zun");
 
 /// The prelude **classes**, in compile order. Classes cannot cross a module
@@ -190,6 +193,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     RESPONSE,
     ASYNC,
     BUILTIN_BASES,
+    ATOMICS,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

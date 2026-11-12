@@ -125,6 +125,16 @@ impl FunctionHandle {
         }
     }
 
+    /// A built-in method value carrying a managed object in its environment
+    /// slot (traced like a closure environment).
+    pub const fn new_builtin_method_with_env(kind: u32, environment: usize) -> Self {
+        Self {
+            method_rid: 0,
+            reserved: BUILTIN_METHOD_BASE + kind,
+            environment,
+        }
+    }
+
     /// The built-in selector when this handle is a built-in method value.
     pub const fn builtin_method(self) -> Option<u32> {
         if self.reserved >= BUILTIN_METHOD_BASE {

@@ -30,6 +30,31 @@ class JSON {
         return coreObject.jsonStringify(value, replacer, space);
     }
 
+    // `JSON.rawJSON(text)`: a frozen null-prototype box that stringify embeds
+    // verbatim. Only primitive JSON text (no surrounding whitespace) is accepted.
+    static rawJSON(text: any): any {
+        let s: string = String(text);
+        let n: u64 = coreString.length(s);
+        if (n == 0) {
+            throw new SyntaxError("Invalid value for JSON.rawJSON");
+        }
+        let first: u32 = coreString.charCodeAt(s, 0);
+        let last: u32 = coreString.charCodeAt(s, n - 1);
+        if (JSON.isJsonSpace(first) || JSON.isJsonSpace(last) || first == 123 || first == 91) {
+            throw new SyntaxError("Invalid value for JSON.rawJSON");
+        }
+        JSON.parse(s);
+        return coreObject.rawJson(s);
+    }
+
+    static isRawJSON(value: any): boolean {
+        return coreObject.isRawJson(value) as boolean;
+    }
+
+    static isJsonSpace(c: u32): boolean {
+        return c == 32 || c == 9 || c == 10 || c == 13;
+    }
+
     // Nesting limit; deeper (or cyclic) input is rejected instead of overflowing
     // the stack.
     static maxDepth(): u64 {

@@ -196,7 +196,7 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         ),
         // Array and the buffer family.
         "Array" => (Ty::Array, CtorLowering::ArrayNew),
-        "ArrayBuffer" => (Ty::Buffer, CtorLowering::ArrayBuffer),
+        "ArrayBuffer" | "SharedArrayBuffer" => (Ty::Buffer, CtorLowering::ArrayBuffer),
         "DataView" => (
             Ty::BufferView(Bv::DataView),
             CtorLowering::BufferView {

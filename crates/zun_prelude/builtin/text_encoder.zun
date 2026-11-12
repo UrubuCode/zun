@@ -1,14 +1,57 @@
 // Nucleus `TextEncoder` (WinterCG minimum common API, prelude class).
 //
 //   new TextEncoder().encode(input) -> Uint8Array   (UTF-8)
+//   new TextEncoder().encodeInto(src, dest) -> { read, written }
+//   new TextEncoder().encoding -> "utf-8"
 //
-// Self-contained over the `nodeBuffer` group of `zun:core`. Deferred:
-// `encodeInto` and the `encoding` property.
+// Self-contained over the `nodeBuffer` group of `zun:core`.
 
 import { nodeBuffer as encBuffer } from "zun:core";
 
 class TextEncoder {
-    encode(input: string): Uint8Array {
-        return encBuffer.nodeBufferFromString(input, "utf8");
+    // The label argument is accepted and ignored: there is exactly one encoding.
+    constructor(label: any = undefined) {
+    }
+
+    get encoding(): string {
+        return "utf-8";
+    }
+
+    encode(input: any = ""): Uint8Array {
+        const text: string = input === undefined ? "" : String(input);
+        return encBuffer.nodeBufferFromString(text, "utf8");
+    }
+
+    // Writes whole code points only; `read` counts UTF-16 units, `written` bytes.
+    encodeInto(source: string, dest: any): any {
+        const bytes: any = encBuffer.nodeBufferFromString(source, "utf8");
+        let read: number = 0;
+        let written: number = 0;
+        let i: number = 0;
+        while (i < bytes.length) {
+            const lead: number = bytes[i];
+            let width: number = 1;
+            if (lead >= 240) {
+                width = 4;
+            } else if (lead >= 224) {
+                width = 3;
+            } else if (lead >= 192) {
+                width = 2;
+            }
+            if (written + width > dest.length) {
+                break;
+            }
+            for (let k = 0; k < width; k++) {
+                dest[written + k] = bytes[i + k];
+            }
+            written = written + width;
+            i = i + width;
+            if (width == 4) {
+                read = read + 2;
+            } else {
+                read = read + 1;
+            }
+        }
+        return { read: read, written: written };
     }
 }

@@ -181,7 +181,7 @@ impl<'a> Interp<'a> {
 
     /// Lazily built `field name -> layout` index for a type's own non-static
     /// instance fields (first occurrence wins), so dynamic field access is O(1).
-    fn instance_field_map(
+    pub(crate) fn instance_field_map(
         &self,
         type_rid: u32,
     ) -> Option<std::rc::Rc<std::collections::HashMap<String, zun_types::FieldLayout>>> {

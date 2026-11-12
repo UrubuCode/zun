@@ -145,6 +145,10 @@ impl<'a> Interp<'a> {
                     }
                     other => other.clone(),
                 };
+                // A function carried through `any` rides in a `__boxedFn` record.
+                let receiver_concrete = zun_gc::with_current_heap(|heap| {
+                    unbox_function_box(receiver_concrete, heap)
+                });
                 if let Value::Str(_) = &receiver_concrete {
                     if let Some((id, native)) = zun_natives::resolve("string", &member) {
                         let mut native_values = Vec::with_capacity(args.len() - 1);
@@ -300,6 +304,39 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // `Function.prototype.bind` on a function value reached through
+                // `any`: `[thisArg, ...partial]` becomes the bound arguments.
+                if let Value::Function(handle) = &receiver_concrete {
+                    if member.as_ref() == "bind" {
+                        let target = *handle;
+                        let unboxed = args[2..]
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Any(any) => {
+                                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .ok_or(RunError::BadToken)
+                                }
+                                other => Ok(other.clone()),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(unboxed.len());
+                            for (index, value) in unboxed.iter().enumerate() {
+                                let any = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                let _ = heap.array_set(array, index, any);
+                            }
+                            array
+                        });
+                        let bound = self.col_function(
+                            "functionBind",
+                            &[Value::Function(target), Value::Object(array)],
+                        )?;
+                        let bound = self.col_function("functionBox", &[bound])?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| bound.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // `Function.prototype.call/apply` on a function value reached
                 // through `any`.
                 if let Value::Function(handle) = &receiver_concrete {
@@ -338,6 +375,12 @@ impl<'a> Interp<'a> {
                                         || name.ends_with("@this")
                                 })
                                 .unwrap_or(false);
+                        // A class instance method (`Class.prototype.m`) takes its
+                        // receiver as the implicit first argument.
+                        let takes_this = takes_this
+                            || (!handle.is_bound()
+                                && self.types.virtual_slot(handle.method_rid()).is_some())
+                            || handle.builtin_method().is_some_and(|kind| kind >= 16);
                         if takes_this {
                             rest.insert(0, this_arg);
                         }
@@ -400,6 +443,12 @@ impl<'a> Interp<'a> {
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // A typed array / ArrayBuffer / DataView reached through `any`.
+                if let Some(result) = self.typed_view_call(namespace, &member, &call_args)? {
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    return Ok(Value::Any(boxed));
+                }
                 // A Proxy reached through `any`: the member is read through its
                 // `get` trap and called with the proxy as `this`.
                 if zun_gc::with_current_heap(|heap| heap.proxy_target(namespace).is_some()) {
@@ -426,6 +475,56 @@ impl<'a> Interp<'a> {
                     let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                         .unwrap_or_else(zun_core::Any::void);
                     return Ok(Value::Any(boxed));
+                }
+                // A method inherited through the object's dynamic prototype chain
+                // (e.g. a built-in collection built with a `newTarget.prototype`).
+                {
+                    let mut cursor = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_prototype(namespace)
+                            .and_then(|any| any.as_object())
+                            .map(|a| unsafe { zun_gc::Obj::from_addr(a as *mut u64) })
+                    });
+                    let mut depth = 0;
+                    while let Some(proto) = cursor {
+                        if let Some(handle) = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_function(proto, &member)
+                        }) {
+                            // A declared class instance method takes the receiver as
+                            // its implicit first parameter.
+                            let plain_instance_method = !handle.is_bound()
+                                && handle.builtin_method().is_none()
+                                && self
+                                    .module
+                                    .tables
+                                    .method_defs
+                                    .get((handle.method_rid() as usize).wrapping_sub(1))
+                                    .is_some_and(|method| {
+                                        let n = self.module.strings.get(method.name);
+                                        !method.is_static
+                                            && !n.starts_with('<')
+                                            && !n.contains("@this")
+                                            && !n.starts_with("get_")
+                                            && !n.starts_with("set_")
+                                    });
+                            let mut call_args = self.with_this_arg(handle, namespace, call_args);
+                            if plain_instance_method {
+                                call_args.insert(0, Value::Object(namespace));
+                            }
+                            let result = self.invoke_function_value(handle, call_args)?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::void);
+                            return Ok(Value::Any(boxed));
+                        }
+                        cursor = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_prototype(proto)
+                                .and_then(|any| any.as_object())
+                                .map(|a| unsafe { zun_gc::Obj::from_addr(a as *mut u64) })
+                        });
+                        depth += 1;
+                        if depth > 64 {
+                            break;
+                        }
+                    }
                 }
                 // A Promise reached through `any` (an awaited/dynamic value, an
                 // async closure's result) answers `then`/`catch`/`finally`.
@@ -749,9 +848,18 @@ impl<'a> Interp<'a> {
                 // is re-boxed to `Any` for the dynamic call site. Only when no
                 // such member exists is this a namespace call routed to the
                 // loader.
-                if let Some(handle) =
-                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(namespace, &member))
-                {
+                // A function stored through an `any` slot rides in a `__boxedFn`
+                // record; it is called the same way.
+                if let Some(handle) = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_function(namespace, &member).or_else(|| {
+                        let any = heap.dynamic_get(namespace, &member)?;
+                        let value = Value::unbox_any(any, heap)?;
+                        match unbox_function_box(value, heap) {
+                            Value::Function(handle) => Some(handle),
+                            _ => None,
+                        }
+                    })
+                }) {
                     // An object-literal method that uses `this` takes the
                     // receiver as a hidden first argument (marked by the
                     // `@this` suffix on its closure name).

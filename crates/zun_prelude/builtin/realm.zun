@@ -70,3 +70,6 @@ global.set("ReferenceError", ReferenceError, true);
 global.set("SyntaxError", SyntaxError, true);
 global.set("TypeError", TypeError, true);
 global.set("URIError", URIError, true);
+
+// Single-agent shared memory: a SharedArrayBuffer is an ArrayBuffer here.
+global.set("SharedArrayBuffer", SharedArrayBuffer, true);

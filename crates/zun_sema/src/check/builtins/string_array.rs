@@ -377,10 +377,32 @@ impl Checker<'_> {
         let mut arg = self.check_expr(cx, arg_expr);
         if arg_ty == Ty::Array {
             if !arg.ty.is_error() && !self.is_assignable(arg.ty, Ty::Array) {
-                self.error(
-                    arg.span,
-                    format!("`Promise.{method}` expects an array of promises"),
-                );
+                // Any other iterable (Set, Map, string, ...) is normalized through
+                // `Array.from` before reaching the array-only combinator intrinsic.
+                let Some((from_id, _)) = zun_natives::resolve("array", "arrayFrom") else {
+                    self.error(span, "missing Array intrinsic `arrayFrom`");
+                    return self.poison(span);
+                };
+                let arg_span = arg.span;
+                let boxed = if arg.ty == Ty::Any {
+                    arg
+                } else {
+                    hir::Expr {
+                        span: arg_span,
+                        kind: hir::ExprKind::BoxAny {
+                            value: Box::new(arg),
+                        },
+                        ty: Ty::Any,
+                    }
+                };
+                arg = hir::Expr {
+                    span: arg_span,
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: from_id,
+                        args: vec![boxed],
+                    },
+                    ty: Ty::Array,
+                };
             }
         } else {
             // `resolve`/`reject` accept any value; box a non-`any` operand.

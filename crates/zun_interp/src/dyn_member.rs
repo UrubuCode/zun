@@ -32,6 +32,18 @@ impl Interp<'_> {
                 })
             });
             if let Some(Value::Function(handle)) = callee {
+                // A script-defined own `name` / `length` shadows the metadata.
+                let bag = crate::function_expando_bag(handle);
+                if let Some(own) =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get(bag, &name))
+                {
+                    if let Some(value) =
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(own, heap))
+                    {
+                        stack.push(value);
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 if let Some(meta) = self.function_meta(handle, &name) {
                     stack.push(meta);
                     return Ok(ArmFlow::Continue);
@@ -136,6 +148,27 @@ impl Interp<'_> {
                 return Ok(ArmFlow::Continue);
             }
         }
+        // `view.constructor` of a typed array / ArrayBuffer / DataView.
+        if name == "constructor" {
+            if let Value::Object(obj) = &concrete {
+                let class_name = zun_gc::with_current_heap(|heap| {
+                    if let Some(kind) = heap.typed_array_element(*obj) {
+                        Some(kind.js_name())
+                    } else if heap.buffer_len(*obj).is_some() {
+                        Some("ArrayBuffer")
+                    } else if heap.data_view_buffer(*obj).is_some() {
+                        Some("DataView")
+                    } else {
+                        None
+                    }
+                });
+                if let Some(class_name) = class_name {
+                    let record = Self::builtin_constructor_record(class_name);
+                    stack.push(Value::Object(record));
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         if name == "constructor" {
             if let Value::Object(obj) = &concrete {
                 if let Some(record) = self.constructor_record(*obj) {
@@ -158,6 +191,17 @@ impl Interp<'_> {
                 return Ok(ArmFlow::Continue);
             }
         }
+        // Typed array / ArrayBuffer / DataView properties.
+        if let Value::Object(view) = &concrete {
+            if let Some(found) = self.typed_view_get(*view, &name) {
+                let boxed = zun_gc::with_current_heap_mut(|heap| found.box_any(heap));
+                stack.push(match boxed {
+                    Some(any) => Value::Any(any),
+                    None => found,
+                });
+                return Ok(ArmFlow::Continue);
+            }
+        }
         if name == "length" {
             match &concrete {
                 Value::Str(text) => {
@@ -176,19 +220,6 @@ impl Interp<'_> {
                 _ => {}
             }
         }
-        // A typed array / `ArrayBuffer` reached through `any` answers
-        // `length`/`byteLength`/`byteOffset`/`buffer` like the typed forms.
-        if let Value::Object(obj) = &concrete {
-            if matches!(
-                name.as_str(),
-                "length" | "byteLength" | "byteOffset" | "buffer" | "maxByteLength" | "resizable"
-            ) {
-                if let Some(answer) = crate::view_dyn::view_property(*obj, &name) {
-                    stack.push(answer);
-                    return Ok(ArmFlow::Continue);
-                }
-            }
-        }
         // `size` of a Map / Set reached through `any`.
         if name == "size" {
             if let Value::Object(obj) = &concrete {
@@ -199,6 +230,15 @@ impl Interp<'_> {
                     return Ok(ArmFlow::Continue);
                 }
             }
+        }
+        // Any other named read off a primitive string / number / boolean has no
+        // own properties here: it yields `undefined` rather than faulting.
+        if matches!(
+            concrete,
+            Value::Str(_) | Value::Int(..) | Value::Float(..) | Value::Bool(_)
+        ) {
+            stack.push(Value::Void);
+            return Ok(ArmFlow::Continue);
         }
         // A RegExp object read through `any`: the flag accessors
         // and `source`/`flags`/`lastIndex`.
@@ -265,11 +305,18 @@ impl Interp<'_> {
                         Err(error) => return Err(error),
                     }
                 }
+                if name == "BYTES_PER_ELEMENT" && !user_class {
+                    if let Some(kind) = self.typed_ctor_kind(token) {
+                        stack.push(Value::Float(kind.size() as f64, zun_il::NumKind::F64));
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 stack.push(if name == "prototype" && user_class {
                     let proto = self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))
                 } else if name == "prototype" {
-                    Value::Any(*descriptor)
+                    let proto = self.builtin_prototype_object(token);
+                    Value::Any(zun_core::Any::object(proto.addr() as usize))
                 } else {
                     Value::Void
                 });
@@ -488,6 +535,19 @@ impl Interp<'_> {
                 });
                 if let Some((len, level)) = level_len {
                     let wanted = any.as_int().map(|n| n as f64).or_else(|| any.as_float());
+                    if let Some(bad) = wanted.filter(|w| {
+                        !(w.is_finite() && *w >= 0.0 && w.fract() == 0.0 && *w <= 4294967295.0)
+                    }) {
+                        let _ = bad;
+                        throw_native_arm!(
+                            self,
+                            body,
+                            stack,
+                            pc,
+                            next - size,
+                            "RangeError: Invalid array length".to_string()
+                        );
+                    }
                     if let Some(wanted) = wanted {
                         let wanted = wanted as usize;
                         if wanted != len {
@@ -677,6 +737,23 @@ impl Interp<'_> {
                 }
             }
         }
+        // A typed array receiver: integer-indexed element read.
+        {
+            let concrete = match &object_raw {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                    .unwrap_or(Value::Void),
+                other => other.clone(),
+            };
+            if let Value::Object(view) = &concrete {
+                if let Some(answer) = self.typed_view_index_get(*view, &key) {
+                    stack.push(match zun_gc::with_current_heap_mut(|heap| answer.box_any(heap)) {
+                        Some(any) => Value::Any(any),
+                        None => answer,
+                    });
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         // A string receiver: `str[i]` is the character, `str.length` its length.
         {
             let concrete = match &object_raw {
@@ -712,29 +789,6 @@ impl Interp<'_> {
                 };
                 stack.push(answer.unwrap_or(Value::Void));
                 return Ok(ArmFlow::Continue);
-            }
-        }
-        // A typed array reached through `any`: `v[i]` is the element
-        // (`undefined` out of range); `v.length` and friends by name.
-        {
-            let concrete = match &object_raw {
-                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                    .unwrap_or(Value::Void),
-                other => other.clone(),
-            };
-            if let Value::Object(view) = &concrete {
-                if zun_gc::with_current_heap(|heap| heap.typed_array_element(*view).is_some()) {
-                    if let Some(at) = crate::view_dyn::element_index(&key) {
-                        stack.push(crate::view_dyn::read_element_or_undefined(*view, at));
-                        return Ok(ArmFlow::Continue);
-                    }
-                    if let Value::Str(name) = &key {
-                        if let Some(answer) = crate::view_dyn::view_property(*view, name) {
-                            stack.push(answer);
-                            return Ok(ArmFlow::Continue);
-                        }
-                    }
-                }
             }
         }
         if matches!(
@@ -858,6 +912,29 @@ impl Interp<'_> {
                     });
                     match own {
                         Some(found) => found,
+                        None if symbol == zun_core::WellKnownSymbol::ToStringTag.id()
+                            && zun_gc::with_current_heap(|heap| heap.array_iterator_mode(object).is_some()) =>
+                        {
+                            let text = if zun_gc::with_current_heap(|heap| heap.array_iterator_mode(object)) == Some(3) {
+                                "String Iterator"
+                            } else {
+                                "Array Iterator"
+                            };
+                            Value::Any(zun_gc::with_current_heap_mut(|heap| {
+                                zun_core::Any::string(heap.intern_string(text))
+                            }))
+                        }
+                        None if symbol == zun_core::WellKnownSymbol::ToStringTag.id()
+                            && zun_gc::with_current_heap(|heap| heap.typed_array_element(object).is_some()) =>
+                        {
+                            let text = zun_gc::with_current_heap(|heap| {
+                                heap.typed_array_element(object).map(|k| k.js_name())
+                            })
+                            .unwrap_or("");
+                            Value::Any(zun_gc::with_current_heap_mut(|heap| {
+                                zun_core::Any::string(heap.intern_string(text))
+                            }))
+                        }
                         // Built-in iterables expose `[Symbol.iterator]` as a
                         // callable that produces their iterator.
                         None if symbol == zun_core::WellKnownSymbol::Iterator.id()
@@ -1093,46 +1170,25 @@ impl Interp<'_> {
         } else {
             key
         };
-        let object_raw = expando_receiver(pop(stack)?);
-        // A typed array reached through `any`: `v[i] = x` writes the
-        // element (coerced to the kind; out of range is dropped, as in JS).
-        {
-            let concrete = match &object_raw {
-                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
-                other => Some(other.clone()),
-            };
-            if let (Some(Value::Object(view)), Some(at)) =
-                (concrete, crate::view_dyn::element_index(&key))
-            {
-                if zun_gc::with_current_heap(|heap| heap.typed_array_element(view).is_some()) {
-                    let element = match &value {
-                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
-                            .unwrap_or(Value::Void),
-                        other => other.clone(),
-                    };
-                    let element = match element {
-                        Value::Bool(flag) => {
-                            Value::Float(f64::from(u8::from(flag)), zun_il::NumKind::F64)
-                        }
-                        other => other,
-                    };
-                    if let Some(number) = match &element {
-                        Value::Int(..) | Value::Float(..) => Some(element.clone()),
-                        Value::Str(text) => Some(Value::Float(
-                            crate::collections::js_string_to_number(text),
-                            zun_il::NumKind::F64,
-                        )),
-                        _ => None,
-                    } {
-                        let _ = crate::view_dyn::write_js_element(view, at, &number);
-                    }
-                    // The assignment expression's value, as every store arm leaves it.
+        let object = expando_receiver(pop(stack)?).as_object();
+        // A typed array receiver: integer-indexed element write.
+        if crate::typed_arrays::element_of(object).is_some() {
+            match self.typed_view_index_set(object, &key, &value) {
+                Ok(true) => {
+                    // The assignment expression evaluates to the stored value.
                     stack.push(value);
                     return Ok(ArmFlow::Next);
                 }
+                Ok(false) => {}
+                Err(RunError::Thrown(exception)) => {
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
+                        return Ok(ArmFlow::Continue);
+                    }
+                    return Err(RunError::Thrown(exception));
+                }
+                Err(error) => return Err(error),
             }
         }
-        let object = object_raw.as_object();
         {
             let key_name: Option<String> = match &key {
                 Value::Str(text) => Some(text.to_string()),

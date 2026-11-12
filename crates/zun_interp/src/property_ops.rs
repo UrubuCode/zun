@@ -140,6 +140,65 @@ impl Desc {
     }
 }
 
+/// Getters on the shared `%TypedArray%.prototype`: `buffer`, `byteLength`,
+/// `byteOffset`, `length` and `@@toStringTag`.
+pub(crate) const BUILTIN_TA_BUFFER: u32 = 100;
+pub(crate) const BUILTIN_TA_BYTE_LENGTH: u32 = 101;
+pub(crate) const BUILTIN_TA_BYTE_OFFSET: u32 = 102;
+pub(crate) const BUILTIN_TA_LENGTH: u32 = 103;
+pub(crate) const BUILTIN_TA_TAG: u32 = 104;
+pub(crate) const BUILTIN_MAP_SIZE: u32 = 16;
+pub(crate) const BUILTIN_SET_SIZE: u32 = 17;
+pub(crate) const BUILTIN_ARRAY_ITER_NEXT: u32 = 18;
+pub(crate) const BUILTIN_STRING_ITER_NEXT: u32 = 19;
+pub(crate) const BUILTIN_ITER_SELF: u32 = 20;
+pub(crate) const BUILTIN_PROXY_REVOKE: u32 = 21;
+pub(crate) const BUILTIN_STRING_ITERATOR: u32 = 22;
+/// `get [Symbol.species]` of the built-in constructors: returns `this`.
+pub(crate) const BUILTIN_SPECIES_GETTER: u32 = 23;
+/// `Map.prototype[Symbol.iterator]` (the `entries` function) and
+/// `Set.prototype[Symbol.iterator]` (the `values` function).
+pub(crate) const BUILTIN_MAP_ITERATOR: u32 = 24;
+pub(crate) const BUILTIN_SET_ITERATOR: u32 = 25;
+/// First kind of the `Map.prototype` / `Set.prototype` method values; the kind
+/// selects a row of [`COLLECTION_METHODS`].
+pub(crate) const BUILTIN_COLLECTION_BASE: u32 = 64;
+/// `(class, js name, native, extra args, returns this)`.
+pub(crate) const COLLECTION_METHODS: [(&str, &str, &str, usize, bool); 9] = [
+    ("Map", "get", "mapGet", 1, false),
+    ("Map", "set", "mapSet", 2, true),
+    ("Map", "has", "mapHas", 1, false),
+    ("Map", "delete", "mapDelete", 1, false),
+    ("Map", "clear", "mapClear", 0, false),
+    ("Set", "add", "setAdd", 1, true),
+    ("Set", "has", "setHas", 1, false),
+    ("Set", "delete", "setDelete", 1, false),
+    ("Set", "clear", "setClear", 0, false),
+];
+/// First kind of the `DataView.prototype` accessor method values; the kind
+/// selects a row of [`DATA_VIEW_METHODS`].
+pub(crate) const BUILTIN_DV_BASE: u32 = 32;
+/// `(js name, native, element kind, is float)`; every accessor takes an optional
+/// little-endian flag except the single-byte widths.
+pub(crate) const DATA_VIEW_METHODS: [(&str, &str, zun_il::NumKind, bool); 16] = [
+    ("getInt8", "dataViewGetInt8", zun_il::NumKind::I8, false),
+    ("getUint8", "dataViewGetUint8", zun_il::NumKind::U8, false),
+    ("getInt16", "dataViewGetInt16", zun_il::NumKind::I16, false),
+    ("getUint16", "dataViewGetU16", zun_il::NumKind::U16, false),
+    ("getInt32", "dataViewGetInt32", zun_il::NumKind::I32, false),
+    ("getUint32", "dataViewGetU32", zun_il::NumKind::U32, false),
+    ("getFloat32", "dataViewGetFloat32", zun_il::NumKind::F32, true),
+    ("getFloat64", "dataViewGetF64", zun_il::NumKind::F64, true),
+    ("setInt8", "dataViewSetInt8", zun_il::NumKind::I8, false),
+    ("setUint8", "dataViewSetUint8", zun_il::NumKind::U8, false),
+    ("setInt16", "dataViewSetInt16", zun_il::NumKind::I16, false),
+    ("setUint16", "dataViewSetU16", zun_il::NumKind::U16, false),
+    ("setInt32", "dataViewSetInt32", zun_il::NumKind::I32, false),
+    ("setUint32", "dataViewSetU32", zun_il::NumKind::U32, false),
+    ("setFloat32", "dataViewSetFloat32", zun_il::NumKind::F32, true),
+    ("setFloat64", "dataViewSetF64", zun_il::NumKind::F64, true),
+];
+
 const OBJECT_PROTOTYPE_KEY: &str = "$Object.prototype";
 const REGEXP_PROTOTYPE_KEY: &str = "$RegExp.prototype";
 
@@ -160,6 +219,78 @@ impl Interp<'_> {
             let any = zun_core::Any::object(root.addr() as usize);
             heap.dynamic_define(global, OBJECT_PROTOTYPE_KEY, any, false);
             root
+        })
+    }
+
+    /// The intrinsic `%TypedArray%.prototype`: owns the geometry getters and the
+    /// `@@toStringTag` getter shared by every concrete typed-array kind.
+    pub(crate) fn typed_array_prototype_singleton() -> zun_gc::Obj {
+        let root = Self::object_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap
+                .dynamic_get(global, "$TypedArray.prototype")
+                .and_then(|a| a.as_object())
+            {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, "$TypedArray.prototype", any, false);
+            for (name, kind) in [
+                ("buffer", BUILTIN_TA_BUFFER),
+                ("byteLength", BUILTIN_TA_BYTE_LENGTH),
+                ("byteOffset", BUILTIN_TA_BYTE_OFFSET),
+                ("length", BUILTIN_TA_LENGTH),
+            ] {
+                heap.dynamic_define_accessor(
+                    proto,
+                    name.to_owned(),
+                    Some(zun_core::FunctionHandle::new_builtin_method(kind)),
+                    None,
+                    false,
+                    true,
+                );
+            }
+            heap.dynamic_set_symbol_getter(
+                proto,
+                zun_core::WellKnownSymbol::ToStringTag.id(),
+                zun_core::FunctionHandle::new_builtin_method(BUILTIN_TA_TAG),
+            );
+            proto
+        })
+    }
+
+    /// The intrinsic `%TypedArray%` constructor stand-in: a non-global object
+    /// named `TypedArray` whose `prototype` is the shared typed-array prototype
+    /// and which inherits from `Function.prototype`.
+    pub(crate) fn typed_array_intrinsic_singleton() -> zun_gc::Obj {
+        let proto = Self::typed_array_prototype_singleton();
+        let fn_proto = Self::function_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap
+                .dynamic_get(global, "$TypedArray")
+                .and_then(|a| a.as_object())
+            {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let ctor = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(ctor, Some(zun_core::Any::object(fn_proto.addr() as usize)));
+            let any = zun_core::Any::object(ctor.addr() as usize);
+            heap.dynamic_define(global, "$TypedArray", any, false);
+            let name = zun_core::Any::string(heap.intern_string("TypedArray"));
+            heap.dynamic_define_data(ctor, "name", name, false, false, true);
+            heap.dynamic_define_data(
+                ctor,
+                "prototype",
+                zun_core::Any::object(proto.addr() as usize),
+                false,
+                false,
+                false,
+            );
+            ctor
         })
     }
 
@@ -196,6 +327,51 @@ impl Interp<'_> {
             }
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, REGEXP_PROTOTYPE_KEY, any, false);
+            proto
+        })
+    }
+
+    /// The realm's shared `String.prototype`: a dynamic object linked to
+    /// `Object.prototype` owning `[Symbol.iterator]`.
+    pub(crate) fn string_prototype_singleton() -> zun_gc::Obj {
+        let root = Self::object_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap
+                .dynamic_get(global, "$String.prototype")
+                .and_then(|a| a.as_object())
+            {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
+            heap.dynamic_set_symbol_function(
+                proto,
+                zun_core::WellKnownSymbol::Iterator.id(),
+                zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
+            );
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, "$String.prototype", any, false);
+            proto
+        })
+    }
+
+    /// The realm's shared `Function.prototype`: a plain dynamic object linked to
+    /// `Object.prototype`, the prototype of every built-in constructor value.
+    pub(crate) fn function_prototype_singleton() -> zun_gc::Obj {
+        let root = Self::object_prototype_singleton();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(existing) = heap
+                .dynamic_get(global, "$Function.prototype")
+                .and_then(|a| a.as_object())
+            {
+                return unsafe { zun_gc::Obj::from_addr(existing as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, "$Function.prototype", any, false);
             proto
         })
     }
@@ -240,6 +416,7 @@ impl Interp<'_> {
         )> = Vec::new();
         // Key -> position in `accessors`, so pairing a getter/setter is O(1)
         // while the `Vec` still preserves first-seen prototype property order.
+        let mut plain_methods: Vec<(String, zun_core::FunctionHandle)> = Vec::new();
         let mut accessor_index: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         if let Some(def) = self
@@ -266,6 +443,16 @@ impl Interp<'_> {
                 } else if let Some(prop) = name.strip_prefix("set_") {
                     (prop, false)
                 } else {
+                    let ident = name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                        && !name.is_empty();
+                    if ident && method.body_offset != u32::MAX {
+                        plain_methods.push((
+                            name.to_owned(),
+                            zun_core::FunctionHandle::new(method_rid, None),
+                        ));
+                    }
                     continue;
                 };
                 let handle = zun_core::FunctionHandle::new(method_rid, None);
@@ -291,6 +478,12 @@ impl Interp<'_> {
             .get(&rid)
             .expect("prototype key cached above")
             .clone();
+        let is_string_class = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .is_some_and(|def| self.module.strings.get(def.name) == "String");
         zun_gc::with_current_heap_mut(|heap| {
             let proto = heap.alloc_dynamic();
             let any = zun_core::Any::object(proto.addr() as usize);
@@ -305,7 +498,452 @@ impl Interp<'_> {
             for (name, get, set) in accessors {
                 heap.dynamic_define_accessor(proto, name, get, set, false, true);
             }
+            heap.dynamic_define(
+                proto,
+                "constructor".to_owned(),
+                zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid),
+                false,
+            );
+            for (name, handle) in plain_methods {
+                heap.dynamic_set_function(proto, name, handle);
+            }
+            if is_string_class {
+                heap.dynamic_set_symbol_function(
+                    proto,
+                    zun_core::WellKnownSymbol::Iterator.id(),
+                    zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
+                );
+            }
             proto
+        })
+    }
+
+    /// The lazily-created real `Builtin.prototype` object of a builtin class
+    /// descriptor `token`: a plain dynamic object anchored (non-enumerable) on
+    /// the realm global so it is rooted and identity-stable.
+    pub(crate) fn builtin_prototype_object(&self, token: u32) -> zun_gc::Obj {
+        let key = format!("$builtinProto#{token}");
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(address) = heap.dynamic_get(global, &key).and_then(|a| a.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, key, any, false);
+            // `Map.prototype.size` / `Set.prototype.size`: accessor properties
+            // whose getters are real built-in function values.
+            let is_class = |heap: &zun_gc::Heap, name: &str| {
+                heap.dynamic_get(global, name)
+                    .and_then(|a| a.as_class_descriptor())
+                    == Some(token)
+            };
+            let size_kind = if is_class(heap, "Map") {
+                Some((BUILTIN_MAP_SIZE, "Map"))
+            } else if is_class(heap, "Set") {
+                Some((BUILTIN_SET_SIZE, "Set"))
+            } else {
+                None
+            };
+            if zun_core::TypedElement::ALL.iter().any(|k| is_class(heap, k.js_name())) {
+                let shared = Self::typed_array_prototype_singleton();
+                heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(shared.addr() as usize)));
+            }
+            if is_class(heap, "String") {
+                heap.dynamic_set_symbol_function(
+                    proto,
+                    zun_core::WellKnownSymbol::Iterator.id(),
+                    zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
+                );
+            }
+            for weak in ["WeakMap", "WeakSet", "WeakRef"] {
+                if is_class(heap, weak) {
+                    let tag = zun_core::Any::string(heap.intern_string(weak));
+                    heap.dynamic_define_symbol(
+                        proto,
+                        zun_core::WellKnownSymbol::ToStringTag.id(),
+                        tag,
+                        false,
+                    );
+                }
+            }
+            if let Some((kind, _)) = size_kind {
+                let class = if kind == BUILTIN_MAP_SIZE { "Map" } else { "Set" };
+                for (index, entry) in COLLECTION_METHODS.iter().enumerate() {
+                    if entry.0 == class {
+                        heap.dynamic_set_function(
+                            proto,
+                            entry.1.to_owned(),
+                            zun_core::FunctionHandle::new_builtin_method(
+                                BUILTIN_COLLECTION_BASE + index as u32,
+                            ),
+                        );
+                    }
+                }
+            }
+            if let Some((kind, tag)) = size_kind {
+                heap.dynamic_set_symbol_function(
+                    proto,
+                    zun_core::WellKnownSymbol::Iterator.id(),
+                    zun_core::FunctionHandle::new_builtin_method(if kind == BUILTIN_MAP_SIZE {
+                        BUILTIN_MAP_ITERATOR
+                    } else {
+                        BUILTIN_SET_ITERATOR
+                    }),
+                );
+                heap.dynamic_define_accessor(
+                    proto,
+                    "size".to_owned(),
+                    Some(zun_core::FunctionHandle::new_builtin_method(kind)),
+                    None,
+                    false,
+                    true,
+                );
+                let tag = zun_core::Any::string(heap.intern_string(tag));
+                heap.dynamic_define_symbol(
+                    proto,
+                    zun_core::WellKnownSymbol::ToStringTag.id(),
+                    tag,
+                    false,
+                );
+            }
+            proto
+        })
+    }
+
+    /// The shared iterator prototype objects: `kind` 0 is `%IteratorPrototype%`,
+    /// 1 `%ArrayIteratorPrototype%`, 2 `%StringIteratorPrototype%`. Created on
+    /// first use, anchored (non-enumerable) on the realm global.
+    pub(crate) fn iterator_prototype_object(kind: u8) -> zun_gc::Obj {
+        let base = if kind == 0 {
+            None
+        } else {
+            Some(Self::iterator_prototype_object(0))
+        };
+        let root = Self::object_prototype_singleton();
+        let key = format!("$iteratorProto#{kind}");
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(address) = heap.dynamic_get(global, &key).and_then(|a| a.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            let any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define(global, key, any, false);
+            let link = base.unwrap_or(root);
+            heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(link.addr() as usize)));
+            match kind {
+                0 => {
+                    heap.dynamic_set_symbol_function(
+                        proto,
+                        zun_core::WellKnownSymbol::Iterator.id(),
+                        zun_core::FunctionHandle::new_builtin_method(BUILTIN_ITER_SELF),
+                    );
+                }
+                1 | 2 => {
+                    let (next, tag) = if kind == 1 {
+                        (BUILTIN_ARRAY_ITER_NEXT, "Array Iterator")
+                    } else {
+                        (BUILTIN_STRING_ITER_NEXT, "String Iterator")
+                    };
+                    heap.dynamic_set_function(
+                        proto,
+                        "next".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method(next),
+                    );
+                    let tag = zun_core::Any::string(heap.intern_string(tag));
+                    heap.dynamic_define_symbol(
+                        proto,
+                        zun_core::WellKnownSymbol::ToStringTag.id(),
+                        tag,
+                        false,
+                    );
+                }
+                _ => {}
+            }
+            proto
+        })
+    }
+
+    fn incompatible_receiver(&mut self, what: &str) -> RunError {
+        let message = format!("Method {what} called on incompatible receiver");
+        match self.new_error_object("TypeError", &message) {
+            Some(object) => RunError::Thrown(Value::Object(object)),
+            None => RunError::Native(format!("TypeError: {message}")),
+        }
+    }
+
+    /// Run a built-in method value (kind >= 16) with its receiver and
+    /// arguments. A receiver of the wrong brand throws a `TypeError`.
+    pub(crate) fn invoke_builtin_with_this(
+        &mut self,
+        handle: zun_core::FunctionHandle,
+        this: Value,
+        _args: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        let kind = handle.builtin_method().unwrap_or(0);
+        let this_obj = match &this {
+            Value::Object(obj) => Some(*obj),
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                .and_then(|v| match v {
+                    Value::Object(obj) => Some(obj),
+                    _ => None,
+                }),
+            _ => None,
+        };
+        match kind {
+            BUILTIN_MAP_SIZE => {
+                let len = this_obj
+                    .and_then(|o| zun_gc::with_current_heap(|heap| heap.map_len(o)))
+                    .ok_or_else(|| self.incompatible_receiver("get Map.prototype.size"))?;
+                Ok(Value::Float(len as f64, zun_il::NumKind::F64))
+            }
+            BUILTIN_SET_SIZE => {
+                let len = this_obj
+                    .and_then(|o| zun_gc::with_current_heap(|heap| heap.set_len(o)))
+                    .ok_or_else(|| self.incompatible_receiver("get Set.prototype.size"))?;
+                Ok(Value::Float(len as f64, zun_il::NumKind::F64))
+            }
+            BUILTIN_ARRAY_ITER_NEXT | BUILTIN_STRING_ITER_NEXT => {
+                let want_string = kind == BUILTIN_STRING_ITER_NEXT;
+                let what = if want_string {
+                    "String Iterator.prototype.next"
+                } else {
+                    "Array Iterator.prototype.next"
+                };
+                let it = this_obj
+                    .filter(|o| {
+                        zun_gc::with_current_heap(|heap| heap.array_iterator_mode(*o))
+                            .is_some_and(|mode| (mode == 3) == want_string)
+                    })
+                    .ok_or_else(|| self.incompatible_receiver(what))?;
+                match self.builtin_iterator_result(it)? {
+                    Some(result) => Ok(result),
+                    None => Err(self.incompatible_receiver(what)),
+                }
+            }
+            BUILTIN_TA_BUFFER..=BUILTIN_TA_TAG => {
+                let typed = this_obj.filter(|o| {
+                    zun_gc::with_current_heap(|heap| heap.typed_array_element(*o).is_some())
+                });
+                if kind == BUILTIN_TA_TAG {
+                    return Ok(match typed {
+                        Some(o) => {
+                            let name = zun_gc::with_current_heap(|heap| {
+                                heap.typed_array_element(o).map(|k| k.js_name())
+                            })
+                            .unwrap_or("");
+                            Value::Str(name.into())
+                        }
+                        None => Value::Void,
+                    });
+                }
+                let label = match kind {
+                    BUILTIN_TA_BUFFER => "buffer",
+                    BUILTIN_TA_BYTE_LENGTH => "byteLength",
+                    BUILTIN_TA_BYTE_OFFSET => "byteOffset",
+                    _ => "length",
+                };
+                let o = typed.ok_or_else(|| {
+                    self.incompatible_receiver(&format!("get TypedArray.prototype.{label}"))
+                })?;
+                let num = |n: Option<usize>| {
+                    Value::Float(n.unwrap_or(0) as f64, zun_il::NumKind::F64)
+                };
+                Ok(zun_gc::with_current_heap(|heap| match kind {
+                    BUILTIN_TA_BUFFER => heap
+                        .typed_array_buffer(o)
+                        .map(Value::Object)
+                        .unwrap_or(Value::Void),
+                    BUILTIN_TA_BYTE_LENGTH => num(heap.typed_array_byte_len(o)),
+                    BUILTIN_TA_BYTE_OFFSET => num(heap.typed_array_byte_offset(o)),
+                    _ => num(heap.typed_array_len(o)),
+                }))
+            }
+            BUILTIN_ITER_SELF | BUILTIN_SPECIES_GETTER => Ok(this),
+            BUILTIN_MAP_ITERATOR | BUILTIN_SET_ITERATOR => {
+                let want_map = kind == BUILTIN_MAP_ITERATOR;
+                let what = if want_map {
+                    "Map.prototype.entries"
+                } else {
+                    "Set.prototype.values"
+                };
+                let source = this_obj
+                    .filter(|o| {
+                        zun_gc::with_current_heap(|heap| {
+                            if want_map {
+                                heap.map_len(*o).is_some()
+                            } else {
+                                heap.set_len(*o).is_some()
+                            }
+                        })
+                    })
+                    .ok_or_else(|| self.incompatible_receiver(what))?;
+                Ok(Value::Object(self.resolve_iterator(source)?))
+            }
+            BUILTIN_STRING_ITERATOR => {
+                let text = match &this {
+                    Value::Str(text) => Some(text.clone()),
+                    Value::Any(any) => match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
+                        Some(Value::Str(text)) => Some(text),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(text) = text else {
+                    return Err(self.incompatible_receiver("String.prototype[Symbol.iterator]"));
+                };
+                self.call_managed_collection("stringIteratorNew", &[Value::Str(text)])
+            }
+            k if (BUILTIN_DV_BASE..BUILTIN_DV_BASE + DATA_VIEW_METHODS.len() as u32).contains(&k) => {
+                let (js_name, native, elem, is_float) =
+                    DATA_VIEW_METHODS[(k - BUILTIN_DV_BASE) as usize];
+                let view = this_obj
+                    .filter(|o| zun_gc::with_current_heap(|heap| heap.data_view_len(*o).is_some()))
+                    .ok_or_else(|| {
+                        self.incompatible_receiver(&format!("DataView.prototype.{js_name}"))
+                    })?;
+                let is_set = js_name.starts_with("set");
+                let number = |this: &mut Self, index: usize| -> Result<f64, RunError> {
+                    let raw = match _args.get(index) {
+                        Some(Value::Any(any)) => {
+                            zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                .unwrap_or(Value::Void)
+                        }
+                        Some(other) => other.clone(),
+                        None => Value::Void,
+                    };
+                    this.to_number_value(raw)
+                };
+                let offset = number(self, 0)?;
+                let offset = if offset.is_nan() { 0.0 } else { offset.trunc() };
+                let mut call = vec![
+                    Value::Object(view),
+                    Value::Int(offset.max(0.0) as i64, zun_il::NumKind::U64),
+                ];
+                if is_set {
+                    let value = number(self, 1)?;
+                    call.push(if is_float {
+                        Value::Float(value, elem)
+                    } else {
+                        let wrapped = if value.is_finite() { value.trunc() as i128 as i64 } else { 0 };
+                        Value::Int(wrapped, elem)
+                    });
+                }
+                let wants_endian = !matches!(elem, zun_il::NumKind::I8 | zun_il::NumKind::U8);
+                if wants_endian {
+                    let flag = _args.get(if is_set { 2 } else { 1 }).cloned().unwrap_or(Value::Void);
+                    let flag = match flag {
+                        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void),
+                        other => other,
+                    };
+                    call.push(Value::Bool(zun_gc::with_current_heap(|heap| {
+                        crate::collections::is_truthy(&flag, heap)
+                    })));
+                }
+                let result = self.call_managed_collection(native, &call)?;
+                Ok(match result {
+                    Value::Int(n, _) => Value::Float(n as f64, zun_il::NumKind::F64),
+                    Value::Bool(_) => Value::Void,
+                    other => other,
+                })
+            }
+            k if (BUILTIN_COLLECTION_BASE..BUILTIN_COLLECTION_BASE + COLLECTION_METHODS.len() as u32)
+                .contains(&k) =>
+            {
+                let (class, js_name, native, count, returns_this) =
+                    COLLECTION_METHODS[(k - BUILTIN_COLLECTION_BASE) as usize];
+                let is_map = class == "Map";
+                let receiver = this_obj
+                    .filter(|o| {
+                        zun_gc::with_current_heap(|heap| {
+                            if is_map {
+                                heap.map_len(*o).is_some()
+                            } else {
+                                heap.set_len(*o).is_some()
+                            }
+                        })
+                    })
+                    .ok_or_else(|| {
+                        self.incompatible_receiver(&format!("{class}.prototype.{js_name}"))
+                    })?;
+                let mut call = vec![Value::Object(receiver)];
+                for index in 0..count {
+                    let arg = _args.get(index).cloned().unwrap_or(Value::Void);
+                    let boxed = match arg {
+                        Value::Any(any) => any,
+                        other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void),
+                    };
+                    call.push(Value::Any(boxed));
+                }
+                let result = self.call_managed_collection(native, &call)?;
+                Ok(if returns_this {
+                    Value::Object(receiver)
+                } else {
+                    match result {
+                        Value::Bool(b) => Value::Bool(b),
+                        Value::Void => Value::Void,
+                        other => other,
+                    }
+                })
+            }
+            BUILTIN_PROXY_REVOKE => {
+                if let Some(address) = handle.environment() {
+                    let proxy = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                    zun_gc::with_current_heap_mut(|heap| heap.proxy_revoke(proxy));
+                }
+                Ok(Value::Void)
+            }
+            _ => Err(RunError::Native(
+                "TypeError: RegExp.prototype method called on an incompatible receiver".into(),
+            )),
+        }
+    }
+
+    /// `name` / `length` of a built-in method value (kind >= 16).
+    pub(crate) fn builtin_method_meta(kind: u32, name: &str) -> Option<Value> {
+        let label = match kind {
+            BUILTIN_MAP_SIZE | BUILTIN_SET_SIZE => "get size",
+            BUILTIN_ARRAY_ITER_NEXT | BUILTIN_STRING_ITER_NEXT => "next",
+            BUILTIN_ITER_SELF => "[Symbol.iterator]",
+            BUILTIN_PROXY_REVOKE => "",
+            BUILTIN_STRING_ITERATOR => "[Symbol.iterator]",
+            BUILTIN_SPECIES_GETTER => "get [Symbol.species]",
+            BUILTIN_TA_BUFFER => "get buffer",
+            BUILTIN_TA_BYTE_LENGTH => "get byteLength",
+            BUILTIN_TA_BYTE_OFFSET => "get byteOffset",
+            BUILTIN_TA_LENGTH => "get length",
+            BUILTIN_TA_TAG => "get [Symbol.toStringTag]",
+            k if (BUILTIN_COLLECTION_BASE..BUILTIN_COLLECTION_BASE + COLLECTION_METHODS.len() as u32)
+                .contains(&k) =>
+            {
+                let entry = COLLECTION_METHODS[(k - BUILTIN_COLLECTION_BASE) as usize];
+                return Some(if name == "name" {
+                    Value::Str(entry.1.into())
+                } else {
+                    Value::Float(entry.3 as f64, zun_il::NumKind::F64)
+                });
+            }
+            BUILTIN_MAP_ITERATOR => "entries",
+            BUILTIN_SET_ITERATOR => "values",
+            k if (BUILTIN_DV_BASE..BUILTIN_DV_BASE + DATA_VIEW_METHODS.len() as u32).contains(&k) => {
+                let entry = DATA_VIEW_METHODS[(k - BUILTIN_DV_BASE) as usize];
+                if name == "name" {
+                    return Some(Value::Str(entry.0.into()));
+                }
+                let single = matches!(entry.2, zun_il::NumKind::I8 | zun_il::NumKind::U8);
+                let fixed = if entry.0.starts_with("set") { 2.0 } else { 1.0 };
+                let _ = single;
+                return Some(Value::Float(fixed, zun_il::NumKind::F64));
+            }
+            _ => return None,
+        };
+        Some(if name == "name" {
+            Value::Str(label.into())
+        } else {
+            Value::Float(0.0, zun_il::NumKind::F64)
         })
     }
 
@@ -378,11 +1016,190 @@ impl Interp<'_> {
                     return Some((mrid, hidden));
                 }
             }
+            current = self
+                .class_static_proto_override(r)
+                .or_else(|| {
+                    (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                        && !def.base.is_null())
+                    .then(|| def.base.rid())
+                });
+        }
+        None
+    }
+
+    /// `delete Class.name` / `Reflect.deleteProperty(Class, name)`: drop the
+    /// class's own initialized static field slot so reads fall through to the
+    /// base chain. Intrinsic `prototype` is non-configurable.
+    pub(crate) fn class_delete_own(&mut self, rid: u32, name: &str) -> bool {
+        if name == "prototype" {
+            return false;
+        }
+        let Some(def) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .cloned()
+        else {
+            return true;
+        };
+        for frid in def.field_start..def.field_end {
+            let matches = self
+                .module
+                .tables
+                .field_defs
+                .get((frid as usize).wrapping_sub(1))
+                .is_some_and(|f| f.is_static && self.module.strings.get(f.name) == name);
+            if matches {
+                zun_gc::with_current_heap_mut(|heap| heap.static_remove(rid, frid));
+            }
+        }
+        true
+    }
+
+    /// A static read whose own slot is unset (deleted, or never initialised on
+    /// this class): the same-named static of the nearest base class that has
+    /// one, as the prototype chain of constructors would answer.
+    pub(crate) fn static_inherited_read(&self, owner: u32, field: u32) -> Option<Value> {
+        let name = self
+            .module
+            .strings
+            .get(self.module.tables.field_defs.get((field as usize).wrapping_sub(1))?.name)
+            .to_owned();
+        let kind = self
+            .module
+            .tables
+            .field_defs
+            .get((field as usize).wrapping_sub(1))?
+            .kind;
+        let mut current = self
+            .module
+            .tables
+            .type_defs
+            .get((owner as usize).wrapping_sub(1))
+            .and_then(|def| {
+                (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                    && !def.base.is_null())
+                .then(|| def.base.rid())
+            });
+        for _ in 0..256 {
+            let r = current?;
+            let def = self.module.tables.type_defs.get((r as usize).wrapping_sub(1))?;
+            for frid in def.field_start..def.field_end {
+                let Some(f) = self.module.tables.field_defs.get((frid as usize).wrapping_sub(1))
+                else {
+                    continue;
+                };
+                if f.is_static && self.module.strings.get(f.name) == name {
+                    let hit = zun_gc::with_current_heap(|heap| {
+                        if let Some(any) = heap.static_get(r, frid) {
+                            let value = Value::unbox_any(any, heap).unwrap_or(Value::Void);
+                            Some(crate::value::retag_static_numeric(value, kind))
+                        } else {
+                            heap.static_get_function(r, frid).map(Value::Function)
+                        }
+                    });
+                    if hit.is_some() {
+                        return hit;
+                    }
+                }
+            }
             current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
                 && !def.base.is_null())
             .then(|| def.base.rid());
         }
         None
+    }
+
+    /// The class descriptor token carried by a value (a class value read
+    /// through `any`), user-defined or built-in.
+    pub(crate) fn class_token_of(value: &Value) -> Option<u32> {
+        match value {
+            Value::Any(any) => {
+                if let Some(token) = any.as_class_descriptor() {
+                    return Some(token);
+                }
+                match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
+                    Some(Value::Any(inner)) => inner.as_class_descriptor(),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The expando bag of a class value: a plain dynamic object, anchored on the
+    /// realm global, that holds the properties scripts define on a constructor
+    /// (`Reflect.defineProperty(Cls, ...)`) beyond its declared statics.
+    pub(crate) fn class_expando_bag(token: u32) -> zun_gc::Obj {
+        let key = format!("$classBag#{token}");
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(address) = heap.dynamic_get(global, &key).and_then(|a| a.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            }
+            let bag = heap.alloc_dynamic();
+            let any = zun_core::Any::object(bag.addr() as usize);
+            heap.dynamic_define(global, key, any, false);
+            bag
+        })
+    }
+
+    /// `Object.hasOwn(Class, name)`: whether the class value itself (not its
+    /// bases) owns the static field, static method or accessor `name`, or one
+    /// of the intrinsic function properties.
+    pub(crate) fn class_has_own(&self, rid: u32, name: &str) -> bool {
+        if matches!(name, "name" | "length" | "prototype") {
+            return true;
+        }
+        let Some(def) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+        else {
+            return false;
+        };
+        for frid in def.field_start..def.field_end {
+            let Some(field) = self
+                .module
+                .tables
+                .field_defs
+                .get((frid as usize).wrapping_sub(1))
+            else {
+                continue;
+            };
+            if field.is_static
+                && self.module.strings.get(field.name) == name
+                && zun_gc::with_current_heap(|heap| {
+                    heap.static_get(rid, frid).is_some()
+                        || heap.static_get_function(rid, frid).is_some()
+                })
+            {
+                return true;
+            }
+        }
+        let getter = format!("get_{name}");
+        let setter = format!("set_{name}");
+        for mrid in def.method_start..def.method_end {
+            let Some(method) = self
+                .module
+                .tables
+                .method_defs
+                .get((mrid as usize).wrapping_sub(1))
+            else {
+                continue;
+            };
+            if !method.is_static {
+                continue;
+            }
+            let raw = self.module.strings.get(method.name);
+            let plain = raw.strip_suffix("@this").unwrap_or(raw);
+            if plain == name || plain == getter || plain == setter {
+                return true;
+            }
+        }
+        false
     }
 
     /// `Class.name` read through a class value: a static field, a static
@@ -474,9 +1291,30 @@ impl Interp<'_> {
                     mrid, None,
                 ))));
             }
-            current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
-                && !def.base.is_null())
-            .then(|| def.base.rid());
+            current = self
+                .class_static_proto_override(r)
+                .or_else(|| {
+                    (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
+                        && !def.base.is_null())
+                    .then(|| def.base.rid())
+                });
+        }
+        if name == "length" {
+            // A class's `length` is its constructor's declared parameter count
+            // (excluding the receiver); 0 without an explicit constructor.
+            let count = self
+                .class_constructor(rid)
+                .and_then(|mrid| {
+                    let method = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get((mrid as usize).wrapping_sub(1))?;
+                    let body = zun_module::read_body(&self.module.code, method.body_offset).ok()?;
+                    Some((body.param_count as usize).saturating_sub(1))
+                })
+                .unwrap_or(0);
+            return Ok(Some(Value::Float(count as f64, zun_il::NumKind::F64)));
         }
         if name == "name" {
             let def = self
@@ -619,6 +1457,11 @@ impl Interp<'_> {
             !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none()
         }) && self.instance_class_prototype(obj).is_some()
         {
+            zun_gc::with_current_heap_mut(|heap| heap.ensure_instance_bag(obj));
+        } else if zun_gc::with_current_heap(|heap| {
+            heap.map_len(obj).is_some() || heap.set_len(obj).is_some()
+        }) {
+            // A Map / Set takes expando properties in an instance bag too.
             zun_gc::with_current_heap_mut(|heap| heap.ensure_instance_bag(obj));
         }
         let name = match key {
@@ -767,14 +1610,20 @@ impl Interp<'_> {
                         configurable,
                     )
                 } else {
-                    heap.dynamic_force_define_data(
+                    let ok = heap.dynamic_force_define_data(
                         obj,
                         name.to_owned(),
                         desc.value.unwrap_or(value),
                         desc.writable.unwrap_or(writable),
                         enumerable,
                         configurable,
-                    )
+                    );
+                    // Redefining a method: the new function value replaces the
+                    // old one in the function side table.
+                    if let (true, Some(function)) = (ok, desc.value_fn) {
+                        heap.dynamic_set_function(obj, name.to_owned(), function);
+                    }
+                    ok
                 }
             }
             zun_core::PropertyDescriptor::Accessor { get, set, .. } => {
@@ -1203,5 +2052,212 @@ impl Interp<'_> {
             return Ok(true);
         }
         Ok(false)
+    }
+}
+
+impl Interp<'_> {
+    /// The real `Name.prototype` object of the global builtin class `name`
+    /// (`Map`, `Set`, `Array`, ...), when the realm exposes it as a descriptor.
+    pub(crate) fn builtin_prototype_by_name(&self, name: &str) -> Option<zun_gc::Obj> {
+        let descriptor = zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            heap.dynamic_get(global, name)
+        })?;
+        let token = descriptor.as_class_descriptor()?;
+        Some(self.builtin_prototype_object(token))
+    }
+}
+
+/// One own property of a user class constructor (see
+/// [`Interp::class_own_props`]).
+pub(crate) enum ClassOwn {
+    /// An initialised static field.
+    Field(u32, u32),
+    /// A static method.
+    Method(zun_core::FunctionHandle),
+    /// A static accessor pair.
+    Accessor(Option<zun_core::FunctionHandle>, Option<zun_core::FunctionHandle>),
+}
+
+impl Interp<'_> {
+    /// Own static members of the user class `rid` in declaration order:
+    /// initialised fields, methods and accessors (hidden `@this` helpers and
+    /// the constructor are skipped).
+    pub(crate) fn class_own_props(&self, rid: u32) -> Vec<(String, ClassOwn)> {
+        let mut out: Vec<(String, ClassOwn)> = Vec::new();
+        let Some(def) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+        else {
+            return out;
+        };
+        for frid in def.field_start..def.field_end {
+            let Some(field) = self
+                .module
+                .tables
+                .field_defs
+                .get((frid as usize).wrapping_sub(1))
+            else {
+                continue;
+            };
+            if !field.is_static {
+                continue;
+            }
+            // A `static { ... }` block is lowered to a synthetic field named by its
+            // source text; it is not a property.
+            if self.module.strings.get(field.name).starts_with("static {") {
+                continue;
+            }
+            let set = zun_gc::with_current_heap(|heap| {
+                heap.static_get(rid, frid).is_some() || heap.static_get_function(rid, frid).is_some()
+            });
+            if set {
+                out.push((
+                    self.module.strings.get(field.name).to_owned(),
+                    ClassOwn::Field(rid, frid),
+                ));
+            }
+        }
+        for mrid in def.method_start..def.method_end {
+            let Some(method) = self
+                .module
+                .tables
+                .method_defs
+                .get((mrid as usize).wrapping_sub(1))
+            else {
+                continue;
+            };
+            if !method.is_static || method.body_offset == u32::MAX {
+                continue;
+            }
+            let name = self.module.strings.get(method.name);
+            let handle = zun_core::FunctionHandle::new(mrid, None);
+            let (prop, is_get) = if let Some(p) = name.strip_prefix("get_") {
+                (p, Some(true))
+            } else if let Some(p) = name.strip_prefix("set_") {
+                (p, Some(false))
+            } else {
+                (name, None)
+            };
+            let ident = !prop.is_empty()
+                && prop
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+            if !ident {
+                continue;
+            }
+            match is_get {
+                None => out.push((name.to_owned(), ClassOwn::Method(handle))),
+                Some(get) => {
+                    if let Some((_, ClassOwn::Accessor(g, s))) =
+                        out.iter_mut().find(|(n, _)| n == prop)
+                    {
+                        if get {
+                            *g = Some(handle);
+                        } else {
+                            *s = Some(handle);
+                        }
+                    } else if get {
+                        out.push((prop.to_owned(), ClassOwn::Accessor(Some(handle), None)));
+                    } else {
+                        out.push((prop.to_owned(), ClassOwn::Accessor(None, Some(handle))));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `Object.getOwnPropertyNames(Class)` for a user class descriptor.
+    pub(crate) fn class_own_names(&self, rid: u32) -> Vec<String> {
+        let mut names = vec!["length".to_owned(), "name".to_owned(), "prototype".to_owned()];
+        names.extend(self.class_own_props(rid).into_iter().map(|(n, _)| n));
+        names
+    }
+
+    /// `Object.getOwnPropertyDescriptor(Class, key)` for a user class.
+    pub(crate) fn class_own_descriptor(&self, rid: u32, key: &str) -> Option<zun_gc::Obj> {
+        if key == "prototype" {
+            let proto = self.class_prototype_object(rid);
+            return Some(zun_gc::with_current_heap_mut(|heap| {
+                let out = heap.alloc_dynamic();
+                heap.dynamic_set(
+                    out,
+                    "value".to_owned(),
+                    zun_core::Any::object(proto.addr() as usize),
+                );
+                for (n, f) in [("writable", false), ("enumerable", false), ("configurable", false)]
+                {
+                    heap.dynamic_set(out, n.to_owned(), zun_core::Any::bool(f));
+                }
+                out
+            }));
+        }
+        let (_, own) = self
+            .class_own_props(rid)
+            .into_iter()
+            .find(|(n, _)| n == key)?;
+        Some(zun_gc::with_current_heap_mut(|heap| {
+            let out = heap.alloc_dynamic();
+            let flag = |heap: &mut zun_gc::Heap, n: &str, f: bool| {
+                heap.dynamic_set(out, n.to_owned(), zun_core::Any::bool(f));
+            };
+            match own {
+                ClassOwn::Field(r, frid) => {
+                    if let Some(any) = heap.static_get(r, frid) {
+                        heap.dynamic_set(out, "value".to_owned(), any);
+                    } else if let Some(handle) = heap.static_get_function(r, frid) {
+                        heap.dynamic_set_function(out, "value", handle);
+                    }
+                    flag(heap, "writable", true);
+                    flag(heap, "enumerable", true);
+                    flag(heap, "configurable", true);
+                }
+                ClassOwn::Method(handle) => {
+                    heap.dynamic_set_function(out, "value", handle);
+                    flag(heap, "writable", true);
+                    flag(heap, "enumerable", false);
+                    flag(heap, "configurable", true);
+                }
+                ClassOwn::Accessor(get, set) => {
+                    match get {
+                        Some(h) => {
+                            heap.dynamic_set_function(out, "get", h);
+                        }
+                        None => {
+                            heap.dynamic_set(out, "get".to_owned(), zun_core::Any::void());
+                        }
+                    }
+                    match set {
+                        Some(h) => {
+                            heap.dynamic_set_function(out, "set", h);
+                        }
+                        None => {
+                            heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
+                        }
+                    }
+                    flag(heap, "enumerable", false);
+                    flag(heap, "configurable", true);
+                }
+            }
+            out
+        }))
+    }
+}
+
+impl Interp<'_> {
+    /// The class a script re-parented the static side of `rid` to with
+    /// `Object.setPrototypeOf(Class, Other)`, when one was recorded.
+    pub(crate) fn class_static_proto_override(&self, rid: u32) -> Option<u32> {
+        let key = format!("$classBag#{}", zun_natives::USER_CLASS_FLAG | rid);
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            let address = heap.dynamic_get(global, &key)?.as_object()?;
+            let bag = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            heap.dynamic_prototype(bag)?.as_class_descriptor()
+        })
+        .and_then(|token| self.user_class_rid(token))
     }
 }

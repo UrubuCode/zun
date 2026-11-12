@@ -91,6 +91,7 @@ impl Interp<'_> {
             Value::Str("".into()),
             Value::Void,
             Value::Str("".into()),
+            Value::Bool(false),
         ];
         if field_count != values.len() {
             return None;
@@ -231,7 +232,11 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "deleteStrict",
         "objectPrototype",
         "regexpPrototype",
+        "stringPrototype",
+        "functionPrototype",
         "objectJsonStringify",
+        "objectRawJson",
+        "objectIsRawJson",
         "proxyNew",
         "proxyGet",
         "proxySet",
@@ -275,6 +280,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "objectCreate",
         "objectGetPrototypeOf",
         "objectSetPrototypeOf",
+        "reflectSetPrototypeOf",
         "objectFromEntries",
         "objectGroupBy",
         "templateObject",
@@ -346,6 +352,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "decoratorRunInitializers",
         "classBox",
         "reflectConstruct",
+        "reflectConstructNew",
         "symbolHas",
         "proxyConstruct",
         "classSetMethod",
@@ -363,6 +370,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "numberCoerceStrict",
         "mathApply",
         "bigIntUshr",
+        "proxyRevocable",
     ]
     .into_iter()
     .find(|&name| {

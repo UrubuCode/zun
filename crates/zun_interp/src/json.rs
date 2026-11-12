@@ -229,6 +229,18 @@ impl Interp<'_> {
     /// Read an own enumerable property of an object (running a getter).
     #[allow(clippy::unnecessary_unwrap)] // guarded unwrap reads clearer than if-let here
     fn json_get(&mut self, obj: zun_gc::Obj, key: &str) -> Result<Option<Value>, RunError> {
+        // A proxy with a `get` trap: the trap supplies the value (and may throw).
+        if zun_gc::with_current_heap(|heap| {
+            heap.proxy_target(obj).is_some() && heap.proxy_trap(obj, "get").is_some()
+        }) {
+            let got = self.proxy_dynamic_get(obj, key)?;
+            let got = match got {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                    .unwrap_or(Value::Void),
+                other => other,
+            };
+            return Ok(Some(got));
+        }
         // Elements of an array-like (an `arguments` object, a typed array).
         if let Some(index) = key.parse::<usize>().ok().filter(|i| i.to_string() == key) {
             if let Some(len) = crate::typed_arrays::element_len(obj) {
@@ -279,7 +291,7 @@ impl Interp<'_> {
     }
 
     /// The class name of a typed instance (`""` for a dynamic object).
-    fn json_class_name(&self, obj: zun_gc::Obj) -> String {
+    pub(crate) fn json_class_name(&self, obj: zun_gc::Obj) -> String {
         let rid = obj.type_rid();
         if rid == 0 {
             return String::new();
@@ -336,6 +348,12 @@ impl Interp<'_> {
         let key_value = Value::Str(key.into());
         // 1. toJSON
         if let Some(obj) = as_obj(&value) {
+            // A proxy's `get` trap observes the `toJSON` lookup (and may throw).
+            if zun_gc::with_current_heap(|heap| {
+                heap.proxy_target(obj).is_some() && heap.proxy_trap(obj, "get").is_some()
+            }) {
+                self.proxy_dynamic_get(obj, "toJSON")?;
+            }
             let is_bigint = zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some());
             if is_bigint {
                 // BigInt has no toJSON here; serialisation fails below.
@@ -355,6 +373,25 @@ impl Interp<'_> {
             } else if let Some(handle) =
                 zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "toJSON"))
             {
+                let this = Value::Object(ctx.slot_get(slot));
+                value = self.json_call_with_this(handle, this, vec![key_value.clone()])?;
+                if let Some(next) = as_obj(&value) {
+                    ctx.slot_set(slot, next);
+                }
+            } else if let Some(handle) = {
+                let name = zun_gc::with_current_heap(|heap| {
+                    if heap.map_entries(obj).is_some() {
+                        Some("Map")
+                    } else if heap.set_values(obj).is_some() {
+                        Some("Set")
+                    } else {
+                        None
+                    }
+                });
+                name.and_then(|n| self.builtin_prototype_by_name(n)).and_then(|proto| {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(proto, "toJSON"))
+                })
+            } {
                 let this = Value::Object(ctx.slot_get(slot));
                 value = self.json_call_with_this(handle, this, vec![key_value.clone()])?;
                 if let Some(next) = as_obj(&value) {
@@ -442,6 +479,16 @@ impl Interp<'_> {
                     return Err(RunError::Native(
                         "TypeError: Do not know how to serialize a BigInt".into(),
                     ));
+                }
+                // A `JSON.rawJSON` box embeds its text verbatim.
+                if zun_gc::with_current_heap(|heap| heap.dynamic_is_raw_json(obj)) {
+                    let text = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get(obj, "rawJSON")
+                            .and_then(|any| Value::unbox_any(any, heap))
+                    });
+                    if let Some(Value::Str(text)) = text {
+                        return Ok(Some(text.to_string()));
+                    }
                 }
                 // Cycle detection against every ancestor currently on the path.
                 for ancestor in 1..slot {

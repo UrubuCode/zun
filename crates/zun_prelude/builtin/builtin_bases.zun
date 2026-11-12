@@ -551,3 +551,119 @@ function __zunSetOpBool(o: Set<any>, op: string, other: any): boolean {
     const result: boolean = __zunSetOp(o, op, other);
     return result;
 }
+
+// `class X extends Array`: the subclass instance owns a native array and
+// forwards the common surface; `from`/`of` build plain native arrays.
+class __BuiltinArray {
+    inner: any[] = [];
+
+    constructor(...items: any[]) {
+        if (items.length === 1 && typeof items[0] === "number") {
+            this.inner = new Array(items[0]);
+        } else {
+            this.inner = items;
+        }
+    }
+
+    get length(): number {
+        return this.inner.length;
+    }
+
+    push(...items: any[]): number {
+        for (const v of items) {
+            this.inner.push(v);
+        }
+        return this.inner.length;
+    }
+
+    pop(): any {
+        return this.inner.pop();
+    }
+
+    join(sep?: any): string {
+        return this.inner.join(sep);
+    }
+
+    toString(): string {
+        return this.inner.join(",");
+    }
+
+    static from(items: any, mapFn?: any): any {
+        if (mapFn === undefined) {
+            return Array.from(items);
+        }
+        return Array.from(items, mapFn);
+    }
+
+    static of(...items: any[]): any {
+        return items;
+    }
+
+    static isArray(v: any): boolean {
+        return Array.isArray(v);
+    }
+}
+
+class __BuiltinBoolean {
+    inner: boolean = false;
+
+    constructor(value?: any) {
+        this.inner = Boolean(value);
+    }
+
+    valueOf(): boolean {
+        return this.inner;
+    }
+
+    toString(): string {
+        return this.inner ? "true" : "false";
+    }
+}
+
+class __BuiltinNumber {
+    inner: number = 0;
+
+    constructor(value?: any) {
+        this.inner = value === undefined ? 0 : Number(value);
+    }
+
+    valueOf(): number {
+        return this.inner;
+    }
+
+    toString(radix?: any): string {
+        return radix === undefined ? String(this.inner) : this.inner.toString(radix);
+    }
+
+    toFixed(digits?: any): string {
+        return this.inner.toFixed(digits);
+    }
+}
+
+class __BuiltinWeakRef {
+    inner: WeakRef<any>;
+
+    constructor(target: any) {
+        this.inner = new WeakRef(target);
+    }
+
+    deref(): any {
+        return this.inner.deref();
+    }
+}
+
+class __BuiltinFinalizationRegistry {
+    inner: FinalizationRegistry<any>;
+
+    constructor(callback: any) {
+        this.inner = new FinalizationRegistry(callback);
+    }
+
+    register(target: any, held: any, token?: any): any {
+        return this.inner.register(target, held, token);
+    }
+
+    unregister(token: any): boolean {
+        return this.inner.unregister(token);
+    }
+}

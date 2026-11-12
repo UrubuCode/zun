@@ -203,7 +203,7 @@ pub const DYNAMIC_REDUCER: FuncIndex = u32::MAX - 2;
 pub type LocalSlot = u16;
 
 /// A checked program.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Program {
     /// All functions; a [`FuncIndex`] indexes this vector.
     pub functions: Vec<Function>,
@@ -282,7 +282,7 @@ pub struct Capture {
 
 /// A capture together with the expression evaluated in the enclosing scope
 /// when the closure environment is constructed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClosureCapture {
     /// Environment layout entry.
     pub capture: Capture,
@@ -292,7 +292,7 @@ pub struct ClosureCapture {
 
 /// A closure body represented as a synthetic function with an explicit hidden
 /// environment parameter. It is not produced until closure sema is enabled.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClosureFunction {
     /// Stable diagnostic/debug name.
     pub name: String,
@@ -334,7 +334,7 @@ pub struct Decorator {
 }
 
 /// A checked class: its base, full field layout, and methods.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Class {
     /// The class name.
     pub name: String,
@@ -350,7 +350,7 @@ pub struct Class {
 }
 
 /// A checked class field.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClassField {
     /// The field name.
     pub name: String,
@@ -363,7 +363,7 @@ pub struct ClassField {
 }
 
 /// A checked function.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Function {
     /// The function name (owned; the HIR outlives the source text).
     pub name: String,
@@ -417,7 +417,7 @@ pub struct GeneratorStateMachinePlan {
 }
 
 /// A checked statement.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     /// Store `init` into a local slot (covers `let`).
     Let {
@@ -501,7 +501,7 @@ pub enum Stmt {
 }
 
 /// A checked exception handler.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CatchClause {
     pub slot: LocalSlot,
     pub ty: Ty,
@@ -509,7 +509,7 @@ pub struct CatchClause {
 }
 
 /// One populated member of a [`ExprKind::DynamicObjectLiteral`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ObjectEntry {
     /// A data property: `key: value` (or shorthand). The value is boxed to
     /// `Any`.
@@ -538,7 +538,7 @@ pub enum ObjectEntry {
 }
 
 /// One part of an [`ExprKind::ArraySpreadLiteral`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ArrayPart {
     /// A present element pushed at the next index.
     Element(Expr),
@@ -554,7 +554,7 @@ pub enum ArrayPart {
 }
 
 /// The key of a data [`ObjectEntry`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ObjectKey {
     /// A statically known string key stored via `StoreDynamic`.
     Named(String),
@@ -564,7 +564,7 @@ pub enum ObjectKey {
 }
 
 /// A checked expression: a kind plus its type and origin.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr {
     /// What the expression is.
     pub kind: ExprKind,
@@ -576,7 +576,7 @@ pub struct Expr {
 }
 
 /// The kinds of checked expressions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprKind {
     /// A number literal.
     Number(f64),

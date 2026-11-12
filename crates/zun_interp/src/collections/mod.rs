@@ -30,6 +30,7 @@ mod string_num;
 mod bigint;
 mod buffer;
 mod class_decorator;
+mod error_own;
 mod generator;
 mod runtime_async;
 mod runtime_class_proxy;
@@ -196,12 +197,26 @@ impl<'a> Interp<'a> {
         // The typed-array intrinsics are generated from the master table in
         // `zun_core`, so every kind the checker accepts runs on Tier 0.
         if let Some(result) = crate::typed_arrays::call(name, args) {
+            // A view constructor the buffer cannot back (misaligned or
+            // out-of-range window) is a RangeError, not a malformed call.
+            if matches!(result, Err(RunError::BadToken)) && name.ends_with("ArrayNew") {
+                return match self.new_error_object("RangeError", "Invalid typed array length") {
+                    Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                    None => result,
+                };
+            }
             return result;
         }
         if let Some(result) = crate::node_buffer::call(name, args) {
             return result;
         }
         if let Some(result) = self.call_typed_array_ext(name, args) {
+            if matches!(result, Err(RunError::BadToken)) && name == "typedArrayTrackingNew" {
+                return match self.new_error_object("RangeError", "Invalid typed array length") {
+                    Some(error) => Err(RunError::Thrown(Value::Object(error))),
+                    None => result,
+                };
+            }
             return result;
         }
         if let Some(result) = self.call_decorator_native(name, args) {
@@ -419,7 +434,7 @@ impl<'a> Interp<'a> {
             "proxyGet" => self.col_proxy(name, args),
             "proxySet" => self.col_proxy(name, args),
             "proxyHas" | "proxyDelete" => self.col_proxy(name, args),
-            "proxyNewCallable" => self.col_proxy(name, args),
+            "proxyNewCallable" | "proxyRevocable" => self.col_proxy(name, args),
             "proxyApply" => self.col_proxy(name, args),
             "replaceFn" => self.col_string_num(name, args),
             "stringMethod" => self.col_string_num(name, args),
@@ -430,7 +445,7 @@ impl<'a> Interp<'a> {
             "decoratorAddInitializer" => self.col_class_decorator(name, args),
             "decoratorRunInitializers" => self.col_class_decorator(name, args),
             "classBox" => self.col_class_decorator(name, args),
-            "reflectConstruct" => self.col_reflect(name, args),
+            "reflectConstruct" | "reflectConstructNew" => self.col_reflect(name, args),
             "proxyConstruct" => self.col_proxy(name, args),
             "applyDecorator" => self.col_class_decorator(name, args),
             "classSetSymbolFunction" => self.col_class_decorator(name, args),
@@ -623,10 +638,12 @@ impl<'a> Interp<'a> {
             "objectIsFrozen" => self.col_object_core(name, args),
             "objectCreate" => self.col_object_core(name, args),
             "objectGetPrototypeOf" => self.col_object_core(name, args),
-            "objectJsonStringify" => self.col_object_core(name, args),
+            "objectJsonStringify" | "objectRawJson" | "objectIsRawJson" => {
+                self.col_object_core(name, args)
+            }
             "objectPrototype" => self.col_object_core(name, args),
-            "regexpPrototype" => self.col_object_core(name, args),
-            "objectSetPrototypeOf" => self.col_object_core(name, args),
+            "regexpPrototype" | "stringPrototype" | "functionPrototype" => self.col_object_core(name, args),
+            "objectSetPrototypeOf" | "reflectSetPrototypeOf" => self.col_object_core(name, args),
             "templateObject" => self.col_object_descriptor(name, args),
             "objectGroupBy" => self.col_object_descriptor(name, args),
             "objectFromEntries" => self.col_object_descriptor(name, args),
@@ -801,6 +818,9 @@ pub(super) fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<S
         Value::Bool(value) => Some(value.to_string()),
         // A nested array joins recursively (`[[1, 2], 3].join()` is "1,2,3").
         Value::Object(obj) => {
+            if let Some(big) = heap.bigint_value(obj) {
+                return Some(big.to_string());
+            }
             let length = heap.array_len(obj)?;
             let parts: Vec<String> = (0..length)
                 .map(|index| {

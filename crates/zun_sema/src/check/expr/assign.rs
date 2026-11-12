@@ -141,6 +141,33 @@ impl Checker<'_> {
                 if self.module_globals.contains(&text) {
                     return self.global_set_expr(&text, value, span);
                 }
+                // Assignment to an undeclared / not-yet-declared (TDZ) name:
+                // evaluate the value, then raise a run-time ReferenceError.
+                let known_declaration = self.by_name.contains_key(&text)
+                    || self.classes_by_name.contains_key(&text)
+                    || self.realm_globals.contains_key(&text);
+                if known_declaration {
+                    self.error(target.span, format!("unknown variable `{text}`"));
+                    return self.poison(span);
+                }
+                if let Some((id, _)) = zun_natives::resolve("collections", "globalRead") {
+                    let throw = hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![Self::string_literal(text.clone(), span)],
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::Sequence {
+                            effect: Box::new(value),
+                            value: Box::new(throw),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 self.error(target.span, format!("unknown variable `{text}`"));
                 self.poison(span)
             }
@@ -206,13 +233,39 @@ impl Checker<'_> {
                 index = self.coerce_array_index(index);
             }
             if !index.ty.is_int() && !index.ty.is_error() {
-                self.error(index.span, "buffer index must be an integer");
+                let value = self.check_expr(cx, value);
+                return hir::Expr {
+                    kind: hir::ExprKind::DynamicSetValue {
+                        object: Box::new(Self::box_to_any(object)),
+                        key: Box::new(Self::box_to_any(index)),
+                        value: Box::new(Self::box_to_any(value)),
+                    },
+                    ty: Ty::Any,
+                    span,
+                };
             }
             if let Some((native, _ret, params)) = crate::typed_arrays::method(kind, "set") {
                 // params = [index, element]; the element type is the kind's.
                 let elem_ty = params.get(1).copied().unwrap_or(Ty::Int(IntKind::U8));
                 let mut value = self.check_expr(cx, value);
                 let value_ty = value.ty;
+                // A value the element type cannot take (a BigInt into a
+                // `BigInt64Array`, a string, ...) is converted at run time.
+                if !value.ty.is_error()
+                    && (!self.is_assignable(value.ty, elem_ty) || value.ty == Ty::Any)
+                    && !(elem_ty.is_int() && value.ty == Ty::F64)
+                    && !matches!(value.ty, Ty::Int(_) | Ty::Float(_))
+                {
+                    return hir::Expr {
+                        kind: hir::ExprKind::DynamicSetValue {
+                            object: Box::new(Self::box_to_any(object)),
+                            key: Box::new(Self::box_to_any(index)),
+                            value: Box::new(Self::box_to_any(value)),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 coerce_numeric_literal(&mut value, elem_ty);
                 // A JS `number` stored into an integer element is
                 // converted (NaN -> 0, truncation) like a typed-array set.
@@ -432,6 +485,9 @@ impl Checker<'_> {
             Ty::Instance(class) => match self.field_of(class, &fname) {
                 Some((slot, ty)) => {
                     coerce_numeric_literal(&mut value, ty);
+                    if ty == Ty::Any && matches!(value.ty, Ty::Function(_)) {
+                        value = Self::box_to_any(value);
+                    }
                     if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
                         self.error(
                             value.span,

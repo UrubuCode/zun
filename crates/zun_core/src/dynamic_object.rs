@@ -66,6 +66,8 @@ pub struct DynamicObject {
     /// This table backs expando properties of a typed class instance (its
     /// declared fields still live in the fixed object layout).
     instance_bag: bool,
+    /// Internal slot of a `JSON.rawJSON` box.
+    raw_json: bool,
     /// Symbol keys whose **enumerable** attribute is cleared (skipped by spread
     /// and `Object.assign`).
     non_enumerable_symbols: HashSet<SymbolId>,
@@ -473,6 +475,14 @@ impl DynamicObject {
         self.non_extensible = true;
     }
     /// Whether new keys may be added (`Object.isExtensible`).
+    /// Mark this object as a `JSON.rawJSON` box.
+    pub fn mark_raw_json(&mut self) {
+        self.raw_json = true;
+    }
+    /// Whether this object carries the `[[IsRawJSON]]` internal slot.
+    pub fn is_raw_json(&self) -> bool {
+        self.raw_json
+    }
     pub fn is_extensible(&self) -> bool {
         !self.non_extensible && !self.frozen
     }

@@ -102,6 +102,10 @@ impl Checker<'_> {
                 // `this` outside a method (module scope, plain function):
                 // strict-mode `undefined`.
                 if text == "this" && !cx.captures.contains_key("this") {
+                    if let Some(class_idx) = self.static_init_class {
+                        let token = zun_natives::USER_CLASS_FLAG | (class_idx + 1);
+                        return self.realm_descriptor_expr(token, span);
+                    }
                     let void_zero = ast::Expr::Unary {
                         op: ast::UnaryOp::Void,
                         operand: Box::new(ast::Expr::Number { value: 0.0, span }),

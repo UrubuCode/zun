@@ -313,7 +313,7 @@ impl Checker<'_> {
                     || t == Ty::Array
                     || t == Ty::Void
                     || t == Ty::Symbol
-                    || matches!(t, Ty::Int(_))
+                    || matches!(t, Ty::Int(_) | Ty::Float(_) | Ty::BufferView(_) | Ty::Buffer)
             };
             let numeric_ty = |t: Ty| t.is_int() || t.is_float();
             // Route through the runtime `addAny` (ECMAScript
@@ -440,10 +440,23 @@ impl Checker<'_> {
         let (lhs, rhs) = if matches!(
             *op,
             ast::BinaryOp::Lt | ast::BinaryOp::Le | ast::BinaryOp::Gt | ast::BinaryOp::Ge
-        ) && (matches!(lhs.ty, Ty::Array | Ty::DynamicObject)
-            || matches!(rhs.ty, Ty::Array | Ty::DynamicObject))
-            && !lhs.ty.is_error()
+        ) && !lhs.ty.is_error()
             && !rhs.ty.is_error()
+            && (matches!(lhs.ty, Ty::Array | Ty::DynamicObject)
+                || matches!(rhs.ty, Ty::Array | Ty::DynamicObject)
+                || {
+                    // Mixed primitives with no direct lowering (`true < "x"`)
+                    // compare through the dynamic relational comparison.
+                    let prim =
+                        |t: Ty| matches!(t, Ty::String | Ty::Boolean | Ty::Void);
+                    let direct = (lhs.ty == rhs.ty && lhs.ty == Ty::String)
+                        || (prim(lhs.ty) && rhs.ty == Ty::F64)
+                        || (lhs.ty == Ty::F64 && prim(rhs.ty));
+                    !direct
+                        && (prim(lhs.ty) || prim(rhs.ty))
+                        && (prim(lhs.ty) || lhs.ty == Ty::F64)
+                        && (prim(rhs.ty) || rhs.ty == Ty::F64)
+                })
         {
             (Self::box_to_any(lhs), Self::box_to_any(rhs))
         } else {

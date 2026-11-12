@@ -736,6 +736,12 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "reflectSetPrototypeOf",
+            params: &[DynamicObject, Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "objectSetPrototypeOf",
             params: &[DynamicObject, Opaque],
             ret: Opaque,
@@ -1323,6 +1329,14 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Opaque,
             imp: unavailable,
         },
+        // `Reflect.construct(target, args, newTarget)`: built-in collection
+        // targets are built natively and given `newTarget.prototype`.
+        NativeFn {
+            name: "reflectConstructNew",
+            params: &[Opaque, Array, Opaque],
+            ret: Opaque,
+            imp: unavailable,
+        },
         NativeFn {
             name: "proxyConstruct",
             params: &[Proxy, Array],
@@ -1563,6 +1577,18 @@ pub const MODULE: crate::Module = crate::Module {
         // `JSON.stringify(value, replacer?, space?)` — returns the JSON text, or
         // `undefined` for a non-serialisable top-level value.
         NativeFn {
+            name: "objectRawJson",
+            params: &[Str],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "objectIsRawJson",
+            params: &[Opaque],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "objectJsonStringify",
             params: &[Opaque, Opaque, Opaque],
             ret: Opaque,
@@ -1616,6 +1642,27 @@ pub const MODULE: crate::Module = crate::Module {
             name: "regexpPrototype",
             params: &[],
             ret: Opaque,
+            imp: unavailable,
+        },
+        // `Function.prototype` as a value: the shared prototype singleton.
+        NativeFn {
+            name: "functionPrototype",
+            params: &[],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        // `String.prototype` as a value: the shared prototype singleton.
+        NativeFn {
+            name: "stringPrototype",
+            params: &[],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        // `Proxy.revocable(target, handler)`: `{ proxy, revoke }`.
+        NativeFn {
+            name: "proxyRevocable",
+            params: &[DynamicObject, DynamicObject],
+            ret: DynamicObject,
             imp: unavailable,
         },
     ],

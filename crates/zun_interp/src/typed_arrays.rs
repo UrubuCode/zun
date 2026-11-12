@@ -250,9 +250,15 @@ macro_rules! typed_array_dispatch {
                     concat!($native, "New") => Some(new_view(args, zun_core::TypedElement::$variant)),
                     concat!($native, "Get") => Some((|| {
                         let view = object(args.first()?)?;
-                        let index = index(args.get(1)).ok()?;
-                        let element =
-                            zun_gc::with_current_heap(|heap| heap.$get(view, index))?;
+                        let Ok(index) = index(args.get(1)) else {
+                            return Some(Value::Void);
+                        };
+                        // An out-of-range read yields `undefined`.
+                        let Some(element) =
+                            zun_gc::with_current_heap(|heap| heap.$get(view, index))
+                        else {
+                            return Some(Value::Void);
+                        };
                         Some(ElementValue::into_value(element))
                     })()
                     .ok_or(RunError::BadToken)),

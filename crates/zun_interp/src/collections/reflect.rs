@@ -76,6 +76,11 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 let mut cursor = object(args.first().ok_or(RunError::BadToken)?);
+                if cursor.is_none() {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot use 'in' operator to search in a non-object".into(),
+                    ));
+                }
                 let mut depth = 0;
                 while let Some(current) = cursor {
                     let found = zun_gc::with_current_heap(|heap| {
@@ -97,8 +102,52 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectHas" => {
-                let object =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A symbol key: walk the prototype chain for an own or
+                // inherited symbol-keyed property, mirroring `symbolHas`.
+                if let Some(crate::property_ops::PropKey::Sym(symbol)) =
+                    args.get(1).and_then(crate::property_ops::prop_key)
+                {
+                    let mut cursor = object(args.first().ok_or(RunError::BadToken)?);
+                    let mut depth = 0;
+                    while let Some(current) = cursor {
+                        let found = zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol(current, symbol).is_some()
+                                || heap.dynamic_get_symbol_function(current, symbol).is_some()
+                                || heap.dynamic_symbol_getter(current, symbol).is_some()
+                        });
+                        if found {
+                            return Ok(Value::Bool(true));
+                        }
+                        cursor = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(current))
+                            .and_then(|proto| proto.as_object())
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                        depth += 1;
+                        if depth > 64 {
+                            break;
+                        }
+                    }
+                    return Ok(Value::Bool(false));
+                }
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if let Some(Value::Str(key)) = args.get(1) {
+                        let bag = Self::class_expando_bag(token);
+                        let found = zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, key))
+                            || self
+                                .user_class_rid(token)
+                                .is_some_and(|rid| self.class_has_own(rid, key));
+                        return Ok(Value::Bool(found));
+                    }
+                }
+                let object = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
+                    RunError::Native(
+                        "TypeError: Cannot use 'in' operator to search in a non-object".into(),
+                    )
+                })?;
+                if let Ok(key) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
+                    if let Some(hit) = self.typed_view_has(object, &key) {
+                        return Ok(Value::Bool(hit));
+                    }
+                }
                 let name = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name,
                     _ => return Err(RunError::BadToken),
@@ -140,6 +189,9 @@ impl<'a> Interp<'a> {
                     {
                         return Ok(Value::Bool(true));
                     }
+                    if self.error_hidden_own(object).iter().any(|(key, _)| key == &name) {
+                        return Ok(Value::Bool(true));
+                    }
                     let found = self.instance_method_rid(object, &name).is_some()
                         || self
                             .instance_method_rid(object, &format!("get_{name}"))
@@ -149,6 +201,41 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectDelete" => {
+                // A symbol key: a symbol-keyed data property is configurable,
+                // so deletion always reports success; remove it from the
+                // object's symbol store when present.
+                if let Some(crate::property_ops::PropKey::Sym(symbol)) =
+                    args.get(1).and_then(crate::property_ops::prop_key)
+                {
+                    if let Some(target) = object(args.first().ok_or(RunError::BadToken)?) {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.dynamic_delete_symbol(target, symbol)
+                        });
+                    }
+                    return Ok(Value::Bool(true));
+                }
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if let Some(Value::Str(key)) = args.get(1) {
+                        let bag = Self::class_expando_bag(token);
+                        if zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, key)) {
+                            return Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_delete(bag, key)
+                            })));
+                        }
+                    }
+                }
+                if let Ok(Value::Any(descriptor)) = unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                {
+                    if let Some(rid) = descriptor
+                        .as_class_descriptor()
+                        .and_then(|t| self.user_class_rid(t))
+                    {
+                        if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                        {
+                            return Ok(Value::Bool(self.class_delete_own(rid, &key)));
+                        }
+                    }
+                }
                 // A boxed string (modelled as the primitive): its indices and
                 // `length` are non-configurable, any other key is deletable.
                 if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
@@ -263,6 +350,98 @@ impl<'a> Interp<'a> {
                     }
                 }
                 self.reflect_set(args)
+            }
+            "reflectConstructNew" => {
+                let token = args
+                    .first()
+                    .and_then(Self::class_token_of)
+                    .ok_or_else(|| RunError::Native("TypeError: value is not a constructor".into()))?;
+                let array =
+                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let values = self.read_array_values(array)?;
+                // `Reflect.construct(Map|Set, args, UserSubclass)`: build a real
+                // instance of the subclass (it owns the native storage and the
+                // subclass methods) instead of a raw collection with a swapped
+                // prototype.
+                if self.user_class_rid(token).is_none() {
+                    if let Some(sub) = args
+                        .get(2)
+                        .and_then(Self::class_token_of)
+                        .and_then(|t| self.user_class_rid(t))
+                    {
+                        let wanted = zun_gc::with_current_heap_mut(|heap| {
+                            let global = heap.global_object();
+                            ["Map", "Set"].into_iter().find(|name| {
+                                heap.dynamic_get(global, name)
+                                    .and_then(|a| a.as_class_descriptor())
+                                    == Some(token)
+                            })
+                        });
+                        if let Some(wanted) = wanted {
+                            let base_name = if wanted == "Map" {
+                                "__BuiltinMap"
+                            } else {
+                                "__BuiltinSet"
+                            };
+                            if self.class_chain_has_name(sub, base_name) {
+                                return self.construct_class_from_descriptor(
+                                    zun_natives::USER_CLASS_FLAG | sub,
+                                    values,
+                                );
+                            }
+                        }
+                    }
+                }
+                let built = if self.user_class_rid(token).is_some() {
+                    self.construct_class_from_descriptor(token, values)?
+                } else {
+                    let named = |this: &mut Self, name: &str| {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            let global = heap.global_object();
+                            heap.dynamic_get(global, name).and_then(|a| a.as_class_descriptor())
+                        })
+                        .is_some_and(|t| t == token)
+                            && {
+                                let _ = this;
+                                true
+                            }
+                    };
+                    let source = values.into_iter().next().unwrap_or(Value::Void);
+                    if named(self, "Map") {
+                        self.call_managed_collection("mapFromIterable", &[source])?
+                    } else if named(self, "Set") {
+                        self.call_managed_collection("setFromIterable", &[source])?
+                    } else {
+                        return Err(RunError::Native("TypeError: value is not a constructor".into()));
+                    }
+                };
+                // The result inherits `newTarget.prototype` when that is an object.
+                let new_target = args.get(2).cloned().unwrap_or(Value::Void);
+                let proto: Option<zun_gc::Obj> = match Self::class_token_of(&new_target) {
+                    Some(t) => match self.user_class_rid(t) {
+                        Some(rid) => Some(self.class_prototype_object(rid)),
+                        None => None,
+                    },
+                    None => match unbox_arg(&new_target) {
+                        Ok(Value::Function(handle)) => {
+                            let bag = crate::function_expando_bag(handle);
+                            zun_gc::with_current_heap(|heap| heap.dynamic_get(bag, "prototype"))
+                                .and_then(|a| a.as_object())
+                                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                        }
+                        _ => None,
+                    },
+                };
+                if let (Some(proto), Some(result)) = (proto, object(&built)) {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.ensure_instance_bag(result);
+                        heap.dynamic_set_prototype(
+                            result,
+                            Some(zun_core::Any::object(proto.addr() as usize)),
+                        )
+                    });
+                }
+                Ok(built)
             }
             "reflectConstruct" => {
                 let token = match args.first().ok_or(RunError::BadToken)? {

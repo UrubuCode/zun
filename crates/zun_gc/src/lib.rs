@@ -275,6 +275,18 @@ impl Heap {
         format!("{owner_type_rid}:{field_rid}")
     }
 
+    /// Remove a class-static field slot (value or function), answering whether
+    /// one was present.
+    pub fn static_remove(&mut self, owner_type_rid: u32, field_rid: u32) -> bool {
+        let Some(object) = self.statics else {
+            return false;
+        };
+        let key = Self::static_slot_key(owner_type_rid, field_rid);
+        let had_function = self.dynamic_get_function(object, &key).is_some();
+        let removed = self.dynamic_remove(object, &key).is_some();
+        removed || had_function
+    }
+
     /// Read a class-static field value (or `None` if unset).
     pub fn static_get(&self, owner_type_rid: u32, field_rid: u32) -> Option<zun_core::Any> {
         let object = self.statics?;
@@ -1055,7 +1067,7 @@ impl Heap {
             if handler.addr() != proxy.handler.addr() {
                 rewritten += 1;
             }
-            mapped_proxies.insert(mapped_address, proxies::ProxyRecord { target, handler });
+            mapped_proxies.insert(mapped_address, proxies::ProxyRecord { target, handler, revoked: proxy.revoked });
         }
         self.proxies = mapped_proxies;
         rewritten

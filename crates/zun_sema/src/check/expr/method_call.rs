@@ -34,6 +34,11 @@ impl Checker<'_> {
         {
             return e;
         }
+        if let Some(e) =
+            self.try_mcall_typed_static_call(cx, receiver.as_ref(), method, args, span)
+        {
+            return e;
+        }
         if let Some(e) = self.try_mcall_math_apply(cx, receiver.as_ref(), method, args, span) {
             return e;
         }
@@ -43,8 +48,26 @@ impl Checker<'_> {
         if let Some(e) = self.try_mcall_static_regex(cx, receiver.as_ref(), method, args, span) {
             return e;
         }
+        let receiver_ast = receiver.clone();
         let mut receiver = self.check_expr(cx, receiver);
         let mname = self.text(method).to_string();
+        // A function-valued field (`bump = () => ...`) is invoked through its
+        // value, not through a method slot.
+        if let Ty::Instance(class) = receiver.ty {
+            if self.method_of(class, &mname).is_none() && self.field_of(class, &mname).is_some() {
+                let callee = ast::Expr::Field {
+                    object: receiver_ast.clone(),
+                    field: method.clone(),
+                    span,
+                };
+                let call = ast::Expr::ComputedCall {
+                    callee: Box::new(callee),
+                    args: args.clone(),
+                    span,
+                };
+                return self.check_expr(cx, &call);
+            }
+        }
         // An integer-typed receiver (`s.codePointAt(0)!`) is a JS number:
         // widen it so the `Number.prototype` methods apply.
         if receiver.ty.is_int()
@@ -67,6 +90,35 @@ impl Checker<'_> {
                 span: receiver_span,
             };
         }
+        // A typed-array / DataView / ArrayBuffer receiver takes the statically
+        // typed lowering when its arguments fit; otherwise the checker's
+        // diagnostics from that attempt are discarded and the call is resolved
+        // by name at run time, as for an `any` receiver.
+        if matches!(receiver.ty, Ty::BufferView(_) | Ty::Buffer) {
+            let before = self.diagnostics.len();
+            let backup = receiver.clone();
+            let typed = self.check_method_call_tail(cx, receiver, mname.clone(), method, args, span);
+            if self.diagnostics.len() == before {
+                return typed;
+            }
+            self.diagnostics.truncate(before);
+            return match self.mcall_view_dynamic_forced(cx, backup, &mname, method, args, span) {
+                Ok(e) => e,
+                Err(_) => self.poison(span),
+            };
+        }
+        self.check_method_call_tail(cx, receiver, mname, method, args, span)
+    }
+
+    fn check_method_call_tail(
+        &mut self,
+        cx: &mut FunctionCx,
+        receiver: hir::Expr,
+        mname: String,
+        method: &ast::Name,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> hir::Expr {
         let receiver = match self.mcall_array_mutators(cx, receiver, &mname, method, args, span) {
             Ok(e) => return e,
             Err(r) => r,
@@ -120,6 +172,10 @@ impl Checker<'_> {
                 Ok(e) => return e,
                 Err(r) => r,
             };
+        let receiver = match self.mcall_view_dynamic(cx, receiver, &mname, method, args, span) {
+            Ok(e) => return e,
+            Err(r) => r,
+        };
         let receiver = match self.mcall_buffer_views(cx, receiver, &mname, method, args, span) {
             Ok(e) => return e,
             Err(r) => r,

@@ -248,6 +248,7 @@ fn check_impl(
         symbol_call_guard: false,
         static_this: HashMap::new(),
         cur_static_class: None,
+        static_init_class: None,
         closure_self_name: None,
         routed_methods: HashMap::new(),
         hooked_classes: HashSet::new(),
@@ -296,6 +297,14 @@ fn check_impl(
     // name at run time, so if the module uses it, keep every mirror. Missing a
     // reader would silently corrupt a program, so this must only ever
     // over-include.
+    // Hidden computed-field key temps (`__ckN`) are only referenced from
+    // synthetic spans, so the source-text scan below cannot see their readers.
+    let computed_key_temps: Vec<String> = checker
+        .module_globals
+        .iter()
+        .filter(|name| name.starts_with("__ck"))
+        .cloned()
+        .collect();
     if checker.source.contains("eval(") || checker.source.contains("Function(") {
         checker.globals_read_in_functions = checker.module_globals.clone();
     } else {
@@ -324,6 +333,7 @@ fn check_impl(
             }
         }
     }
+    checker.globals_read_in_functions.extend(computed_key_temps);
     {
         let mut assigned: HashSet<String> = HashSet::new();
         for function in &program.functions {
@@ -454,8 +464,14 @@ struct Signature {
 struct ClassInfo {
     /// Byte offset where the class declaration starts.
     span_start: u32,
+    /// Declared in a nested block or function body: its static initializers run
+    /// at the declaration-site marker rather than in the module body.
+    local: bool,
     base: Option<u32>,
     base_name: Option<String>,
+    /// The `extends` value is a runtime value rather than a known class, so the
+    /// class is compiled base-less and `super(...)` is a no-op.
+    dynamic_base: bool,
     own_fields: Vec<(String, Ty, bool, bool)>,
     own_initializers: Vec<Option<Box<ast::Expr>>>,
 }
@@ -534,6 +550,7 @@ struct Checker<'a> {
     static_this: HashMap<u32, u32>,
     /// Declaring class of the static method currently being checked (for `super`).
     cur_static_class: Option<u32>,
+    static_init_class: Option<u32>,
     /// Name a closure being bound by `let name = <closure>` may call itself by.
     closure_self_name: Option<String>,
     /// Instance methods whose runtime decorator returns a function (method

@@ -16,6 +16,12 @@ impl Heap {
             _ => Some(value),
         }
     }
+    /// The iteration mode of an array iterator (0 values, 1 keys, 2 entries,
+    /// 3 string iterator).
+    pub fn array_iterator_mode(&self, iterator: Obj) -> Option<u8> {
+        let (_, state) = self.array_iterators.get(&(iterator.addr() as usize))?;
+        Some(state.mode())
+    }
     pub fn array_iterator_done(&self, iterator: Obj) -> Option<bool> {
         let (array, state) = self.array_iterators.get(&(iterator.addr() as usize))?;
         Some(state.is_done(self.arrays.get(&(array.addr() as usize))?))

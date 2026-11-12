@@ -49,6 +49,21 @@ pub(crate) fn compare(stack: &mut Vec<Value>, op: Ordering) -> Result<(), RunErr
         (Value::Float(x, _), Value::Float(y, _)) => op.apply(*x, *y),
         (Value::Int(x, _), Value::Float(y, _)) => op.apply(*x as f64, *y),
         (Value::Float(x, _), Value::Int(y, _)) => op.apply(*x, *y as f64),
+        // Two BigInts (boxed in `any`) compare exactly by value.
+        (Value::Object(x), Value::Object(y))
+            if zun_gc::with_current_heap(|heap| {
+                heap.bigint_value(*x).is_some() && heap.bigint_value(*y).is_some()
+            }) =>
+        {
+            let ordering = zun_gc::with_current_heap(|heap| {
+                let (Some(left), Some(right)) = (heap.bigint_value(*x), heap.bigint_value(*y))
+                else {
+                    unreachable!()
+                };
+                left.cmp(right)
+            });
+            op.apply(ordering, std::cmp::Ordering::Equal)
+        }
         // JS compares strings by UTF-16 code units, not by code points.
         (Value::Str(x), Value::Str(y)) => {
             let ordering = zun_core::wtf16::encode(x).cmp(zun_core::wtf16::encode(y));

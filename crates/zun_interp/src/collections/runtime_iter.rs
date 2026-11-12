@@ -27,6 +27,25 @@ impl<'a> Interp<'a> {
         {
             return Ok(source);
         }
+        // A proxy forwards `[Symbol.iterator]` to its target. Over an array the
+        // elements are read through the proxy (`length` then each index) so its
+        // traps observe the access; the snapshot then drives an array iterator.
+        if let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(source)) {
+            let mut inner = target;
+            while let Some(next) = zun_gc::with_current_heap(|heap| heap.proxy_target(inner)) {
+                inner = next;
+            }
+            if zun_gc::with_current_heap(|heap| heap.array_len(inner).is_some()) {
+                let snapshot = self.call_managed_collection(
+                    "arrayFromArrayLike",
+                    &[Value::Object(source)],
+                )?;
+                let snapshot = object(&snapshot).ok_or(RunError::BadToken)?;
+                return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(snapshot))
+                    .ok_or(RunError::BadToken);
+            }
+            return self.resolve_iterator(target);
+        }
         if zun_gc::with_current_heap(|heap| {
             heap.array_len(source).is_some()
                 && heap
@@ -43,6 +62,21 @@ impl<'a> Interp<'a> {
         if zun_gc::with_current_heap(|heap| heap.map_entries(source)).is_some() {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_map_iterator(source))
                 .ok_or(RunError::BadToken);
+        }
+        // A `new String("..")` wrapper iterates its primitive by code point.
+        if self.json_class_name(source) == "StringObject" {
+            if let Some(Value::Str(text)) = self
+                .instance_member_get(source, "value")?
+                .map(|inner| match inner {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other,
+                })
+            {
+                let made = self
+                    .call_managed_collection("stringIteratorNew", &[Value::Str(text)])?;
+                return object(&made).ok_or(RunError::BadToken);
+            }
         }
         let handle =
             zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(source, iterator_id))
@@ -638,6 +672,9 @@ impl<'a> Interp<'a> {
         object: zun_gc::Obj,
         name: &str,
     ) -> Result<Value, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.proxy_target(object).is_some()) {
+            return self.proxy_dynamic_get(object, name);
+        }
         if name == "constructor" {
             if let Some(record) = self.constructor_record(object) {
                 return Ok(Value::Object(record));
@@ -666,6 +703,17 @@ impl<'a> Interp<'a> {
         if let Some(value) = own {
             return Ok(value);
         }
+        // `DataView.prototype` accessors read off a view are function values.
+        if let Some(index) = crate::property_ops::DATA_VIEW_METHODS
+            .iter()
+            .position(|entry| entry.0 == name)
+        {
+            if zun_gc::with_current_heap(|heap| heap.data_view_len(object).is_some()) {
+                return Ok(Value::Function(zun_core::FunctionHandle::new_builtin_method(
+                    crate::property_ops::BUILTIN_DV_BASE + index as u32,
+                )));
+            }
+        }
         // A typed class instance exposes its declared fields and getters.
         let typed = zun_gc::with_current_heap(|heap| {
             (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
@@ -692,6 +740,9 @@ impl<'a> Interp<'a> {
         proxy: zun_gc::Obj,
         key: &str,
     ) -> Result<Value, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+            return Err(self.revoked_proxy_error("get"));
+        }
         let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
             return Err(RunError::BadToken);
         };
@@ -707,11 +758,7 @@ impl<'a> Interp<'a> {
                 ];
                 self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?
             }
-            None => zun_gc::with_current_heap(|heap| {
-                heap.dynamic_get(target, key)
-                    .and_then(|any| Value::unbox_any(any, heap))
-                    .unwrap_or(Value::Void)
-            }),
+            None => self.proxy_forward_get(target, key)?,
         };
         Ok(match result {
             Value::Function(_) | Value::Any(_) => result,
@@ -719,6 +766,123 @@ impl<'a> Interp<'a> {
                 .map(Value::Any)
                 .unwrap_or(Value::Void),
         })
+    }
+
+    /// Trap-less read forwarded to a proxy's target: arrays expose `length` and
+    /// their elements, nested proxies recurse, everything else is an ordinary
+    /// member read.
+    fn proxy_forward_get(&mut self, target: zun_gc::Obj, key: &str) -> Result<Value, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some()) {
+            return self.proxy_dynamic_get(target, key);
+        }
+        let array = zun_gc::with_current_heap(|heap| {
+            heap.array_len(target).map(|len| {
+                if key == "length" {
+                    Some(Value::Float(len as f64, zun_il::NumKind::F64))
+                } else if let Some(index) = key.parse::<usize>().ok().filter(|i| i.to_string() == key) {
+                    Some(
+                        heap.array_get(target, index)
+                            .filter(|any| !any.is_hole())
+                            .and_then(|any| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void),
+                    )
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(Some(value)) = array {
+            return Ok(value);
+        }
+        if let Some(Value::Any(any)) = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get(target, key).map(Value::Any)
+        }) {
+            return Ok(zun_gc::with_current_heap(|heap| {
+                Value::unbox_any(any, heap).unwrap_or(Value::Void)
+            }));
+        }
+        self.dynamic_member_get(target, key)
+    }
+
+    /// Generic `Array.prototype.push/pop` over a proxy receiver: every step is a
+    /// proxy get / set / delete so the handler traps observe the algorithm.
+    pub(crate) fn proxy_push_pop(
+        &mut self,
+        proxy: zun_gc::Obj,
+        is_push: bool,
+        items: Vec<zun_core::Any>,
+    ) -> Result<Value, RunError> {
+        let raw = self.proxy_dynamic_get(proxy, "length")?;
+        let raw = match raw {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                .unwrap_or(Value::Void),
+            other => other,
+        };
+        let raw = self.to_number_value(raw)?;
+        let length = if raw.is_nan() || raw <= 0.0 {
+            0.0
+        } else {
+            raw.trunc().min(9007199254740991.0)
+        };
+        let num = |n: f64| Value::Float(n, zun_il::NumKind::F64);
+        if is_push {
+            let count = items.len() as f64;
+            for (offset, item) in items.into_iter().enumerate() {
+                let key = format!("{}", length as u64 + offset as u64);
+                self.proxy_dynamic_set(proxy, &key, Value::Any(item))?;
+            }
+            self.proxy_dynamic_set(proxy, "length", num(length + count))?;
+            return Ok(num(length + count));
+        }
+        if length == 0.0 {
+            self.proxy_dynamic_set(proxy, "length", num(0.0))?;
+            return Ok(Value::Void);
+        }
+        let last = format!("{}", length as u64 - 1);
+        let value = self.proxy_dynamic_get(proxy, &last)?;
+        let value = match value {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                .unwrap_or(Value::Void),
+            other => other,
+        };
+        self.proxy_key_op(proxy, &last, true)?;
+        self.proxy_dynamic_set(proxy, "length", num(length - 1.0))?;
+        Ok(value)
+    }
+
+    /// `key in proxy` / `delete proxy[key]` for the generic array algorithms:
+    /// the matching trap, or the target's own answer.
+    pub(crate) fn proxy_key_op(
+        &mut self,
+        proxy: zun_gc::Obj,
+        key: &str,
+        delete: bool,
+    ) -> Result<bool, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+            return Err(self.revoked_proxy_error(if delete { "deleteProperty" } else { "has" }));
+        }
+        let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+            return Err(RunError::BadToken);
+        };
+        let trap_name = if delete { "deleteProperty" } else { "has" };
+        if let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, trap_name))
+        {
+            let handler =
+                zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
+            let args = vec![Value::Object(target), Value::Str(key.into())];
+            let result =
+                self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?;
+            return Ok(zun_gc::with_current_heap(|heap| is_truthy(&result, heap)));
+        }
+        if zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some()) {
+            return self.proxy_key_op(target, key, delete);
+        }
+        let name = if delete { "reflectDelete" } else { "reflectHas" };
+        let result = self.call_managed_collection(
+            name,
+            &[Value::Object(target), Value::Str(key.into())],
+        )?;
+        Ok(matches!(result, Value::Bool(true)))
     }
 
     /// `proxy.key = value` through an `any` receiver: the `set` trap
@@ -729,6 +893,9 @@ impl<'a> Interp<'a> {
         key: &str,
         value: Value,
     ) -> Result<(), RunError> {
+        if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+            return Err(self.revoked_proxy_error("set"));
+        }
         let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
             return Err(RunError::BadToken);
         };
@@ -750,6 +917,13 @@ impl<'a> Interp<'a> {
                     Value::Object(proxy),
                 ];
                 self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?;
+            }
+            None if zun_gc::with_current_heap(|heap| heap.array_len(target).is_some()) => {
+                let key_value = Value::Str(key.into());
+                self.reflect_set(&[Value::Object(target), key_value, value])?;
+            }
+            None if zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some()) => {
+                self.proxy_dynamic_set(target, key, value)?;
             }
             None => {
                 if let Some(any) = zun_gc::with_current_heap_mut(|heap| value.box_any(heap)) {
@@ -778,6 +952,9 @@ impl<'a> Interp<'a> {
                 Value::Float(1.0, zun_il::NumKind::F64)
             });
         }
+        if let Some(kind) = handle.builtin_method() {
+            return Self::builtin_method_meta(kind, name);
+        }
         if handle.is_bound() || handle.generator_method().is_some() {
             return None;
         }
@@ -789,7 +966,34 @@ impl<'a> Interp<'a> {
             .get((rid as usize).wrapping_sub(1))?;
         let method_name = self.module.strings.get(method.name);
         if !method_name.starts_with("[symbol]") {
-            return None;
+            // A plain method / static method / accessor reached as a value:
+            // derive `name` and `length` from the method metadata.
+            if name == "name" {
+                if method_name.starts_with('<') {
+                    return None;
+                }
+                let plain = method_name.split("@this").next().unwrap_or(method_name);
+                return Some(Value::Str(
+                    if let Some(rest) = plain.strip_prefix("get_") {
+                        format!("get {rest}")
+                    } else if let Some(rest) = plain.strip_prefix("set_") {
+                        format!("set {rest}")
+                    } else {
+                        plain.to_string()
+                    }
+                    .into(),
+                ));
+            }
+            let body = read_body(&self.module.code, method.body_offset).ok()?;
+            let mut receiver = usize::from(method_name.contains("@this"));
+            if !method.is_static && !method_name.starts_with('<') {
+                receiver = 1;
+            }
+            if method_name.ends_with("@rest>") {
+                receiver += 1;
+            }
+            let length = (body.param_count as usize).saturating_sub(receiver);
+            return Some(Value::Float(length as f64, zun_il::NumKind::F64));
         }
         if name == "name" {
             let symbol = self
@@ -812,6 +1016,10 @@ impl<'a> Interp<'a> {
         receiver: zun_gc::Obj,
         mut args: Vec<Value>,
     ) -> Vec<Value> {
+        if handle.builtin_method().is_some_and(|kind| kind >= 16) {
+            args.insert(0, Value::Object(receiver));
+            return args;
+        }
         if !handle.is_bound() {
             let takes_this = self
                 .module
@@ -842,6 +1050,12 @@ impl<'a> Interp<'a> {
         handle: zun_core::FunctionHandle,
         call_args: Vec<Value>,
     ) -> Result<Value, RunError> {
+        if let Some(kind) = handle.builtin_method().filter(|kind| *kind >= 16) {
+            let mut call_args = call_args;
+            let this = if call_args.is_empty() { Value::Void } else { call_args.remove(0) };
+            let _ = kind;
+            return self.invoke_builtin_with_this(handle, this, call_args);
+        }
         if handle.builtin_method().is_some() {
             return Err(RunError::Native(
                 "TypeError: RegExp.prototype method called on an incompatible receiver".into(),
@@ -858,7 +1072,8 @@ impl<'a> Interp<'a> {
             return self.invoke_promise_settler(promise, mode, call_args);
         }
         let (method_rid, final_args) = self.resolve_call_target(handle, call_args)?;
-        // A rest-parameter callee takes its trailing arguments as one array.
+        // A declared function ending in a rest parameter receives its trailing
+        // arguments packed into the array it expects.
         let final_args = self.pack_rest_call_args(method_rid, final_args);
         // Calling a generator function value creates the generator object.
         if self.method_contains_yield(method_rid) {

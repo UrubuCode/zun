@@ -469,7 +469,7 @@ impl Checker<'_> {
                 );
                 return self.poison(span);
             }
-            checked.truncate(2);
+            let new_target = if checked.len() == 3 { checked.pop() } else { None };
             let array = checked.pop().unwrap();
             let array = self.array_like_to_array(array);
             let target = checked.pop().unwrap();
@@ -479,6 +479,18 @@ impl Checker<'_> {
                     "`Reflect.construct` expects an Array of arguments",
                 );
                 return self.poison(span);
+            }
+            if let (Some(new_target), true) = (new_target, target.ty == Ty::Any) {
+                if let Some((id, _)) = zun_natives::resolve("collections", "reflectConstructNew") {
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![target, array, Self::box_to_any(new_target)],
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
             }
             let native_name = match target.ty {
                 Ty::Proxy => "proxyConstruct",
@@ -548,7 +560,14 @@ impl Checker<'_> {
         // A managed collection target is handed to the natives as a dynamic receiver.
         if matches!(
             checked[0].ty,
-            Ty::Array | Ty::Map | Ty::Set | Ty::Instance(_) | Ty::RegExp | Ty::Function(_)
+            Ty::Array
+                | Ty::Map
+                | Ty::Set
+                | Ty::Instance(_)
+                | Ty::RegExp
+                | Ty::Function(_)
+                | Ty::BufferView(_)
+                | Ty::Buffer
         ) {
             let target = checked.remove(0);
             checked.insert(0, Self::box_to_any(target));
@@ -615,7 +634,7 @@ impl Checker<'_> {
             }
             "defineProperty" => builtin(self, "reflectDefineProperty", checked, Ty::Boolean),
             "getPrototypeOf" => builtin(self, "objectGetPrototypeOf", checked, Ty::Any),
-            "setPrototypeOf" => builtin(self, "objectSetPrototypeOf", checked, Ty::Any),
+            "setPrototypeOf" => builtin(self, "reflectSetPrototypeOf", checked, Ty::Boolean),
             "isExtensible" => builtin(self, "objectIsExtensible", checked, Ty::Boolean),
             "preventExtensions" => builtin(self, "objectPreventExtensions", checked, Ty::Any),
             _ => unreachable!(),
