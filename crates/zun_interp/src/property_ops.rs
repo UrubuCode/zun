@@ -498,11 +498,17 @@ impl Interp<'_> {
             for (name, get, set) in accessors {
                 heap.dynamic_define_accessor(proto, name, get, set, false, true);
             }
+            // `Class.prototype.constructor` is writable (ES2024 15.7.14 step 12
+            // defines it with `{ [[Writable]]: true, [[Enumerable]]: false,
+            // [[Configurable]]: true }`), so a program may replace it. Defining
+            // it read-only made `C.prototype.constructor = C` throw, which is
+            // the idiom `lib/events.js` and every library modelled on it uses
+            // to restore the entry after reassigning a prototype.
             heap.dynamic_define(
                 proto,
                 "constructor".to_owned(),
                 zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid),
-                false,
+                true,
             );
             for (name, handle) in plain_methods {
                 heap.dynamic_set_function(proto, name, handle);
