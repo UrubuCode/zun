@@ -273,14 +273,18 @@ impl Checker<'_> {
                     span: bits_span,
                 };
             }
-            if !bits.ty.is_error() && !bits.ty.is_int() {
+            // A dynamic (`any`) bit width is accepted: ToIndex runs in the
+            // native. Only a concrete non-numeric type is rejected here.
+            if !bits.ty.is_error() && !bits.ty.is_int() && bits.ty != Ty::Any {
                 self.error(
                     bits.span,
                     format!("`BigInt.{member}` bit width must be an integer"),
                 );
             }
             let value = self.check_expr(cx, &args[1]);
-            if !value.ty.is_error() && value.ty != Ty::BigInt {
+            // A dynamic (`any`) value is accepted: ToBigInt runs in the native
+            // (a string parses, a number or other value throws a TypeError).
+            if !value.ty.is_error() && value.ty != Ty::BigInt && value.ty != Ty::Any {
                 self.error(
                     value.span,
                     format!("`BigInt.{member}` expects a BigInt value"),

@@ -78,20 +78,57 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(object))
             }
             "bigIntAsIntN" | "bigIntAsUintN" => {
-                let bits = match args.first().ok_or(RunError::BadToken)? {
+                // ToIndex(bits): an integer or float directly, or a boxed
+                // number / numeric string unwrapped through `Any`.
+                let bits_arg = args.first().ok_or(RunError::BadToken)?;
+                let bits = match bits_arg {
                     Value::Int(bits, _) => *bits,
                     Value::Float(bits, _) => *bits as i64,
-                    _ => return Err(RunError::BadToken),
+                    other => match unbox_arg(other) {
+                        Ok(Value::Int(bits, _)) => bits,
+                        Ok(Value::Float(bits, _)) => bits as i64,
+                        Ok(Value::Str(text)) => text.trim().parse::<f64>().map(|f| f as i64).map_err(
+                            |_| {
+                                RunError::Native(
+                                    "RangeError: BigInt bit width must be a non-negative integer"
+                                        .into(),
+                                )
+                            },
+                        )?,
+                        _ => {
+                            return Err(RunError::Native(
+                                "TypeError: Cannot convert the bit width to an integer".into(),
+                            ))
+                        }
+                    },
                 };
                 if bits < 0 {
                     return Err(RunError::Native(
                         "RangeError: BigInt bit width must be non-negative".into(),
                     ));
                 }
-                let object =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
-                    .ok_or(RunError::BadToken)?;
+                // ToBigInt(value): a BigInt passes through, a string parses,
+                // and a number or anything else throws, matching ToBigInt.
+                let value_arg = args.get(1).ok_or(RunError::BadToken)?;
+                let value = if let Some(object) = object(value_arg) {
+                    zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned()).ok_or_else(
+                        || {
+                            RunError::Native(
+                                "TypeError: Cannot convert the given value to a BigInt".into(),
+                            )
+                        },
+                    )?
+                } else {
+                    match unbox_arg(value_arg) {
+                        Ok(Value::Str(text)) => zun_core::BigInt::parse(&text)
+                            .map_err(|error| RunError::Native(format!("SyntaxError: {}", error)))?,
+                        _ => {
+                            return Err(RunError::Native(
+                                "TypeError: Cannot convert the given value to a BigInt".into(),
+                            ))
+                        }
+                    }
+                };
                 let result = if name == "bigIntAsIntN" {
                     value.as_int_n(bits as u64)
                 } else {
