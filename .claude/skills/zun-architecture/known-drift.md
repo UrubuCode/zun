@@ -4,8 +4,11 @@ Audit snapshot: 2026-11-12, with a fix pass the same day. Line numbers move;
 re-locate with a search before acting. Mark an entry FIXED (with the commit)
 instead of deleting it.
 
-Conformance at the end of the fix pass: 120/168 fixtures exit 0 (118 at commit
-`ef117cff`), so the pass regressed nothing.
+Conformance: **107/168** fixtures exit 0 at `e77901ec`. The audit fix pass took
+118 (at `ef117cff`) to 120; making the garbage collector actually run then cost
+13 fixtures and recovered 5, which is the first OPEN item below. Measure with
+`zun run` per fixture and a per-fixture timeout: three fixtures used to hang
+forever, so a harness without one never finishes.
 
 ## Concept-level (decides whether the premise is exercised)
 
@@ -139,18 +142,20 @@ Conformance at the end of the fix pass: 120/168 fixtures exit 0 (118 at commit
   Also: the finalizer and registry callbacks were rewritten with
   `FunctionHandle::new`, which drops the bound discriminant; they use
   `relocate_environment` now.
-- **OPEN (branch `fix/gc-actually-runs`) - Turning the GC on breaks 13
-  fixtures.** With collections actually happening, 13 fixtures that pass on
-  `main` fail: `array-iterators-and-protocols`, `runtime-error-sites`,
+- **OPEN - 13 fixtures regressed when the GC started running.** Merged into
+  `main` as `e77901ec` with the regression accepted: these 13 passed at
+  `2ef79483` and fail now, so the current pass rate is 107/168, not 120/168.
+  They are `array-iterators-and-protocols`, `runtime-error-sites`,
   `throw-catch-finally-control`, `iterator-helpers-and-set-op-protocol`,
   `set-core-and-operations`, `generator-expressions-and-capture`,
   `yield-star-delegation`, `iterator-helper-pipeline`,
   `json-stringify-cycles-and-raw-json`, `getters-proxy-all`,
   `data-structures-and-algorithms`, `url-parse-resolve-and-setters`,
-  `urlsearchparams-semantics` (120 -> 107). Each one is its own missing root or
-  missing rewrite of the same shape as the five fixed below, not a regression
-  in the collector itself: the branch is bisect-proven down to the trigger
-  change alone. The recipe that locates one in a few minutes: run the fixture,
+  `urlsearchparams-semantics`. Each one is its own missing root or missing
+  rewrite of the same shape as the five fixed below, not a regression in the
+  collector itself: bisect pinned them to the budget change alone, with the
+  nursery and record changes reverted. The recipe that locates one in a few
+  minutes: run the fixture,
   note the last line it printed, find that line in the fixture, wrap the
   *following* statement in `try { ... } catch (e: any) { console.log(e.name +
   ": " + e.message) }` (the thrown message is what names the broken operation),
