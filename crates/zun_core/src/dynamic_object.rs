@@ -681,30 +681,35 @@ impl DynamicObject {
                     .filter_map(|value| value.as_object()),
             )
             .chain(
-                self.symbol_functions
-                    .values()
-                    .filter_map(|value| value.environment()),
+                self.function_handles()
+                    .filter_map(|handle| handle.environment()),
             )
-            .chain(
-                self.symbol_getters
-                    .values()
-                    .filter_map(|value| value.environment()),
-            )
-            .chain(
-                self.string_functions
-                    .values()
-                    .filter_map(|value| value.environment()),
-            )
-            .chain(
-                self.accessor_get
-                    .values()
-                    .filter_map(|value| value.environment()),
-            )
-            .chain(
-                self.accessor_set
-                    .values()
-                    .filter_map(|value| value.environment()),
-            )
+    }
+
+    /// Every `FunctionHandle` this object stores. A closure environment is a
+    /// managed reference, so the trace in [`Self::object_references`] and the
+    /// rewrite in [`Self::rewrite_object_references`] must cover exactly the
+    /// same handles: one that is traced but not rewritten keeps a stale
+    /// address after a moving collection, and one that is rewritten but not
+    /// traced points at reclaimed storage. Both go through this iterator so
+    /// adding a function-valued map cannot update only one of them.
+    fn function_handles(&self) -> impl Iterator<Item = &FunctionHandle> + '_ {
+        self.symbol_functions
+            .values()
+            .chain(self.symbol_getters.values())
+            .chain(self.string_functions.values())
+            .chain(self.accessor_get.values())
+            .chain(self.accessor_set.values())
+    }
+
+    /// The mutable counterpart of [`Self::function_handles`].
+    fn function_handles_mut(&mut self) -> impl Iterator<Item = &mut FunctionHandle> + '_ {
+        self.symbol_functions
+            .values_mut()
+            .chain(self.symbol_getters.values_mut())
+            .chain(self.string_functions.values_mut())
+            .chain(self.accessor_get.values_mut())
+            .chain(self.accessor_set.values_mut())
     }
 
     pub fn rewrite_object_references(&mut self, map: impl Fn(usize) -> usize + Copy) -> usize {
@@ -728,6 +733,20 @@ impl DynamicObject {
             if mapped != *value {
                 rewritten += 1;
                 *value = mapped;
+            }
+        }
+        // A function-valued property (a method, an accessor, a boxed closure)
+        // holds its captured environment as a raw managed address, so it moves
+        // with the object it points at. `relocate_environment` keeps the bound
+        // discriminant, which `FunctionHandle::new` would drop.
+        for handle in self.function_handles_mut() {
+            let Some(environment) = handle.environment() else {
+                continue;
+            };
+            let mapped = map(environment);
+            if mapped != environment {
+                *handle = handle.relocate_environment(Some(mapped));
+                rewritten += 1;
             }
         }
         rewritten

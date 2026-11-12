@@ -91,11 +91,89 @@ Conformance at the end of the fix pass: 120/168 fixtures exit 0 (118 at commit
 
 ## New findings from the fix pass
 
+- **FIXED - The interpreter only collected after a typed `newobj`.**
+  `self.allocs` was incremented in exactly one opcode arm, so a program that
+  allocated only dynamic objects, arrays, strings, maps or promises never
+  reached the GC budget and **never collected at all**. The budget now comes
+  from `Heap::allocations_since_collection`, counted at the single allocation
+  point, so no allocation site can forget to report itself. Measured on a loop
+  allocating 900k short-lived dynamic objects: peak RSS 872 MB -> 15.9 MB, and
+  it also got faster (2.0s -> 1.7s).
+- **FIXED - An evacuating minor collection abandoned the nursery.** It bumped
+  `nursery_cursor` to `CHUNK_SLOTS` so the next allocation pushed a fresh
+  512 KiB chunk, and nothing ever released or reused the old ones; a
+  compaction did not reclaim the nursery either. The nursery is now released
+  after each evacuation. The hazard that forced the old behaviour - a
+  non-moving full collection promotes survivors *in place*, leaving old
+  objects in nursery storage - is handled by evacuating any object whose
+  storage is in the nursery, old or young (`address_in` in
+  `zun_gc/src/collection.rs`). Behaviour change: a minor collection can now
+  move an old object, so a caller must use the rewritten root, not a stale
+  `Obj` copy.
+- **FIXED - The record table grew with every object ever allocated.** Dead
+  young records were dropped from the address-preserving free list and never
+  came back. They now go to `free_records`, which hands the index out again
+  with a freshly allocated address (`Heap::release_record_storage`).
+- **FIXED - Latent rooting and relocation bugs the live GC exposed.** None of
+  these could fire while collections never happened; all five are the same
+  mistake, a managed value the collector cannot see:
+  1. `DynamicObject::rewrite_object_references` rewrote properties and the
+     prototype but not the `FunctionHandle`s in `string_functions`,
+     `accessor_get/set`, `symbol_functions` and `symbol_getters`. Their closure
+     environments were *traced* and so survived, at an address the handle no
+     longer pointed at - which is every closure stored in a container
+     (`arr.push(() => i)`, `o.f = () => i`). The trace and the rewrite now go
+     through one `function_handles()` / `function_handles_mut()` pair so a new
+     function-valued map cannot update only one of them.
+  2. `function_expando_bag` keyed its bag on the environment's raw address, so
+     a recycled address aliased a dead closure's properties onto a new one and
+     a moved environment lost its bag. It keys on the identity hash now.
+  3. The mark phase never traced a typed array's or DataView's ArrayBuffer
+     (the edge is a raw header address, like an iterator's source), so a
+     buffer referenced only by its view was swept while the view was alive.
+  4. `class_symbol_methods` and `class_field_defaults` were neither rooted nor
+     rewritten; they now go through the decorator side-table pair.
+  5. A frame in transit (`suspended`, `resume_frame`) and a `yielded` value
+     were not rooted - nothing else references them between a generator's
+     yield and the boundary that takes it.
+  Also: the finalizer and registry callbacks were rewritten with
+  `FunctionHandle::new`, which drops the bound discriminant; they use
+  `relocate_environment` now.
+- **OPEN (branch `fix/gc-actually-runs`) - Turning the GC on breaks 13
+  fixtures.** With collections actually happening, 13 fixtures that pass on
+  `main` fail: `array-iterators-and-protocols`, `runtime-error-sites`,
+  `throw-catch-finally-control`, `iterator-helpers-and-set-op-protocol`,
+  `set-core-and-operations`, `generator-expressions-and-capture`,
+  `yield-star-delegation`, `iterator-helper-pipeline`,
+  `json-stringify-cycles-and-raw-json`, `getters-proxy-all`,
+  `data-structures-and-algorithms`, `url-parse-resolve-and-setters`,
+  `urlsearchparams-semantics` (120 -> 107). Each one is its own missing root or
+  missing rewrite of the same shape as the five fixed below, not a regression
+  in the collector itself: the branch is bisect-proven down to the trigger
+  change alone. The recipe that locates one in a few minutes: run the fixture,
+  note the last line it printed, find that line in the fixture, wrap the
+  *following* statement in `try { ... } catch (e: any) { console.log(e.name +
+  ": " + e.message) }` (the thrown message is what names the broken operation),
+  then cut the fixture down around it. Four of five found so far were an
+  interpreter-owned or side-table-owned managed value that the mark phase or
+  the relocation pass did not know about.
 - **OPEN - The interned-string table is never reclaimed.** `Heap::intern_string`
   pushes onto a `Vec<ZStr>` and `zun_gc/src/collection.rs` never touches
-  `strings`, so a program that builds strings in a loop grows without bound. This
-  is also why `JitKind::String` needs no rooting. Likely more serious than
-  anything in the original audit list.
+  `strings`. Measured: ~108 bytes per interned string, linear and unbounded
+  (900k strings boxed into `any` = 111 MB peak, flat in everything else after
+  the fixes above). This is also why `JitKind::String` needs no rooting.
+  Reclaiming it is a design decision, not a patch, because a stale handle
+  silently reads a *different* string rather than crashing. Every handle
+  source would have to be traced: `Any::string` payloads in the ten heap side
+  tables, `FIELD_STRING` slots of frozen layouts (which needs a
+  `string_slots(type_rid)` query beside `reference_slots`), string-tagged
+  `Any`s in interpreter frames, and handles held in JIT registers and native
+  locals - which stack maps do not describe, since they track addresses. The
+  two candidate designs are (a) a mark/free-list pass over the table, gated on
+  a safepoint with no active native frame, plus the metadata above, or (b)
+  strings become ordinary GC objects, which `zun_core/src/zstr.rs` already
+  anticipates ("a GC-handle string") and which gets all the existing tracing
+  and rooting for free.
 - **OPEN - `compare` orders by UTF-8 bytes, not UTF-16 code units**, in BOTH
   tiers (`zun_codegen/src/thunks/string.rs`, `zun_natives/src/string.rs`). Not a
   tier divergence; a probable conformance bug. Unchecked against Node.
@@ -127,6 +205,14 @@ Conformance at the end of the fix pass: 120/168 fixtures exit 0 (118 at commit
   run the native code with the malformed carrier; it now returns
   `JitError::InvalidAnyTag`, matching `call_packed_any`.
 - `string.repeat` is no longer JIT-compiled (see above).
+- The interpreter now actually collects in programs that allocate only
+  dynamic objects, so code paths whose rooting was never exercised are
+  exercised for the first time. A missing root shows up as a use-after-free,
+  not as a leak.
+- An evacuating minor collection can move an *old* object (one a full
+  collection promoted in place). Read the rewritten root after
+  `collect_young_evacuating`; a stale `Obj` copy taken before the call points
+  at released storage.
 
 ## Dead code
 

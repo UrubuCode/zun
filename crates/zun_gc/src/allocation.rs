@@ -23,6 +23,7 @@ impl Heap {
 
     pub fn alloc(&mut self, type_rid: u32, field_count: usize) -> Obj {
         let identity_hash = self.allocate_identity_hash();
+        self.allocations = self.allocations.saturating_add(1);
         if let Some(idx) = self.free.get_mut(&field_count).and_then(Vec::pop) {
             let addr = self.records[idx].addr;
             unsafe {
@@ -56,19 +57,71 @@ impl Heap {
             *base = type_rid as u64;
             *base.add(1) = identity_hash;
         }
-        let idx = self.records.len();
-        self.records.push(Record {
+        let record = Record {
             addr: base,
             field_count,
             alive: true,
             marked: false,
             generation: Generation::Young,
-        });
+        };
+        // A record whose storage was released by a moving collection carries a
+        // null address and is reusable with this fresh one, so `records` stays
+        // proportional to the live set rather than to every object ever made.
+        let idx = match self.free_records.pop() {
+            Some(idx) => {
+                debug_assert!(self.records[idx].addr.is_null());
+                debug_assert!(!self.records[idx].alive);
+                self.records[idx] = record;
+                idx
+            }
+            None => {
+                self.records.push(record);
+                self.records.len() - 1
+            }
+        };
         self.by_addr.insert(base as usize, idx);
         self.nursery_bytes = self
             .nursery_bytes
             .saturating_add(slots * std::mem::size_of::<u64>());
         Obj(base)
+    }
+
+    /// The address ranges currently owned by nursery chunks, as
+    /// `[start, end)` byte bounds. Computed once per collection so testing a
+    /// record's storage does not re-walk the chunk list for every record.
+    pub(super) fn nursery_ranges(&self) -> Vec<(usize, usize)> {
+        self.nursery_chunks
+            .iter()
+            .map(|chunk| {
+                let start = chunk.as_ptr() as usize;
+                (start, start + std::mem::size_of_val(&**chunk))
+            })
+            .collect()
+    }
+
+    /// Release the nursery back to the bump allocator.
+    ///
+    /// The caller must have moved or swept every live object out of nursery
+    /// storage first: this hands the same addresses out again. One chunk is
+    /// kept so the common case does not free and re-zero 512 KiB per
+    /// collection, and any further chunks the epoch grew are returned to the
+    /// system allocator.
+    pub(super) fn reset_nursery(&mut self) {
+        self.nursery_chunks.truncate(1);
+        self.nursery_cursor = 0;
+        self.nursery_bytes = 0;
+    }
+
+    /// Queue a dead record for reuse at a fresh address, marking it with a
+    /// null one. Idempotent: a record already queued is left alone, so a
+    /// second moving collection cannot hand the same index out twice.
+    pub(super) fn release_record_storage(&mut self, idx: usize) {
+        debug_assert!(!self.records[idx].alive);
+        if self.records[idx].addr.is_null() {
+            return;
+        }
+        self.records[idx].addr = std::ptr::null_mut();
+        self.free_records.push(idx);
     }
 
     /// Reserve storage in the tenured heap for a survivor promoted out of the

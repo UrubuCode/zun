@@ -2,6 +2,17 @@
 
 use super::*;
 
+/// Whether `address` falls inside one of the `[start, end)` byte ranges. The
+/// collector uses it to tell nursery storage from tenured storage, which a
+/// record's generation alone does not answer: a non-moving full collection
+/// promotes survivors in place, leaving old objects in nursery chunks.
+fn address_in(ranges: &[(usize, usize)], address: *mut u64) -> bool {
+    let address = address as usize;
+    ranges
+        .iter()
+        .any(|&(start, end)| address >= start && address < end)
+}
+
 impl Heap {
     /// Collect using interpreter roots plus every stopped native frame
     /// currently registered with the GC boundary.
@@ -140,6 +151,7 @@ impl Heap {
         evacuate: bool,
         mut on_relocation: Option<&mut dyn FnMut(&RelocationMap)>,
     ) -> usize {
+        self.allocations = 0;
         for r in &mut self.records {
             r.marked = false;
         }
@@ -288,12 +300,23 @@ impl Heap {
             }
             // An iterator keeps its source container alive through the side
             // tables (its header slot is a raw address, not a typed reference).
+            // A typed array and a DataView reach their ArrayBuffer the same
+            // way, so those edges belong here too: a buffer referenced only by
+            // its view was otherwise swept while the view was still alive.
             {
                 let key = obj.addr() as usize;
                 let sources = [
-                    self.array_iterators.get(&key).map(|(source, _)| source.addr()),
-                    self.set_iterators.get(&key).map(|(source, _)| source.addr()),
-                    self.map_iterators.get(&key).map(|(source, _)| source.addr()),
+                    self.typed_views.get(&key).map(|(buffer, _)| buffer.addr()),
+                    self.data_views.get(&key).map(|_| obj.field(0) as *mut u64),
+                    self.array_iterators
+                        .get(&key)
+                        .map(|(source, _)| source.addr()),
+                    self.set_iterators
+                        .get(&key)
+                        .map(|(source, _)| source.addr()),
+                    self.map_iterators
+                        .get(&key)
+                        .map(|(source, _)| source.addr()),
                 ];
                 for source in sources.into_iter().flatten() {
                     if let Some(&cidx) = self.by_addr.get(&(source as usize)) {
@@ -422,12 +445,23 @@ impl Heap {
             }
             // An iterator keeps its source container alive through the side
             // tables (its header slot is a raw address, not a typed reference).
+            // A typed array and a DataView reach their ArrayBuffer the same
+            // way, so those edges belong here too: a buffer referenced only by
+            // its view was otherwise swept while the view was still alive.
             {
                 let key = obj.addr() as usize;
                 let sources = [
-                    self.array_iterators.get(&key).map(|(source, _)| source.addr()),
-                    self.set_iterators.get(&key).map(|(source, _)| source.addr()),
-                    self.map_iterators.get(&key).map(|(source, _)| source.addr()),
+                    self.typed_views.get(&key).map(|(buffer, _)| buffer.addr()),
+                    self.data_views.get(&key).map(|_| obj.field(0) as *mut u64),
+                    self.array_iterators
+                        .get(&key)
+                        .map(|(source, _)| source.addr()),
+                    self.set_iterators
+                        .get(&key)
+                        .map(|(source, _)| source.addr()),
+                    self.map_iterators
+                        .get(&key)
+                        .map(|(source, _)| source.addr()),
                 ];
                 for source in sources.into_iter().flatten() {
                     if let Some(&cidx) = self.by_addr.get(&(source as usize)) {
@@ -547,14 +581,38 @@ impl Heap {
             }
         }
 
+        // The nursery's address ranges, read once: the evacuate path consults
+        // them both before moving survivors out and after sweeping, and the
+        // chunk list is only released at the very end.
+        let nursery_ranges = if evacuate {
+            self.nursery_ranges()
+        } else {
+            Vec::new()
+        };
         if evacuate {
             let mut relocation = RelocationMap::new();
+            // This collection releases the nursery, so every object that is
+            // still alive afterwards has to leave it. Marked young objects are
+            // promoted, as before. An object that an earlier non-moving full
+            // collection promoted *in place* is already old but its storage can
+            // still be nursery storage, and a young-only collection never
+            // proves an old object dead, so those move too and keep their
+            // generation. The alternative - leaving them where they are and
+            // bumping the cursor past them - is what used to abandon a whole
+            // 512 KiB chunk on every minor collection.
             let survivors: Vec<_> = self
                 .records
                 .iter()
                 .enumerate()
                 .filter(|(_, record)| {
-                    record.alive && record.marked && record.generation == records::Generation::Young
+                    if !record.alive {
+                        return false;
+                    }
+                    let young = record.generation == records::Generation::Young;
+                    // The sweep below spares an old record in a young-only
+                    // collection whether or not the trace reached it.
+                    let survives_sweep = record.marked || (young_only && !young);
+                    survives_sweep && (young || address_in(&nursery_ranges, record.addr))
                 })
                 .map(|(idx, record)| (idx, record.addr, record.field_count))
                 .collect();
@@ -583,12 +641,6 @@ impl Heap {
             if let Some(callback) = on_relocation.as_mut() {
                 callback(&relocation);
             }
-            // A non-moving full collection may have promoted survivors in
-            // place. Those records are now old, but their storage can still
-            // live in a nursery chunk. Retaining the chunks keeps those
-            // promoted objects valid; force the next allocation into a fresh
-            // chunk instead of reusing storage that contains old objects.
-            self.nursery_cursor = CHUNK_SLOTS;
         }
 
         // Sweep: reclaim live-but-unmarked objects into the free list.
@@ -630,14 +682,30 @@ impl Heap {
             }
         }
         if evacuate {
-            // Dead young records still point into the nursery chunks that are
-            // about to be released. Do not put those records back on the free
-            // list: reusing their addresses after the chunks are cleared would
-            // turn the next allocation into a use-after-free.
-            for free_indices in self.free.values_mut() {
-                free_indices
-                    .retain(|&idx| self.records[idx].generation != records::Generation::Young);
+            // Dead records still point into the nursery storage this
+            // collection is about to hand out again, so they cannot go back on
+            // the address-preserving free list: that would make the next
+            // allocation a use-after-free. Release their storage instead, which
+            // keeps the record index reusable at a fresh address.
+            let mut free = std::mem::take(&mut self.free);
+            let mut stale: Vec<usize> = Vec::new();
+            for free_indices in free.values_mut() {
+                free_indices.retain(|&idx| {
+                    if address_in(&nursery_ranges, self.records[idx].addr) {
+                        stale.push(idx);
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
+            self.free = free;
+            for idx in stale {
+                self.release_record_storage(idx);
+            }
+            // Nothing alive is left in nursery storage: young survivors were
+            // promoted out of it and the sweep has just dropped the rest.
+            self.reset_nursery();
         }
         for entry in &mut self.finalizers {
             if entry.target != 0 && !entry.queued && !self.by_addr.contains_key(&entry.target) {

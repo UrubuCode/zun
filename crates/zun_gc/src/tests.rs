@@ -18,7 +18,9 @@ fn function_environment_is_kept_as_a_gc_root() {
     let garbage = heap.alloc(4, 0);
     let function = zun_core::FunctionHandle::new(11, Some(environment.addr() as usize));
 
-    let freed = unsafe { heap.collect_with_function_roots(&[], &[function], &|_| std::rc::Rc::from(Vec::new())) };
+    let freed = unsafe {
+        heap.collect_with_function_roots(&[], &[function], &|_| std::rc::Rc::from(Vec::new()))
+    };
     assert_eq!(freed, 1);
     assert_eq!(heap.live_count(), 1);
     assert!(heap.by_addr.contains_key(&(environment.addr() as usize)));
@@ -34,12 +36,18 @@ fn promise_result_keeps_managed_object_alive() {
         heap.promise_resolve(promise, zun_core::Any::object(result.addr() as usize)),
         Some(true)
     );
-    assert_eq!(unsafe { heap.collect(&[promise], &|_| std::rc::Rc::from(Vec::new())) }, 0);
+    assert_eq!(
+        unsafe { heap.collect(&[promise], &|_| std::rc::Rc::from(Vec::new())) },
+        0
+    );
     assert_eq!(
         heap.promise_state(promise),
         Some(zun_core::ManagedPromiseState::Resolved)
     );
-    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 2);
+    assert_eq!(
+        unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) },
+        2
+    );
 }
 
 #[test]
@@ -202,7 +210,10 @@ fn weak_reference_observes_a_live_root() {
     let mut heap = Heap::new();
     let target = heap.alloc(1, 0);
     let weak = heap.weak_ref_new(target);
-    assert_eq!(unsafe { heap.collect(&[target], &|_| std::rc::Rc::from(Vec::new())) }, 0);
+    assert_eq!(
+        unsafe { heap.collect(&[target], &|_| std::rc::Rc::from(Vec::new())) },
+        0
+    );
     assert_eq!(heap.weak_ref_get(weak), Some(target));
 }
 
@@ -213,13 +224,19 @@ fn weak_map_promotes_value_only_when_key_is_live() {
     let key = heap.alloc(1, 0);
     let value = heap.alloc(2, 0);
     assert!(heap.weak_map_set(weak_map, key, value));
-    assert_eq!(unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) }, 0);
+    assert_eq!(
+        unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) },
+        0
+    );
     assert_eq!(heap.weak_map_get(weak_map), Some((key, value)));
 
     let key2 = heap.alloc(3, 0);
     let value2 = heap.alloc(4, 0);
     assert!(heap.weak_map_set(weak_map, key2, value2));
-    assert_eq!(unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) }, 2);
+    assert_eq!(
+        unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) },
+        2
+    );
     assert_eq!(heap.weak_map_get(weak_map), Some((key, value)));
 }
 
@@ -232,7 +249,10 @@ fn weak_map_promotion_traces_dynamic_value_children() {
     let child = heap.alloc(2, 0);
     heap.dynamic_set(value, "child", zun_core::Any::object(child.addr() as usize));
     heap.weak_map_set(weak_map, key, value);
-    assert_eq!(unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) }, 0);
+    assert_eq!(
+        unsafe { heap.collect(&[key], &|_| std::rc::Rc::from(Vec::new())) },
+        0
+    );
     assert_eq!(heap.live_count(), 3);
 }
 
@@ -247,7 +267,10 @@ fn weak_map_ephemeron_chain_promotes_transitively() {
     assert!(heap.weak_map_set(first, root_key, value1));
     // `value1` is itself a key: promoting it must promote its own value.
     assert!(heap.weak_map_set(second, value1, value2));
-    assert_eq!(unsafe { heap.collect(&[root_key], &|_| std::rc::Rc::from(Vec::new())) }, 0);
+    assert_eq!(
+        unsafe { heap.collect(&[root_key], &|_| std::rc::Rc::from(Vec::new())) },
+        0
+    );
     assert_eq!(heap.weak_map_get(first), Some((root_key, value1)));
     assert_eq!(heap.weak_map_get(second), Some((value1, value2)));
 }
@@ -390,7 +413,10 @@ fn finalization_queues_token_after_target_is_swept() {
     let target = heap.alloc(1, 0);
     heap.finalization_register(target, 99);
     assert!(heap.finalization_drain().is_empty());
-    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 1);
+    assert_eq!(
+        unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) },
+        1
+    );
     assert_eq!(heap.finalization_drain(), vec![99]);
     assert!(heap.finalization_drain().is_empty());
 }
@@ -458,7 +484,10 @@ fn minor_collection_keeps_registered_callback_environment_alive() {
     unsafe { heap.collect(&[target], &|_| std::rc::Rc::from(Vec::new())) };
     let garbage = heap.alloc(3, 0);
 
-    assert_eq!(unsafe { heap.collect_young(&[target], &|_| std::rc::Rc::from(Vec::new())) }, 1);
+    assert_eq!(
+        unsafe { heap.collect_young(&[target], &|_| std::rc::Rc::from(Vec::new())) },
+        1
+    );
     assert!(heap.by_addr.contains_key(&(environment.addr() as usize)));
     assert!(!heap.by_addr.contains_key(&(garbage.addr() as usize)));
 }
@@ -492,7 +521,10 @@ fn byte_buffers_roundtrip_through_the_heap() {
     assert_eq!(heap.buffer_set(buffer, 2, 0xfe), Some(true));
     assert_eq!(heap.buffer_get(buffer, 2), Some(0xfe));
     assert_eq!(heap.buffer_set(buffer, 4, 1), Some(false));
-    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 1);
+    assert_eq!(
+        unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) },
+        1
+    );
     assert_eq!(heap.buffer_len(buffer), None);
 }
 
@@ -598,7 +630,10 @@ fn error_values_roundtrip_through_the_heap() {
     assert_eq!(heap.error_name(error), Some("RangeError"));
     assert_eq!(heap.error_set_message(error, "fixed"), Some(()));
     assert_eq!(heap.error_message(error), Some("fixed"));
-    assert_eq!(unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) }, 1);
+    assert_eq!(
+        unsafe { heap.collect(&[], &|_| std::rc::Rc::from(Vec::new())) },
+        1
+    );
     assert_eq!(heap.error_message(error), None);
 }
 
@@ -758,7 +793,13 @@ fn collect_frees_unreachable_and_keeps_reachable() {
     assert_eq!(heap.live_count(), 3);
 
     // Type 1 has a reference in slot 0; types 2 and 3 have none.
-    let ref_slots = |type_rid: u32| if type_rid == 1 { std::rc::Rc::from(vec![0usize]) } else { std::rc::Rc::from(vec![]) };
+    let ref_slots = |type_rid: u32| {
+        if type_rid == 1 {
+            std::rc::Rc::from(vec![0usize])
+        } else {
+            std::rc::Rc::from(vec![])
+        }
+    };
     // Root set is just `a`; `a` keeps `b` alive; `c` is garbage.
     let freed = unsafe { heap.collect(&[a], &ref_slots) };
     assert_eq!(freed, 1);
@@ -1040,7 +1081,9 @@ fn compaction_rewrites_multiple_stopped_native_frames() {
     ];
     let mut roots = vec![object];
 
-    let result = unsafe { heap.compact_with_native_frames(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &frames) };
+    let result = unsafe {
+        heap.compact_with_native_frames(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &frames)
+    };
 
     assert_eq!(result.moved_objects, 1);
     assert_eq!(result.rewritten_references, 2);
@@ -1071,7 +1114,9 @@ fn compaction_rewrites_registered_native_frame_stack_map() {
     let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 50, frame.as_mut_ptr()) };
     let mut roots = vec![object];
 
-    let result = unsafe { heap.compact_with_registered_native_frames(&mut roots, &|_| std::rc::Rc::from(Vec::new())) };
+    let result = unsafe {
+        heap.compact_with_registered_native_frames(&mut roots, &|_| std::rc::Rc::from(Vec::new()))
+    };
 
     assert_eq!(result.moved_objects, 1);
     assert_eq!(result.rewritten_references, 1);
@@ -1097,7 +1142,9 @@ fn collection_marks_registered_native_frame_roots() {
     }]);
     let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 60, frame.as_mut_ptr()) };
 
-    let reclaimed = unsafe { heap.collect_with_registered_native_frames(&[], &|_| std::rc::Rc::from(Vec::new())) };
+    let reclaimed = unsafe {
+        heap.collect_with_registered_native_frames(&[], &|_| std::rc::Rc::from(Vec::new()))
+    };
 
     assert_eq!(reclaimed, 0);
     assert_eq!(heap.live_count(), 1);
@@ -1122,7 +1169,9 @@ fn collect_and_compact_preserves_registered_native_frame_roots() {
     let mut roots = Vec::new();
 
     let result = unsafe {
-        heap.collect_and_compact_with_registered_native_frames(&mut roots, &|_| std::rc::Rc::from(Vec::new()))
+        heap.collect_and_compact_with_registered_native_frames(&mut roots, &|_| {
+            std::rc::Rc::from(Vec::new())
+        })
     };
 
     assert_eq!(result.reclaimed_objects, 0);
@@ -1157,7 +1206,9 @@ fn collect_and_compact_marks_native_root_scopes() {
     let mut explicit_roots = Vec::new();
 
     let result = unsafe {
-        heap.collect_and_compact_with_registered_native_frames(&mut explicit_roots, &|_| std::rc::Rc::from(Vec::new()))
+        heap.collect_and_compact_with_registered_native_frames(&mut explicit_roots, &|_| {
+            std::rc::Rc::from(Vec::new())
+        })
     };
 
     assert_eq!(result.reclaimed_objects, 0);
@@ -1188,7 +1239,11 @@ fn collect_and_compact_accepts_explicit_native_frames() {
     }];
 
     let result = unsafe {
-        heap.collect_and_compact_with_native_frames(&mut Vec::new(), &|_| std::rc::Rc::from(Vec::new()), &frames)
+        heap.collect_and_compact_with_native_frames(
+            &mut Vec::new(),
+            &|_| std::rc::Rc::from(Vec::new()),
+            &frames,
+        )
     };
 
     assert_eq!(result.reclaimed_objects, 0);
@@ -1213,8 +1268,9 @@ fn young_collection_marks_registered_native_frame_roots() {
     }]);
     let _scope = unsafe { ActiveNativeFrameScope::enter(&registry, 90, frame.as_mut_ptr()) };
 
-    let reclaimed =
-        unsafe { heap.collect_young_with_registered_native_frames(&[], &|_| std::rc::Rc::from(Vec::new())) };
+    let reclaimed = unsafe {
+        heap.collect_young_with_registered_native_frames(&[], &|_| std::rc::Rc::from(Vec::new()))
+    };
 
     assert_eq!(reclaimed, 0);
     assert_eq!(heap.live_count(), 1);
@@ -1378,16 +1434,23 @@ fn evacuating_minor_collection_rewrites_roots_and_old_to_young_fields() {
     let mut relocated = false;
 
     let freed = unsafe {
-        heap.collect_young_evacuating(&mut roots, &|_| std::rc::Rc::from(vec![0usize]), &mut |map| {
-            relocated =
-                map.relocate_address(old_young_address as usize) != old_young_address as usize;
-        })
+        heap.collect_young_evacuating(
+            &mut roots,
+            &|_| std::rc::Rc::from(vec![0usize]),
+            &mut |map| {
+                relocated =
+                    map.relocate_address(old_young_address as usize) != old_young_address as usize;
+            },
+        )
     };
 
     assert_eq!(freed, 0);
     assert!(relocated);
     assert_ne!(roots[1].addr(), old_young_address);
-    assert_eq!(old.field(0), roots[1].addr() as u64);
+    // `old` was promoted in place by the full collection above, so its storage
+    // is nursery storage and this evacuation moves it as well; the live handle
+    // is the rewritten root, not the stale local.
+    assert_eq!(roots[0].field(0), roots[1].addr() as u64);
     assert_eq!(heap.generation_counts(), (0, 2));
 }
 
@@ -1398,7 +1461,9 @@ fn evacuating_minor_collection_rewrites_addressed_array_side_tables() {
     let old_address = array.addr();
     let mut roots = vec![array];
 
-    unsafe { heap.collect_young_evacuating(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &mut |_| {}) };
+    unsafe {
+        heap.collect_young_evacuating(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &mut |_| {})
+    };
 
     assert_ne!(roots[0].addr(), old_address);
     assert_eq!(heap.array_len(roots[0]), Some(1));
@@ -1452,7 +1517,10 @@ fn minor_collection_clears_dead_young_weak_references() {
     let young = heap.alloc(8, 0);
     let weak = heap.weak_ref_new(young);
 
-    assert_eq!(unsafe { heap.collect_young(&[old], &|_| std::rc::Rc::from(Vec::new())) }, 1);
+    assert_eq!(
+        unsafe { heap.collect_young(&[old], &|_| std::rc::Rc::from(Vec::new())) },
+        1
+    );
     assert_eq!(heap.weak_ref_get(weak), None);
     assert!(heap.by_addr.contains_key(&(old.addr() as usize)));
 }
@@ -1465,7 +1533,11 @@ fn side_table_reference_writes_enter_the_remembered_set() {
     let set = heap.alloc_set();
     let dynamic = heap.alloc_dynamic();
     let promise = heap.alloc_promise();
-    unsafe { heap.collect(&[array, map, set, dynamic, promise], &|_| std::rc::Rc::from(Vec::new())) };
+    unsafe {
+        heap.collect(&[array, map, set, dynamic, promise], &|_| {
+            std::rc::Rc::from(Vec::new())
+        })
+    };
     let child = heap.alloc(8, 0);
 
     assert!(heap
@@ -1597,7 +1669,8 @@ fn nested_native_root_scopes_restore_the_outer_frame() {
         roots.clear();
         append_native_roots(&mut roots);
         assert_eq!(roots, vec![outer_object, inner_object]);
-        let freed = unsafe { heap.collect_with_native_roots(&[], &|_| std::rc::Rc::from(Vec::new())) };
+        let freed =
+            unsafe { heap.collect_with_native_roots(&[], &|_| std::rc::Rc::from(Vec::new())) };
         assert_eq!(freed, 0);
         assert_eq!(heap.live_count(), 2);
     }
@@ -1717,8 +1790,11 @@ fn active_stack_map_collection_includes_native_root_scopes() {
     }]);
     let _scope = unsafe { ActiveStackMapScope::enter(&registry) };
 
-    let reclaimed =
-        unsafe { heap.collect_with_active_native_frame(&[], 105, frame.as_ptr(), &|_| std::rc::Rc::from(Vec::new())) };
+    let reclaimed = unsafe {
+        heap.collect_with_active_native_frame(&[], 105, frame.as_ptr(), &|_| {
+            std::rc::Rc::from(Vec::new())
+        })
+    };
 
     assert_eq!(reclaimed, 0);
     assert_eq!(heap.live_count(), 1);
@@ -1729,7 +1805,9 @@ fn active_stack_map_collection_falls_back_to_explicit_roots() {
     let mut heap = Heap::new();
     let object = heap.alloc(1, 0);
     let freed = unsafe {
-        heap.collect_with_active_native_frame(&[object], 100, std::ptr::null(), &|_| std::rc::Rc::from(Vec::new()))
+        heap.collect_with_active_native_frame(&[object], 100, std::ptr::null(), &|_| {
+            std::rc::Rc::from(Vec::new())
+        })
     };
     assert_eq!(freed, 0);
     assert_eq!(heap.live_count(), 1);
@@ -1795,7 +1873,8 @@ fn bigint_payload_is_traced_by_its_managed_owner_and_relocated() {
     let bigint =
         heap.alloc_bigint(zun_core::BigInt::parse_decimal("18446744073709551616").unwrap());
     let mut roots = vec![bigint];
-    let result = unsafe { heap.collect_and_compact(&mut roots, &|_| std::rc::Rc::from(Vec::new())) };
+    let result =
+        unsafe { heap.collect_and_compact(&mut roots, &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(result.reclaimed_objects, 1);
     assert_eq!(
         heap.bigint_value(roots[0]).unwrap().to_string(),
@@ -1813,7 +1892,148 @@ fn realm_global_object_is_a_heap_singleton_and_relocates() {
     let global = heap.global_object();
     assert_eq!(heap.global_object(), global);
     let mut roots = vec![global];
-    unsafe { heap.collect_young_evacuating(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &mut |_| {}) };
+    unsafe {
+        heap.collect_young_evacuating(&mut roots, &|_| std::rc::Rc::from(Vec::new()), &mut |_| {})
+    };
     assert_eq!(heap.global_object(), roots[0]);
     assert_ne!(roots[0], global);
+}
+
+#[test]
+fn an_evacuating_collection_releases_nursery_storage() {
+    let mut heap = Heap::new();
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    // One object stays reachable across every collection; everything else in
+    // each epoch is garbage by the time the collection runs.
+    let mut roots = vec![heap.alloc(1, 0)];
+    for _ in 0..200 {
+        for _ in 0..256 {
+            let _ = heap.alloc_dynamic();
+        }
+        unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+    }
+    assert_eq!(heap.live_count(), 1);
+    // The nursery is handed back after each collection instead of being
+    // abandoned, and dead record indices are reused at fresh addresses, so
+    // neither grows with the number of objects ever allocated (51_200 here).
+    assert!(
+        heap.nursery_chunk_count() <= 1,
+        "nursery chunks: {}",
+        heap.nursery_chunk_count()
+    );
+    assert!(
+        heap.record_count() <= 1024,
+        "records: {}",
+        heap.record_count()
+    );
+    assert!(
+        heap.chunk_bytes() <= 4 * 1024 * 1024,
+        "chunk bytes: {}",
+        heap.chunk_bytes()
+    );
+}
+
+#[test]
+fn an_object_promoted_in_place_is_evacuated_out_of_the_nursery() {
+    let mut heap = Heap::new();
+    let ref_slots = |type_rid: u32| {
+        if type_rid == 1 {
+            std::rc::Rc::from(vec![0usize])
+        } else {
+            std::rc::Rc::from(Vec::new())
+        }
+    };
+    let holder = heap.alloc(1, 1);
+    let target = heap.alloc(2, 0);
+    holder.set_field(0, target.addr() as u64);
+
+    // A full collection does not move anything: both objects become old while
+    // their storage is still nursery storage. Releasing the nursery without
+    // moving them would be a use-after-free, which is why the previous
+    // behaviour was to abandon the chunk instead.
+    let mut roots = vec![holder];
+    unsafe { heap.collect(&roots, &ref_slots) };
+    assert_eq!(heap.generation_counts(), (0, 2));
+    let before = holder.addr();
+
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+    let holder = roots[0];
+    assert_ne!(holder.addr(), before, "the holder should have moved");
+    assert_eq!(heap.live_count(), 2);
+    let moved_target = unsafe { Obj::from_addr(holder.field(0) as *mut u64) };
+    assert_eq!(moved_target.type_rid(), 2, "the reference was rewritten");
+    assert!(heap.by_addr.contains_key(&(moved_target.addr() as usize)));
+    assert!(heap.nursery_chunk_count() <= 1);
+}
+
+#[test]
+fn compaction_releases_dead_records_for_reuse() {
+    let mut heap = Heap::new();
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    for _ in 0..64 {
+        let _ = heap.alloc(1, 0);
+    }
+    let mut roots: Vec<Obj> = Vec::new();
+    unsafe { heap.collect_and_compact(&mut roots, &ref_slots) };
+    assert_eq!(heap.live_count(), 0);
+
+    let records = heap.record_count();
+    for _ in 0..64 {
+        let _ = heap.alloc(1, 0);
+    }
+    assert_eq!(
+        heap.record_count(),
+        records,
+        "a compaction nulls dead records' addresses, so their indices are \
+         reusable at freshly allocated ones"
+    );
+    assert_eq!(heap.live_count(), 64);
+}
+
+#[test]
+fn a_function_property_keeps_and_rewrites_its_closure_environment() {
+    let mut heap = Heap::new();
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    // The shape a closure stored in a container has: a cell holding the
+    // captured value, an environment whose capture slot points at the cell,
+    // and a function-valued property whose handle points at the environment.
+    // Nothing else references the environment or the cell.
+    let cell = heap.alloc_dynamic();
+    heap.dynamic_set(cell, "$value", zun_core::Any::int(7));
+    let environment = heap.alloc_dynamic();
+    let cell_any = zun_core::Any::object(cell.addr() as usize);
+    heap.dynamic_set(environment, "c0", cell_any);
+    let holder = heap.alloc_dynamic();
+    heap.dynamic_set_function(
+        holder,
+        "f",
+        zun_core::FunctionHandle::new(1, Some(environment.addr() as usize)),
+    );
+
+    let mut roots = vec![holder];
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+    let holder = roots[0];
+
+    let handle = heap
+        .dynamic_get_function(holder, "f")
+        .expect("the function property survived");
+    let moved = handle
+        .environment()
+        .expect("the handle kept an environment");
+    assert!(
+        heap.by_addr.contains_key(&moved),
+        "the handle's environment address was rewritten after the move"
+    );
+    let environment = unsafe { Obj::from_addr(moved as *mut u64) };
+    let cell = heap
+        .dynamic_get(environment, "c0")
+        .and_then(|any| any.as_object())
+        .expect("the capture slot survived");
+    let cell = unsafe { Obj::from_addr(cell as *mut u64) };
+    assert_eq!(
+        heap.dynamic_get(cell, "$value")
+            .and_then(|any| any.as_int()),
+        Some(7),
+        "the captured value is still readable through the rewritten chain"
+    );
 }

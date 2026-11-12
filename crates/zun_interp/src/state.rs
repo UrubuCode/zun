@@ -15,7 +15,6 @@ pub(super) struct Interp<'a> {
     pub(super) eval_host: Option<&'a dyn super::EvalHost>,
     /// `new Function` results by source so repeats link (and leak a module copy) once.
     pub(super) eval_cache: HashMap<String, zun_core::FunctionHandle>,
-    pub(super) allocs: u32,
     pub(super) gc_interval: u32,
     pub(super) minor_collections: u8,
     pub(super) types: zun_types::TypeSystem,
@@ -354,6 +353,20 @@ impl<'a> Interp<'a> {
     /// side tables, exactly as the actively suspended frame is.
     pub(super) fn append_parked_roots(&self, roots: &mut Vec<Obj>) {
         self.append_decorator_roots(roots);
+        // A frame held in transit between a suspension and the boundary that
+        // takes it (a generator's yield, a resume about to start) owns managed
+        // values that nothing else references, and so does a yielded value
+        // waiting to be handed over. A collection can run at any safepoint in
+        // between, including one reached from inside the suspension itself.
+        for frame in [self.suspended.as_ref(), self.resume_frame.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            frame.append_managed_roots(roots);
+        }
+        if let Some(value) = self.yielded.as_ref() {
+            super::roots::collect_frame_roots(std::slice::from_ref(value), &[], roots);
+        }
         for parked in self.async_state.parked.values() {
             parked.frame.append_managed_roots(roots);
         }
