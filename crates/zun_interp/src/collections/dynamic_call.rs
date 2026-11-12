@@ -419,6 +419,20 @@ impl<'a> Interp<'a> {
                 // A built-in iterator object (from `Array`/`Map`/`Set`
                 // `keys`/`values`/`entries`) answers `next()` with a fresh
                 // `{ value, done }` result object, per the iterator protocol.
+                // The `%Iterator.prototype%` helpers on a built-in iterator or
+                // generator (`gen.map(..)`, `set.values().toArray()`).
+                if let Some(index) = iterator_helpers::iter_helper_index(&member) {
+                    if iterator_helpers::is_builtin_iterator_object(namespace) {
+                        let result = self.iterator_builtin_call(
+                            iterator_helpers::BUILTIN_ITER_HELPER_BASE + index,
+                            Value::Object(namespace),
+                            args[2..].to_vec(),
+                        )?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 if matches!(member.as_ref(), "return" | "throw")
                     && zun_gc::with_current_heap(|heap| heap.generator_state(namespace).is_some())
                 {
@@ -855,7 +869,9 @@ impl<'a> Interp<'a> {
                     // receiver as a hidden first argument (marked by the
                     // `@this` suffix on its closure name).
                     let mut call_args = call_args;
-                    if !handle.is_bound() {
+                    if handle.builtin_method().is_some_and(|kind| kind >= 16) {
+                        call_args.insert(0, Value::Object(namespace));
+                    } else if !handle.is_bound() {
                         let takes_this = self
                             .module
                             .tables

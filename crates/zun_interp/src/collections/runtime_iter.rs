@@ -84,6 +84,9 @@ impl<'a> Interp<'a> {
                     self.class_symbol_methods
                         .get(&(source.type_rid(), iterator_id.get()))
                         .copied()
+                })
+                .or_else(|| {
+                    super::iterator_helpers::symbol_function_in_chain(source, iterator_id)
                 });
         let Some(handle) = handle else {
             return Err(RunError::Native("TypeError: value is not iterable".into()));
@@ -136,7 +139,13 @@ impl<'a> Interp<'a> {
                 .unwrap_or(Value::Void);
             return Ok((value, false));
         }
-        let next = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "next"));
+        if zun_gc::with_current_heap(|heap| heap.dynamic_has(it, "$ih")) {
+            return self.iter_step(it);
+        }
+        let mut next = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "next"));
+        if next.is_none() {
+            next = self.iter_method(it, "next")?;
+        }
         let Some(next) = next else {
             return Err(RunError::Native(
                 "TypeError: iterator has no next() method".into(),

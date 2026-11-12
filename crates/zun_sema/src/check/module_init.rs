@@ -211,6 +211,7 @@ impl Checker<'_> {
                 ("Math", true),
                 ("JSON", true),
                 ("Reflect", true),
+                ("Iterator", true),
                 ("Proxy", false),
                 ("parseInt", false),
                 ("parseFloat", false),

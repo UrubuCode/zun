@@ -639,6 +639,53 @@ impl Interp<'_> {
                         zun_core::WellKnownSymbol::Iterator.id(),
                         zun_core::FunctionHandle::new_builtin_method(BUILTIN_ITER_SELF),
                     );
+                    for (index, entry) in super::collections::iterator_helpers::ITER_HELPERS
+                        .iter()
+                        .enumerate()
+                    {
+                        heap.dynamic_set_function(
+                            proto,
+                            entry.0.to_owned(),
+                            zun_core::FunctionHandle::new_builtin_method(
+                                super::collections::iterator_helpers::BUILTIN_ITER_HELPER_BASE
+                                    + index as u32,
+                            ),
+                        );
+                    }
+                    let tag = zun_core::Any::string(heap.intern_string("Iterator"));
+                    heap.dynamic_define_symbol(
+                        proto,
+                        zun_core::WellKnownSymbol::ToStringTag.id(),
+                        tag,
+                        false,
+                    );
+                }
+                3 | 4 => {
+                    use super::collections::iterator_helpers as ih;
+                    let (next, ret) = if kind == 3 {
+                        (ih::BUILTIN_ITERH_NEXT, ih::BUILTIN_ITERH_RETURN)
+                    } else {
+                        (ih::BUILTIN_WRAP_NEXT, ih::BUILTIN_WRAP_RETURN)
+                    };
+                    heap.dynamic_set_function(
+                        proto,
+                        "next".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method(next),
+                    );
+                    heap.dynamic_set_function(
+                        proto,
+                        "return".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method(ret),
+                    );
+                    if kind == 3 {
+                        let tag = zun_core::Any::string(heap.intern_string("Iterator Helper"));
+                        heap.dynamic_define_symbol(
+                            proto,
+                            zun_core::WellKnownSymbol::ToStringTag.id(),
+                            tag,
+                            false,
+                        );
+                    }
                 }
                 1 | 2 => {
                     let (next, tag) = if kind == 1 {
@@ -761,6 +808,12 @@ impl Interp<'_> {
                 }))
             }
             BUILTIN_ITER_SELF | BUILTIN_SPECIES_GETTER => Ok(this),
+            k if (super::collections::iterator_helpers::BUILTIN_ITER_HELPER_BASE
+                ..=super::collections::iterator_helpers::BUILTIN_WRAP_RETURN)
+                .contains(&k) =>
+            {
+                self.iterator_builtin_call(k, this, _args)
+            }
             BUILTIN_MAP_ITERATOR | BUILTIN_SET_ITERATOR => {
                 let want_map = kind == BUILTIN_MAP_ITERATOR;
                 let what = if want_map {
@@ -924,6 +977,23 @@ impl Interp<'_> {
                     Value::Str(entry.1.into())
                 } else {
                     Value::Float(entry.3 as f64, zun_il::NumKind::F64)
+                });
+            }
+            k if (super::collections::iterator_helpers::BUILTIN_ITER_HELPER_BASE
+                ..=super::collections::iterator_helpers::BUILTIN_WRAP_RETURN)
+                .contains(&k) =>
+            {
+                use super::collections::iterator_helpers as ih;
+                let (label, arity) = match k {
+                    ih::BUILTIN_ITER_FROM => ("from", 1),
+                    ih::BUILTIN_ITERH_NEXT | ih::BUILTIN_WRAP_NEXT => ("next", 0),
+                    ih::BUILTIN_ITERH_RETURN | ih::BUILTIN_WRAP_RETURN => ("return", 0),
+                    other => ih::ITER_HELPERS[(other - ih::BUILTIN_ITER_HELPER_BASE) as usize],
+                };
+                return Some(if name == "name" {
+                    Value::Str(label.into())
+                } else {
+                    Value::Float(arity as f64, zun_il::NumKind::F64)
                 });
             }
             BUILTIN_MAP_ITERATOR => "entries",

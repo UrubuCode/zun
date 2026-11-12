@@ -14,6 +14,7 @@ mod array_iterate;
 mod array_mutate;
 mod dynamic_call;
 mod iterators;
+pub(crate) mod iterator_helpers;
 mod mapset;
 mod misc_ops;
 

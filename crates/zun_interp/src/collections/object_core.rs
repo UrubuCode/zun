@@ -466,8 +466,14 @@ impl<'a> Interp<'a> {
                 let readonly = matches!(args.get(2), Some(Value::Bool(true)));
                 zun_gc::with_current_heap_mut(|heap| {
                     let global = heap.global_object();
-                    heap.dynamic_define(global, name, value, !readonly);
+                    heap.dynamic_define(global, name.clone(), value, !readonly);
                 });
+                if name == "Iterator" {
+                    if let Some(address) = value.as_object() {
+                        let namespace = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                        Self::install_iterator_global(namespace);
+                    }
+                }
                 // An assignment expression evaluates to the assigned value.
                 Ok(Value::Any(value))
             }

@@ -127,7 +127,8 @@ impl<'a> Interp<'a> {
                     self.class_symbol_methods
                         .get(&(source.type_rid(), iterator_id.get()))
                         .copied()
-                });
+                })
+                .or_else(|| super::iterator_helpers::symbol_function_in_chain(source, iterator_id));
                 let Some(handle) = handle else {
                     return Err(RunError::Native("TypeError: value is not iterable".into()));
                 };

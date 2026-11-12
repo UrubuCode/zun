@@ -95,6 +95,18 @@ impl Interp<'_> {
                 }
             }
         }
+        // `gen.map` / `setIterator.toArray` ... read off a built-in iterator
+        // are the shared `%Iterator.prototype%` helper method values.
+        if let Some(index) = crate::collections::iterator_helpers::iter_helper_index(&name) {
+            if let Value::Object(obj) = &concrete {
+                if crate::collections::iterator_helpers::is_builtin_iterator_object(*obj) {
+                    stack.push(Value::Function(zun_core::FunctionHandle::new_builtin_method(
+                        crate::collections::iterator_helpers::BUILTIN_ITER_HELPER_BASE + index,
+                    )));
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         // `gen.next` / `gen.return` / `gen.throw` read off a generator
         // object are callable method values.
         if matches!(name.as_str(), "next" | "return" | "throw") {
@@ -873,6 +885,14 @@ impl Interp<'_> {
         // `gen["next" | "return" | "throw"]` read off a generator object
         // is a callable method value, like the static-name read.
         if let Value::Str(name) = &key {
+            if let Some(index) = crate::collections::iterator_helpers::iter_helper_index(name) {
+                if crate::collections::iterator_helpers::is_builtin_iterator_object(object) {
+                    stack.push(Value::Function(zun_core::FunctionHandle::new_builtin_method(
+                        crate::collections::iterator_helpers::BUILTIN_ITER_HELPER_BASE + index,
+                    )));
+                    return Ok(ArmFlow::Continue);
+                }
+            }
             if matches!(&**name, "next" | "return" | "throw")
                 && zun_gc::with_current_heap(|heap| {
                     heap.generator_state(object).is_some()
@@ -962,6 +982,11 @@ impl Interp<'_> {
                                 self.class_symbol_methods
                                     .get(&(object.type_rid(), symbol.get()))
                                     .copied()
+                            })
+                            .or_else(|| {
+                                crate::collections::iterator_helpers::symbol_function_in_chain(
+                                    object, symbol,
+                                )
                             });
                             match handle {
                                 Some(handle) => Value::Function(handle),
