@@ -208,8 +208,8 @@ impl Checker<'_> {
         // proxy over data uses the plain `proxyNew`.
         if name == "Proxy" {
             if args.len() != 2 {
-                self.error(span, "`Proxy` expects a target and a handler");
-                return Some(self.poison(span));
+                // `new Proxy()` with a wrong arity is a run-time TypeError.
+                return Some(self.runtime_type_error(cx, span));
             }
             let target = self.check_expr(cx, &args[0]);
             let handler = self.check_expr(cx, &args[1]);

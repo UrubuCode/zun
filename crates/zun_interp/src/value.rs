@@ -278,7 +278,7 @@ pub fn store_field(
     heap: &mut zun_gc::Heap,
 ) {
     if kind == FIELD_ANY {
-        if let Some(any) = value.box_any(heap) {
+        if let Some(any) = value.box_any_cell(heap) {
             heap.store_any_field(obj, slot, any);
         }
         return;

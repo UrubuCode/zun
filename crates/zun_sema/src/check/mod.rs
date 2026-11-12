@@ -466,6 +466,9 @@ struct ClassInfo {
     span_start: u32,
     base: Option<u32>,
     base_name: Option<String>,
+    /// The `extends` value is a runtime value rather than a known class, so the
+    /// class is compiled base-less and `super(...)` is a no-op.
+    dynamic_base: bool,
     own_fields: Vec<(String, Ty, bool, bool)>,
     own_initializers: Vec<Option<Box<ast::Expr>>>,
 }

@@ -49,6 +49,9 @@ fn needs_hoist(source: &str, init: &ast::Expr) -> bool {
     let Some(text) = source.get(span.start as usize..span.end as usize) else {
         return false;
     };
+    if matches!(init, ast::Expr::Function(_)) && text.contains("=>") && is_word(text, "this") {
+        return true;
+    }
     if text.contains("=>") || text.starts_with("function") || text.starts_with("class") {
         return false;
     }
@@ -71,12 +74,47 @@ fn name_is(source: &str, name: &ast::Name, expected: &str) -> bool {
     source.get(name.span.start as usize..name.span.end as usize) == Some(expected)
 }
 
+/// Parameters of the nearest constructor up `class`'s base chain (empty when
+/// no ancestor declares one). `None` when the chain cannot be resolved
+/// statically or the constructor takes a rest parameter, which `super(...)`
+/// forwarding cannot express.
+fn inherited_ctor_params(
+    source: &str,
+    classes: &[ast::Class],
+    class: &ast::Class,
+) -> Option<Vec<ast::Param>> {
+    let mut current = class;
+    for _ in 0..classes.len() + 1 {
+        let base = current.base.as_ref()?;
+        let base_name = source.get(base.span.start as usize..base.span.end as usize)?;
+        let parent = classes.iter().find(|c| {
+            source.get(c.name.span.start as usize..c.name.span.end as usize) == Some(base_name)
+        })?;
+        if let Some(ctor) = parent
+            .methods
+            .iter()
+            .find(|m| !m.is_static && name_is(source, &m.name, "constructor"))
+        {
+            if ctor.params.iter().any(|p| p.is_rest) {
+                return None;
+            }
+            return Some(ctor.params.clone());
+        }
+        if parent.base.is_none() {
+            return Some(Vec::new());
+        }
+        current = parent;
+    }
+    None
+}
+
 /// Rewrite `program` so order-sensitive instance field initializers run inside
 /// constructors. Returns `None` when nothing needs rewriting.
 pub(crate) fn hoist(source: &str, program: &ast::Program) -> Option<ast::Program> {
     let hoistable = |class: &ast::Class| {
         class.decorators.is_empty()
             && (class.base.is_none()
+                || inherited_ctor_params(source, &program.classes, class).is_some()
                 || class
                     .methods
                     .iter()
@@ -158,11 +196,28 @@ pub(crate) fn hoist(source: &str, program: &ast::Program) -> Option<ast::Program
                 ctor.body.statements.splice(at..at, statements);
             }
             None => {
+                let mut statements = statements;
+                let mut params = Vec::new();
+                if class.base.is_some() {
+                    params = inherited_ctor_params(source, &program.classes, class)
+                        .unwrap_or_default();
+                    let super_name = find_word(source, "super")
+                        .map_or_else(|| ast::synthetic_ident("super"), |span| ast::Name { span });
+                    let args = params.iter().map(|p| ast::Expr::Ident(p.name)).collect();
+                    statements.insert(
+                        0,
+                        ast::Stmt::Expr(ast::Expr::Call {
+                            callee: super_name,
+                            args,
+                            span: class.span,
+                        }),
+                    );
+                }
                 class.methods.push(ast::Function {
                     name: ctor_name,
                     type_params: Vec::new(),
                     decorators: Vec::new(),
-                    params: Vec::new(),
+                    params,
                     return_type: None,
                     is_extern: false,
                     is_static: false,

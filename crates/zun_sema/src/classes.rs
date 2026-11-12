@@ -4,6 +4,28 @@ use zun_common::Span;
 use zun_syntax::ast;
 
 impl<'a> Checker<'a> {
+    /// Whether `name` denotes a run-time value (a builtin global constructor or
+    /// a binding declared in the source) rather than a misspelled class.
+    fn is_runtime_value_name(&self, name: &str) -> bool {
+        const GLOBALS: &[&str] = &[
+            "Iterator", "BigInt", "Symbol", "Object", "Function", "Array", "String", "Number",
+            "Boolean", "Error", "Proxy", "Reflect", "Date", "RegExp", "Map", "Set", "WeakMap",
+            "WeakSet", "Promise",
+        ];
+        if GLOBALS.contains(&name) {
+            return true;
+        }
+        ["const", "let", "var", "function"].iter().any(|keyword| {
+            let needle = format!("{keyword} {name}");
+            self.source.match_indices(&needle).any(|(at, _)| {
+                self.source[at + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            })
+        })
+    }
+
     /// First pass over classes: register names (so annotations resolve) and
     /// remember each base's name for later resolution.
     pub(super) fn collect_classes(&mut self, program: &ast::Program) {
@@ -18,6 +40,7 @@ impl<'a> Checker<'a> {
                 span_start: c.span.start,
                 base: None,
                 base_name,
+                dynamic_base: false,
                 own_fields: Vec::new(),
                 own_initializers: Vec::new(),
             });
@@ -45,7 +68,13 @@ impl<'a> Checker<'a> {
                         }
                     }
                     None => {
-                        if let Some(b) = &c.base {
+                        // A base that is not a known class is a runtime value
+                        // (a builtin constructor, a mixin result): the class
+                        // is compiled base-less.
+                        if self.is_runtime_value_name(&base_name) {
+                            self.classes[i].dynamic_base = true;
+                            self.classes[i].base_name = None;
+                        } else if let Some(b) = &c.base {
                             self.error(b.span, format!("unknown base class `{base_name}`"));
                         }
                     }

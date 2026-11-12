@@ -85,24 +85,7 @@ pub(super) fn convert_class_declaration_inner(
         .as_ref()
         .map(|id| id.span)
         .unwrap_or(class_declaration.span);
-    let base = class_declaration
-        .heritage
-        .as_ref()
-        .map(|heritage| {
-            // `extends null`: the instance chain stops at the class itself.
-            if matches!(&heritage.expression, Expression::NullLiteral(_)) {
-                return Ok(None);
-            }
-            let Expression::Identifier(identifier) = &heritage.expression else {
-                return Err("OXC adapter supports identifier class bases only".into());
-            };
-            Ok(Some(Name {
-                span: Span::new(identifier.span.start, identifier.span.end),
-            }))
-        })
-        .transpose()
-        .map_err(|error| vec![error])?
-        .flatten();
+    let base = convert_heritage(source, class_declaration)?;
     let mut fields = Vec::new();
     let mut methods = Vec::new();
     let mut method_index = MethodIndex::new();
@@ -162,6 +145,93 @@ pub(super) fn convert_class_declaration_inner(
         symbol_methods,
         span: Span::new(class_declaration.span.start, class_declaration.span.end),
     })
+}
+
+/// Peel parentheses and TS casts off a heritage expression.
+fn peel_heritage<'a, 'b>(mut expression: &'b Expression<'a>) -> &'b Expression<'a> {
+    loop {
+        match expression {
+            Expression::ParenthesizedExpression(inner) => expression = &inner.expression,
+            Expression::TSAsExpression(inner) => expression = &inner.expression,
+            Expression::TSNonNullExpression(inner) => expression = &inner.expression,
+            _ => return expression,
+        }
+    }
+}
+
+/// Resolve the `extends` clause to a static base class name.
+///
+/// A bare identifier (possibly cast) is the base. Any other expression is
+/// evaluated once, at the class definition point, into a hidden temp (so side
+/// effects, ordering and thrown errors are preserved); the base is then taken
+/// from the `typeof Name` return annotation of a called top-level function when
+/// one is declared, and the class is base-less otherwise.
+fn convert_heritage(
+    source: &str,
+    class_declaration: &oxc_ast::ast::Class<'_>,
+) -> Result<Option<Name>, Vec<String>> {
+    let Some(heritage) = class_declaration.heritage.as_ref() else {
+        return Ok(None);
+    };
+    let expression = peel_heritage(&heritage.expression);
+    if matches!(expression, Expression::NullLiteral(_)) {
+        return Ok(None);
+    }
+    let self_name = class_declaration.id.as_ref().map(|id| id.name.as_str());
+    if let Expression::Identifier(identifier) = expression {
+        if Some(identifier.name.as_str()) != self_name {
+            return Ok(Some(Name {
+                span: Span::new(identifier.span.start, identifier.span.end),
+            }));
+        }
+    }
+    let value = convert_expression(source, expression).map_err(|error| vec![error])?;
+    let span = Span::new(expression.span().start, expression.span().end);
+    let n = COMPUTED_FIELD_COUNTER.with(|counter| {
+        let n = counter.get();
+        counter.set(n + 1);
+        n
+    });
+    CLASS_TRAILING.with(|cells| {
+        cells.borrow_mut().push(Stmt::Let {
+            name: crate::ast::synthetic_ident(&format!("__hb{n}")),
+            ty: None,
+            init: value,
+            span,
+        })
+    });
+    // `f()` where `function f(...): typeof Name` names its base statically.
+    if let Expression::CallExpression(call) = expression {
+        if let Expression::Identifier(callee) = &call.callee {
+            if let Some((start, end)) = declared_typeof_return(source, callee.name.as_str()) {
+                return Ok(Some(Name {
+                    span: Span::new(start as u32, end as u32),
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Locate `function <callee>(...): typeof <Name>` in the source and return the
+/// byte range of `<Name>`.
+fn declared_typeof_return(source: &str, callee: &str) -> Option<(usize, usize)> {
+    let needle = format!("function {callee}(");
+    let at = source.find(&needle)?;
+    let rest = &source[at..];
+    let close = rest.find(')')?;
+    let after = rest[close + 1..].trim_start();
+    let after = after.strip_prefix(':')?.trim_start();
+    let after = after.strip_prefix("typeof")?;
+    let trimmed = after.trim_start();
+    let len = trimmed
+        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .unwrap_or(trimmed.len());
+    if len == 0 {
+        return None;
+    }
+    let name_start = source.len() - trimmed.len();
+    Some((name_start, name_start + len))
 }
 
 /// A field with a run-time computed key. The key is evaluated once, when the
@@ -399,7 +469,7 @@ fn infer_constructor_fields(
         let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
         // Both `this.name =` and `this['name'] =` spellings.
         let mut candidates: Vec<(usize, usize)> = Vec::new();
-        for (marker, skip) in [("this.", 5usize), ("this['", 6), ("this[\"", 6)] {
+        for (marker, skip) in [("this.", 5usize), ("this['", 6), ("this[\"", 6), ("(this as any).", 14)] {
             let mut from = 0;
             while let Some(found) = text[from..].find(marker) {
                 let at = from + found;

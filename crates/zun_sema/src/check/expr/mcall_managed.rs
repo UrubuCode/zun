@@ -35,10 +35,10 @@ impl Checker<'_> {
             let form = match args.first() {
                 Some(arg) => {
                     let checked = self.check_expr(cx, arg);
-                    if !checked.ty.is_error() && checked.ty != Ty::String {
+                    if !checked.ty.is_error() && !matches!(checked.ty, Ty::String | Ty::Any) {
                         self.error(checked.span, "normalize form must be a string");
                     }
-                    checked
+                    Self::unbox_to(checked, Ty::String)
                 }
                 None => hir::Expr {
                     kind: hir::ExprKind::String("NFC".to_string()),

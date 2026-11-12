@@ -65,6 +65,18 @@ impl Checker<'_> {
             return self.poison(span);
         };
         let Some(base) = self.classes[this_class as usize].base else {
+            if self.classes[this_class as usize].dynamic_base {
+                // The runtime base is not modelled: evaluate the arguments for
+                // their effects and treat the call as a no-op.
+                for argument in args {
+                    self.check_expr(cx, argument);
+                }
+                return hir::Expr {
+                    kind: hir::ExprKind::Null,
+                    ty: Ty::Void,
+                    span,
+                };
+            }
             self.error(
                 span,
                 "`super` used in a class that has no base class (no `extends`)",

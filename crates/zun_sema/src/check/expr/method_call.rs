@@ -48,8 +48,26 @@ impl Checker<'_> {
         if let Some(e) = self.try_mcall_static_regex(cx, receiver.as_ref(), method, args, span) {
             return e;
         }
+        let receiver_ast = receiver.clone();
         let mut receiver = self.check_expr(cx, receiver);
         let mname = self.text(method).to_string();
+        // A function-valued field (`bump = () => ...`) is invoked through its
+        // value, not through a method slot.
+        if let Ty::Instance(class) = receiver.ty {
+            if self.method_of(class, &mname).is_none() && self.field_of(class, &mname).is_some() {
+                let callee = ast::Expr::Field {
+                    object: receiver_ast.clone(),
+                    field: method.clone(),
+                    span,
+                };
+                let call = ast::Expr::ComputedCall {
+                    callee: Box::new(callee),
+                    args: args.clone(),
+                    span,
+                };
+                return self.check_expr(cx, &call);
+            }
+        }
         // An integer-typed receiver (`s.codePointAt(0)!`) is a JS number:
         // widen it so the `Number.prototype` methods apply.
         if receiver.ty.is_int()

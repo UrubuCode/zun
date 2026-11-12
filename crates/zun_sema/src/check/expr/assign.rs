@@ -458,6 +458,9 @@ impl Checker<'_> {
             Ty::Instance(class) => match self.field_of(class, &fname) {
                 Some((slot, ty)) => {
                     coerce_numeric_literal(&mut value, ty);
+                    if ty == Ty::Any && matches!(value.ty, Ty::Function(_)) {
+                        value = Self::box_to_any(value);
+                    }
                     if !ty.is_error() && !value.ty.is_error() && !self.is_assignable(value.ty, ty) {
                         self.error(
                             value.span,
