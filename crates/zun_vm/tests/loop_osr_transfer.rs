@@ -111,3 +111,16 @@ fn input_array_local_survives_loop_and_is_read_after() {
     assert_eq!(plain, hooked);
     assert!(transfers > 0, "array-local loop OSR must have fired");
 }
+
+// The shape of a rest-parameter helper (`for (...) passed.push(args[i])` over
+// `any[]` locals): the loop region returns a resume PC, which says nothing
+// about the element kind of the arrays it touches, so heterogeneous `any`
+// elements must come through the native loop unchanged.
+#[test]
+fn any_array_copy_loop_keeps_heterogeneous_elements() {
+    let src = "function spread(args: any[]): any[] { const passed: any[] = []; const count = args.length; for (let i = 0; i < count; i++) passed.push(args[i]); return passed; }
+               function main() { const out = spread([\"a\", \"b\", 5, true, \"lit\"]); let i = 0; while (i < out.length) { print(String(out[i])); i = i + 1; } }";
+    let (plain, hooked, _) = run_both(src, 2);
+    assert_eq!(plain, ["a", "b", "5", "true", "lit"]);
+    assert_eq!(plain, hooked);
+}

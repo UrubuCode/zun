@@ -763,6 +763,14 @@ impl Translator<'_> {
                     );
                     let load_bool = self.method_return_kind == JitKind::Bool;
                     let load_object = self.method_return_kind == JitKind::Object;
+                    // The element kind of a typed load is inferred from the
+                    // method's return kind. A loop region returns its resume PC
+                    // (u64), which says nothing about the array's elements, so
+                    // an uncarried load would read e.g. `any` elements as raw
+                    // u64 and yield 0. Refuse the region instead (interpreted).
+                    if !carrier_load && self.osr_exit.is_some() {
+                        return Err("array element load in an OSR loop region needs an Any carrier".into());
+                    }
                     if carrier_load {
                         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
                             StackSlotKind::ExplicitSlot,

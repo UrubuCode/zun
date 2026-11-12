@@ -43,6 +43,11 @@ impl Translator<'_> {
             return Err("array pop requires an object receiver".into());
         }
         self.builder.declare_value_needs_stack_map(array);
+        // As for `LoadArray`: the pop kind comes from the method return kind,
+        // which in an OSR loop region is the resume PC, not the element kind.
+        if self.osr_exit.is_some() {
+            return Err("array pop in an OSR loop region has no known element kind".into());
+        }
         let pop_u64 = self.method_return_kind == JitKind::Num(NumKind::U64);
         let pop_i64 = self.method_return_kind == JitKind::Num(NumKind::I64);
         let pop_i32 = self.method_return_kind == JitKind::Num(NumKind::I32);

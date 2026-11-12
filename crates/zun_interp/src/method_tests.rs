@@ -4194,3 +4194,23 @@ fn any_receivers_of_other_builtins_still_dispatch() {
     );
     assert_eq!(lines, vec!["ABC", "32", "4", "true"]);
 }
+
+#[test]
+fn rest_parameter_function_called_through_an_any_member_packs_its_arguments() {
+    let module = zun_compiler::compile_with_oxc(
+        r#"
+        function rest(...args: any[]): void {
+          let out = "";
+          for (const a of args) out = out + " " + String(a);
+          console.log("n=" + String(args.length) + " ->" + out);
+        }
+        const viaAny: any = { rest: rest };
+        viaAny.rest("a", "b", 5, true, "lit");
+        "#,
+        true,
+    )
+    .expect("compile");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("rest call through any member");
+    assert_eq!(output.lines, vec!["n=5 -> a b 5 true lit"]);
+}
