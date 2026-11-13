@@ -276,22 +276,19 @@ pub fn call_namespace_instance_method(
 
     // Root the wrapper and the real instance across the call and the post-call
     // resync: the method body can allocate and trigger a moving collection that
-    // relocates both, and a native root scope lets the GC rewrite these slots so
-    // the volatile re-reads below stay valid.
-    let roots = [*wrapper, instance];
-    let _root_scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-    let current_wrapper = || unsafe { std::ptr::read_volatile(&roots[0]) };
-    let current_instance = || unsafe { std::ptr::read_volatile(&roots[1]) };
+    // relocates both, so each is held in a guard and read back through `get()`.
+    zun_gc::root!(wrapper = *wrapper);
+    zun_gc::root!(instance = instance);
 
     // The receiver is argument 0; the call's own arguments follow it.
     let mut call_args = Vec::with_capacity(args.len() + 1);
-    call_args.push(Value::Object(current_instance()));
+    call_args.push(Value::Object(instance.get()));
     call_args.extend(args);
     let result =
         run_method_loaded_on_current_heap(scope, loader, function.method_rid(), call_args, output)?;
 
     // Mirror the (possibly mutated) instance fields back into the snapshot.
-    resync_snapshot_fields(scope, current_wrapper(), current_instance());
+    resync_snapshot_fields(scope, wrapper.get(), instance.get());
     Ok(result)
 }
 
@@ -331,13 +328,13 @@ fn resync_snapshot_fields(scope: &ModuleScope, wrapper: zun_gc::Obj, instance: z
             })
             .collect()
     });
-    let roots = [wrapper];
-    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-    let current_wrapper = || unsafe { std::ptr::read_volatile(&roots[0]) };
+    // Boxing a field value allocates and can move the wrapper, so it is read through
+    // a guard before each store.
+    zun_gc::root!(wrapper = wrapper);
     zun_gc::with_current_heap_mut(|heap| {
         for (name, value) in &values {
             let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
-            heap.dynamic_set(current_wrapper(), name.clone(), boxed);
+            heap.dynamic_set(wrapper.get(), name.clone(), boxed);
         }
     });
 }

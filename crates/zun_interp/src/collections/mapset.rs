@@ -24,11 +24,12 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 // Root both the source and the target: `map_insert` may grow the
                 // table (allocating), relocating either handle.
-                let roots = [source, target];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                zun_gc::root!(source = source);
+                zun_gc::root!(target = target);
                 for index in 0..length {
-                    let entry = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
+                    let entry =
+                        zun_gc::with_current_heap(|heap| heap.array_get(source.get(), index))
+                            .ok_or(RunError::BadToken)?;
                     let pair = entry
                         .as_object()
                         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
@@ -41,9 +42,9 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?;
                     let value = zun_gc::with_current_heap(|heap| heap.array_get(pair, 1))
                         .unwrap_or_else(zun_core::Any::void);
-                    zun_gc::with_current_heap_mut(|heap| heap.map_insert(roots[1], key, value));
+                    zun_gc::with_current_heap_mut(|heap| heap.map_insert(target.get(), key, value));
                 }
-                Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
+                Ok(Value::Any(zun_core::Any::object(target.get().addr() as usize)))
             }
             "mapSet" => {
                 let object =
@@ -329,7 +330,7 @@ impl<'a> Interp<'a> {
                 }
                 let iterator =
                     zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
-                        .ok_or(RunError::BadToken)?;
+                            .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "mapKeys" | "mapEntries" => {
@@ -355,7 +356,7 @@ impl<'a> Interp<'a> {
                 }
                 let iterator =
                     zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
-                        .ok_or(RunError::BadToken)?;
+                            .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "mapForEach" => {
@@ -382,14 +383,17 @@ impl<'a> Interp<'a> {
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_set());
                 let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
                     .ok_or(RunError::BadToken)?;
-                let roots = [source, target];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Keep-alive: `set_add` can grow the table (allocating) while the source is still
+                // read.
+                zun_gc::root!(source = source);
+                zun_gc::root!(target = target);
                 for index in 0..length {
-                    let value = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
-                    zun_gc::with_current_heap_mut(|heap| heap.set_add(roots[1], value));
+                    let value =
+                        zun_gc::with_current_heap(|heap| heap.array_get(source.get(), index))
+                            .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| heap.set_add(target.get(), value));
                 }
-                Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
+                Ok(Value::Any(zun_core::Any::object(target.get().addr() as usize)))
             }
             "setFromIterable" => {
                 // `new Set(iterable)` for a non-array built-in iterable: a
@@ -409,15 +413,16 @@ impl<'a> Interp<'a> {
                 if let Value::Str(value) = arg {
                     let points: Vec<String> =
                         value.chars().map(|point| point.to_string()).collect();
-                    let roots = [target];
-                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                    // Keep-alive: interning and `set_add` allocate while the target set is still
+                    // appended to.
+                    zun_gc::root!(target = target);
                     for point in points {
                         zun_gc::with_current_heap_mut(|heap| {
                             let id = heap.intern_string(point.as_str());
-                            heap.set_add(roots[0], zun_core::Any::string(id));
+                            heap.set_add(target.get(), zun_core::Any::string(id));
                         });
                     }
-                    return Ok(Value::Any(zun_core::Any::object(roots[0].addr() as usize)));
+                    return Ok(Value::Any(zun_core::Any::object(target.get().addr() as usize)));
                 }
                 let source = object(arg).ok_or_else(|| {
                     RunError::Native("TypeError: value is not iterable".to_string())
@@ -469,14 +474,17 @@ impl<'a> Interp<'a> {
                     }
                     staged
                 });
-                let roots = [staged, target];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Keep-alive: `set_add` can grow the table (allocating) while the staged array is
+                // still read.
+                zun_gc::root!(staged = staged);
+                zun_gc::root!(target = target);
                 for index in 0..length {
-                    let value = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
-                    zun_gc::with_current_heap_mut(|heap| heap.set_add(roots[1], value));
+                    let value =
+                        zun_gc::with_current_heap(|heap| heap.array_get(staged.get(), index))
+                            .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| heap.set_add(target.get(), value));
                 }
-                Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
+                Ok(Value::Any(zun_core::Any::object(target.get().addr() as usize)))
             }
             "mapFromIterable" => {
                 // `new Map(iterable)` for a non-array built-in iterable: another
@@ -513,17 +521,23 @@ impl<'a> Interp<'a> {
                         }
                         (keys, values)
                     });
-                    let roots = [keys, values, target];
-                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                    // Keep-alive: `map_insert` can grow the table (allocating) while the key and
+                    // value arrays are still read.
+                    zun_gc::root!(keys = keys);
+                    zun_gc::root!(values = values);
+                    zun_gc::root!(target = target);
                     for index in 0..length {
-                        let key = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                            .ok_or(RunError::BadToken)?;
-                        let value =
-                            zun_gc::with_current_heap(|heap| heap.array_get(roots[1], index))
+                        let key =
+                            zun_gc::with_current_heap(|heap| heap.array_get(keys.get(), index))
                                 .ok_or(RunError::BadToken)?;
-                        zun_gc::with_current_heap_mut(|heap| heap.map_insert(roots[2], key, value));
+                        let value =
+                            zun_gc::with_current_heap(|heap| heap.array_get(values.get(), index))
+                                    .ok_or(RunError::BadToken)?;
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.map_insert(target.get(), key, value);
+                        });
                     }
-                    return Ok(Value::Any(zun_core::Any::object(roots[2].addr() as usize)));
+                    return Ok(Value::Any(zun_core::Any::object(target.get().addr() as usize)));
                 }
                 // A Set source (or an array): each element must be a `[key,
                 // value]` pair array. Snapshot the elements into a rooted array
@@ -564,11 +578,14 @@ impl<'a> Interp<'a> {
                     }
                     staged
                 });
-                let roots = [staged, target];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Keep-alive: `map_insert` can grow the table (allocating) while the staged array
+                // is still read.
+                zun_gc::root!(staged = staged);
+                zun_gc::root!(target = target);
                 for index in 0..length {
-                    let entry = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
+                    let entry =
+                        zun_gc::with_current_heap(|heap| heap.array_get(staged.get(), index))
+                            .ok_or(RunError::BadToken)?;
                     let pair = entry
                         .as_object()
                         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
@@ -581,9 +598,9 @@ impl<'a> Interp<'a> {
                         .ok_or(RunError::BadToken)?;
                     let value = zun_gc::with_current_heap(|heap| heap.array_get(pair, 1))
                         .unwrap_or_else(zun_core::Any::void);
-                    zun_gc::with_current_heap_mut(|heap| heap.map_insert(roots[1], key, value));
+                    zun_gc::with_current_heap_mut(|heap| heap.map_insert(target.get(), key, value));
                 }
-                Ok(Value::Any(zun_core::Any::object(roots[1].addr() as usize)))
+                Ok(Value::Any(zun_core::Any::object(target.get().addr() as usize)))
             }
             "setAdd" => {
                 let object =
@@ -763,7 +780,7 @@ impl<'a> Interp<'a> {
                 // A live cursor: deletions and additions during iteration are seen.
                 let iterator =
                     zun_gc::with_current_heap_mut(|heap| heap.alloc_set_iterator(object))
-                        .ok_or(RunError::BadToken)?;
+                            .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "setEntries" => {
@@ -789,7 +806,7 @@ impl<'a> Interp<'a> {
                 }
                 let iterator =
                     zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
-                        .ok_or(RunError::BadToken)?;
+                            .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "setForEach" => {

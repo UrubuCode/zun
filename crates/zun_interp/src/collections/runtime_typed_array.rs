@@ -265,24 +265,27 @@ impl<'a> Interp<'a> {
         } else {
             view
         };
-        let roots = [view, result];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Every callback can evacuate the view, the `map` result and the callback's closure
+        // environment, so reads go through the guards.
+        zun_gc::root!(view = view);
+        zun_gc::root!(result = result);
+        zun_gc::root!(callback = callback);
         let mut kept: Vec<Value> = Vec::new();
         for index in 0..length {
             let value =
-                crate::typed_arrays::read_element(roots[0], index).ok_or(RunError::BadToken)?;
+                crate::typed_arrays::read_element(view.get(), index).ok_or(RunError::BadToken)?;
             let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .ok_or(RunError::BadToken)?;
             let callback_args = vec![
                 Value::Any(boxed),
                 Value::Any(zun_core::Any::float(index as f64)),
-                Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
+                Value::Any(zun_core::Any::object(view.get().addr() as usize)),
             ];
-            let produced = self.invoke_callback(callback, callback_args)?;
+            let produced = self.invoke_callback(callback.get(), callback_args)?;
             match name {
                 "typedArrayForEach" => {}
                 "typedArrayMap" => {
-                    crate::typed_arrays::write_element(roots[1], index, &produced);
+                    crate::typed_arrays::write_element(result.get(), index, &produced);
                 }
                 "typedArrayFilter" => {
                     if zun_gc::with_current_heap(|heap| is_truthy(&produced, heap)) {
@@ -314,7 +317,7 @@ impl<'a> Interp<'a> {
         }
         match name {
             "typedArrayForEach" => Ok(Value::Void),
-            "typedArrayMap" => Ok(Value::Object(roots[1])),
+            "typedArrayMap" => Ok(Value::Object(result.get())),
             "typedArrayFilter" => {
                 let result =
                     crate::typed_arrays::alloc_of(element, kept.len()).ok_or(RunError::BadToken)?;
@@ -383,28 +386,31 @@ impl<'a> Interp<'a> {
             }
             holder
         });
-        let roots = [view, accumulator];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Every callback can evacuate the view, the accumulator holder and the callback's
+        // closure environment, so reads go through the guards.
+        zun_gc::root!(view = view);
+        zun_gc::root!(accumulator = accumulator);
+        zun_gc::root!(callback = callback);
         for step in start_step..length {
             let index = at(step);
             let element =
-                crate::typed_arrays::read_element(roots[0], index).ok_or(RunError::BadToken)?;
+                crate::typed_arrays::read_element(view.get(), index).ok_or(RunError::BadToken)?;
             let boxed_element = zun_gc::with_current_heap_mut(|heap| element.box_any(heap))
                 .ok_or(RunError::BadToken)?;
-            let acc = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
+            let acc = zun_gc::with_current_heap(|heap| heap.array_get(accumulator.get(), 0))
                 .ok_or(RunError::BadToken)?;
             let callback_args = vec![
                 Value::Any(acc),
                 Value::Any(boxed_element),
                 Value::Any(zun_core::Any::float(index as f64)),
-                Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
+                Value::Any(zun_core::Any::object(view.get().addr() as usize)),
             ];
-            let next = self.invoke_callback(callback, callback_args)?;
+            let next = self.invoke_callback(callback.get(), callback_args)?;
             let boxed = zun_gc::with_current_heap_mut(|heap| next.box_any(heap))
                 .ok_or(RunError::BadToken)?;
-            zun_gc::with_current_heap_mut(|heap| heap.array_set(roots[1], 0, boxed));
+            zun_gc::with_current_heap_mut(|heap| heap.array_set(accumulator.get(), 0, boxed));
         }
-        let result = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
+        let result = zun_gc::with_current_heap(|heap| heap.array_get(accumulator.get(), 0))
             .ok_or(RunError::BadToken)?;
         zun_gc::with_current_heap(|heap| Value::unbox_any(result, heap)).ok_or(RunError::BadToken)
     }
@@ -450,8 +456,10 @@ impl<'a> Interp<'a> {
         };
         let result =
             crate::typed_arrays::alloc_of(kind, elements.len()).ok_or(RunError::BadToken)?;
-        let roots = [result];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Every callback can evacuate the result view and the callback's closure environment,
+        // so both are read back through guards.
+        zun_gc::root!(result = result);
+        zun_gc::root!(callback = callback);
         for (index, value) in elements.iter().enumerate() {
             let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .ok_or(RunError::BadToken)?;
@@ -459,10 +467,10 @@ impl<'a> Interp<'a> {
                 Value::Any(boxed),
                 Value::Any(zun_core::Any::float(index as f64)),
             ];
-            let produced = self.invoke_callback(callback, callback_args)?;
-            crate::typed_arrays::write_element(roots[0], index, &produced);
+            let produced = self.invoke_callback(callback.get(), callback_args)?;
+            crate::typed_arrays::write_element(result.get(), index, &produced);
         }
-        Ok(Value::Object(roots[0]))
+        Ok(Value::Object(result.get()))
     }
 
     /// The logical element at `index`: an accessor element (installed by

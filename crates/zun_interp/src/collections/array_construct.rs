@@ -367,27 +367,29 @@ impl<'a> Interp<'a> {
                     raw.trunc().min(4294967295.0) as usize
                 };
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
-                let roots = [source, target];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // `dynamic_member_get` and `proxy_key_op` run user getters and proxy traps, which
+                // can collect; the source and the result are read back through guards after each.
+                zun_gc::root!(source = source);
+                zun_gc::root!(target = target);
                 for index in 0..length {
                     // An absent index stays a hole so generic receivers keep `in` shape.
-                    let element = self.dynamic_member_get(roots[0], &index.to_string())?;
+                    let element = self.dynamic_member_get(source.get(), &index.to_string())?;
                     let present = if zun_gc::with_current_heap(|heap| {
-                        heap.proxy_target(roots[0]).is_some()
+                        heap.proxy_target(source.get()).is_some()
                     }) {
                         matches!(element, Value::Void)
-                            .then(|| self.proxy_key_op(roots[0], &index.to_string(), false))
+                            .then(|| self.proxy_key_op(source.get(), &index.to_string(), false))
                             .transpose()?
                             .unwrap_or(true)
                     } else {
                         !matches!(element, Value::Void)
                             || zun_gc::with_current_heap(|heap| {
-                                heap.dynamic_has(roots[0], &index.to_string())
+                                heap.dynamic_has(source.get(), &index.to_string())
                             })
                     };
                     if !present {
                         zun_gc::with_current_heap_mut(|heap| {
-                            heap.array_push(roots[1], zun_core::Any::hole())
+                            heap.array_push(target.get(), zun_core::Any::hole())
                         });
                         continue;
                     }
@@ -400,9 +402,9 @@ impl<'a> Interp<'a> {
                         other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap)),
                     }
                     .unwrap_or_else(zun_core::Any::void);
-                    zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], boxed));
+                    zun_gc::with_current_heap_mut(|heap| heap.array_push(target.get(), boxed));
                 }
-                Ok(Value::Object(roots[1]))
+                Ok(Value::Object(target.get()))
             }
             "destructOpen" => {
                 // Lazy array-destructuring source: an Array (or any eagerly
@@ -445,15 +447,17 @@ impl<'a> Interp<'a> {
                     return self.call_managed_collection("arraySlice", args);
                 }
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
-                let roots = [wrapper, target];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                while !matches!(self.protocol_done(roots[0])?, Value::Bool(true)) {
-                    let value = self.protocol_next(roots[0])?;
+                // `protocol_done`/`protocol_next` run user `next()` code and can collect; the
+                // wrapper and the rest array are read back through guards.
+                zun_gc::root!(wrapper = wrapper);
+                zun_gc::root!(target = target);
+                while !matches!(self.protocol_done(wrapper.get())?, Value::Bool(true)) {
+                    let value = self.protocol_next(wrapper.get())?;
                     let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .unwrap_or_else(zun_core::Any::null);
-                    zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], boxed));
+                    zun_gc::with_current_heap_mut(|heap| heap.array_push(target.get(), boxed));
                 }
-                Ok(Value::Object(roots[1]))
+                Ok(Value::Object(target.get()))
             }
             "destructFinish" => {
                 // Close the iterator unless it already reported `done`.
@@ -751,17 +755,18 @@ impl<'a> Interp<'a> {
                     }
                     other => other.clone(),
                 };
+                // The spread appends into `target` and the iteration protocol can run user code
+                // that collects; `target` is also returned at the end, so it is held in a guard.
+                zun_gc::root!(target = target);
                 match &concrete {
                     Value::Str(text) => {
                         // Spread a string by Unicode code point.
                         let points: Vec<String> =
                             text.chars().map(|point| point.to_string()).collect();
-                        let roots = [target];
-                        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
                         for point in points {
                             zun_gc::with_current_heap_mut(|heap| {
                                 let id = heap.intern_string(point.as_str());
-                                heap.array_push(roots[0], zun_core::Any::string(id));
+                                heap.array_push(target.get(), zun_core::Any::string(id));
                             });
                         }
                     }
@@ -786,11 +791,10 @@ impl<'a> Interp<'a> {
                                 .is_none()
                             })
                         }) {
-                            let roots = [source, target];
-                            let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                            zun_gc::root!(source = source);
                             for index in 0..length {
                                 let value = zun_gc::with_current_heap(|heap| {
-                                    heap.array_get(roots[0], index)
+                                    heap.array_get(source.get(), index)
                                 })
                                 .unwrap_or_else(zun_core::Any::void);
                                 // Spread materialises holes as undefined.
@@ -800,17 +804,17 @@ impl<'a> Interp<'a> {
                                     value
                                 };
                                 zun_gc::with_current_heap_mut(|heap| {
-                                    heap.array_push(roots[1], value)
+                                    heap.array_push(target.get(), value)
                                 });
                             }
                         } else {
-                            self.drive_iterable(source, target, |heap, array, value| {
+                            self.drive_iterable(source, target.get(), |heap, array, value| {
                                 heap.array_push(array, value);
                             })?;
                         }
                     }
                 }
-                Ok(Value::Object(target))
+                Ok(Value::Object(target.get()))
             }
             _ => Err(RunError::BadToken),
         }

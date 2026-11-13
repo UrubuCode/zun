@@ -67,11 +67,12 @@ impl<'a> Interp<'a> {
             promise
         });
         let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-        let roots = [promise, target];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Keep-alive: `attach_reaction` allocates while both promises are still read.
+        zun_gc::root!(promise = promise);
+        zun_gc::root!(target = target);
         self.attach_reaction(
-            roots[0],
-            roots[1],
+            promise.get(),
+            target.get(),
             ReactionKind::Microtask {
                 callback: Value::Function(callback),
             },

@@ -125,31 +125,33 @@ impl<'a> Interp<'a> {
         callback: zun_core::FunctionHandle,
         is_set: bool,
     ) -> Result<Value, RunError> {
-        let roots = [object];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        zun_gc::with_current_heap_mut(|heap| heap.collection_pin(roots[0], true));
+        // The cursor loop invokes the callback, which re-enters managed code and can collect;
+        // the receiver is read back through its guard (it is also the pinned collection).
+        zun_gc::root!(object = object);
+        zun_gc::root!(callback = callback);
+        zun_gc::with_current_heap_mut(|heap| heap.collection_pin(object.get(), true));
         let mut outcome = Ok(Value::Void);
         let mut index = 0usize;
         loop {
             let Some(slot) =
-                zun_gc::with_current_heap(|heap| heap.collection_cursor(roots[0], index))
+                zun_gc::with_current_heap(|heap| heap.collection_cursor(object.get(), index))
             else {
                 break;
             };
             index += 1;
             let Some((key, value)) = slot else { continue };
-            let receiver = Value::Any(zun_core::Any::object(roots[0].addr() as usize));
+            let receiver = Value::Any(zun_core::Any::object(object.get().addr() as usize));
             let callback_args = if is_set {
                 vec![Value::Any(key), Value::Any(key), receiver]
             } else {
                 vec![Value::Any(value), Value::Any(key), receiver]
             };
-            if let Err(error) = self.invoke_callback(callback, callback_args) {
+            if let Err(error) = self.invoke_callback(callback.get(), callback_args) {
                 outcome = Err(error);
                 break;
             }
         }
-        zun_gc::with_current_heap_mut(|heap| heap.collection_pin(roots[0], false));
+        zun_gc::with_current_heap_mut(|heap| heap.collection_pin(object.get(), false));
         outcome
     }
 

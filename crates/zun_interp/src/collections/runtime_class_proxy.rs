@@ -158,15 +158,16 @@ impl<'a> Interp<'a> {
         promise: zun_gc::Obj,
         mode: f64,
     ) -> zun_core::FunctionHandle {
-        let roots = [promise];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Defensive: allocating the record never collects by itself (only the dispatch loop
+        // polls the GC budget), so the promise cannot move before it is read.
+        zun_gc::root!(promise = promise);
         let record = zun_gc::with_current_heap_mut(|heap| {
             let record = heap.alloc_dynamic();
             heap.dynamic_set(record, "__settleMode", zun_core::Any::float(mode));
             heap.dynamic_set(
                 record,
                 "__settlePromise",
-                zun_core::Any::object(roots[0].addr() as usize),
+                zun_core::Any::object(promise.get().addr() as usize),
             );
             record
         });

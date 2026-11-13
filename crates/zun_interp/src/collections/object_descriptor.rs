@@ -158,14 +158,15 @@ impl<'a> Interp<'a> {
                     })
                     .map_err(|_| not_iterable())?
                 };
-                let _array_root = [array];
-                let _array_scope = unsafe { zun_gc::NativeRootScope::enter(&_array_root) };
-                let array = _array_root[0];
-                let length = zun_gc::with_current_heap(|heap| heap.array_len(array))
+                // Keep-alive: the result object and the interned keys are allocated while the
+                // entries array is still being read.
+                zun_gc::root!(array = array);
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(array.get()))
                     .ok_or(RunError::BadToken)?;
                 let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
                 for index in 0..length {
-                    let pair_any = zun_gc::with_current_heap(|heap| heap.array_get(array, index))
+                    let pair_any =
+                        zun_gc::with_current_heap(|heap| heap.array_get(array.get(), index))
                         .ok_or(RunError::BadToken)?;
                     let Some(pair) = pair_any.as_object() else {
                         return Err(RunError::Native(
@@ -339,16 +340,20 @@ impl<'a> Interp<'a> {
                 // a throwing getter or a bad descriptor leaves the target clean.
                 // The normalised descriptors are held in a rooted array.
                 let holder = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
-                let roots = [obj, descs, holder];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // `dynamic_member_get` and `normalize_descriptor` run user getters, which can
+                // collect; the target, the descriptor map and the holder are read back through
+                // guards.
+                zun_gc::root!(obj = obj);
+                zun_gc::root!(descs = descs);
+                zun_gc::root!(holder = holder);
                 let mut gathered: Vec<String> = Vec::new();
                 for name in names {
                     if !zun_gc::with_current_heap(|heap| {
-                        heap.dynamic_is_enumerable(roots[1], &name)
+                        heap.dynamic_is_enumerable(descs.get(), &name)
                     }) {
                         continue;
                     }
-                    let value = self.dynamic_member_get(roots[1], &name)?;
+                    let value = self.dynamic_member_get(descs.get(), &name)?;
                     let Some(desc) = crate::property_ops::descriptor_object(&value) else {
                         return Err(RunError::Native(
                             "TypeError: Property description must be an object".into(),
@@ -356,16 +361,17 @@ impl<'a> Interp<'a> {
                     };
                     let desc = self.normalize_descriptor(desc)?;
                     zun_gc::with_current_heap_mut(|heap| {
-                        heap.array_push(roots[2], zun_core::Any::object(desc.addr() as usize))
+                        heap.array_push(holder.get(), zun_core::Any::object(desc.addr() as usize))
                     });
                     gathered.push(name);
                 }
                 for (position, name) in gathered.into_iter().enumerate() {
-                    let desc = zun_gc::with_current_heap(|heap| heap.array_get(roots[2], position))
-                        .and_then(|any| any.as_object())
-                        .map(|addr| unsafe { zun_gc::Obj::from_addr(addr as *mut u64) })
-                        .ok_or(RunError::BadToken)?;
-                    let obj = roots[0];
+                    let desc =
+                        zun_gc::with_current_heap(|heap| heap.array_get(holder.get(), position))
+                            .and_then(|any| any.as_object())
+                            .map(|addr| unsafe { zun_gc::Obj::from_addr(addr as *mut u64) })
+                            .ok_or(RunError::BadToken)?;
+                    let obj = obj.get();
                     if !self.define_own_property(
                         obj,
                         &crate::property_ops::PropKey::Str(name.clone()),
@@ -377,15 +383,18 @@ impl<'a> Interp<'a> {
                     }
                 }
                 // Symbol-keyed descriptors of the map define symbol properties.
-                let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(roots[1]));
+                let symbols =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(descs.get()));
                 for symbol in symbols {
                     if !zun_gc::with_current_heap(|heap| {
-                        heap.dynamic_is_symbol_enumerable(roots[1], symbol)
+                        heap.dynamic_is_symbol_enumerable(descs.get(), symbol)
                     }) {
                         continue;
                     }
                     let Some(any) =
-                        zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol(roots[1], symbol))
+                        zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol(descs.get(), symbol)
+                        })
                     else {
                         continue;
                     };
@@ -398,7 +407,7 @@ impl<'a> Interp<'a> {
                     };
                     let desc = self.normalize_descriptor(desc)?;
                     if !self.define_own_property(
-                        roots[0],
+                        obj.get(),
                         &crate::property_ops::PropKey::Sym(symbol),
                         desc,
                     ) {
@@ -407,7 +416,7 @@ impl<'a> Interp<'a> {
                         ));
                     }
                 }
-                Ok(Value::Object(roots[0]))
+                Ok(Value::Object(obj.get()))
             }
             "objectGetOwnPropertyDescriptor" => {
                 // A function value owns `name` / `length` (read-only,
@@ -775,15 +784,15 @@ impl<'a> Interp<'a> {
                 if symbols.is_empty() {
                     return Ok(Value::Object(names_array));
                 }
-                let roots = [names_array];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Keep-alive: `array_insert` can grow (allocate) the names array while it is read.
+                zun_gc::root!(names_array = names_array);
                 zun_gc::with_current_heap_mut(|heap| {
                     for symbol in symbols {
-                        let end = heap.array_len(roots[0]).unwrap_or(0);
-                        heap.array_insert(roots[0], end, zun_core::Any::symbol(symbol));
+                        let end = heap.array_len(names_array.get()).unwrap_or(0);
+                        heap.array_insert(names_array.get(), end, zun_core::Any::symbol(symbol));
                     }
                 });
-                Ok(Value::Object(roots[0]))
+                Ok(Value::Object(names_array.get()))
             }
             "objectGetOwnPropertySymbols" => {
                 // `Object.getOwnPropertySymbols(obj)` — an array of the object's

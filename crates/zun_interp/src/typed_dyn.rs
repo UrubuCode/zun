@@ -875,9 +875,13 @@ impl Interp<'_> {
                         _ => None,
                     }
                 };
+                // The comparator re-enters managed code and can collect, moving both views.
+                // `target` is written back to after the sort, so it is read through its
+                // guard; the source view is not read again and is only kept alive.
+                zun_gc::root!(_source_view = view);
+                zun_gc::root!(target = target);
                 if let Some(handle) = cmp {
-                    let roots = [view, target];
-                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                    zun_gc::root!(handle = handle);
                     // Insertion-based merge via a simple stable sort with a
                     // fallible comparator.
                     let mut failure: Option<RunError> = None;
@@ -888,7 +892,7 @@ impl Interp<'_> {
                         while lo < hi && failure.is_none() {
                             let mid = (lo + hi) / 2;
                             let result = self.invoke_callback(
-                                handle,
+                                handle.get(),
                                 vec![
                                     self.box_view_value(&sorted[mid]),
                                     self.box_view_value(&item),
@@ -934,9 +938,9 @@ impl Interp<'_> {
                     });
                 }
                 for (i, v) in items.iter().enumerate() {
-                    self.view_write(target, i, v)?;
+                    self.view_write(target.get(), i, v)?;
                 }
-                Ok(Some(Value::Object(target)))
+                Ok(Some(Value::Object(target.get())))
             }
             "forEach" | "map" | "filter" | "some" | "every" | "find" | "findIndex"
             | "findLast" | "findLastIndex" => {

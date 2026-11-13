@@ -204,14 +204,16 @@ impl<'a> Interp<'a> {
     /// `__zun_has`) so the desugared `done`/`next` pair reads one lookahead.
     pub(crate) fn protocol_iterator_new(&mut self, source: zun_gc::Obj) -> Result<Value, RunError> {
         let it = self.resolve_iterator(source)?;
-        let roots = [it];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Defensive: allocating the wrapper never collects by itself, so the iterator cannot
+        // move between `resolve_iterator` (which can, via a user `[Symbol.iterator]()`) and
+        // the store below.
+        zun_gc::root!(it = it);
         let wrapper = zun_gc::with_current_heap_mut(|heap| {
             let wrapper = heap.alloc_dynamic();
             heap.dynamic_set(
                 wrapper,
                 "__zun_it",
-                zun_core::Any::object(roots[0].addr() as usize),
+                zun_core::Any::object(it.get().addr() as usize),
             );
             wrapper
         });
@@ -257,8 +259,9 @@ impl<'a> Interp<'a> {
         // Mark done first so re-entrant calls see a finished generator.
         state.done = true;
         zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
-        let roots = [generator];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Keep-alive: `resume_suspended` runs the `finally` blocks and can collect, but the
+        // generator is not read after it.
+        zun_gc::root!(generator = generator);
         crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(true));
         let outcome = self.resume_suspended(frame);
         crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(false));
@@ -333,15 +336,16 @@ impl<'a> Interp<'a> {
     pub(crate) fn make_iter_result(&mut self, value: Value, done: bool) -> Value {
         let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
             .unwrap_or_else(zun_core::Any::void);
-        let value_root: Vec<zun_gc::Obj> = boxed
+        // Defensive: `alloc_dynamic` never collects by itself, so the boxed value cannot
+        // move before it is stored; the guard carries an `Option` because the value is only
+        // sometimes an object.
+        let value_object = boxed
             .as_object()
-            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-            .into_iter()
-            .collect();
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&value_root) };
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+        zun_gc::root!(value_root = value_object);
         let result = zun_gc::with_current_heap_mut(|heap| {
             let result = heap.alloc_dynamic();
-            let value_any = match value_root.first() {
+            let value_any = match value_root.get() {
                 Some(object) => zun_core::Any::object(object.addr() as usize),
                 None => boxed,
             };
@@ -555,15 +559,16 @@ impl<'a> Interp<'a> {
             zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .unwrap_or_else(zun_core::Any::null)
         };
-        let value_root: Vec<zun_gc::Obj> = boxed
+        // Defensive: `alloc_dynamic` never collects by itself, so the boxed value cannot
+        // move before it is stored; the guard carries an `Option` because the value is only
+        // sometimes an object.
+        let value_object = boxed
             .as_object()
-            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-            .into_iter()
-            .collect();
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&value_root) };
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+        zun_gc::root!(value_root = value_object);
         let result = zun_gc::with_current_heap_mut(|heap| {
             let result = heap.alloc_dynamic();
-            let value_any = match value_root.first() {
+            let value_any = match value_root.get() {
                 Some(object) => zun_core::Any::object(object.addr() as usize),
                 None => boxed,
             };

@@ -1284,21 +1284,23 @@ impl Interp<'_> {
                     if let Value::Object(proxy) = &function {
                         if zun_gc::with_current_heap(|heap| heap.proxy_target(*proxy).is_some()) {
                             let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
-                            let roots = [*proxy, array];
-                            let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                            // `proxyApply` runs the trap, which can collect: the proxy and the
+                            // argument array are read back through guards.
+                            zun_gc::root!(proxy = *proxy);
+                            zun_gc::root!(array = array);
                             for arg in &args {
                                 zun_gc::with_current_heap_mut(|heap| {
                                     let boxed =
                                         arg.box_any(heap).unwrap_or_else(zun_core::Any::void);
-                                    heap.array_push(roots[1], boxed);
+                                    heap.array_push(array.get(), boxed);
                                 });
                             }
                             let outcome = self.call_managed_collection(
                                 "proxyApply",
                                 &[
-                                    Value::Object(roots[0]),
+                                    Value::Object(proxy.get()),
                                     Value::Null,
-                                    Value::Object(roots[1]),
+                                    Value::Object(array.get()),
                                 ],
                             );
                             match outcome {

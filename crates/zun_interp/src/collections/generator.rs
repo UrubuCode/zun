@@ -27,15 +27,16 @@ impl<'a> Interp<'a> {
                 if let Value::Str(text) = &first_concrete {
                     let points: Vec<String> = text.chars().map(|point| point.to_string()).collect();
                     let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
-                    let roots = [array];
-                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                    // Keep-alive: interning each code point allocates while the array is still
+                    // appended to.
+                    zun_gc::root!(array = array);
                     for point in points {
                         zun_gc::with_current_heap_mut(|heap| {
                             let id = heap.intern_string(point.as_str());
-                            heap.array_push(roots[0], zun_core::Any::string(id));
+                            heap.array_push(array.get(), zun_core::Any::string(id));
                         });
                     }
-                    return self.protocol_iterator_new(roots[0]);
+                    return self.protocol_iterator_new(array.get());
                 }
                 let source = object(args.first().ok_or(RunError::BadToken)?)
                     .ok_or_else(|| RunError::Native("TypeError: value is not iterable".into()))?;
@@ -197,9 +198,10 @@ impl<'a> Interp<'a> {
                     }
                     return Ok(Value::Bool(true));
                 };
-                let roots = [it];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                let return_args = self.with_this_arg(method, it, Vec::new());
+                // Keep-alive: `it` rides in the `return` call's arguments; it is not read after the
+                // call.
+                zun_gc::root!(it = it);
+                let return_args = self.with_this_arg(method, it.get(), Vec::new());
                 match self.invoke_function_value(method, return_args) {
                     Ok(result) => {
                         if !throwing && object(&result).is_none() {

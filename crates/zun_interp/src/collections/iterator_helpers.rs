@@ -159,26 +159,28 @@ impl<'a> Interp<'a> {
     /// and the prototype's back-link `constructor`.
     pub(crate) fn install_iterator_global(namespace: zun_gc::Obj) {
         let proto = Self::iterator_prototype_object(0);
-        let roots = [namespace, proto];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Keep-alive: `dynamic_set_function`/`dynamic_define_data` allocate while both objects
+        // are still read.
+        zun_gc::root!(namespace = namespace);
+        zun_gc::root!(proto = proto);
         zun_gc::with_current_heap_mut(|heap| {
             heap.dynamic_set_function(
-                roots[0],
+                namespace.get(),
                 "from".to_owned(),
                 zun_core::FunctionHandle::new_builtin_method(BUILTIN_ITER_FROM),
             );
             heap.dynamic_define_data(
-                roots[0],
+                namespace.get(),
                 "prototype".to_owned(),
-                zun_core::Any::object(roots[1].addr() as usize),
+                zun_core::Any::object(proto.get().addr() as usize),
                 false,
                 false,
                 false,
             );
             heap.dynamic_define_data(
-                roots[1],
+                proto.get(),
                 "constructor".to_owned(),
-                zun_core::Any::object(roots[0].addr() as usize),
+                zun_core::Any::object(namespace.get().addr() as usize),
                 true,
                 false,
                 true,
@@ -290,9 +292,10 @@ impl<'a> Interp<'a> {
 
     /// IteratorClose. With `throwing` an error from `return()` is swallowed.
     pub(crate) fn iter_close(&mut self, it: zun_gc::Obj, throwing: bool) -> Result<(), RunError> {
-        let roots = [it];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        let outcome = self.iter_close_inner(roots[0]);
+        // Keep-alive: closing re-enters user `return()` code; `it` is read back only for the
+        // call.
+        zun_gc::root!(it = it);
+        let outcome = self.iter_close_inner(it.get());
         match outcome {
             Err(_) if throwing => Ok(()),
             other => other,
@@ -340,20 +343,22 @@ impl<'a> Interp<'a> {
         remaining: f64,
     ) -> Value {
         let proto = Self::iterator_prototype_object(3);
-        let roots = [src, proto];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Defensive: allocating never collects by itself (only the dispatch loop polls the
+        // GC budget), so this guards the two addresses against a re-entry added here later.
+        zun_gc::root!(src = src);
+        zun_gc::root!(proto = proto);
         let helper = zun_gc::with_current_heap_mut(|heap| {
             let helper = heap.alloc_dynamic();
             heap.dynamic_set_prototype(
                 helper,
-                Some(zun_core::Any::object(roots[1].addr() as usize)),
+                Some(zun_core::Any::object(proto.get().addr() as usize)),
             );
             hidden(heap, helper, "$ih", float_any(kind as f64));
             hidden(
                 heap,
                 helper,
                 "$src",
-                zun_core::Any::object(roots[0].addr() as usize),
+                zun_core::Any::object(src.get().addr() as usize),
             );
             hidden(heap, helper, "$i", float_any(0.0));
             hidden(heap, helper, "$rem", float_any(remaining));
@@ -702,25 +707,26 @@ impl<'a> Interp<'a> {
     fn iterator_from(&mut self, arg: Option<&Value>) -> Result<Value, RunError> {
         let value = arg.cloned().unwrap_or(Value::Void);
         let iterator = self.iter_flattenable(&value, true)?;
-        let roots = [iterator];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        if self.iter_inherits_proto(roots[0]) {
-            return Ok(Value::Any(zun_core::Any::object(roots[0].addr() as usize)));
+        // Defensive: `iter_inherits_proto` only reads the heap and allocating never collects
+        // by itself, so nothing here moves the iterator today; the guard is for the day one
+        // of these steps reaches user code.
+        zun_gc::root!(iterator = iterator);
+        if self.iter_inherits_proto(iterator.get()) {
+            return Ok(Value::Any(zun_core::Any::object(iterator.get().addr() as usize)));
         }
         let proto = Self::iterator_prototype_object(4);
-        let roots2 = [roots[0], proto];
-        let _scope2 = unsafe { zun_gc::NativeRootScope::enter(&roots2) };
+        zun_gc::root!(proto = proto);
         let wrapper = zun_gc::with_current_heap_mut(|heap| {
             let wrapper = heap.alloc_dynamic();
             heap.dynamic_set_prototype(
                 wrapper,
-                Some(zun_core::Any::object(roots2[1].addr() as usize)),
+                Some(zun_core::Any::object(proto.get().addr() as usize)),
             );
             hidden(
                 heap,
                 wrapper,
                 "$w",
-                zun_core::Any::object(roots2[0].addr() as usize),
+                zun_core::Any::object(iterator.get().addr() as usize),
             );
             wrapper
         });

@@ -424,30 +424,35 @@ impl<'a> Interp<'a> {
                     heap.array_set(holder, 0, seed);
                     holder
                 });
-                let roots = [source, accumulator];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Every callback can evacuate the source, the accumulator holder and the callback's
+                // closure environment, so reads go through the guards.
+                zun_gc::root!(source = source);
+                zun_gc::root!(accumulator = accumulator);
+                zun_gc::root!(callback = callback);
                 for step in (seed_step + 1)..length {
                     let index = if forward { step } else { length - 1 - step };
-                    let Some(element) = self.array_element_value(roots[0], index)? else {
+                    let Some(element) = self.array_element_value(source.get(), index)? else {
                         continue;
                     };
                     if element.is_hole() {
                         continue;
                     }
-                    let acc = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
+                    let acc = zun_gc::with_current_heap(|heap| heap.array_get(accumulator.get(), 0))
                         .ok_or(RunError::BadToken)?;
                     let callback_args = vec![
                         Value::Any(acc),
                         Value::Any(element),
                         Value::Any(zun_core::Any::float(index as f64)),
-                        Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
+                        Value::Any(zun_core::Any::object(source.get().addr() as usize)),
                     ];
-                    let next = self.invoke_callback(callback, callback_args)?;
+                    let next = self.invoke_callback(callback.get(), callback_args)?;
                     let boxed = zun_gc::with_current_heap_mut(|heap| next.box_any(heap))
                         .ok_or(RunError::BadToken)?;
-                    zun_gc::with_current_heap_mut(|heap| heap.array_set(roots[1], 0, boxed));
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_set(accumulator.get(), 0, boxed)
+                    });
                 }
-                let result = zun_gc::with_current_heap(|heap| heap.array_get(roots[1], 0))
+                let result = zun_gc::with_current_heap(|heap| heap.array_get(accumulator.get(), 0))
                     .ok_or(RunError::BadToken)?;
                 zun_gc::with_current_heap(|heap| Value::unbox_any(result, heap))
                     .ok_or(RunError::BadToken)
@@ -478,17 +483,19 @@ impl<'a> Interp<'a> {
                     }
                     copy
                 });
-                let roots = [copy];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // The comparator re-enters managed code and can collect; the copy is read back
+                // through its guard on every compare and swap.
+                zun_gc::root!(copy = copy);
+                zun_gc::root!(comparator = comparator);
                 for i in 1..length {
                     let mut j = i;
                     while j > 0 {
                         let left =
-                            zun_gc::with_current_heap(|heap| heap.array_get(roots[0], j - 1))
+                            zun_gc::with_current_heap(|heap| heap.array_get(copy.get(), j - 1))
                                 .ok_or(RunError::BadToken)?;
-                        let right = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], j))
+                        let right = zun_gc::with_current_heap(|heap| heap.array_get(copy.get(), j))
                             .ok_or(RunError::BadToken)?;
-                        let ordered_before = match comparator {
+                        let ordered_before = match comparator.get() {
                             Some(handle) => {
                                 let outcome = self.invoke_callback(
                                     handle,
@@ -510,17 +517,17 @@ impl<'a> Interp<'a> {
                             break;
                         }
                         zun_gc::with_current_heap_mut(|heap| {
-                            let a = heap.array_get(roots[0], j - 1);
-                            let b = heap.array_get(roots[0], j);
+                            let a = heap.array_get(copy.get(), j - 1);
+                            let b = heap.array_get(copy.get(), j);
                             if let (Some(a), Some(b)) = (a, b) {
-                                heap.array_set(roots[0], j - 1, b);
-                                heap.array_set(roots[0], j, a);
+                                heap.array_set(copy.get(), j - 1, b);
+                                heap.array_set(copy.get(), j, a);
                             }
                         });
                         j -= 1;
                     }
                 }
-                Ok(Value::Object(roots[0]))
+                Ok(Value::Object(copy.get()))
             }
             "arrayToReversed" => {
                 // `toReversed()`: a reversed COPY; the receiver is untouched.

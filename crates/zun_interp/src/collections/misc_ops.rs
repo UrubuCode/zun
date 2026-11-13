@@ -120,21 +120,22 @@ impl<'a> Interp<'a> {
                 else {
                     return Ok(Value::Void);
                 };
-                let roots = [source];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Keep-alive only: `invoke_function_value` at the end can collect, but the receiver
+                // is not read after it (it rides in `call_args`).
+                zun_gc::root!(source = source);
                 let async_id = zun_core::WellKnownSymbol::AsyncIterator.id();
                 let handle = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get_symbol_function(roots[0], async_id)
+                    heap.dynamic_get_symbol_function(source.get(), async_id)
                 })
                 .or_else(|| {
                     self.class_symbol_methods
-                        .get(&(roots[0].type_rid(), async_id.get()))
+                        .get(&(source.get().type_rid(), async_id.get()))
                         .copied()
                 });
                 let Some(handle) = handle else {
                     return Ok(Value::Void);
                 };
-                let call_args = self.with_this_arg(handle, roots[0], Vec::new());
+                let call_args = self.with_this_arg(handle, source.get(), Vec::new());
                 let result = self.invoke_function_value(handle, call_args)?;
                 match object(&unbox_arg(&result)?) {
                     Some(obj) => Ok(Value::Any(zun_core::Any::object(obj.addr() as usize))),

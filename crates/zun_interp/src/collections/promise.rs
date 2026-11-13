@@ -23,20 +23,22 @@ impl<'a> Interp<'a> {
                 // `invoke_function_value` and `CallIndirect`).
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
                 let result = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
-                let roots = [promise, result];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                let resolve = self.make_promise_settler(roots[0], SETTLE_RESOLVE);
-                let reject = self.make_promise_settler(roots[0], SETTLE_REJECT);
+                // Keep-alive: the settler records allocate while the promise and the result
+                // object are still read.
+                zun_gc::root!(promise = promise);
+                zun_gc::root!(result = result);
+                let resolve = self.make_promise_settler(promise.get(), SETTLE_RESOLVE);
+                let reject = self.make_promise_settler(promise.get(), SETTLE_REJECT);
                 zun_gc::with_current_heap_mut(|heap| {
                     heap.dynamic_set(
-                        roots[1],
+                        result.get(),
                         "promise",
-                        zun_core::Any::object(roots[0].addr() as usize),
+                        zun_core::Any::object(promise.get().addr() as usize),
                     );
-                    heap.dynamic_set_function(roots[1], "resolve", resolve);
-                    heap.dynamic_set_function(roots[1], "reject", reject);
+                    heap.dynamic_set_function(result.get(), "resolve", resolve);
+                    heap.dynamic_set_function(result.get(), "reject", reject);
                 });
-                Ok(Value::Object(roots[1]))
+                Ok(Value::Object(result.get()))
             }
             "promiseNewExecutor" => {
                 // `new Promise(executor)`: build a pending promise plus its
@@ -162,10 +164,11 @@ impl<'a> Interp<'a> {
                     });
                     if thenable {
                         let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-                        let roots = [promise];
-                        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                        self.settle_target_with(roots[0], Value::Object(obj));
-                        return Ok(Value::Object(roots[0]));
+                        // Keep-alive: `settle_target_with` allocates and schedules reactions while
+                        // the new promise is still read.
+                        zun_gc::root!(promise = promise);
+                        self.settle_target_with(promise.get(), Value::Object(obj));
+                        return Ok(Value::Object(promise.get()));
                     }
                 }
                 let boxed = any(value).ok_or(RunError::BadToken)?;

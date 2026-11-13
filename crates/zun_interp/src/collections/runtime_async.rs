@@ -33,16 +33,20 @@ impl<'a> Interp<'a> {
                 // Promise costs a job (which attaches the pass-through reaction)
                 // plus the reaction tick.
                 let dummy = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-                let roots = [target, obj, dummy];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Keep-alive: `promise_resolve` and `attach_reaction` allocate while the target,
+                // the thenable and the dummy promise are still read. Distinct names: the
+                // unreachable match below still reads the plain `target` and `obj`.
+                zun_gc::root!(target_root = target);
+                zun_gc::root!(thenable = obj);
+                zun_gc::root!(dummy = dummy);
                 zun_gc::with_current_heap_mut(|heap| {
-                    heap.promise_resolve(roots[2], zun_core::Any::null())
+                    heap.promise_resolve(dummy.get(), zun_core::Any::null())
                 });
                 self.attach_reaction(
-                    roots[2],
-                    roots[0],
+                    dummy.get(),
+                    target_root.get(),
                     ReactionKind::ThenableJob {
-                        thenable: Value::Object(roots[1]),
+                        thenable: Value::Object(thenable.get()),
                         then: Value::Void,
                     },
                 );
@@ -127,16 +131,19 @@ impl<'a> Interp<'a> {
                 .or(dynamic_then)
             {
                 let dummy = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-                let roots = [target, obj, dummy];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Keep-alive: `promise_resolve` and `attach_reaction` allocate while the target,
+                // the thenable and the dummy promise are still read.
+                zun_gc::root!(target = target);
+                zun_gc::root!(obj = obj);
+                zun_gc::root!(dummy = dummy);
                 zun_gc::with_current_heap_mut(|heap| {
-                    heap.promise_resolve(roots[2], zun_core::Any::null())
+                    heap.promise_resolve(dummy.get(), zun_core::Any::null())
                 });
                 self.attach_reaction(
-                    roots[2],
-                    roots[0],
+                    dummy.get(),
+                    target.get(),
                     ReactionKind::ThenableJob {
-                        thenable: Value::Object(roots[1]),
+                        thenable: Value::Object(obj.get()),
                         then,
                     },
                 );
@@ -161,10 +168,11 @@ impl<'a> Interp<'a> {
             _ => 0,
         };
         let value = unbox_arg(args.get(2).unwrap_or(&Value::Void))?;
-        let roots = [generator];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // `generator_return` and `generatorIteratorNext` run the coroutine body, which can
+        // collect; the generator is read back through its guard after each.
+        zun_gc::root!(generator = generator);
         let (done, started) = zun_gc::with_current_heap(|heap| {
-            heap.generator_state(roots[0])
+            heap.generator_state(generator.get())
                 .map(|state| (state.done, state.frame.is_some()))
                 .unwrap_or((true, false))
         });
@@ -183,7 +191,7 @@ impl<'a> Interp<'a> {
             1 => {
                 if done || !started {
                     zun_gc::with_current_heap_mut(|heap| {
-                        if let Some(state) = heap.generator_state_mut(roots[0]) {
+                        if let Some(state) = heap.generator_state_mut(generator.get()) {
                             state.done = true;
                             state.frame = None;
                         }
@@ -191,7 +199,7 @@ impl<'a> Interp<'a> {
                     return finish(2, value);
                 }
                 crate::unwind::ASYNC_AWAIT.with(|flag| flag.set(false));
-                let result = self.generator_return(roots[0], value)?;
+                let result = self.generator_return(generator.get(), value)?;
                 let flagged = crate::unwind::ASYNC_AWAIT.with(|flag| flag.replace(false));
                 let result_obj = object(&unbox_arg(&result)?).ok_or(RunError::BadToken)?;
                 let (inner, finished) = zun_gc::with_current_heap(|heap| {
@@ -219,7 +227,7 @@ impl<'a> Interp<'a> {
             2 => {
                 if done || !started {
                     zun_gc::with_current_heap_mut(|heap| {
-                        if let Some(state) = heap.generator_state_mut(roots[0]) {
+                        if let Some(state) = heap.generator_state_mut(generator.get()) {
                             state.done = true;
                             state.frame = None;
                         }
@@ -237,14 +245,16 @@ impl<'a> Interp<'a> {
             }
         }
         crate::unwind::ASYNC_AWAIT.with(|flag| flag.set(false));
-        let result =
-            self.call_managed_collection("generatorIteratorNext", &[Value::Object(roots[0])]);
+        let result = self.call_managed_collection(
+            "generatorIteratorNext",
+            &[Value::Object(generator.get())],
+        );
         crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
         crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = None);
         let awaited = crate::unwind::ASYNC_AWAIT.with(|flag| flag.replace(false));
         let value = result?;
         let finished = zun_gc::with_current_heap(|heap| {
-            heap.generator_state(roots[0])
+            heap.generator_state(generator.get())
                 .map(|state| state.done)
                 .unwrap_or(true)
         });
@@ -284,9 +294,10 @@ impl<'a> Interp<'a> {
         let maker = self
             .free_function_rid("__zunMakeAsyncGen")
             .ok_or_else(|| RunError::Native("async generator support is unavailable".into()))?;
-        let roots = [generator];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        self.call(maker, vec![Value::Object(roots[0])], None)
+        // Keep-alive: `call` runs the `__zunMakeAsyncGen` wrapper, which can collect; the
+        // generator rides in its arguments and is not read afterwards.
+        zun_gc::root!(generator = generator);
+        self.call(maker, vec![Value::Object(generator.get())], None)
     }
 
     /// Entry of an `async` function: allocate its result Promise and a
@@ -399,17 +410,19 @@ impl<'a> Interp<'a> {
                     }
                     _ => {
                         let fresh = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-                        let inner = [fresh];
-                        let _inner_scope = unsafe { zun_gc::NativeRootScope::enter(&inner) };
-                        self.settle_target_with(inner[0], value);
-                        inner[0]
+                        // Defensive: `settle_target_with` only allocates and attaches a
+                        // reaction, and allocating never collects by itself, so the promise
+                        // cannot move here yet.
+                        zun_gc::root!(fresh = fresh);
+                        self.settle_target_with(fresh.get(), value);
+                        fresh.get()
                     }
                 };
-                let awaited_roots = [awaited];
-                let _awaited_scope = unsafe { zun_gc::NativeRootScope::enter(&awaited_roots) };
-                self.notice_promise(awaited_roots[0]);
+                // Keep-alive: reaction bookkeeping allocates while the awaited promise is read.
+                zun_gc::root!(awaited = awaited);
+                self.notice_promise(awaited.get());
                 self.attach_reaction(
-                    awaited_roots[0],
+                    awaited.get(),
                     promise.get(),
                     ReactionKind::AsyncStep {
                         generator: Value::Object(generator.get()),

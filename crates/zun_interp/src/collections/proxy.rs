@@ -21,10 +21,12 @@ impl<'a> Interp<'a> {
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let handler =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let roots = [target, handler];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Keep-alive: `alloc_proxy`/`alloc_dynamic` allocate while the target and handler
+                // are still being read.
+                zun_gc::root!(target = target);
+                zun_gc::root!(handler = handler);
                 let result = zun_gc::with_current_heap_mut(|heap| {
-                    let proxy = heap.alloc_proxy(roots[0], roots[1]);
+                    let proxy = heap.alloc_proxy(target.get(), handler.get());
                     let result = heap.alloc_dynamic();
                     heap.dynamic_set(
                         result,

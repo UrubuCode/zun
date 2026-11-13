@@ -161,10 +161,10 @@ impl Interp<'_> {
     /// class of `obj` (and its bases) on a freshly constructed instance.
     pub(super) fn run_instance_hooks(&mut self, start: Obj) -> Result<Obj, RunError> {
         // The instance is rooted (and rewritten on a moving collection) for the
-        // whole run, because transforms and initializers re-enter the interpreter.
-        let roots = [start];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        let current = || unsafe { std::ptr::read_volatile(&roots[0]) };
+        // whole run, because transforms and initializers re-enter the interpreter and
+        // can collect. The guard owns the address, so `get()` always reads the
+        // relocated one and no `read_volatile` workaround is needed.
+        zun_gc::root!(instance = start);
         let type_rid = start.type_rid();
         let transforms: Vec<(u32, u32, FunctionHandle)> = self
             .field_transforms
@@ -182,7 +182,7 @@ impl Interp<'_> {
             }
             let kind = self.field_kind_at(field_start + slot)?;
             let initial = zun_gc::with_current_heap(|heap| {
-                crate::value::load_field(kind, current(), slot as usize, heap)
+                crate::value::load_field(kind, instance.get(), slot as usize, heap)
             });
             let result = self.invoke_function_value(transform, vec![initial])?;
             let result = match result {
@@ -191,7 +191,7 @@ impl Interp<'_> {
                 other => other,
             };
             zun_gc::with_current_heap_mut(|heap| {
-                crate::value::store_field(kind, current(), slot as usize, &result, heap);
+                crate::value::store_field(kind, instance.get(), slot as usize, &result, heap);
             });
         }
         let initializers: Vec<FunctionHandle> = self
@@ -201,9 +201,9 @@ impl Interp<'_> {
             .map(|(_, handle)| *handle)
             .collect();
         for initializer in initializers {
-            self.invoke_function_value(initializer, vec![Value::Object(current())])?;
+            self.invoke_function_value(initializer, vec![Value::Object(instance.get())])?;
         }
-        Ok(current())
+        Ok(instance.get())
     }
 
     pub(super) fn call_decorator_native(

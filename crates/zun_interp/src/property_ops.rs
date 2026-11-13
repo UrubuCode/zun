@@ -1986,8 +1986,10 @@ impl Interp<'_> {
         desc: zun_gc::Obj,
     ) -> Result<zun_gc::Obj, RunError> {
         let out = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
-        let roots = [desc, out];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // `forInHas` and `dynamic_member_get` run user getters and proxy traps, which can
+        // collect: both the descriptor and the output object are read through guards.
+        zun_gc::root!(desc = desc);
+        zun_gc::root!(out = out);
         let (mut has_accessor, mut has_data) = (false, false);
         for field in [
             "enumerable",
@@ -1999,12 +2001,12 @@ impl Interp<'_> {
         ] {
             let present = self.call_managed_collection(
                 "forInHas",
-                &[Value::Object(roots[0]), Value::Str(field.into())],
+                &[Value::Object(desc.get()), Value::Str(field.into())],
             )?;
             if !matches!(present, Value::Bool(true)) {
                 continue;
             }
-            let value = self.dynamic_member_get(roots[0], field)?;
+            let value = self.dynamic_member_get(desc.get(), field)?;
             match field {
                 "enumerable" | "configurable" | "writable" => {
                     if field == "writable" {
@@ -2014,14 +2016,14 @@ impl Interp<'_> {
                         super::collections::is_truthy(&value, heap)
                     });
                     zun_gc::with_current_heap_mut(|heap| {
-                        heap.dynamic_set(roots[1], field.to_owned(), zun_core::Any::bool(flag));
+                        heap.dynamic_set(out.get(), field.to_owned(), zun_core::Any::bool(flag));
                     });
                 }
                 "value" if matches!(value, Value::Function(_)) => {
                     has_data = true;
                     if let Value::Function(handle) = value {
                         zun_gc::with_current_heap_mut(|heap| {
-                            heap.dynamic_set_function(roots[1], "value", handle);
+                            heap.dynamic_set_function(out.get(), "value", handle);
                         });
                     }
                 }
@@ -2030,21 +2032,25 @@ impl Interp<'_> {
                     let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .unwrap_or_else(zun_core::Any::void);
                     zun_gc::with_current_heap_mut(|heap| {
-                        heap.dynamic_set(roots[1], "value".to_owned(), boxed);
+                        heap.dynamic_set(out.get(), "value".to_owned(), boxed);
                     });
                 }
                 _ => {
                     has_accessor = true;
                     match value {
                         Value::Function(handle) => zun_gc::with_current_heap_mut(|heap| {
-                            heap.dynamic_set_function(roots[1], field, handle);
+                            heap.dynamic_set_function(out.get(), field, handle);
                         }),
                         Value::Void => zun_gc::with_current_heap_mut(|heap| {
-                            heap.dynamic_set(roots[1], field.to_owned(), zun_core::Any::void());
+                            heap.dynamic_set(out.get(), field.to_owned(), zun_core::Any::void());
                         }),
                         Value::Any(any) if any.tag() == zun_core::AnyTag::Void => {
                             zun_gc::with_current_heap_mut(|heap| {
-                                heap.dynamic_set(roots[1], field.to_owned(), zun_core::Any::void());
+                                heap.dynamic_set(
+                                    out.get(),
+                                    field.to_owned(),
+                                    zun_core::Any::void(),
+                                );
                             })
                         }
                         _ => {
@@ -2062,7 +2068,7 @@ impl Interp<'_> {
                 "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute".into(),
             ));
         }
-        Ok(roots[1])
+        Ok(out.get())
     }
 
     /// `Object.defineProperty(obj, key, desc)` / `Reflect.defineProperty`.

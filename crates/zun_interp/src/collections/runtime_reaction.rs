@@ -48,21 +48,21 @@ impl<'a> Interp<'a> {
         };
         let source = object(&reaction.source).ok_or(RunError::BadToken)?;
         let target = object(&reaction.target).ok_or(RunError::BadToken)?;
-        // Root source and target across any callback re-entry; the scope keeps
-        // the array current if a collection relocates them.
-        let roots = [source, target];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // The callbacks below re-enter managed code and can collect; the source and the target
+        // are read back through guards after every such call.
+        zun_gc::root!(source = source);
+        zun_gc::root!(target = target);
         match reaction.kind {
             ReactionKind::Then {
                 on_fulfilled,
                 on_rejected,
-            } => match self.promise_settlement_of(roots[0])? {
+            } => match self.promise_settlement_of(source.get())? {
                 PromiseSettlement::Resolved(value) => match as_function(&on_fulfilled) {
                     Some(callback) => {
-                        self.run_then_callback(callback, Value::Any(value), &roots)?
+                        self.run_then_callback(callback, Value::Any(value), target)?
                     }
                     None => {
-                        self.settle_promise_resolve(roots[1], value);
+                        self.settle_promise_resolve(target.get(), value);
                     }
                 },
                 PromiseSettlement::Rejected(error, reason) => match as_function(&on_rejected) {
@@ -78,14 +78,14 @@ impl<'a> Interp<'a> {
                                 )
                             }),
                         };
-                        self.run_then_callback(callback, Value::Any(arg), &roots)?;
+                        self.run_then_callback(callback, Value::Any(arg), target)?;
                     }
                     None => match reason {
                         Some(reason) => {
-                            self.settle_promise_reject_value(roots[1], reason, error);
+                            self.settle_promise_reject_value(target.get(), reason, error);
                         }
                         None => {
-                            self.settle_promise_reject(roots[1], error);
+                            self.settle_promise_reject(target.get(), error);
                         }
                     },
                 },
@@ -94,7 +94,7 @@ impl<'a> Interp<'a> {
                 PromiseSettlement::Pending => {}
             },
             ReactionKind::Finally { on_finally } => {
-                let settlement = self.promise_settlement_of(roots[0])?;
+                let settlement = self.promise_settlement_of(source.get())?;
                 let cleanup_error = match as_function(&on_finally) {
                     Some(callback) => match self.invoke_callback(callback, vec![]) {
                         Ok(result) => {
@@ -112,18 +112,16 @@ impl<'a> Interp<'a> {
                             if let Some(obj) = waits {
                                 let wait =
                                     zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-                                let wait_roots = [wait, obj, roots[0], roots[1]];
-                                let _wait_scope =
-                                    unsafe { zun_gc::NativeRootScope::enter(&wait_roots) };
-                                self.settle_target_with(
-                                    wait_roots[0],
-                                    Value::Object(wait_roots[1]),
-                                );
+                                // Defensive: `settle_target_with` only allocates, and
+                                // allocating never collects by itself.
+                                zun_gc::root!(wait = wait);
+                                zun_gc::root!(waited = obj);
+                                self.settle_target_with(wait.get(), Value::Object(waited.get()));
                                 self.attach_reaction(
-                                    wait_roots[0],
-                                    wait_roots[3],
+                                    wait.get(),
+                                    target.get(),
                                     ReactionKind::FinallyPass {
-                                        original: Value::Object(wait_roots[2]),
+                                        original: Value::Object(source.get()),
                                     },
                                 );
                                 return Ok(());
@@ -136,50 +134,50 @@ impl<'a> Interp<'a> {
                     None => None,
                 };
                 if let Some(error) = cleanup_error {
-                    self.reject_with_thrown(roots[1], &error);
+                    self.reject_with_thrown(target.get(), &error);
                 } else {
                     match settlement {
                         PromiseSettlement::Resolved(value) => {
-                            self.settle_promise_resolve(roots[1], value);
+                            self.settle_promise_resolve(target.get(), value);
                         }
                         PromiseSettlement::Rejected(error, Some(reason)) => {
-                            self.settle_promise_reject_value(roots[1], reason, error);
+                            self.settle_promise_reject_value(target.get(), reason, error);
                         }
                         PromiseSettlement::Rejected(error, None) => {
-                            self.settle_promise_reject(roots[1], error);
+                            self.settle_promise_reject(target.get(), error);
                         }
                         PromiseSettlement::Pending => {}
                     }
                 }
             }
             ReactionKind::FinallyPass { original } => {
-                let waited = self.promise_settlement_of(roots[0])?;
+                let waited = self.promise_settlement_of(source.get())?;
                 if let PromiseSettlement::Rejected(error, reason) = waited {
                     match reason {
                         Some(reason) => {
-                            self.settle_promise_reject_value(roots[1], reason, error);
+                            self.settle_promise_reject_value(target.get(), reason, error);
                         }
                         None => {
-                            self.settle_promise_reject(roots[1], error);
+                            self.settle_promise_reject(target.get(), error);
                         }
                     }
                 } else if let Some(original) = object(&original) {
                     match self.promise_settlement_of(original)? {
                         PromiseSettlement::Resolved(value) => {
-                            self.settle_promise_resolve(roots[1], value);
+                            self.settle_promise_resolve(target.get(), value);
                         }
                         PromiseSettlement::Rejected(error, Some(reason)) => {
-                            self.settle_promise_reject_value(roots[1], reason, error);
+                            self.settle_promise_reject_value(target.get(), reason, error);
                         }
                         PromiseSettlement::Rejected(error, None) => {
-                            self.settle_promise_reject(roots[1], error);
+                            self.settle_promise_reject(target.get(), error);
                         }
                         PromiseSettlement::Pending => {}
                     }
                 }
             }
             ReactionKind::Combinator { aggregate, index } => {
-                let settlement = self.promise_settlement_of(roots[0])?;
+                let settlement = self.promise_settlement_of(source.get())?;
                 self.combinator_input_settled(aggregate, index, settlement);
             }
             ReactionKind::Microtask { callback } => {
@@ -192,13 +190,13 @@ impl<'a> Interp<'a> {
             }
             ReactionKind::AsyncStep { generator } => {
                 let generator = object(&generator).ok_or(RunError::BadToken)?;
-                let input = match crate::settled_await_value(roots[0]) {
+                let input = match crate::settled_await_value(source.get()) {
                     Ok(Some(value)) => Ok(value),
                     Ok(None) => return Ok(()),
                     Err(RunError::Thrown(thrown)) => Err(thrown),
                     Err(other) => return Err(other),
                 };
-                self.async_step(generator, roots[1], input)?;
+                self.async_step(generator, target.get(), input)?;
             }
             ReactionKind::ThenableJob { thenable, then } => {
                 if matches!(then, Value::Void) {
@@ -206,7 +204,7 @@ impl<'a> Interp<'a> {
                     if let Some(source) = object(&thenable) {
                         self.attach_reaction(
                             source,
-                            roots[1],
+                            target.get(),
                             ReactionKind::Then {
                                 on_fulfilled: None,
                                 on_rejected: None,
@@ -214,8 +212,8 @@ impl<'a> Interp<'a> {
                         );
                     }
                 } else if let Value::Int(rid, _) = then {
-                    let resolve = self.make_promise_settler(roots[1], SETTLE_RESOLVE);
-                    let reject = self.make_promise_settler(roots[1], SETTLE_REJECT);
+                    let resolve = self.make_promise_settler(target.get(), SETTLE_RESOLVE);
+                    let reject = self.make_promise_settler(target.get(), SETTLE_REJECT);
                     match self.call(
                         rid as u32,
                         vec![thenable, Value::Function(resolve), Value::Function(reject)],
@@ -223,16 +221,19 @@ impl<'a> Interp<'a> {
                     ) {
                         Ok(_) => {}
                         Err(RunError::Thrown(thrown)) => {
-                            let _ =
-                                self.invoke_promise_settler(roots[1], SETTLE_REJECT, vec![thrown]);
+                            let _ = self.invoke_promise_settler(
+                                target.get(),
+                                SETTLE_REJECT,
+                                vec![thrown],
+                            );
                         }
                         Err(_) => {
-                            self.settle_promise_reject(roots[1], "thenable.then failed".into());
+                            self.settle_promise_reject(target.get(), "thenable.then failed".into());
                         }
                     }
                 } else if let Some(then) = as_function(&Some(then)) {
-                    let resolve = self.make_promise_settler(roots[1], SETTLE_RESOLVE);
-                    let reject = self.make_promise_settler(roots[1], SETTLE_REJECT);
+                    let resolve = self.make_promise_settler(target.get(), SETTLE_RESOLVE);
+                    let reject = self.make_promise_settler(target.get(), SETTLE_REJECT);
                     let then_args = vec![Value::Function(resolve), Value::Function(reject)];
                     let then_args = match object(&thenable) {
                         Some(receiver) => self.with_this_arg(then, receiver, then_args),
@@ -241,11 +242,14 @@ impl<'a> Interp<'a> {
                     match self.invoke_function_value(then, then_args) {
                         Ok(_) => {}
                         Err(RunError::Thrown(thrown)) => {
-                            let _ =
-                                self.invoke_promise_settler(roots[1], SETTLE_REJECT, vec![thrown]);
+                            let _ = self.invoke_promise_settler(
+                                target.get(),
+                                SETTLE_REJECT,
+                                vec![thrown],
+                            );
                         }
                         Err(_) => {
-                            self.settle_promise_reject(roots[1], "thenable.then failed".into());
+                            self.settle_promise_reject(target.get(), "thenable.then failed".into());
                         }
                     }
                 }
@@ -256,20 +260,20 @@ impl<'a> Interp<'a> {
 
     /// Invoke a `then`/`catch` callback and settle the reaction's target from
     /// its result (adopting a returned Promise) or reject it on a throw.
-    /// `roots[1]` is re-read after the re-entry, which may have relocated it.
+    /// `target` is re-read after the re-entry, which may have relocated it.
     pub(crate) fn run_then_callback(
         &mut self,
         callback: zun_core::FunctionHandle,
         arg: Value,
-        roots: &[zun_gc::Obj],
+        target: std::pin::Pin<&zun_gc::Rooted<zun_gc::Obj>>,
     ) -> Result<(), RunError> {
         match self.invoke_callback(callback, vec![arg]) {
             Ok(result) => {
-                self.settle_target_with(roots[1], result);
+                self.settle_target_with(target.get(), result);
                 Ok(())
             }
             Err(RunError::Thrown(value)) => {
-                self.reject_with_thrown(roots[1], &value);
+                self.reject_with_thrown(target.get(), &value);
                 Ok(())
             }
             Err(other) => Err(other),
@@ -304,17 +308,18 @@ impl<'a> Interp<'a> {
         on_rejected: Option<zun_core::FunctionHandle>,
     ) -> Result<Value, RunError> {
         let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-        let roots = [source, target];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Keep-alive: `attach_reaction` allocates while the source and the target are still read.
+        zun_gc::root!(source = source);
+        zun_gc::root!(target = target);
         self.attach_reaction(
-            roots[0],
-            roots[1],
+            source.get(),
+            target.get(),
             ReactionKind::Then {
                 on_fulfilled: on_fulfilled.map(Value::Function),
                 on_rejected: on_rejected.map(Value::Function),
             },
         );
-        Ok(Value::Object(roots[1]))
+        Ok(Value::Object(target.get()))
     }
 
     /// `promise.finally(onFinally)`: create a NEW promise and attach a reaction
@@ -326,16 +331,17 @@ impl<'a> Interp<'a> {
         on_finally: Option<zun_core::FunctionHandle>,
     ) -> Result<Value, RunError> {
         let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-        let roots = [source, target];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Keep-alive: `attach_reaction` allocates while the source and the target are still read.
+        zun_gc::root!(source = source);
+        zun_gc::root!(target = target);
         self.attach_reaction(
-            roots[0],
-            roots[1],
+            source.get(),
+            target.get(),
             ReactionKind::Finally {
                 on_finally: on_finally.map(Value::Function),
             },
         );
-        Ok(Value::Object(roots[1]))
+        Ok(Value::Object(target.get()))
     }
 
     /// Normalize a combinator input to a Promise object: an existing Promise is
@@ -356,10 +362,11 @@ impl<'a> Interp<'a> {
             });
             if thenable {
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-                let roots = [promise];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                self.settle_target_with(roots[0], Value::Object(obj));
-                return roots[0];
+                // Defensive: `settle_target_with` only allocates and attaches a reaction, and
+                // allocating never collects by itself, so the promise cannot move here yet.
+                zun_gc::root!(promise = promise);
+                self.settle_target_with(promise.get(), Value::Object(obj));
+                return promise.get();
             }
         }
         let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
@@ -464,8 +471,9 @@ impl<'a> Interp<'a> {
         errors: zun_gc::Obj,
         message: &str,
     ) -> zun_core::Any {
-        let roots = [errors];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Keep-alive: the aggregate object, its name and its message are allocated while the
+        // errors array is still read.
+        zun_gc::root!(errors = errors);
         zun_gc::with_current_heap_mut(|heap| {
             let object = heap.alloc_dynamic();
             let name = Value::Str(zun_core::ZStr::from("AggregateError"))
@@ -479,7 +487,7 @@ impl<'a> Interp<'a> {
             heap.dynamic_set(
                 object,
                 "errors",
-                zun_core::Any::object(roots[0].addr() as usize),
+                zun_core::Any::object(errors.get().addr() as usize),
             );
             zun_core::Any::object(object.addr() as usize)
         })
