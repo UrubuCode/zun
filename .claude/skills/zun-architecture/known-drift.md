@@ -4,11 +4,13 @@ Audit snapshot: 2026-11-12, with a fix pass the same day. Line numbers move;
 re-locate with a search before acting. Mark an entry FIXED (with the commit)
 instead of deleting it.
 
-Conformance: **107/168** fixtures exit 0 at `e77901ec`. The audit fix pass took
-118 (at `ef117cff`) to 120; making the garbage collector actually run then cost
-13 fixtures and recovered 5, which is the first OPEN item below. Measure with
-`zun run` per fixture and a per-fixture timeout: three fixtures used to hang
-forever, so a harness without one never finishes.
+Conformance: **114/168** fixtures exit 0 at `dfb7a142`. The audit fix pass took
+118 (at `ef117cff`) to 120; making the garbage collector actually run cost 13
+fixtures and recovered 5 (`e77901ec`), and rooting the calling frame across a
+native call brought 7 of those 13 back (`dfb7a142`). Six are still out, as the
+first OPEN item below. Measure with `zun run` per fixture and a per-fixture
+timeout: three fixtures used to hang forever, so a harness without one never
+finishes.
 
 ## Concept-level (decides whether the premise is exercised)
 
@@ -139,29 +141,56 @@ forever, so a harness without one never finishes.
   5. A frame in transit (`suspended`, `resume_frame`) and a `yielded` value
      were not rooted - nothing else references them between a generator's
      yield and the boundary that takes it.
+  6. (`dfb7a142`, issue #67) The **calling** frame was dropped from the root
+     chain whenever a native re-entered a managed callee: a native has no
+     `RootLink` to thread and passed `parent: None`. The interpreter publishes
+     the activation in `Interp::native_link` for the duration of the call and
+     `Interp::call` / `Interp::dispatch` resolve `None` against it, so the fix
+     is two points rather than the dozen native call sites. The same commit
+     publishes the native's argument vector as the innermost activation -
+     `pop_n` takes the arguments off the interpreter stack, so until then
+     nothing rooted a callback's captured environment while the native ran.
   Also: the finalizer and registry callbacks were rewritten with
   `FunctionHandle::new`, which drops the bound discriminant; they use
   `relocate_environment` now.
-- **OPEN - 13 fixtures regressed when the GC started running.** Merged into
-  `main` as `e77901ec` with the regression accepted: these 13 passed at
-  `2ef79483` and fail now, so the current pass rate is 107/168, not 120/168.
-  They are `array-iterators-and-protocols`, `runtime-error-sites`,
-  `throw-catch-finally-control`, `iterator-helpers-and-set-op-protocol`,
-  `set-core-and-operations`, `generator-expressions-and-capture`,
-  `yield-star-delegation`, `iterator-helper-pipeline`,
-  `json-stringify-cycles-and-raw-json`, `getters-proxy-all`,
-  `data-structures-and-algorithms`, `url-parse-resolve-and-setters`,
-  `urlsearchparams-semantics`. Each one is its own missing root or missing
-  rewrite of the same shape as the five fixed below, not a regression in the
-  collector itself: bisect pinned them to the budget change alone, with the
-  nursery and record changes reverted. The recipe that locates one in a few
-  minutes: run the fixture,
+- **OPEN - 6 fixtures still regressed since the GC started running, and they
+  share one cause.** Thirteen regressed at `e77901ec` (accepted deliberately);
+  rooting the calling frame across a native call (`dfb7a142`, issue #67) brought
+  seven back. The six left are `array-iterators-and-protocols`,
+  `throw-catch-finally-control`, `generator-expressions-and-capture`,
+  `yield-star-delegation`, `iterator-helper-pipeline` and
+  `data-structures-and-algorithms`, and the shared cause has a minimal
+  reproducer: **a closure with captures, re-entered from a native, loses its
+  environment**. The read of a captured slot comes back `Void`, or the cell
+  behind it reads `undefined`, which means the environment object was swept or
+  its address recycled even though the function value that points at it is
+  rooted through the native's argument vector. The next fix belongs here.
+
+  ```ts
+  class Rec { a: number = 1; }
+  function work(): string {
+    const src: any[] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let hits = 0;                       // captured by cell
+    for (let r = 0; r < 400; r++) {
+      src.forEach((v: any) => { const o = new Rec(); hits += o.a; });
+    }
+    return "hits=" + String(hits);
+  }
+  console.log(work());
+  ```
+
+  The callback has to allocate a *typed* instance: the interpreter polls the GC
+  budget at `newobj` and at loop backedges only, so a callback that builds
+  dynamic objects never reaches a safepoint and the bug stays hidden. That is
+  also why the reproducers in issues #55 and #67 stopped failing on their own.
+  The recipe that locates one of these in a few minutes: run the fixture,
   note the last line it printed, find that line in the fixture, wrap the
   *following* statement in `try { ... } catch (e: any) { console.log(e.name +
   ": " + e.message) }` (the thrown message is what names the broken operation),
-  then cut the fixture down around it. Four of five found so far were an
-  interpreter-owned or side-table-owned managed value that the mark phase or
-  the relocation pass did not know about.
+  then cut the fixture down around it. Every one found so far was a managed
+  value the mark phase or the relocation pass did not know about: an
+  interpreter-owned table, a side table, a frame in transit, a native call's
+  argument vector, or the calling frame itself.
 - **OPEN - The interned-string table is never reclaimed.** `Heap::intern_string`
   pushes onto a `Vec<ZStr>` and `zun_gc/src/collection.rs` never touches
   `strings`. Measured: ~108 bytes per interned string, linear and unbounded
