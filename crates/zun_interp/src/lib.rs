@@ -392,12 +392,49 @@ impl Interp<'_> {
     /// on entry and pops it on every exit path (including the error returns
     /// deep inside [`Self::call_inner`]), so a runtime stack capture (see
     /// `Error.stack`) sees exactly the methods currently executing.
+    /// Publish `link` as the calling activation for the duration of a native
+    /// call, restoring the previous one when the returned scope drops.
+    ///
+    /// The scope holds a raw pointer to the field rather than a borrow, so the
+    /// interpreter stays usable for the native call itself. `link` must
+    /// therefore outlive the scope: declare it first, so it drops last.
+    pub(crate) fn publish_native_link(
+        &mut self,
+        link: &RootLink<'_>,
+    ) -> crate::state::NativeLinkScope {
+        let slot = std::ptr::from_mut(&mut self.native_link);
+        // SAFETY: `slot` is this interpreter's own field, and the caller keeps
+        // `link` alive for at least as long as the returned scope.
+        unsafe { crate::state::NativeLinkScope::enter(slot, link) }
+    }
+
+    /// The activation to treat as a dispatch's caller: the explicit link when
+    /// the call site has one, otherwise the one published for the native call
+    /// this dispatch is nested inside.
+    ///
+    /// Resolved here, at the one point every managed dispatch goes through,
+    /// rather than at each of the dozen native call sites that would otherwise
+    /// have to thread a link they do not have.
+    fn caller_link<'a>(&self, parent: Option<&'a RootLink<'a>>) -> Option<&'a RootLink<'a>> {
+        parent.or_else(|| self.published_link())
+    }
+
+    /// The currently published activation, if a native call is in progress.
+    pub(crate) fn published_link<'a>(&self) -> Option<&'a RootLink<'a>> {
+        self.native_link
+            // SAFETY: a published link is only readable while the scope that
+            // published it is alive, which is inside the native call this
+            // dispatch was reached from.
+            .map(|link| unsafe { &*(link as *const RootLink<'a>) })
+    }
+
     fn call(
         &mut self,
         method_rid: u32,
         args: Vec<Value>,
         parent: Option<&RootLink>,
     ) -> Result<Value, RunError> {
+        let parent = self.caller_link(parent);
         self.call_stack
             .push(crate::state::CallFrame { method_rid, pc: 0 });
         let result = self.call_inner(method_rid, args, parent);
@@ -1425,6 +1462,18 @@ impl Interp<'_> {
                 }
                 Opcode::CallBuiltin => {
                     let id = operand_i32(&instr.operand);
+                    // Safepoint: a builtin allocates, and many of them re-enter
+                    // a managed callee (a callback, or a method reached through
+                    // a dynamic member) which has no link of its own to thread.
+                    // Publish this activation so a collection taken down there
+                    // still roots and rewrites this frame. `link` is declared
+                    // first so it outlives the scope.
+                    let link = RootLink {
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
+                        parent,
+                    };
+                    let _native_link = self.publish_native_link(&link);
                     match builtins::call_builtin(self, id, stack).map_err(|error| match error {
                         RunError::BadToken => RunError::Native(
                             "TypeError: invalid argument to built-in function".into(),

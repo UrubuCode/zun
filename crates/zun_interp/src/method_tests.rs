@@ -4293,4 +4293,3 @@ fn regex_string_form_orders_flags_like_the_flags_getter() {
     assert_eq!(typeof_of(source), "/a/gsy|gsy|/a/gsy");
 }
 
-}

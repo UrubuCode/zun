@@ -34,7 +34,21 @@ pub(super) fn call_builtin(
     stack: &mut Vec<Value>,
 ) -> Result<(), RunError> {
     let id = id as u32;
-    let args = pop_n(stack, zun_natives::param_count(id))?;
+    let mut args = pop_n(stack, zun_natives::param_count(id))?;
+    // The arguments are off the interpreter stack now, so for the duration of
+    // this call nothing else roots them: a callback's captured environment, or
+    // a container the native is about to iterate, is reachable only from this
+    // vector. Publish it as the innermost activation, with the caller's frame
+    // as its parent, so a collection taken inside the native - including one
+    // taken inside a callback the native re-enters - both keeps them alive and
+    // rewrites them here when it moves them.
+    let mut no_locals: [Value; 0] = [];
+    let arg_link = crate::state::RootLink {
+        stack: std::ptr::from_mut(args.as_mut_slice()),
+        locals: std::ptr::from_mut(no_locals.as_mut_slice()),
+        parent: interp.published_link(),
+    };
+    let _arg_scope = interp.publish_native_link(&arg_link);
     if let Some(name) = managed_builtin_name(id) {
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
@@ -43,8 +57,8 @@ pub(super) fn call_builtin(
     // only sees its handle), so truthiness is decided here. The dispatch id is
     // fixed per process, so resolve it once instead of on every CallBuiltin.
     static BOOLEAN_COERCE_ID: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
-    let boolean_coerce_id =
-        *BOOLEAN_COERCE_ID.get_or_init(|| zun_natives::resolve_name("booleanCoerce").map(|(id, _)| id));
+    let boolean_coerce_id = *BOOLEAN_COERCE_ID
+        .get_or_init(|| zun_natives::resolve_name("booleanCoerce").map(|(id, _)| id));
     if boolean_coerce_id == Some(id) {
         let flag = zun_gc::with_current_heap(|heap| crate::collections::is_truthy(&args[0], heap));
         stack.push(Value::Bool(flag));

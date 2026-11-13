@@ -91,6 +91,7 @@ impl<'a> OwnedGeneratorSession<'a> {
             instance_method_index: std::cell::RefCell::new(std::collections::HashMap::new()),
             instance_field_index: std::cell::RefCell::new(std::collections::HashMap::new()),
             prototype_keys: std::cell::RefCell::new(std::collections::HashMap::new()),
+            native_link: None,
         };
         let outcome = if let Some(frame) = self.pending.take() {
             interp.resume_suspended(frame)
@@ -425,6 +426,7 @@ impl<'a> ResumableSession<'a> {
                 instance_method_index: std::cell::RefCell::new(std::collections::HashMap::new()),
                 instance_field_index: std::cell::RefCell::new(std::collections::HashMap::new()),
                 prototype_keys: std::cell::RefCell::new(std::collections::HashMap::new()),
+                native_link: None,
             },
             method_rid,
             args: Some(args),
@@ -577,6 +579,7 @@ pub(super) fn run_method_with(
         instance_method_index: std::cell::RefCell::new(std::collections::HashMap::new()),
         instance_field_index: std::cell::RefCell::new(std::collections::HashMap::new()),
         prototype_keys: std::cell::RefCell::new(std::collections::HashMap::new()),
+        native_link: None,
     };
     // Run the module initializer once before the entry point (PLAN §3.1, doc 02
     // area 10): it seeds the realm global on this same heap so `globalThis.Map`
@@ -666,6 +669,7 @@ pub(crate) fn construct_class_loaded(
         instance_method_index: std::cell::RefCell::new(std::collections::HashMap::new()),
         instance_field_index: std::cell::RefCell::new(std::collections::HashMap::new()),
         prototype_keys: std::cell::RefCell::new(std::collections::HashMap::new()),
+        native_link: None,
     };
     // Run the defining module's initializer first so field defaults, field
     // transforms, and instance initializers are registered on this interpreter
@@ -740,6 +744,7 @@ pub(crate) fn run_method_loaded_on_current_heap_bare(
         instance_method_index: std::cell::RefCell::new(std::collections::HashMap::new()),
         instance_field_index: std::cell::RefCell::new(std::collections::HashMap::new()),
         prototype_keys: std::cell::RefCell::new(std::collections::HashMap::new()),
+        native_link: None,
     };
     let first = interp.call(method_rid, args, None);
     let outcome = match first {
@@ -983,6 +988,9 @@ impl Interp<'_> {
         args: Vec<Value>,
         parent: Option<&super::RootLink>,
     ) -> Result<Value, RunError> {
+        // A native that re-enters a managed callee passes no link; the real
+        // caller is the activation published for that native call.
+        let parent = self.caller_link(parent);
         if let Some(hook) = self.hook {
             // A JIT allocation may collect while the interpreter caller is
             // parked in this dispatch. Publish the caller chain as native

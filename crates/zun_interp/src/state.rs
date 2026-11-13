@@ -84,6 +84,10 @@ pub(super) struct Interp<'a> {
     /// prototype object itself is still looked up on the global each time, so
     /// relocation stays correct.
     pub(super) prototype_keys: std::cell::RefCell<HashMap<u32, String>>,
+    /// The calling activation while a native builtin runs, so a managed callee
+    /// the native re-enters is dispatched with the caller still in the GC root
+    /// chain. See [`ErasedRootLink`]; read through [`Interp::caller_link`].
+    pub(super) native_link: Option<ErasedRootLink>,
 }
 
 /// The `await` substrate owned by one interpreter session.
@@ -600,6 +604,50 @@ pub(super) struct RootLink<'a> {
     pub(super) parent: Option<&'a RootLink<'a>>,
 }
 
+/// A lifetime-erased pointer to the innermost [`RootLink`], published by the
+/// interpreter for the duration of a native call.
+///
+/// A static call site builds a `RootLink` over the caller's stack and locals
+/// and threads it into the callee, so a collection taken inside the callee
+/// sees the whole frame chain. A native cannot: when it re-enters a managed
+/// callee - a `forEach` or `sort` callback, a method reached through a dynamic
+/// member - it has no link of its own and passes `None`. The calling
+/// activation was then neither a GC root nor rewritten after a moving
+/// collection, so anything held only by the caller's locals was freed by the
+/// first collection the callee triggered, and anything that survived through
+/// another root was relocated while the caller kept the stale address.
+///
+/// Erasing the lifetime is what lets the link live in a field instead of
+/// being threaded through every native signature. It is sound because the
+/// pointer is only ever read while the [`NativeLinkScope`] that published it
+/// is alive, and that interval is strictly inside the activation it points at.
+pub(super) type ErasedRootLink = *const RootLink<'static>;
+
+/// Restores the previously published link when it drops, so a nested native
+/// call cannot leave a stale one behind on any return path - including the
+/// error paths a `?` takes.
+pub(super) struct NativeLinkScope {
+    slot: *mut Option<ErasedRootLink>,
+    previous: Option<ErasedRootLink>,
+}
+
+impl NativeLinkScope {
+    /// # Safety
+    /// `slot` must point at the live `native_link` field of the interpreter
+    /// that created this scope, and `link` must outlive the scope.
+    pub(super) unsafe fn enter(slot: *mut Option<ErasedRootLink>, link: &RootLink<'_>) -> Self {
+        let previous = unsafe { *slot };
+        unsafe { *slot = Some(link as *const RootLink<'_> as ErasedRootLink) };
+        Self { slot, previous }
+    }
+}
+
+impl Drop for NativeLinkScope {
+    fn drop(&mut self) {
+        unsafe { *self.slot = self.previous };
+    }
+}
+
 impl<'a> RootLink<'a> {
     /// Read the frame roots while the linked activation remains live.
     pub(super) unsafe fn append_roots(&self, roots: &mut Vec<Obj>) {
@@ -854,5 +902,65 @@ mod tests {
         assert_eq!(rewritten, 2, "both the callback and its arg are rewritten");
         assert!(matches!(state.timers.entries[0].callback, Value::Object(object) if object == new));
         assert!(matches!(state.timers.entries[0].args[0], Value::Object(object) if object == new));
+    }
+
+    fn link_over<'a>(
+        stack: &'a mut [Value],
+        locals: &'a mut [Value],
+        parent: Option<&'a RootLink<'a>>,
+    ) -> RootLink<'a> {
+        RootLink {
+            stack: std::ptr::from_mut(stack),
+            locals: std::ptr::from_mut(locals),
+            parent,
+        }
+    }
+
+    #[test]
+    fn a_linked_caller_frame_contributes_its_roots() {
+        // Why the parent matters at all: without the link, a collection taken
+        // in the callee sees only the callee's own values.
+        let mut caller_stack = [Value::Any(zun_core::Any::object(0x1000))];
+        let mut caller_locals = [Value::Any(zun_core::Any::object(0x2000))];
+        let caller = link_over(&mut caller_stack, &mut caller_locals, None);
+        let mut callee_stack = [Value::Any(zun_core::Any::object(0x3000))];
+        let mut callee_locals: [Value; 0] = [];
+        let callee = link_over(&mut callee_stack, &mut callee_locals, Some(&caller));
+
+        let mut roots = Vec::new();
+        unsafe { callee.append_roots(&mut roots) };
+        let mut addresses: Vec<usize> = roots.iter().map(|root| root.addr() as usize).collect();
+        addresses.sort_unstable();
+        assert_eq!(addresses, vec![0x1000, 0x2000, 0x3000]);
+    }
+
+    #[test]
+    fn a_native_link_scope_restores_the_previous_link() {
+        // Nesting is the whole contract: a native that calls a native must not
+        // leave the inner activation published once it returns, or a later
+        // dispatch would root a frame that is gone.
+        let mut slot: Option<ErasedRootLink> = None;
+        let mut outer_stack: [Value; 0] = [];
+        let mut outer_locals: [Value; 0] = [];
+        let outer = link_over(&mut outer_stack, &mut outer_locals, None);
+        let outer_address = &outer as *const RootLink<'_> as usize;
+        {
+            let _outer_scope = unsafe { NativeLinkScope::enter(&mut slot, &outer) };
+            assert_eq!(slot.map(|link| link as usize), Some(outer_address));
+            let mut inner_stack: [Value; 0] = [];
+            let mut inner_locals: [Value; 0] = [];
+            let inner = link_over(&mut inner_stack, &mut inner_locals, Some(&outer));
+            let inner_address = &inner as *const RootLink<'_> as usize;
+            {
+                let _inner_scope = unsafe { NativeLinkScope::enter(&mut slot, &inner) };
+                assert_eq!(slot.map(|link| link as usize), Some(inner_address));
+            }
+            assert_eq!(
+                slot.map(|link| link as usize),
+                Some(outer_address),
+                "the inner scope restored the outer activation"
+            );
+        }
+        assert_eq!(slot, None, "nothing stays published after the last scope");
     }
 }
