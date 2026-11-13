@@ -55,42 +55,84 @@ impl Heap {
             .filter_map(|value| value.as_object())
     }
 
+    /// Relocate the generator state table: both the values it holds and the
+    /// address it is keyed by.
+    ///
+    /// Re-keying is not optional. Every address-keyed side table is re-keyed
+    /// in the relocation pass, and a generator's state left under the old key
+    /// makes the object stop being a generator: `generator_state` answers
+    /// `None`, so the iterator protocol cannot find `next` and a `for…of` over
+    /// it fails with "iterator has no next() method" partway through.
     pub(super) fn rewrite_generator_states(&mut self, relocation: &RelocationMap) -> usize {
         let mut rewritten = 0;
-        for state in self.generator_states.values_mut() {
-            let values =
-                state
-                    .args
-                    .iter_mut()
-                    .chain([&mut state.current, &mut state.pending_return])
-                    .chain(state.frame.iter_mut().flat_map(|frame| {
-                        frame.locals.iter_mut().chain(frame.eval_stack.iter_mut())
-                    }));
-            for value in values {
-                if let Some(address) = value.as_object() {
-                    let relocated = relocation.relocate_address(address);
-                    if relocated != address {
-                        *value = zun_core::Any::object(relocated);
-                        rewritten += 1;
-                    }
-                }
+        let states = std::mem::take(&mut self.generator_states);
+        let mut mapped = std::collections::HashMap::with_capacity(states.len());
+        for (address, mut state) in states {
+            let relocated = relocation.relocate_address(address);
+            if relocated != address {
+                rewritten += 1;
             }
+            rewritten += rewrite_state_values(&mut state, relocation);
+            mapped.insert(relocated, state);
         }
+        self.generator_states = mapped;
         rewritten
     }
+
+    /// The same for the suspended-frame table, keyed the same way.
     pub(super) fn rewrite_generator_frames(&mut self, relocation: &RelocationMap) -> usize {
         let mut rewritten = 0;
-        for frame in self.generator_frames.values_mut() {
-            for value in frame.locals.iter_mut().chain(frame.eval_stack.iter_mut()) {
-                if let Some(address) = value.as_object() {
-                    let relocated = relocation.relocate_address(address);
-                    if relocated != address {
-                        *value = zun_core::Any::object(relocated);
-                        rewritten += 1;
-                    }
+        let frames = std::mem::take(&mut self.generator_frames);
+        let mut mapped = std::collections::HashMap::with_capacity(frames.len());
+        for (address, mut frame) in frames {
+            let relocated = relocation.relocate_address(address);
+            if relocated != address {
+                rewritten += 1;
+            }
+            rewritten += rewrite_frame_values(&mut frame, relocation);
+            mapped.insert(relocated, frame);
+        }
+        self.generator_frames = mapped;
+        rewritten
+    }
+}
+
+fn rewrite_frame_values(frame: &mut GeneratorFrame, relocation: &RelocationMap) -> usize {
+    let mut rewritten = 0;
+    for value in frame.locals.iter_mut().chain(frame.eval_stack.iter_mut()) {
+        if let Some(address) = value.as_object() {
+            let relocated = relocation.relocate_address(address);
+            if relocated != address {
+                *value = zun_core::Any::object(relocated);
+                rewritten += 1;
+            }
+        }
+    }
+    rewritten
+}
+
+fn rewrite_state_values(state: &mut GeneratorState, relocation: &RelocationMap) -> usize {
+    let mut rewritten = 0;
+    {
+        let values = state
+            .args
+            .iter_mut()
+            .chain([&mut state.current, &mut state.pending_return])
+            .chain(
+                state
+                    .frame
+                    .iter_mut()
+                    .flat_map(|frame| frame.locals.iter_mut().chain(frame.eval_stack.iter_mut())),
+            );
+        for value in values {
+            if let Some(address) = value.as_object() {
+                let relocated = relocation.relocate_address(address);
+                if relocated != address {
+                    *value = zun_core::Any::object(relocated);
+                    rewritten += 1;
                 }
             }
         }
-        rewritten
     }
+    rewritten
 }

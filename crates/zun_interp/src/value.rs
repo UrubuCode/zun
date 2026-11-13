@@ -232,6 +232,10 @@ impl Value {
 
 /// Field value-type code for an object reference (beyond the `JitKind` codes).
 pub const FIELD_OBJECT: u8 = 11;
+/// Field value-type code for an array reference. Like [`FIELD_OBJECT`] it
+/// holds a managed address in the slot, so it is traced, rewritten and
+/// write-barriered as a reference (`JitKind::Array`).
+pub const FIELD_ARRAY: u8 = 13;
 /// Field value-type code for a string reference.
 pub const FIELD_STRING: u8 = 12;
 /// Field value-type code for a dynamically-typed (`any`) field. An `Any` is 16
@@ -284,7 +288,10 @@ pub fn store_field(
         return;
     }
     let raw = encode_field(kind, value, heap);
-    heap.store_field(obj, slot, raw, kind == FIELD_OBJECT);
+    // An array field is a managed reference too, so it needs the old-to-young
+    // write barrier as much as an object field does.
+    let is_reference = kind == FIELD_OBJECT || kind == FIELD_ARRAY;
+    heap.store_field(obj, slot, raw, is_reference);
 }
 
 /// Decode a raw field slot into a [`Value`], given the field's value-type code

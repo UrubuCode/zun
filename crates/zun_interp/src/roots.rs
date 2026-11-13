@@ -13,6 +13,28 @@ pub(super) fn collect(
     collect_with_policy(types, stack, locals, parent, extra_roots, false)
 }
 
+/// Run a **non-moving** minor collection: sweep dead young objects, leave
+/// every survivor at its address.
+///
+/// This is the only young policy that is safe while native code is on the
+/// stack. A native holds managed references in ordinary Rust locals - the
+/// callback it extracted from its arguments before looping, the receiver it
+/// resolved once - and the collector can neither find nor rewrite those, so
+/// anything that moves leaves the native holding a stale address. The arena's
+/// own frames are fine either way; it is the native frames that have no
+/// description. Runtimes with a moving collector solve this with a handle API
+/// for native code (CLR `GCPROTECT`, V8 `Handle`); until Zun has one, native
+/// calls run under a pinning policy.
+pub(super) fn collect_young_non_moving(
+    types: &zun_types::TypeSystem,
+    stack: &[Value],
+    locals: &[Value],
+    parent: Option<&RootLink>,
+    extra_roots: &[zun_gc::Obj],
+) -> usize {
+    collect_with_policy(types, stack, locals, parent, extra_roots, true)
+}
+
 /// Run an evacuating minor collection for an explicitly stopped interpreter
 /// chain.  Unlike `collect_young`, this path rewrites the current activation,
 /// every linked caller, and the external roots in the same relocation

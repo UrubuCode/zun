@@ -192,10 +192,25 @@ impl TypeSystem {
         let reference_slots_by_type = types
             .iter()
             .map(|descriptor| {
+                // `Array` belongs here beside `Object`: both field kinds hold a
+                // managed address in the slot, and this list is what the
+                // collector traces and rewrites. Leaving arrays out meant an
+                // array-typed field was never reached from its owner, so the
+                // array behind `class Heap { items: Item[] }` was freed by the
+                // first collection that did not reach it some other way.
+                // `String` is an index into the interned table, `Function` is a
+                // rid the compiler keeps off the inline path, and the `Any`
+                // carrier lives in the `any_fields` side table - none of those
+                // is an address in the slot.
                 let slots: Vec<usize> = descriptor
                     .fields
                     .iter()
-                    .filter(|field| JitKind::from_byte(field.kind) == JitKind::Object)
+                    .filter(|field| {
+                        matches!(
+                            JitKind::from_byte(field.kind),
+                            JitKind::Object | JitKind::Array
+                        )
+                    })
                     .map(|field| field.slot)
                     .collect();
                 Rc::from(slots)
@@ -364,5 +379,25 @@ mod tests {
         .expect("compile");
         let types = TypeSystem::from_module(&module).expect("types");
         assert_eq!(types.reference_slots(2).to_vec(), vec![0]);
+    }
+
+    #[test]
+    fn an_array_typed_field_is_a_reference_slot() {
+        // The collector traces and rewrites exactly this list. An array field
+        // left out of it is never reached from its owner, so the array behind
+        // `class Heap { items: Item[] }` is freed by the first collection that
+        // does not reach it some other way.
+        let module = zun_compiler::compile(
+            "class Item { value: int; }\n\
+             class Holder { items: Item[]; names: string[]; count: int; owner: Item; }\n\
+             function main(): int { return 0; }",
+        )
+        .expect("compile");
+        let types = TypeSystem::from_module(&module).expect("types");
+        assert_eq!(
+            types.reference_slots(2).to_vec(),
+            vec![0, 1, 3],
+            "both array fields and the object field are references; the int is not"
+        );
     }
 }

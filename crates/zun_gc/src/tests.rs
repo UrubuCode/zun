@@ -2037,3 +2037,45 @@ fn a_function_property_keeps_and_rewrites_its_closure_environment() {
         "the captured value is still readable through the rewritten chain"
     );
 }
+
+#[test]
+fn an_evacuated_generator_keeps_its_state_and_frame() {
+    let mut heap = Heap::new();
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    let carried = heap.alloc(9, 0);
+    let generator =
+        heap.alloc_generator(1, 42, vec![zun_core::Any::object(carried.addr() as usize)]);
+    heap.generator_frame_set(
+        generator,
+        crate::GeneratorFrame {
+            method_rid: 42,
+            pc: 7,
+            locals: vec![zun_core::Any::object(carried.addr() as usize)],
+            eval_stack: Vec::new(),
+        },
+    );
+
+    let mut roots = vec![generator];
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+    let generator = roots[0];
+
+    // Both tables are keyed by the generator object's address. Left under the
+    // old key, the object stops being a generator: the iterator protocol sees
+    // no state, so it cannot find `next`.
+    let state = heap
+        .generator_state(generator)
+        .expect("the state follows the generator to its new address");
+    assert_eq!(state.method_rid, 42);
+    let carried_now = state.args[0]
+        .as_object()
+        .expect("the carried argument is still an object");
+    assert!(
+        heap.by_addr.contains_key(&carried_now),
+        "the argument was rewritten to its new address"
+    );
+    let frame = heap
+        .generator_frame(generator)
+        .expect("the suspended frame follows it too");
+    assert_eq!(frame.pc, 7);
+    assert_eq!(frame.locals[0].as_object(), Some(carried_now));
+}

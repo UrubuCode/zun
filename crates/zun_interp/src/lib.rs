@@ -1759,7 +1759,17 @@ impl Interp<'_> {
         // a resumed frame is executing: root them here so a promise still owed a
         // reaction is not reclaimed, and rewrite them when the heap moves.
         self.append_parked_roots(&mut extra_roots);
-        if full && parent.is_none() {
+        // A native call on the stack pins the heap. Native code keeps managed
+        // references in ordinary Rust locals - the callback a builtin pulled
+        // out of its arguments before looping over an array, the receiver it
+        // resolved once - and the collector can neither find nor rewrite them,
+        // so a moving collection leaves the native holding stale addresses and
+        // the next element it visits reads a recycled object. Sweeping is
+        // still fine: what a native holds is rooted through the argument
+        // vector the interpreter published, so it is never swept, it just must
+        // not move. See `roots::collect_young_non_moving`.
+        let pinned = self.native_link.is_some();
+        if full && parent.is_none() && !pinned {
             let hook = self.hook;
             roots::collect_and_compact_current(
                 &self.types,
@@ -1796,6 +1806,8 @@ impl Interp<'_> {
             )
         } else if full {
             roots::collect(&self.types, stack, locals, parent, &extra_roots)
+        } else if pinned {
+            roots::collect_young_non_moving(&self.types, stack, locals, parent, &extra_roots)
         } else {
             let hook = self.hook;
             roots::collect_young_evacuating(
