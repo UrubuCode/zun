@@ -376,7 +376,7 @@ impl Interp<'_> {
                     None => Value::Null,
                 };
             } else if let Some(handle) =
-                zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, "toJSON"))
+                zun_gc::with_current_heap(|heap| inherited_function(heap, obj, "toJSON"))
             {
                 let this = Value::Object(ctx.slot_get(slot));
                 value = self.json_call_with_this(handle, this, vec![key_value.clone()])?;
@@ -622,4 +622,22 @@ impl Interp<'_> {
             )
         }))
     }
+}
+
+/// A function-valued property looked up on `obj` and then along its dynamic
+/// prototype chain (a `toJSON` inherited from a constructor's `prototype`).
+fn inherited_function(
+    heap: &zun_gc::Heap,
+    obj: zun_gc::Obj,
+    name: &str,
+) -> Option<zun_core::FunctionHandle> {
+    let mut current = obj;
+    for _ in 0..MAX_DEPTH {
+        if let Some(handle) = heap.dynamic_get_function(current, name) {
+            return Some(handle);
+        }
+        let next = heap.dynamic_prototype(current)?.as_object()?;
+        current = unsafe { zun_gc::Obj::from_addr(next as *mut u64) };
+    }
+    None
 }

@@ -352,6 +352,18 @@ impl<'a> Interp<'a> {
                 self.reflect_set(args)
             }
             "reflectConstructNew" => {
+                if let Some(Value::Function(handle)) =
+                    args.first().and_then(|arg| unbox_arg(arg).ok())
+                {
+                    let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                        .ok_or(RunError::BadToken)?;
+                    let values = self.read_array_values(array)?;
+                    let proto_source = match args.get(2).map(unbox_arg) {
+                        Some(Ok(Value::Function(target))) => target,
+                        _ => handle,
+                    };
+                    return self.construct_ordinary_function(handle, proto_source, values);
+                }
                 let token = args
                     .first()
                     .and_then(Self::class_token_of)
@@ -423,12 +435,7 @@ impl<'a> Interp<'a> {
                         None => None,
                     },
                     None => match unbox_arg(&new_target) {
-                        Ok(Value::Function(handle)) => {
-                            let bag = crate::function_expando_bag(handle);
-                            zun_gc::with_current_heap(|heap| heap.dynamic_get(bag, "prototype"))
-                                .and_then(|a| a.as_object())
-                                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
-                        }
+                        Ok(Value::Function(handle)) => Self::function_prototype_property(handle),
                         _ => None,
                     },
                 };
@@ -444,6 +451,14 @@ impl<'a> Interp<'a> {
                 Ok(built)
             }
             "reflectConstruct" => {
+                if let Ok(Value::Function(handle)) =
+                    unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                {
+                    let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                        .ok_or(RunError::BadToken)?;
+                    let values = self.read_array_values(array)?;
+                    return self.construct_ordinary_function(handle, handle, values);
+                }
                 let token = match args.first().ok_or(RunError::BadToken)? {
                     Value::Any(any) if any.as_class_descriptor().is_some() => {
                         any.as_class_descriptor().ok_or(RunError::BadToken)?
@@ -464,5 +479,75 @@ impl<'a> Interp<'a> {
             }
             _ => Err(RunError::BadToken),
         }
+    }
+}
+
+impl<'a> Interp<'a> {
+    /// The object stored in a function's `prototype` property, if any. A
+    /// missing or primitive value yields `None`.
+    pub(super) fn function_prototype_property(handle: zun_core::FunctionHandle) -> Option<zun_gc::Obj> {
+        let bag = crate::function_expando_bag(handle);
+        zun_gc::with_current_heap(|heap| heap.dynamic_get(bag, "prototype"))
+            .and_then(|a| a.as_object())
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+    }
+
+    /// `[[Construct]]` for an ordinary (non-class) function: allocate a fresh
+    /// object inheriting `proto_source.prototype` (falling back to
+    /// `Object.prototype`), call `handle` with it as `this`, and return the
+    /// call's result when it is an object, else the fresh object.
+    pub(super) fn construct_ordinary_function(
+        &mut self,
+        handle: zun_core::FunctionHandle,
+        proto_source: zun_core::FunctionHandle,
+        values: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        let fresh = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+        // The call below re-enters managed code, which can collect and move it.
+        zun_gc::root!(fresh = fresh);
+        let root = Self::object_prototype_singleton();
+        if let Some(proto) = Self::function_prototype_property(proto_source) {
+            if proto.addr() != root.addr() {
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_set_prototype(
+                        fresh.get(),
+                        Some(zun_core::Any::object(proto.addr() as usize)),
+                    )
+                });
+            }
+        }
+        let call_args = self.with_this_arg(handle, fresh.get(), values);
+        let result = self.invoke_function_value(handle, call_args)?;
+        let built = object(&result).unwrap_or_else(|| fresh.get());
+        let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(built).box_any(heap))
+            .unwrap_or_else(zun_core::Any::null);
+        Ok(Value::Any(boxed))
+    }
+}
+
+impl<'a> Interp<'a> {
+    /// `value instanceof fn` for an ordinary function: whether `fn.prototype`
+    /// appears on the dynamic prototype chain of `value`.
+    pub(super) fn function_instanceof(&self, value: &Value, handle: zun_core::FunctionHandle) -> bool {
+        Self::ensure_function_prototype(handle);
+        let Some(target) = Self::function_prototype_property(handle) else {
+            return false;
+        };
+        let Some(mut current) = unbox_arg(value).ok().as_ref().and_then(object) else {
+            return false;
+        };
+        zun_gc::with_current_heap(|heap| {
+            for _ in 0..256 {
+                let Some(next) = heap.dynamic_prototype(current).and_then(|any| any.as_object())
+                else {
+                    return false;
+                };
+                if next == target.addr() as usize {
+                    return true;
+                }
+                current = unsafe { zun_gc::Obj::from_addr(next as *mut u64) };
+            }
+            false
+        })
     }
 }

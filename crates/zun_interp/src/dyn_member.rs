@@ -50,6 +50,15 @@ impl Interp<'_> {
                 }
             }
         }
+        if name == "prototype" {
+            let callee = match &popped {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
+                other => Some(other.clone()),
+            };
+            if let Some(Value::Function(handle)) = callee {
+                Self::ensure_function_prototype(handle);
+            }
+        }
         let raw = expando_receiver(popped);
         // A dynamic receiver that unboxes to a primitive string or an
         // array exposes `.length` the same as the typed forms, so a
@@ -1347,5 +1356,29 @@ impl Interp<'_> {
         }
         stack.push(value);
         Ok(ArmFlow::Next)
+    }
+}
+
+impl Interp<'_> {
+    /// An ordinary function owns a `prototype` object (with a non-enumerable
+    /// back-reference `constructor`) from the moment it is created. Functions
+    /// here materialise it lazily, on the first read of `fn.prototype`, unless
+    /// the script already stored its own value.
+    pub(crate) fn ensure_function_prototype(handle: zun_core::FunctionHandle) {
+        if handle.builtin_method().is_some() || handle.is_bound() {
+            return;
+        }
+        let bag = crate::function_expando_bag(handle);
+        zun_gc::with_current_heap_mut(|heap| {
+            if heap.dynamic_get(bag, "prototype").is_some() {
+                return;
+            }
+            let proto = heap.alloc_dynamic();
+            if let Some(constructor) = Value::Function(handle).box_any(heap) {
+                heap.dynamic_define_data(proto, "constructor", constructor, true, false, true);
+            }
+            let proto_any = zun_core::Any::object(proto.addr() as usize);
+            heap.dynamic_define_data(bag, "prototype", proto_any, true, false, false);
+        });
     }
 }

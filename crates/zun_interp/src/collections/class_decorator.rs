@@ -333,6 +333,11 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Bool(false));
                     }
                 }
+                if let Ok(Value::Function(handle)) =
+                    unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                {
+                    return Ok(Value::Bool(self.function_instanceof(&value, handle)));
+                }
                 let rhs = object(args.get(1).ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native(
                         "TypeError: Right-hand side of 'instanceof' is not callable".into(),

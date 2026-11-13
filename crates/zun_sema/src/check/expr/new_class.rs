@@ -275,33 +275,49 @@ impl Checker<'_> {
                 };
             }
         }
-        // `new x(...)` where `x` is a variable holding a class value:
-        // construct through the class descriptor at run time.
-        if cx.lookup(name).is_some() || self.module_globals.contains(name) {
+        // `new x(...)` where `x` is a variable holding a class value, or a
+        // declared ordinary function: construct through the value at run time.
+        if cx.lookup(name).is_some()
+            || self.module_globals.contains(name)
+            || self.by_name.contains_key(name)
+        {
             let callee = self.check_expr(cx, &ast::Expr::Ident(*class));
             if !callee.ty.is_error()
                 && matches!(callee.ty, Ty::Any | Ty::Function(_) | Ty::DynamicObject)
             {
-                if let Some((id, _)) = zun_natives::resolve("collections", "reflectConstruct") {
-                    let elements: Vec<Option<hir::Expr>> =
-                        args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
-                    let args_array = hir::Expr {
-                        kind: hir::ExprKind::ArrayLiteral { elements },
-                        ty: Ty::Array,
-                        span,
-                    };
-                    return hir::Expr {
-                        kind: hir::ExprKind::CallBuiltin {
-                            id,
-                            args: vec![Self::box_to_any(callee), args_array],
-                        },
-                        ty: Ty::Any,
-                        span,
-                    };
+                if let Some(expr) = self.lower_reflect_construct(cx, callee, args, span) {
+                    return expr;
                 }
             }
         }
         self.error(class.span, format!("unknown class `{name}`"));
         self.poison(span)
+    }
+
+    /// Lower `new callee(args)` to the `reflectConstruct` native: the callee is
+    /// boxed to `Any` and the arguments are packed into an array literal.
+    fn lower_reflect_construct(
+        &mut self,
+        cx: &mut FunctionCx,
+        callee: hir::Expr,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let (id, _) = zun_natives::resolve("collections", "reflectConstruct")?;
+        let elements: Vec<Option<hir::Expr>> =
+            args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
+        let args_array = hir::Expr {
+            kind: hir::ExprKind::ArrayLiteral { elements },
+            ty: Ty::Array,
+            span,
+        };
+        Some(hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![Self::box_to_any(callee), args_array],
+            },
+            ty: Ty::Any,
+            span,
+        })
     }
 }

@@ -480,6 +480,12 @@ impl Checker<'_> {
                 );
                 return self.poison(span);
             }
+            // A function value constructs through the runtime like an `any` target.
+            let target = if matches!(target.ty, Ty::Function(_) | Ty::DynamicObject) {
+                Self::box_to_any(target)
+            } else {
+                target
+            };
             if let (Some(new_target), true) = (new_target, target.ty == Ty::Any) {
                 if let Some((id, _)) = zun_natives::resolve("collections", "reflectConstructNew") {
                     return hir::Expr {

@@ -238,6 +238,14 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // An ordinary function value: `[[Construct]]` through its
+                // `prototype` (same path as `Reflect.construct(fn, args)`).
+                if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
+                    let array = object(args.get(1).ok_or(RunError::BadToken)?)
+                        .ok_or(RunError::BadToken)?;
+                    let values = self.read_array_values(array)?;
+                    return self.construct_ordinary_function(handle, handle, values);
+                }
                 let proxy = args.first().and_then(object);
                 let proxy = match proxy {
                     Some(p) if zun_gc::with_current_heap(|heap| heap.proxy_target(p).is_some()) => p,
