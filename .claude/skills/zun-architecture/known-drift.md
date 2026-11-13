@@ -281,6 +281,25 @@ harness without one never finishes.
   keyed on `object.type_rid()` is wrong again by default. The repair is to stop
   overloading the rid space: a tag bit, or a runtime-kind field in the object
   header beside the type rid.
+- **OPEN - a `JSON.stringify` replacer can fail to resolve its own call.** Found
+  while probing the rooting work; **not** a rooting bug, because it fails
+  identically with and without `ZUN_GC_STRESS`. This exact program dies with
+  `runtime error: call did not resolve to a method at <main>`, pointing at the
+  `JSON.stringify` call:
+
+  ```ts
+  class Rec { a: number = 1; }
+  function churn(): number { let n = 0; for (let i = 0; i < 40; i++) { const o = new Rec(); n += o.a; } return n; }
+  const deep: any = { l1: { l2: { l3: { l4: { l5: [1, 2, { l6: "x" }] } } } }, tail: [3, 4] };
+  console.log("A=" + JSON.stringify(deep, function (k: any, v: any) { churn(); return v; }));
+  ```
+
+  It needs the whole combination: every smaller variant passes - four levels of
+  nesting without an array, an array without the nesting, the allocating callee
+  without either, and each pair of the three. A `toJSON` hook doing the same
+  allocation at four nesting depths works fine. Likely the same family as the
+  closure-conversion and top-level-dispatch entries above, since the failing
+  thing is resolving a call from inside a top-level function expression.
 - **OPEN - The interned-string table is never reclaimed.** `Heap::intern_string`
   pushes onto a `Vec<ZStr>` and `zun_gc/src/collection.rs` never touches
   `strings`. Measured: ~108 bytes per interned string, linear and unbounded
