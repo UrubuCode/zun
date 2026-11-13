@@ -2172,3 +2172,147 @@ fn an_epoch_spanning_several_chunks_leaves_the_retained_one_clean() {
         slots.iter().filter(|&&slot| slot != 0).count()
     );
 }
+
+/// Evacuates the young generation with native roots appended the way
+/// `zun_interp::roots` does, so a `Rooted` guard is both marked and rewritten.
+fn evacuate_with_native_roots(heap: &mut Heap) {
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    let mut roots = Vec::new();
+    append_native_roots(&mut roots);
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+}
+
+#[test]
+fn a_rooted_object_follows_an_evacuating_collection() {
+    let mut heap = Heap::new();
+    let object = heap.alloc(5, 1);
+    object.set_field(0, 0xBEEF);
+    let old = object.addr() as usize;
+    crate::root!(held = object);
+
+    evacuate_with_native_roots(&mut heap);
+
+    let now = held.get();
+    assert_ne!(now.addr() as usize, old, "the object moved");
+    assert!(!heap.by_addr.contains_key(&old), "the old address is gone");
+    assert!(heap.by_addr.contains_key(&(now.addr() as usize)));
+    assert_eq!(now.field(0), 0xBEEF, "contents survived the move");
+}
+
+#[test]
+fn a_rooted_function_follows_its_closure_environment() {
+    let mut heap = Heap::new();
+    let environment = heap.alloc_dynamic();
+    heap.dynamic_set(environment, "c0", zun_core::Any::int(7));
+    let old = environment.addr() as usize;
+    let function = zun_core::FunctionHandle::new(9, Some(old));
+    crate::root!(held = function);
+
+    evacuate_with_native_roots(&mut heap);
+
+    let handle = held.get();
+    let moved = handle
+        .environment()
+        .expect("the closure kept its environment");
+    assert_ne!(moved, old);
+    assert_eq!(handle.method_rid(), 9);
+    assert!(heap.by_addr.contains_key(&moved));
+    assert!(!heap.by_addr.contains_key(&old));
+    let environment = unsafe { Obj::from_addr(moved as *mut u64) };
+    assert_eq!(
+        heap.dynamic_get(environment, "c0")
+            .and_then(|any| any.as_int()),
+        Some(7)
+    );
+}
+
+#[test]
+fn a_rooted_function_without_an_environment_is_left_alone() {
+    let mut heap = Heap::new();
+    // A young object must exist so the collection really moves something.
+    let _other = heap.alloc(1, 0);
+    let function = zun_core::FunctionHandle::new(4, None);
+    crate::root!(held = function);
+
+    evacuate_with_native_roots(&mut heap);
+
+    assert_eq!(held.get(), function);
+    assert_eq!(held.get().environment(), None);
+}
+
+#[test]
+fn a_rooted_bound_function_stays_bound_after_its_record_moves() {
+    let mut heap = Heap::new();
+    let record = heap.alloc(2, 0);
+    let old = record.addr() as usize;
+    let bound = zun_core::FunctionHandle::new_bound(old);
+    crate::root!(held = bound);
+
+    evacuate_with_native_roots(&mut heap);
+
+    let handle = held.get();
+    assert!(handle.is_bound(), "relocation must keep the bound tag");
+    let moved = handle
+        .environment()
+        .expect("the bound record is referenced");
+    assert_ne!(moved, old);
+    assert!(heap.by_addr.contains_key(&moved));
+}
+
+#[test]
+fn a_dropped_rooted_guard_is_no_longer_reported_or_rewritten() {
+    let mut heap = Heap::new();
+    let object = heap.alloc(5, 0);
+    {
+        crate::root!(held = object);
+        let mut roots = Vec::new();
+        append_native_roots(&mut roots);
+        assert_eq!(roots, vec![held.get()], "a live guard is reported");
+    }
+    let mut roots = Vec::new();
+    append_native_roots(&mut roots);
+    assert!(roots.is_empty(), "a dead guard must not be reported");
+
+    let mut relocation = RelocationMap::new();
+    relocation.insert_addresses(object.addr() as usize, 0x7770);
+    assert_eq!(
+        unsafe { rewrite_native_roots(&relocation) },
+        0,
+        "a dead guard's slot must not be written through"
+    );
+}
+
+#[test]
+fn a_rooted_optional_handle_follows_its_environment() {
+    let mut heap = Heap::new();
+    let environment = heap.alloc_dynamic();
+    let old = environment.addr() as usize;
+    let function = Some(zun_core::FunctionHandle::new(3, Some(old)));
+    crate::root!(held = function);
+
+    evacuate_with_native_roots(&mut heap);
+
+    let moved = held
+        .get()
+        .expect("the guard still holds a handle")
+        .environment()
+        .expect("the closure kept its environment");
+    assert_ne!(moved, old);
+    assert!(heap.by_addr.contains_key(&moved));
+}
+
+#[test]
+fn a_rooted_none_is_reported_as_nothing() {
+    let mut heap = Heap::new();
+    // A young object must exist so the collection really moves something.
+    let _other = heap.alloc(1, 0);
+    let absent: Option<zun_core::FunctionHandle> = None;
+    crate::root!(held = absent);
+
+    let mut roots = Vec::new();
+    append_native_roots(&mut roots);
+    assert!(roots.is_empty(), "nothing to root means no root reported");
+
+    evacuate_with_native_roots(&mut heap);
+    assert_eq!(held.get(), None);
+}
