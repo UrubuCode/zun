@@ -116,6 +116,41 @@ Deliverable: the env var, the pinned budget, a unit test that
 `next_gc_interval` does not grow under stress, and a recorded suite result at
 one stress level so the baseline exists.
 
+**Done.** `ZUN_GC_STRESS=<n>` pins the budget; the parse and the policy are pure
+functions tested directly, with the `OnceLock` only supplying the argument, so
+no test touches the process environment. Cost on an allocation-heavy program
+(800k allocations inside native callbacks): `n=1024` and `n=64` are within noise
+of the adaptive policy, `n=4` is 1.6x, `n=1` is 3x. Measure after a warm-up run
+— the first invocation of the release binary pays enough page-in to swamp the
+difference and make stress look *faster* than the adaptive policy.
+
+**It paid for itself on the first run: 114/168 under `ZUN_GC_STRESS=1`, against
+120 under the shipped policy.** Six more latent bugs of this same class, in one
+suite run instead of six bisections:
+
+| Fixture | Note |
+|---|---|
+| `classes-errors/runtime-error-sites` | was in the original 13 |
+| `classes-errors/throw-catch-finally-control` | was in the original 13 |
+| `collections/constructor-protocol-and-subclassing` | new |
+| `collections/weak-collections-and-brand-metadata` | new |
+| `iteration/iterable-protocol-contract` | new |
+| `typed-buffers/typedarray-element-writes-and-set` | new |
+
+The two that were in the original thirteen matter most: they pass under the
+shipped policy, so `dfb7a142`/`020e678b` moved collections away from the bad
+place rather than closing the hazard. This is the work list for phase 2, and
+these six are its acceptance test.
+
+### Phase 1b — poison from-space under stress
+
+After an evacuating collection, fill the released nursery with a trap pattern
+instead of leaving the old bytes readable. A stale address then faults at first
+use rather than reading a recycled object and returning a wrong answer much
+later. Every one of the nine causes was silent; this is the cheapest lever that
+makes the whole class loud, and it belongs with the stress mode because that is
+where the cost is acceptable.
+
 ### Phase 2 — a rooted slot natives can hold
 
 Replace hoisted copies with a slot the collector rewrites. The open question is
@@ -164,9 +199,65 @@ Three candidate shapes, in increasing generality:
   closest analogue to `GCPROTECT_BEGIN`, and the only one that reads naturally
   at the use site (`rooted.get()`).
 
-(a) is the cheapest and fixes the known bugs; (c) is the most faithful and the
-most invasive; (b) is in between. The decision gates phase 2 and is recorded
-below once made.
+**Decided: (c), with the safepoint entry points taking `&Rooted<…>`, and (b)
+folded in as `impl Trace for [T; N]`.**
+
+(a) is rejected on evidence, not taste. Two findings sink it:
+
+- **The argument vector is often not the published one.** Natives re-dispatch
+  through `call_managed_collection` with fresh vectors nobody publishes:
+  `collections/mod.rs` (`let mut stripped = args.to_vec()` in the
+  `dynamicCall` optional probe), `collections/array_iterate.rs`
+  (`&[Value::Object(target), list]`), `collections/array_construct.rs`
+  (`&forwarded`, three sites). A native reached that way would be re-reading
+  memory nothing rewrites — so (a) is not merely incomplete, it is a hazard in
+  its own right that the pinning policy is currently hiding.
+- **The existing mechanism cannot express the one carrier that matters.**
+  `NativeRootScope::enter` takes `&[Obj]`, and a `FunctionHandle`'s environment
+  is not an `Obj`. `array_iterate.rs`'s iterate arm is instructive: it roots
+  `[source, result]` and re-reads `roots[0]` every iteration — the author got
+  that part right, with a comment saying why — but `callback` is hoisted and
+  unrooted, because there is nowhere to put it. Every callback-holding native
+  has the same hole for the same reason.
+
+(b) is rejected as the *primary* shape because the copy-out mistake
+(`let it = roots[0]`) stays silent, and `iter_next` is standing proof that it
+gets made: it registers a copy of `it` and then goes on using the original.
+
+What makes (c) worth the extra work is not fidelity to CoreCLR, it is that
+changing `invoke_function_value` / `invoke_callback` / `with_this_arg` to take
+`&Rooted<FunctionHandle>` / `&Rooted<Obj>` turns all 84 sites into compile
+errors until they are converted, and makes the mistake unavailable to the next
+author. Nothing short of that is loud.
+
+Mechanics settled with it:
+
+- `unsafe trait Trace { fn trace(&mut self, visit: &mut dyn FnMut(usize) -> usize); }`
+  in `zun_gc`, the visitor taking the old address and returning the new one.
+  Reporting is the same walk with an identity visitor. A registry entry is
+  `(*mut (), unsafe fn(*mut (), &mut dyn FnMut(usize) -> usize))`, where the fn
+  pointer is a monomorphised `trace_erased::<T>` — an ordinary pointer cast, no
+  transmute and no shadow copy, so **`Value` being an enum is not a problem**:
+  the collector never interprets its layout, it calls code that knows the type.
+- `impl Trace for Value` is the match that already exists twice, in
+  `Value::rewrite_managed_reference` and (for reporting) in
+  `roots::collect_frame_roots`. One impl replaces both, which is a dedup worth
+  having on its own: those two matches disagreeing is precisely how a carrier
+  gets rooted but not rewritten.
+- Orphan rule is fine: `Obj`, `FunctionHandle`, `Any`, `[T; N]`, `Option<T>` in
+  `zun_gc`; `Value` in `zun_interp`.
+- A `root!(let cb = handle);` macro in the style of `std::pin::pin!`, shadowing
+  the owner so the slot cannot be moved. Drops are then strictly LIFO, so the
+  registry is a push/pop stack instead of the id search
+  `NativeRootScope::drop` does today.
+- The slot holds an `UnsafeCell`. This also fixes a real defect in the current
+  mechanism: `NativeRootScope::enter(&roots)` takes a shared reference to a
+  non-`mut` local and `rewrite_native_roots` writes through
+  `ptr as *mut Obj`. It works in practice because the pointer escapes to a
+  thread-local, but writing through a pointer derived from a `&` is formally
+  undefined behaviour.
+- `get()` returns a copy (`Obj`, `FunctionHandle`) or a clone (`Value`), and
+  must never hand out a `&T` that outlives a safepoint.
 
 ## Verification rules for every phase
 

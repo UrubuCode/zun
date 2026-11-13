@@ -1,4 +1,4 @@
-use super::gc_policy::GC_INTERVAL;
+use super::gc_policy::initial_gc_interval;
 use super::state::{AsyncState, ExecutionFrame, ExecutionOutcome, Microstep};
 use super::{CallHook, Interp, Output, RunError, Value};
 use zun_il::{decode_one, Opcode};
@@ -71,7 +71,7 @@ impl<'a> OwnedGeneratorSession<'a> {
             loader,
             eval_host: None,
             eval_cache: std::collections::HashMap::new(),
-            gc_interval: GC_INTERVAL,
+            gc_interval: initial_gc_interval(),
             minor_collections: 0,
             types: self.types.clone(),
             suspended: None,
@@ -406,7 +406,7 @@ impl<'a> ResumableSession<'a> {
                 loader,
                 eval_host: None,
                 eval_cache: std::collections::HashMap::new(),
-                gc_interval: GC_INTERVAL,
+                gc_interval: initial_gc_interval(),
                 minor_collections: 0,
                 types,
                 suspended: None,
@@ -559,7 +559,7 @@ pub(super) fn run_method_with(
         loader,
         eval_host,
         eval_cache: std::collections::HashMap::new(),
-        gc_interval: GC_INTERVAL,
+        gc_interval: initial_gc_interval(),
         minor_collections: 0,
         types,
         suspended: None,
@@ -649,7 +649,7 @@ pub(crate) fn construct_class_loaded(
         loader: Some(loader),
         eval_host: None,
         eval_cache: std::collections::HashMap::new(),
-        gc_interval: GC_INTERVAL,
+        gc_interval: initial_gc_interval(),
         minor_collections: 0,
         types,
         suspended: None,
@@ -724,7 +724,7 @@ pub(crate) fn run_method_loaded_on_current_heap_bare(
         loader,
         eval_host: None,
         eval_cache: std::collections::HashMap::new(),
-        gc_interval: GC_INTERVAL,
+        gc_interval: initial_gc_interval(),
         minor_collections: 0,
         types,
         suspended: None,
