@@ -128,14 +128,37 @@ difference and make stress look *faster* than the adaptive policy.
 120 under the shipped policy.** Six more latent bugs of this same class, in one
 suite run instead of six bisections:
 
+| Fixture | Symptom under `ZUN_GC_STRESS=1` | |
+|---|---|---|
+| `classes-errors/runtime-error-sites` | `call did not resolve to a method` | was in the original 13 |
+| `classes-errors/throw-catch-finally-control` | `call did not resolve to a method`, in a closure | was in the original 13 |
+| `typed-buffers/typedarray-element-writes-and-set` | `call did not resolve to a method` | new |
+| `collections/constructor-protocol-and-subclassing` | panic, `zun_gc/src/strings.rs:11` index out of bounds | new |
+| `collections/weak-collections-and-brand-metadata` | panic, same line | new |
+| `iteration/iterable-protocol-contract` | panic, same line | new |
+
+**Three of those six turned out to be one bug, and it was mine** — see phase 1b.
+`Heap::string` is `&self.strings[handle as usize]`, and the interned-string
+table only ever grows, so a handle can only be out of range if it was never a
+handle: it is a `FIELD_STRING` slot read out of an object whose memory was
+handed out again. That pointed at the nursery, not at a native frame.
+
+Phase 1b fixed it and those three now pass under stress. **Three remain**, and
+they are the genuine native-stale-reference class:
+
 | Fixture | Note |
 |---|---|
-| `classes-errors/runtime-error-sites` | was in the original 13 |
-| `classes-errors/throw-catch-finally-control` | was in the original 13 |
-| `collections/constructor-protocol-and-subclassing` | new |
-| `collections/weak-collections-and-brand-metadata` | new |
-| `iteration/iterable-protocol-contract` | new |
-| `typed-buffers/typedarray-element-writes-and-set` | new |
+| `classes-errors/runtime-error-sites` | passes under the shipped policy |
+| `classes-errors/throw-catch-finally-control` | passes under the shipped policy |
+| `typed-buffers/typedarray-element-writes-and-set` | passes under the shipped policy |
+
+All three pass without stress, which is the point: `dfb7a142`/`020e678b` moved
+collections away from the bad place rather than closing the hazard. These three
+are phase 2's acceptance test.
+
+(`Heap::string` panicking rather than returning an error is its own small
+diagnostic debt — `try_string` exists right beside it — but the panic is what
+made this one easy to place, so it earned its keep once.)
 
 The two that were in the original thirteen matter most: they pass under the
 shipped policy, so `dfb7a142`/`020e678b` moved collections away from the bad
@@ -150,6 +173,33 @@ use rather than reading a recycled object and returning a wrong answer much
 later. Every one of the nine causes was silent; this is the cheapest lever that
 makes the whole class loud, and it belongs with the stress mode because that is
 where the cost is acceptable.
+
+**Done, and it immediately found a bug in `020e678b` — the nursery release
+itself.** `Heap::alloc`'s bump path writes only the two header words and relies
+on the chunk being zero-initialised for the object's fields. Before
+`020e678b`, every evacuating collection abandoned the chunk and the next
+allocation came from a freshly zeroed one, so that held. Reusing the chunk
+broke it: a new object started life holding a dead object's field values. That
+is what three of the six stress failures were, and the `strings.rs` panic was a
+`FIELD_STRING` slot full of someone else's bytes.
+
+`reset_nursery` now restores the invariant, zeroing only the extent the epoch
+actually handed out — the whole chunk once the epoch grew past one, the bump
+cursor otherwise, because the cursor refers to a *later* chunk in that case and
+reading it would leave most of the retained chunk dirty. A typical
+256-allocation epoch dirties about 8 KiB of the 512 KiB chunk, so the extent
+matters: 64x the work otherwise, and it keeps the per-allocation path free of a
+memset. Under poisoning the whole chunk is filled instead, and the bump path
+zeroes what it hands out.
+
+Result: **117/168 under `ZUN_GC_STRESS=1`** (114 before), and the normal policy
+is still 120/168 with a byte-identical pass set. The three remaining stress
+failures are the real phase 2 work list.
+
+Worth stating plainly, because it is the lesson of the phase: the stress mode's
+first catch was not a pre-existing bug the hunt had missed. It was a bug the
+hunt had *introduced*, three days old, invisible to 168 fixtures under the
+normal collection budget.
 
 ### Phase 2 — a rooted slot natives can hold
 

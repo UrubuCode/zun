@@ -1933,6 +1933,57 @@ fn an_evacuating_collection_releases_nursery_storage() {
     );
 }
 
+/// Allocate garbage, run an evacuating collection that keeps one root, and
+/// return the heap with the nursery released.
+fn heap_after_evacuating_collection(poison: bool) -> Heap {
+    let mut heap = Heap::new();
+    heap.set_poison_released_memory(poison);
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    let mut roots = vec![heap.alloc(1, 2)];
+    for _ in 0..16 {
+        let garbage = heap.alloc(2, 3);
+        garbage.set_field(0, 0x1234);
+    }
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+    heap
+}
+
+#[test]
+fn released_nursery_is_not_poisoned_when_poisoning_is_off() {
+    // Explicit off, so a ZUN_GC_STRESS in the test environment cannot flip it.
+    let mut heap = heap_after_evacuating_collection(false);
+    let fresh = heap.alloc(3, 3);
+    assert_eq!(fresh.field(0), 0);
+    assert_eq!(fresh.field(1), 0);
+    assert_eq!(fresh.field(2), 0);
+}
+
+#[test]
+fn fresh_objects_read_zero_after_the_nursery_was_poisoned() {
+    // The bump path relies on zeroed storage; poisoning must not leak into
+    // new objects' fields.
+    let mut heap = heap_after_evacuating_collection(true);
+    for _ in 0..8 {
+        let fresh = heap.alloc(3, 3);
+        assert_eq!(fresh.field(0), 0);
+        assert_eq!(fresh.field(1), 0);
+        assert_eq!(fresh.field(2), 0);
+    }
+}
+
+#[test]
+fn released_nursery_holds_the_poison_pattern() {
+    let heap = heap_after_evacuating_collection(true);
+    let ranges = heap.nursery_ranges();
+    assert_eq!(ranges.len(), 1, "one chunk is retained");
+    let (start, end) = ranges[0];
+    let slots = (end - start) / std::mem::size_of::<u64>();
+    // SAFETY: the range is the retained nursery chunk, owned by `heap`, which
+    // is alive and not mutated while this slice exists.
+    let chunk = unsafe { std::slice::from_raw_parts(start as *const u64, slots) };
+    assert!(chunk.iter().all(|&slot| slot == 0xDEAD_BEEF_DEAD_BEEF));
+}
+
 #[test]
 fn an_object_promoted_in_place_is_evacuated_out_of_the_nursery() {
     let mut heap = Heap::new();
@@ -2078,4 +2129,46 @@ fn an_evacuated_generator_keeps_its_state_and_frame() {
         .expect("the suspended frame follows it too");
     assert_eq!(frame.pc, 7);
     assert_eq!(frame.locals[0].as_object(), Some(carried_now));
+}
+
+#[test]
+fn an_epoch_spanning_several_chunks_leaves_the_retained_one_clean() {
+    // The zero-fill in `reset_nursery` covers only the extent the epoch handed
+    // out, because zeroing a whole 512 KiB chunk per collection would be about
+    // 64x the work for a typical budget. That extent is the bump cursor *only*
+    // while the epoch fits in one chunk: once it grows past one, the retained
+    // chunk was filled to capacity and the cursor refers to a later chunk that
+    // is about to be dropped. Reading the cursor in that case would leave most
+    // of the retained chunk dirty, and `alloc`'s bump path - which writes only
+    // the header - would hand out objects holding dead objects' field values.
+    let mut heap = Heap::new();
+    heap.set_poison_released_memory(false);
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    let mut roots = vec![heap.alloc(1, 2)];
+    // 4 slots each (2 header + 2 fields) over three chunks' worth of slots.
+    let per_object = zun_core::OBJECT_HEADER_SLOTS + 2;
+    for index in 0..(3 * CHUNK_SLOTS / per_object) {
+        let garbage = heap.alloc(2, 2);
+        garbage.set_field(0, 0xDEAD_0000 | index as u64);
+        garbage.set_field(1, 0xBEEF_0000 | index as u64);
+    }
+    assert!(
+        heap.nursery_chunk_count() > 1,
+        "the epoch has to outgrow one chunk for this test to mean anything"
+    );
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+
+    let ranges = heap.nursery_ranges();
+    assert_eq!(ranges.len(), 1, "one chunk is retained, the rest released");
+    let (start, end) = ranges[0];
+    // SAFETY: the range is the retained nursery chunk, owned by this heap and
+    // untouched since the collection; nothing has been allocated into it yet.
+    let slots = unsafe {
+        std::slice::from_raw_parts(start as *const u64, (end - start) / size_of::<u64>())
+    };
+    assert!(
+        slots.iter().all(|&slot| slot == 0),
+        "the retained chunk still holds {} dirty slots",
+        slots.iter().filter(|&&slot| slot != 0).count()
+    );
 }

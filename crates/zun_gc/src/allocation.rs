@@ -4,7 +4,18 @@ use super::{
     WeakRefId, WeakSlot, CHUNK_SLOTS,
 };
 
+/// Written into every slot of released nursery memory under stress. The value
+/// is non-canonical on x86-64, so a stale reference dereferenced as a pointer
+/// faults at the stale read instead of reading plausible recycled data.
+const POISON_SLOT: u64 = 0xDEAD_BEEF_DEAD_BEEF;
+
 impl Heap {
+    /// Turn released-memory poisoning on or off without touching the process
+    /// environment. Takes effect at the next nursery release.
+    pub fn set_poison_released_memory(&mut self, poison: bool) {
+        self.poison_released_memory.0 = poison;
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -54,6 +65,14 @@ impl Heap {
         let base = &mut chunk[self.nursery_cursor] as *mut u64;
         self.nursery_cursor += slots;
         unsafe {
+            // The bump path normally relies on the chunk being zero-initialised
+            // for the object's fields. A poisoned retained chunk is not zero, so
+            // without this every new object would start with 0xDEADBEEF fields:
+            // the diagnostic would corrupt the program. Gated so the normal hot
+            // path is untouched.
+            if self.poison_released_memory.0 {
+                std::ptr::write_bytes(base, 0, slots);
+            }
             *base = type_rid as u64;
             *base.add(1) = identity_hash;
         }
@@ -107,7 +126,33 @@ impl Heap {
     /// collection, and any further chunks the epoch grew are returned to the
     /// system allocator.
     pub(super) fn reset_nursery(&mut self) {
+        // How much of the retained chunk this epoch actually handed out: all of
+        // it once the epoch grew past one chunk, otherwise only up to the bump
+        // cursor. Everything past that was never written and is still clean, so
+        // zeroing the whole 512 KiB would be about 64x the work for a typical
+        // epoch (a 256-allocation budget dirties roughly 8 KiB of it).
+        let dirty = if self.nursery_chunks.len() > 1 {
+            CHUNK_SLOTS
+        } else {
+            self.nursery_cursor
+        };
         self.nursery_chunks.truncate(1);
+        if let Some(chunk) = self.nursery_chunks.first_mut() {
+            if self.poison_released_memory.0 {
+                // The whole chunk, not just the dirty extent: this is the
+                // diagnostic path, where being thorough is worth more than
+                // being quick. `alloc` re-zeroes what it hands back out.
+                chunk.fill(POISON_SLOT);
+            } else {
+                // `alloc`'s bump path writes only the header and relies on the
+                // chunk being zero for the object's fields. Reusing the chunk
+                // (rather than abandoning it, as the collector did before
+                // `020e678b`) broke that invariant: a new object started with a
+                // dead object's field values. Restoring it here keeps the
+                // per-allocation path free of a memset.
+                chunk[..dirty].fill(0);
+            }
+        }
         self.nursery_cursor = 0;
         self.nursery_bytes = 0;
     }

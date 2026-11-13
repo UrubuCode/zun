@@ -141,6 +141,39 @@ pub struct GeneratorState {
     pub has_pending_return: bool,
 }
 
+/// Whether released nursery memory is poisoned. A newtype so `Heap` can keep
+/// `#[derive(Default)]` while its default still comes from the environment.
+///
+/// `ZUN_GC_STRESS` is one user-facing knob with two consumers: `zun_interp`
+/// reads it to pin the collection budget, and this crate reads it to poison
+/// released memory. `zun_gc` reads it itself instead of having it plumbed in
+/// because a `Heap` is built in many places (five `Interp` literals in
+/// `zun_interp/src/runner.rs`, plus test and bridge paths); a knob that depended
+/// on who constructed the heap would be silently off in exactly the runs it is
+/// meant to help.
+#[derive(Debug, Clone, Copy)]
+struct PoisonReleasedMemory(bool);
+
+impl Default for PoisonReleasedMemory {
+    fn default() -> Self {
+        Self(poison_from_env())
+    }
+}
+
+/// Same rule as `zun_interp`'s `parse_stress`: only a positive integer means
+/// stress is on, so a typo does not enable it.
+fn parse_stress_on(value: Option<&str>) -> bool {
+    value
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .is_some_and(|n| n > 0)
+}
+
+/// Read once per process; `Heap`s are created often.
+fn poison_from_env() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| parse_stress_on(std::env::var("ZUN_GC_STRESS").ok().as_deref()))
+}
+
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
 /// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
@@ -155,6 +188,8 @@ pub struct Heap {
     nursery_cursor: usize,
     /// Bytes allocated in the current young-generation nursery epoch.
     nursery_bytes: usize,
+    /// Fill released nursery memory with a trap pattern (see `allocation.rs`).
+    poison_released_memory: PoisonReleasedMemory,
     /// Allocation budget that requests a minor collection at a safepoint.
     nursery_budget: usize,
     /// Objects allocated since the last collection. Counted here, at the one
