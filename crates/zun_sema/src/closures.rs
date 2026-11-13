@@ -66,7 +66,11 @@ impl Checker<'_> {
                 .iter()
                 .map(|capture| (capture.name.clone(), capture.clone()))
                 .collect(),
-            this_class: outer.this_class,
+            this_class: function
+                .this_class
+                .as_ref()
+                .and_then(|name| self.classes_by_name.get(self.text(name)).copied())
+                .or(outer.this_class),
             is_constructor: false,
             is_module_scope: false,
             finally_depth: 0,

@@ -66,6 +66,7 @@ pub(in crate::oxc) fn convert_argument(
                     is_arrow: true,
                     is_async: false,
                     is_generator: false,
+                    this_class: None,
                     span: span(member.span),
                 }));
             }

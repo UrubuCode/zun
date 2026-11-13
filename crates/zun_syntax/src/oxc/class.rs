@@ -427,6 +427,7 @@ fn convert_static_block(
         is_arrow: true,
         is_async: false,
         is_generator: false,
+        this_class: None,
         span: block_span,
     });
     fields.push(crate::ast::ClassField {
@@ -763,6 +764,12 @@ fn install_runtime_computed_method(
         if !well_known {
             let function_value =
                 convert_oxc_function(source, &method.value).map_err(|error| vec![error])?;
+            let mut function_value = function_value;
+            if let (Expr::Function(function), false) = (&mut function_value, method.r#static) {
+                function.this_class = Some(Name {
+                    span: Span::new(class_id.span.start, class_id.span.end),
+                });
+            }
             let class_ref = Expr::Ident(Name {
                 span: Span::new(class_id.span.start, class_id.span.end),
             });

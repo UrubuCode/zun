@@ -243,6 +243,11 @@ pub struct FunctionExpr {
     pub is_async: bool,
     /// Whether this expression uses generator syntax.
     pub is_generator: bool,
+    /// The class whose instance is `this` when this function is installed as
+    /// a computed-key instance method (`class C { [expr]() {} }`). Such a
+    /// method is defined outside the class body, so the checker needs this to
+    /// resolve private names lexically.
+    pub this_class: Option<Name>,
     /// Span of the whole expression.
     pub span: Span,
 }

@@ -178,6 +178,7 @@ fn predeclare_forward_functions(
                         is_arrow: true,
                         is_async: false,
                         is_generator: false,
+                        this_class: None,
                         span: whole,
                     }),
                     span: whole,

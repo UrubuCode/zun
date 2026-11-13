@@ -176,6 +176,7 @@ pub(super) fn convert_oxc_function(
         is_arrow: false,
         is_async: function.r#async,
         is_generator: function.generator,
+        this_class: None,
         span: span(function.span),
     }))
 }
@@ -240,6 +241,7 @@ pub(super) fn convert_arrow(
         is_arrow: true,
         is_async: arrow.r#async,
         is_generator: false,
+        this_class: None,
         span: span(arrow.span),
     }))
 }

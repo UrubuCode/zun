@@ -53,6 +53,7 @@ pub(super) fn convert_named_function_expression(
         is_arrow: true,
         is_async: false,
         is_generator: false,
+        this_class: None,
         span: whole,
     });
     Ok(Expr::ComputedCall {
