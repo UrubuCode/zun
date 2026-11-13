@@ -17,6 +17,7 @@ pub mod feedback;
 mod gc_policy;
 mod hooks;
 mod integrity;
+mod intrinsic_meta;
 mod json;
 mod metadata;
 mod namespace;

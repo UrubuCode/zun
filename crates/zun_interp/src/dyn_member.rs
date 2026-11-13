@@ -326,6 +326,12 @@ impl Interp<'_> {
                         return Ok(ArmFlow::Continue);
                     }
                 }
+                if !user_class && (name == "length" || name == "name") {
+                    if let Some(value) = self.builtin_ctor_own_value(token, &name) {
+                        stack.push(value);
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 stack.push(if name == "prototype" && user_class {
                     let proto = self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))

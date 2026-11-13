@@ -71,6 +71,10 @@ pub struct DynamicObject {
     /// Symbol keys whose **enumerable** attribute is cleared (skipped by spread
     /// and `Object.assign`).
     non_enumerable_symbols: HashSet<SymbolId>,
+    /// Symbol keys whose **writable** attribute is cleared (reported by
+    /// `getOwnPropertyDescriptor`; e.g. a built-in prototype's
+    /// `Symbol.toStringTag`).
+    non_writable_symbols: HashSet<SymbolId>,
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
     /// Getter functions of symbol-keyed accessor properties.
     symbol_getters: BTreeMap<SymbolId, FunctionHandle>,
@@ -93,6 +97,7 @@ impl PartialEq for DynamicObject {
             && self.accessor_set == other.accessor_set
             && self.symbol_properties == other.symbol_properties
             && self.non_enumerable_symbols == other.non_enumerable_symbols
+            && self.non_writable_symbols == other.non_writable_symbols
             && self.symbol_functions == other.symbol_functions
             && self.symbol_getters == other.symbol_getters
             && self.string_functions == other.string_functions
@@ -522,6 +527,16 @@ impl DynamicObject {
         }
         true
     }
+    /// Clear the **writable** attribute of an existing own symbol data property.
+    pub fn mark_symbol_readonly(&mut self, symbol: SymbolId) {
+        if self.symbol_properties.contains_key(&symbol) {
+            self.non_writable_symbols.insert(symbol);
+        }
+    }
+    /// Whether an own symbol data property is writable (a frozen object's are not).
+    pub fn is_symbol_writable(&self, symbol: SymbolId) -> bool {
+        !self.frozen && !self.non_writable_symbols.contains(&symbol)
+    }
     /// Whether the symbol key is an own enumerable property.
     pub fn is_symbol_enumerable(&self, symbol: SymbolId) -> bool {
         self.symbol_properties.contains_key(&symbol)
@@ -557,6 +572,7 @@ impl DynamicObject {
         self.symbol_functions.remove(&symbol);
         self.symbol_getters.remove(&symbol);
         self.non_enumerable_symbols.remove(&symbol);
+        self.non_writable_symbols.remove(&symbol);
         self.symbol_order.retain(|s| *s != symbol);
         true
     }

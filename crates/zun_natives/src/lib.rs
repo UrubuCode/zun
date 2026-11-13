@@ -63,6 +63,7 @@ pub use number::{js_to_exponential, js_to_fixed, js_to_precision, js_to_radix_st
 mod string;
 pub use string::normalize_form as string_normalize_form;
 mod promise;
+mod realm_define;
 mod view_members;
 pub use view_members::{node_buffer_accessor_native, view_member, ViewArg, ViewMember, LENGTH_SENTINEL};
 mod serde;
@@ -345,6 +346,9 @@ pub static MODULES: &[Module] = &[
     // Blocking HTTP (`httpFetch`). Appended last so every existing dispatch
     // id stays stable.
     net::MODULE,
+    // Realm-global built-in definitions. Appended last so every existing
+    // dispatch id stays stable.
+    realm_define::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

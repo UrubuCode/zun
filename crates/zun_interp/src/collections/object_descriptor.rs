@@ -498,6 +498,16 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // A built-in constructor owns `prototype`, `length` and `name`.
+                if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    if let Some(crate::property_ops::PropKey::Str(key)) =
+                        args.get(1).and_then(crate::property_ops::prop_key)
+                    {
+                        if let Some(d) = self.builtin_ctor_own_descriptor(token, &key) {
+                            return Ok(Value::Object(d));
+                        }
+                    }
+                }
                 // A built-in constructor owns an accessor `[Symbol.species]`
                 // (the collection / array / promise / regexp family only).
                 if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {

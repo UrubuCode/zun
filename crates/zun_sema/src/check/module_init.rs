@@ -199,7 +199,7 @@ impl Checker<'_> {
         // 1) Declarative realm seed (base-type class descriptors).
         let registry = crate::realm::registry();
         if !registry.is_empty() {
-            let (set_id, _) = zun_natives::resolve("collections", "globalSet")
+            let (set_id, _) = zun_natives::resolve("realm", "globalDefineBuiltin")
                 .expect("globalSet intrinsic must exist");
             // Namespace globals are plain objects; function-like globals reuse the
             // `Object` descriptor so `typeof globalThis[name]` reports the right kind.
@@ -260,7 +260,7 @@ impl Checker<'_> {
                             },
                             value,
                             hir::Expr {
-                                kind: hir::ExprKind::Boolean(true),
+                                kind: hir::ExprKind::Boolean(false),
                                 ty: Ty::Boolean,
                                 span,
                             },
@@ -286,7 +286,72 @@ impl Checker<'_> {
                             },
                             descriptor,
                             hir::Expr {
-                                kind: hir::ExprKind::Boolean(true),
+                                kind: hir::ExprKind::Boolean(false),
+                                ty: Ty::Boolean,
+                                span,
+                            },
+                        ],
+                    },
+                    ty: Ty::Void,
+                    span,
+                }));
+            }
+            // The frozen value properties (`undefined`, `NaN`, `Infinity`) and
+            // the self reference `globalThis`.
+            let number = |value: f64| hir::Expr {
+                kind: hir::ExprKind::BoxAny {
+                    value: Box::new(hir::Expr {
+                        kind: hir::ExprKind::Number(value),
+                        ty: Ty::F64,
+                        span,
+                    }),
+                },
+                ty: Ty::Any,
+                span,
+            };
+            let undefined = hir::Expr {
+                kind: hir::ExprKind::DynamicGet {
+                    object: Box::new(hir::Expr {
+                        kind: hir::ExprKind::DynamicObjectLiteral {
+                            entries: Vec::new(),
+                        },
+                        ty: Ty::DynamicObject,
+                        span,
+                    }),
+                    name: "undefined".to_string(),
+                },
+                ty: Ty::Any,
+                span,
+            };
+            let global_self = hir::Expr {
+                kind: hir::ExprKind::BoxAny {
+                    value: Box::new(hir::Expr {
+                        kind: hir::ExprKind::RealmGlobal,
+                        ty: Ty::DynamicObject,
+                        span,
+                    }),
+                },
+                ty: Ty::Any,
+                span,
+            };
+            for (name, value, constant) in [
+                ("undefined", undefined, true),
+                ("NaN", number(f64::NAN), true),
+                ("Infinity", number(f64::INFINITY), true),
+                ("globalThis", global_self, false),
+            ] {
+                body.push(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: set_id,
+                        args: vec![
+                            hir::Expr {
+                                kind: hir::ExprKind::String(name.to_string()),
+                                ty: Ty::String,
+                                span,
+                            },
+                            value,
+                            hir::Expr {
+                                kind: hir::ExprKind::Boolean(constant),
                                 ty: Ty::Boolean,
                                 span,
                             },

@@ -479,6 +479,15 @@ impl Interp<'_> {
             .type_defs
             .get((rid as usize).wrapping_sub(1))
             .is_some_and(|def| self.module.strings.get(def.name) == "String");
+        // The `Error` family owns data `name` and `message` on its prototype
+        // (ECMAScript 20.5.3); they replace the managed `name` accessor.
+        let error_class = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .map(|def| self.module.strings.get(def.name).to_owned())
+            .filter(|name| crate::intrinsic_meta::is_error_family(name));
         zun_gc::with_current_heap_mut(|heap| {
             let proto = heap.alloc_dynamic();
             let any = zun_core::Any::object(proto.addr() as usize);
@@ -491,7 +500,13 @@ impl Interp<'_> {
                 );
             }
             for (name, get, set) in accessors {
+                if error_class.is_some() && name == "name" {
+                    continue;
+                }
                 heap.dynamic_define_accessor(proto, name, get, set, false, true);
+            }
+            if let Some(class) = &error_class {
+                crate::intrinsic_meta::define_error_prototype_fields(heap, proto, class);
             }
             // `Class.prototype.constructor` is writable (ES2024 15.7.14 step 12
             // defines it with `{ [[Writable]]: true, [[Enumerable]]: false,
@@ -550,6 +565,11 @@ impl Interp<'_> {
                 let shared = Self::typed_array_prototype_singleton();
                 heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(shared.addr() as usize)));
             }
+            if let Some(class) = crate::intrinsic_meta::builtin_class_name_in(heap, token)
+                .filter(|name| crate::intrinsic_meta::is_error_family(name))
+            {
+                crate::intrinsic_meta::define_error_prototype_fields(heap, proto, &class);
+            }
             if is_class(heap, "String") {
                 heap.dynamic_set_symbol_function(
                     proto,
@@ -557,15 +577,17 @@ impl Interp<'_> {
                     zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
                 );
             }
-            for weak in ["WeakMap", "WeakSet", "WeakRef"] {
-                if is_class(heap, weak) {
-                    let tag = zun_core::Any::string(heap.intern_string(weak));
-                    heap.dynamic_define_symbol(
-                        proto,
-                        zun_core::WellKnownSymbol::ToStringTag.id(),
-                        tag,
-                        false,
-                    );
+            // `%Class%.prototype[Symbol.toStringTag]` (ECMAScript: a
+            // non-writable, non-enumerable, configurable data property).
+            for tagged in [
+                "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry", "Promise", "ArrayBuffer",
+                "DataView", "Symbol", "BigInt",
+            ] {
+                if is_class(heap, tagged) {
+                    let tag = zun_core::Any::string(heap.intern_string(tagged));
+                    let id = zun_core::WellKnownSymbol::ToStringTag.id();
+                    heap.dynamic_define_symbol(proto, id, tag, false);
+                    heap.dynamic_mark_symbol_readonly(proto, id);
                 }
             }
             if let Some((kind, _)) = size_kind {
@@ -607,6 +629,7 @@ impl Interp<'_> {
                     tag,
                     false,
                 );
+                heap.dynamic_mark_symbol_readonly(proto, zun_core::WellKnownSymbol::ToStringTag.id());
             }
             proto
         })
@@ -1424,6 +1447,17 @@ impl Interp<'_> {
                         && !def.base.is_null())
                     .then(|| def.base.rid())
                 });
+        }
+        if name == "length" {
+            let declared = self
+                .module
+                .tables
+                .type_defs
+                .get((rid as usize).wrapping_sub(1))
+                .and_then(|def| crate::intrinsic_meta::intrinsic_ctor_length(self.module.strings.get(def.name)));
+            if let Some(count) = declared {
+                return Ok(Some(Value::Float(f64::from(count), zun_il::NumKind::F64)));
+            }
         }
         if name == "length" {
             // A class's `length` is its constructor's declared parameter count

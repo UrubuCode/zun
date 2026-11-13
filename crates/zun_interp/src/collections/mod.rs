@@ -622,6 +622,7 @@ impl<'a> Interp<'a> {
             "objectEntries" => self.col_object_core(name, args),
             "objectAssign" => self.col_object_core(name, args),
             "globalSet" => self.col_object_core(name, args),
+            "globalDefineBuiltin" => self.col_object_core(name, args),
             "globalGet" => self.col_object_core(name, args),
             "globalRead" => self.col_object_core(name, args),
             "realmDescriptor" => self.col_object_core(name, args),

@@ -325,9 +325,10 @@ impl<'a> Interp<'a> {
             let value = heap.dynamic_get_symbol(obj, symbol)?;
             let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
             let frozen = !heap.dynamic_can_set(obj, " __symbol_probe");
+            let writable = heap.dynamic_is_symbol_writable(obj, symbol);
             let out = heap.alloc_dynamic();
             heap.dynamic_set(out, "value".to_owned(), value);
-            heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(!frozen));
+            heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(writable));
             heap.dynamic_set(
                 out,
                 "enumerable".to_owned(),

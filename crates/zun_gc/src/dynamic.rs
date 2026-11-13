@@ -482,6 +482,20 @@ impl Heap {
         ok
     }
 
+    /// Clear the writable attribute of an existing own symbol data property.
+    pub fn dynamic_mark_symbol_readonly(&mut self, object: Obj, symbol: zun_core::SymbolId) {
+        if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            properties.mark_symbol_readonly(symbol);
+        }
+    }
+
+    /// Whether an own symbol data property is writable.
+    pub fn dynamic_is_symbol_writable(&self, object: Obj, symbol: zun_core::SymbolId) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_none_or(|p| p.is_symbol_writable(symbol))
+    }
+
     pub fn dynamic_is_symbol_enumerable(&self, object: Obj, symbol: zun_core::SymbolId) -> bool {
         self.dynamic_objects
             .get(&(object.addr() as usize))

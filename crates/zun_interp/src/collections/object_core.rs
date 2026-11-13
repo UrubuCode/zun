@@ -477,6 +477,36 @@ impl<'a> Interp<'a> {
                 // An assignment expression evaluates to the assigned value.
                 Ok(Value::Any(value))
             }
+            "globalDefineBuiltin" => {
+                // A built-in global property: non-enumerable, and either an
+                // ordinary writable/configurable binding or (`constant`) a
+                // frozen value property such as `undefined`.
+                let name = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Str(name) => name.to_string(),
+                    _ => return Err(RunError::BadToken),
+                };
+                let value =
+                    any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let constant = matches!(args.get(2), Some(Value::Bool(true)));
+                zun_gc::with_current_heap_mut(|heap| {
+                    let global = heap.global_object();
+                    heap.dynamic_define_data(
+                        global,
+                        name.clone(),
+                        value,
+                        !constant,
+                        false,
+                        !constant,
+                    );
+                });
+                if name == "Iterator" {
+                    if let Some(address) = value.as_object() {
+                        let namespace = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                        Self::install_iterator_global(namespace);
+                    }
+                }
+                Ok(Value::Void)
+            }
             "globalGet" => {
                 // Read a module-level binding from the realm global singleton.
                 let name = match args.first().ok_or(RunError::BadToken)? {
