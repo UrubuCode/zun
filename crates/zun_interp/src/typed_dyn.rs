@@ -119,6 +119,9 @@ impl Interp<'_> {
         let Some(kind) = crate::typed_arrays::element_of(view) else {
             return Ok(());
         };
+        // Converting the value runs a user `valueOf`, which can collect and move the
+        // view; the element is written to its relocated address.
+        zun_gc::root!(view = view);
         let value = unbox_arg(value)?;
         let converted = if is_bigint_kind(kind) {
             // Zun has native 64-bit integers, so a plain int or float writes
@@ -177,7 +180,7 @@ impl Interp<'_> {
                 _ => Value::Float(n, NumKind::F64),
             }
         };
-        crate::typed_arrays::write_element(view, index, &converted);
+        crate::typed_arrays::write_element(view.get(), index, &converted);
         Ok(())
     }
 
@@ -193,10 +196,12 @@ impl Interp<'_> {
     ) -> Result<zun_gc::Obj, RunError> {
         let view = crate::typed_arrays::alloc_of(kind, values.len())
             .ok_or_else(|| self.view_error("RangeError", "Invalid typed array length"))?;
+        // Each write may run a user `valueOf` and move the new view.
+        zun_gc::root!(view = view);
         for (index, value) in values.iter().enumerate() {
-            self.view_write(view, index, value)?;
+            self.view_write(view.get(), index, value)?;
         }
-        Ok(view)
+        Ok(view.get())
     }
 
     fn view_js_string(&mut self, value: &Value) -> Result<String, RunError> {
@@ -731,10 +736,12 @@ impl Interp<'_> {
             "reverse" => {
                 let mut items = self.view_collect(view);
                 items.reverse();
+                // A write can run a user `valueOf` and move the view.
+                zun_gc::root!(view_g = view);
                 for (i, v) in items.iter().enumerate() {
-                    self.view_write(view, i, v)?;
+                    self.view_write(view_g.get(), i, v)?;
                 }
-                Ok(Some(Value::Object(view)))
+                Ok(Some(Value::Object(view_g.get())))
             }
             "toReversed" => {
                 let mut items = self.view_collect(view);
@@ -746,10 +753,12 @@ impl Interp<'_> {
                 let begin = self.view_relative(args.get(1), len, 0)?;
                 let end = self.view_relative(args.get(2), len, len)?;
                 // Convert once (it may throw), then store across the range.
+                // Each write can run a user `valueOf` and move the view.
+                zun_gc::root!(view_g = view);
                 for i in begin..end {
-                    self.view_write(view, i, &value)?;
+                    self.view_write(view_g.get(), i, &value)?;
                 }
-                Ok(Some(Value::Object(view)))
+                Ok(Some(Value::Object(view_g.get())))
             }
             "set" => {
                 let source = args.first().cloned().unwrap_or(Value::Void);
@@ -783,8 +792,10 @@ impl Interp<'_> {
                 if offset.checked_add(items.len()).is_none_or(|end| end > len) {
                     return Err(self.view_error("RangeError", "offset is out of bounds"));
                 }
+                // Each write can run a user `valueOf` and move the view.
+                zun_gc::root!(view_g = view);
                 for (i, v) in items.iter().enumerate() {
-                    self.view_write(view, offset + i, v)?;
+                    self.view_write(view_g.get(), offset + i, v)?;
                 }
                 Ok(Some(Value::Void))
             }
@@ -814,10 +825,11 @@ impl Interp<'_> {
                 let end = self.view_relative(args.get(2), len, len)?;
                 let count = end.saturating_sub(start).min(len - target);
                 let items = self.view_collect(view);
+                zun_gc::root!(view_g = view);
                 for i in 0..count {
-                    self.view_write(view, target + i, &items[start + i])?;
+                    self.view_write(view_g.get(), target + i, &items[start + i])?;
                 }
-                Ok(Some(Value::Object(view)))
+                Ok(Some(Value::Object(view_g.get())))
             }
             "with" => {
                 let n = match args.first() {
@@ -939,24 +951,27 @@ impl Interp<'_> {
                     Some(view)
                 };
                 let result = result.ok_or(RunError::BadToken)?;
-                let roots = [view, result];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // The callback re-enters managed code and can move the view, the `map`
+                // result and its own closure environment.
+                zun_gc::root!(view = view);
+                zun_gc::root!(result = result);
+                zun_gc::root!(handle = handle);
                 let reverse = matches!(member, "findLast" | "findLastIndex");
                 let mut kept: Vec<Value> = Vec::new();
                 for step in 0..len {
                     let index = if reverse { len - 1 - step } else { step };
-                    let value = self.view_read(roots[0], index);
+                    let value = self.view_read(view.get(), index);
                     let produced = self.invoke_callback(
-                        handle,
+                        handle.get(),
                         vec![
                             self.box_view_value(&value),
                             Value::Any(zun_core::Any::float(index as f64)),
-                            Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
+                            Value::Any(zun_core::Any::object(view.get().addr() as usize)),
                         ],
                     )?;
                     match member {
                         "forEach" => {}
-                        "map" => self.view_write(roots[1], index, &produced)?,
+                        "map" => self.view_write(result.get(), index, &produced)?,
                         "filter" => {
                             if truthy(&produced) {
                                 kept.push(value);
@@ -986,7 +1001,7 @@ impl Interp<'_> {
                 }
                 Ok(Some(match member {
                     "forEach" | "find" | "findLast" => Value::Void,
-                    "map" => Value::Object(roots[1]),
+                    "map" => Value::Object(result.get()),
                     "filter" => Value::Object(self.view_new_like(kind, &kept)?),
                     "some" => Value::Bool(false),
                     "every" => Value::Bool(true),
@@ -1016,16 +1031,17 @@ impl Interp<'_> {
                         }
                     },
                 };
-                let roots = [view];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // The reducer can move the view and its own closure environment.
+                zun_gc::root!(view = view);
+                zun_gc::root!(handle = handle);
                 for i in iter {
                     acc = self.invoke_callback(
-                        handle,
+                        handle.get(),
                         vec![
                             self.box_view_value(&acc),
                             self.box_view_value(&items[i]),
                             Value::Any(zun_core::Any::float(i as f64)),
-                            Value::Any(zun_core::Any::object(roots[0].addr() as usize)),
+                            Value::Any(zun_core::Any::object(view.get().addr() as usize)),
                         ],
                     )?;
                 }

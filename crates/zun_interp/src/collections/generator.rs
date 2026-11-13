@@ -79,15 +79,18 @@ impl<'a> Interp<'a> {
                         .map(|state| !state.done && !state.has_current)
                 })
                 .ok_or(RunError::BadToken)?;
+                // `generatorIteratorNext` runs the generator body and can evacuate it;
+                // the prefetch is stored back under its relocated address.
+                zun_gc::root!(generator = generator);
                 if needs_prefetch {
                     let value = self.call_managed_collection(
                         "generatorIteratorNext",
-                        &[Value::Object(generator)],
+                        &[Value::Object(generator.get())],
                     )?;
                     let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .unwrap_or(zun_core::Any::null());
                     zun_gc::with_current_heap_mut(|heap| {
-                        if let Some(state) = heap.generator_state_mut(generator) {
+                        if let Some(state) = heap.generator_state_mut(generator.get()) {
                             if !state.done {
                                 state.current = boxed;
                                 state.has_current = true;
@@ -97,7 +100,8 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Bool(
                     zun_gc::with_current_heap(|heap| {
-                        heap.generator_state(generator).map(|state| state.done)
+                        heap.generator_state(generator.get())
+                            .map(|state| state.done)
                     })
                     .ok_or(RunError::BadToken)?,
                 ))
@@ -236,6 +240,11 @@ impl<'a> Interp<'a> {
                     });
                     return Ok(value);
                 }
+                // The body below runs managed code, which allocates and can evacuate
+                // the generator. Its state is out of the table (taken above) and is
+                // put back keyed by address, so a stale `generator` would re-key it
+                // under a dead address and the object would stop being a generator.
+                zun_gc::root!(generator = generator);
                 let outcome = if let Some(saved) = state.frame.take() {
                     let locals = zun_gc::with_current_heap(|heap| {
                         saved
@@ -266,6 +275,11 @@ impl<'a> Interp<'a> {
                             .collect::<Option<Vec<_>>>()
                     })
                     .ok_or(RunError::BadToken)?;
+                    // The arguments now live in the frame. Left in the state they would
+                    // go stale at the first evacuation (a taken state is not traced
+                    // while the body runs) and then be reported as roots for
+                    // addresses that no longer hold those objects.
+                    state.args.clear();
                     self.dispatch_outcome(state.method_rid, initial_args, None)
                 };
                 let result = match outcome {
@@ -319,13 +333,15 @@ impl<'a> Interp<'a> {
                         state.done = true;
                         state.current = zun_core::Any::void();
                         zun_gc::with_current_heap_mut(|heap| {
-                            heap.generator_state_set(generator, state)
+                            heap.generator_state_set(generator.get(), state)
                         });
                         return Err(RunError::Thrown(value));
                     }
                     ExecutionOutcome::Fault(error) => return Err(error),
                 };
-                zun_gc::with_current_heap_mut(|heap| heap.generator_state_set(generator, state));
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.generator_state_set(generator.get(), state)
+                });
                 Ok(result)
             }
             _ => Err(RunError::BadToken),

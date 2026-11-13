@@ -88,18 +88,28 @@ impl<'a> Interp<'a> {
                     heap.dynamic_set_prototype(obj, Some(zun_core::Any::null()));
                     obj
                 });
-                let roots = [source, obj];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // The callback can evacuate the source, the result and its own closure
+                // environment, and `element` is pushed into its group after the call, so it
+                // rides in a rooted one-slot array (an `Any` is not a rooted carrier).
+                zun_gc::root!(source = source);
+                zun_gc::root!(obj = obj);
+                zun_gc::root!(callback = callback);
+                let holder = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(1));
+                zun_gc::root!(holder = holder);
                 for index in 0..length {
-                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
+                    let element =
+                        zun_gc::with_current_heap(|heap| heap.array_get(source.get(), index))
+                            .ok_or(RunError::BadToken)?;
+                    zun_gc::with_current_heap_mut(|heap| heap.array_set(holder.get(), 0, element));
                     let produced = self.invoke_callback(
-                        callback,
+                        callback.get(),
                         vec![
                             Value::Any(element),
                             Value::Any(zun_core::Any::float(index as f64)),
                         ],
                     )?;
+                    let element = zun_gc::with_current_heap(|heap| heap.array_get(holder.get(), 0))
+                        .ok_or(RunError::BadToken)?;
                     let key = match unbox_arg(&produced)? {
                         Value::Void => "undefined".to_string(),
                         Value::Null => "null".to_string(),
@@ -114,14 +124,14 @@ impl<'a> Interp<'a> {
                     };
                     zun_gc::with_current_heap_mut(|heap| {
                         let group = match heap
-                            .dynamic_get(roots[1], &key)
+                            .dynamic_get(obj.get(), &key)
                             .and_then(|any| any.as_object())
                         {
                             Some(address) => unsafe { zun_gc::Obj::from_addr(address as *mut u64) },
                             None => {
                                 let group = heap.alloc_array(0);
                                 heap.dynamic_set(
-                                    roots[1],
+                                    obj.get(),
                                     key.clone(),
                                     zun_core::Any::object(group.addr() as usize),
                                 );
@@ -131,7 +141,7 @@ impl<'a> Interp<'a> {
                         heap.array_push(group, element);
                     });
                 }
-                Ok(Value::Object(roots[1]))
+                Ok(Value::Object(obj.get()))
             }
             "objectFromEntries" => {
                 let not_iterable = || RunError::Native("TypeError: object is not iterable".into());

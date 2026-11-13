@@ -3,6 +3,9 @@
 use super::value::Value;
 use super::RootLink;
 
+/// Run a full, non-moving collection with precise roots: the current frame, the
+/// linked caller chain, the interpreter's side tables, and every active native
+/// root scope and [`zun_gc::Rooted`] guard.
 pub(super) fn collect(
     types: &zun_types::TypeSystem,
     stack: &[Value],
@@ -10,29 +13,16 @@ pub(super) fn collect(
     parent: Option<&RootLink>,
     extra_roots: &[zun_gc::Obj],
 ) -> usize {
-    collect_with_policy(types, stack, locals, parent, extra_roots, false)
-}
-
-/// Run a **non-moving** minor collection: sweep dead young objects, leave
-/// every survivor at its address.
-///
-/// This is the only young policy that is safe while native code is on the
-/// stack. A native holds managed references in ordinary Rust locals - the
-/// callback it extracted from its arguments before looping, the receiver it
-/// resolved once - and the collector can neither find nor rewrite those, so
-/// anything that moves leaves the native holding a stale address. The arena's
-/// own frames are fine either way; it is the native frames that have no
-/// description. Runtimes with a moving collector solve this with a handle API
-/// for native code (CLR `GCPROTECT`, V8 `Handle`); until Zun has one, native
-/// calls run under a pinning policy.
-pub(super) fn collect_young_non_moving(
-    types: &zun_types::TypeSystem,
-    stack: &[Value],
-    locals: &[Value],
-    parent: Option<&RootLink>,
-    extra_roots: &[zun_gc::Obj],
-) -> usize {
-    collect_with_policy(types, stack, locals, parent, extra_roots, true)
+    let mut roots: Vec<zun_gc::Obj> = Vec::new();
+    roots.extend_from_slice(extra_roots);
+    collect_frame_roots(stack, locals, &mut roots);
+    if let Some(link) = parent {
+        unsafe { link.append_roots(&mut roots) };
+    }
+    zun_gc::append_native_roots(&mut roots);
+    let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
+    // SAFETY: roots contains every live interpreter reference at this safepoint.
+    zun_gc::with_current_heap_mut(|heap| unsafe { heap.collect(&roots, &ref_fn) })
 }
 
 /// Run an evacuating minor collection for an explicitly stopped interpreter
@@ -92,32 +82,6 @@ pub(super) fn collect_and_compact_current(
                 rewrite_external(relocation);
             });
         result.reclaimed_objects + rewritten
-    })
-}
-
-fn collect_with_policy(
-    types: &zun_types::TypeSystem,
-    stack: &[Value],
-    locals: &[Value],
-    parent: Option<&RootLink>,
-    extra_roots: &[zun_gc::Obj],
-    young_only: bool,
-) -> usize {
-    let mut roots: Vec<zun_gc::Obj> = Vec::new();
-    roots.extend_from_slice(extra_roots);
-    collect_frame_roots(stack, locals, &mut roots);
-    if let Some(link) = parent {
-        unsafe { link.append_roots(&mut roots) };
-    }
-    zun_gc::append_native_roots(&mut roots);
-    let ref_fn = |type_rid: u32| types.reference_slots(type_rid);
-    // SAFETY: roots contains every live interpreter reference at this safepoint.
-    zun_gc::with_current_heap_mut(|h| unsafe {
-        if young_only {
-            h.collect_young(&roots, &ref_fn)
-        } else {
-            h.collect(&roots, &ref_fn)
-        }
     })
 }
 

@@ -257,32 +257,34 @@ impl<'a> Interp<'a> {
         if zun_gc::with_current_heap(|heap| heap.dynamic_has(it, "$ih")) {
             return self.helper_next(it);
         }
-        let roots = [it];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        let result = self.iter_raw_next(roots[0])?;
+        let result = self.iter_raw_next(it)?;
         let Some(result_obj) = value_object(&result) else {
             let text = "Iterator result is not an object";
             return Err(self.iter_error("TypeError", text));
         };
-        let roots2 = [result_obj];
-        let _scope2 = unsafe { zun_gc::NativeRootScope::enter(&roots2) };
+        // `done` and `value` are read through `dynamic_member_get`, which runs an
+        // accessor if the result object defines one; that can evacuate it between
+        // the two reads.
+        zun_gc::root!(result_obj = result_obj);
         let done = {
-            let raw = self.dynamic_member_get(roots2[0], "done")?;
+            let raw = self.dynamic_member_get(result_obj.get(), "done")?;
             zun_gc::with_current_heap(|heap| is_truthy(&raw, heap))
         };
         if done {
             return Ok((Value::Void, true));
         }
-        let value = self.dynamic_member_get(roots2[0], "value")?;
+        let value = self.dynamic_member_get(result_obj.get(), "value")?;
         Ok((unboxed(&value), false))
     }
 
     /// `iterator.next()` returning the raw result value.
     fn iter_raw_next(&mut self, it: zun_gc::Obj) -> Result<Value, RunError> {
-        let Some(next) = self.iter_method(it, "next")? else {
+        // `iter_method` can run a getter and evacuate `it` before it is `this`.
+        zun_gc::root!(it = it);
+        let Some(next) = self.iter_method(it.get(), "next")? else {
             return Err(self.iter_error("TypeError", "iterator.next is not a function"));
         };
-        let call_args = self.with_this_arg(next, it, Vec::new());
+        let call_args = self.with_this_arg(next, it.get(), Vec::new());
         self.invoke_function_value(next, call_args)
     }
 
@@ -315,10 +317,12 @@ impl<'a> Interp<'a> {
         if zun_gc::with_current_heap(|heap| heap.dynamic_has(it, "$ih")) {
             return self.helper_close(it);
         }
-        let Some(method) = self.iter_method(it, "return")? else {
+        // `iter_method` can run a getter and evacuate `it` before it is `this`.
+        zun_gc::root!(it = it);
+        let Some(method) = self.iter_method(it.get(), "return")? else {
             return Ok(());
         };
-        let call_args = self.with_this_arg(method, it, Vec::new());
+        let call_args = self.with_this_arg(method, it.get(), Vec::new());
         let result = self.invoke_function_value(method, call_args)?;
         if value_object(&result).is_none() {
             return Err(self.iter_error("TypeError", "iterator.return() did not return an object"));
@@ -383,20 +387,21 @@ impl<'a> Interp<'a> {
             return Ok(());
         }
         Self::helper_mark_done(helper);
-        let roots = [helper];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        if let Some(inner) = get_obj(roots[0], "$inner") {
+        // `iter_close(inner)` runs `return()` and can evacuate the helper, whose
+        // `$src` slot is read back afterwards.
+        zun_gc::root!(helper = helper);
+        if let Some(inner) = get_obj(helper.get(), "$inner") {
             zun_gc::with_current_heap_mut(|heap| {
-                heap.dynamic_delete(roots[0], "$inner");
+                heap.dynamic_delete(helper.get(), "$inner");
             });
             if let Err(error) = self.iter_close(inner, false) {
-                if let Some(src) = get_obj(roots[0], "$src") {
+                if let Some(src) = get_obj(helper.get(), "$src") {
                     let _ = self.iter_close(src, true);
                 }
                 return Err(error);
             }
         }
-        let Some(src) = get_obj(roots[0], "$src") else {
+        let Some(src) = get_obj(helper.get(), "$src") else {
             return Ok(());
         };
         self.iter_close(src, false)
@@ -405,10 +410,13 @@ impl<'a> Interp<'a> {
     /// Close the source after a callback/validation failure and rethrow.
     fn helper_abort(&mut self, helper: zun_gc::Obj, error: RunError) -> RunError {
         Self::helper_mark_done(helper);
-        if let Some(inner) = get_obj(helper, "$inner") {
+        // Closing the inner iterator runs `return()` and can evacuate the helper
+        // before `$src` is read.
+        zun_gc::root!(helper = helper);
+        if let Some(inner) = get_obj(helper.get(), "$inner") {
             let _ = self.iter_close(inner, true);
         }
-        if let Some(src) = get_obj(helper, "$src") {
+        if let Some(src) = get_obj(helper.get(), "$src") {
             let _ = self.iter_close(src, true);
         }
         error
@@ -419,32 +427,38 @@ impl<'a> Interp<'a> {
         if Self::helper_is_done(helper) {
             return Ok((Value::Void, true));
         }
-        let roots = [helper];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        let kind = get_f64(roots[0], "$ih") as u32;
-        let Some(src) = get_obj(roots[0], "$src") else {
+        // Everything below re-enters managed code (`iter_step`, the callback, a
+        // flattened inner iterator) and can evacuate the helper and its source,
+        // so neither is held in a plain local across those calls; the callback
+        // is re-read from the helper slot at each use for the same reason.
+        zun_gc::root!(helper = helper);
+        let kind = get_f64(helper.get(), "$ih") as u32;
+        let Some(src) = get_obj(helper.get(), "$src") else {
             return Ok((Value::Void, true));
         };
-        let callback = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(roots[0], "$fn"));
+        zun_gc::root!(src = src);
         match kind {
             K_MAP | K_FILTER => loop {
-                let (value, done) = match self.iter_step(src) {
+                let (value, done) = match self.iter_step(src.get()) {
                     Ok(pair) => pair,
                     Err(error) => {
-                        Self::helper_mark_done(roots[0]);
+                        Self::helper_mark_done(helper.get());
                         return Err(error);
                     }
                 };
                 if done {
-                    Self::helper_mark_done(roots[0]);
+                    Self::helper_mark_done(helper.get());
                     return Ok((Value::Void, true));
                 }
-                let index = get_f64(roots[0], "$i");
+                let index = get_f64(helper.get(), "$i");
                 zun_gc::with_current_heap_mut(|heap| {
-                    hidden(heap, roots[0], "$i", float_any(index + 1.0))
+                    hidden(heap, helper.get(), "$i", float_any(index + 1.0))
                 });
-                state_set(roots[0], &value, "$cur");
-                let callback = callback.ok_or(RunError::BadToken)?;
+                state_set(helper.get(), &value, "$cur");
+                let callback = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_function(helper.get(), "$fn")
+                })
+                .ok_or(RunError::BadToken)?;
                 let args = vec![
                     zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .map(Value::Any)
@@ -453,106 +467,109 @@ impl<'a> Interp<'a> {
                 ];
                 let produced = match self.iter_call(callback, args) {
                     Ok(produced) => produced,
-                    Err(error) => return Err(self.helper_abort(roots[0], error)),
+                    Err(error) => return Err(self.helper_abort(helper.get(), error)),
                 };
                 if kind == K_MAP {
                     return Ok((unboxed(&produced), false));
                 }
                 let keep = zun_gc::with_current_heap(|heap| is_truthy(&produced, heap));
                 if keep {
-                    return Ok((state_get(roots[0], "$cur"), false));
+                    return Ok((state_get(helper.get(), "$cur"), false));
                 }
             },
             K_TAKE => {
-                let remaining = get_f64(roots[0], "$rem");
+                let remaining = get_f64(helper.get(), "$rem");
                 if remaining <= 0.0 {
-                    Self::helper_mark_done(roots[0]);
-                    self.iter_close(src, false)?;
+                    Self::helper_mark_done(helper.get());
+                    self.iter_close(src.get(), false)?;
                     return Ok((Value::Void, true));
                 }
                 if remaining.is_finite() {
                     zun_gc::with_current_heap_mut(|heap| {
-                        hidden(heap, roots[0], "$rem", float_any(remaining - 1.0))
+                        hidden(heap, helper.get(), "$rem", float_any(remaining - 1.0))
                     });
                 }
-                match self.iter_step(src) {
+                match self.iter_step(src.get()) {
                     Ok((value, done)) => {
                         if done {
-                            Self::helper_mark_done(roots[0]);
+                            Self::helper_mark_done(helper.get());
                         }
                         Ok((value, done))
                     }
                     Err(error) => {
-                        Self::helper_mark_done(roots[0]);
+                        Self::helper_mark_done(helper.get());
                         Err(error)
                     }
                 }
             }
             K_DROP => {
                 loop {
-                    let remaining = get_f64(roots[0], "$rem");
+                    let remaining = get_f64(helper.get(), "$rem");
                     if remaining <= 0.0 {
                         break;
                     }
                     if remaining.is_finite() {
                         zun_gc::with_current_heap_mut(|heap| {
-                            hidden(heap, roots[0], "$rem", float_any(remaining - 1.0))
+                            hidden(heap, helper.get(), "$rem", float_any(remaining - 1.0))
                         });
                     }
-                    match self.iter_step(src) {
+                    match self.iter_step(src.get()) {
                         Ok((_, true)) => {
-                            Self::helper_mark_done(roots[0]);
+                            Self::helper_mark_done(helper.get());
                             return Ok((Value::Void, true));
                         }
                         Ok(_) => {}
                         Err(error) => {
-                            Self::helper_mark_done(roots[0]);
+                            Self::helper_mark_done(helper.get());
                             return Err(error);
                         }
                     }
                 }
-                match self.iter_step(src) {
+                match self.iter_step(src.get()) {
                     Ok((value, done)) => {
                         if done {
-                            Self::helper_mark_done(roots[0]);
+                            Self::helper_mark_done(helper.get());
                         }
                         Ok((value, done))
                     }
                     Err(error) => {
-                        Self::helper_mark_done(roots[0]);
+                        Self::helper_mark_done(helper.get());
                         Err(error)
                     }
                 }
             }
             K_FLAT_MAP => loop {
-                if let Some(inner) = get_obj(roots[0], "$inner") {
+                if let Some(inner) = get_obj(helper.get(), "$inner") {
                     match self.iter_step(inner) {
                         Ok((value, false)) => return Ok((value, false)),
                         Ok((_, true)) => {
                             zun_gc::with_current_heap_mut(|heap| {
-                                heap.dynamic_delete(roots[0], "$inner");
+                                heap.dynamic_delete(helper.get(), "$inner");
                             });
                             continue;
                         }
-                        Err(error) => return Err(self.helper_abort(roots[0], error)),
+                        Err(error) => return Err(self.helper_abort(helper.get(), error)),
                     }
                 }
-                let (value, done) = match self.iter_step(src) {
+                let (value, done) = match self.iter_step(src.get()) {
                     Ok(pair) => pair,
                     Err(error) => {
-                        Self::helper_mark_done(roots[0]);
+                        Self::helper_mark_done(helper.get());
                         return Err(error);
                     }
                 };
                 if done {
-                    Self::helper_mark_done(roots[0]);
+                    Self::helper_mark_done(helper.get());
                     return Ok((Value::Void, true));
                 }
-                let index = get_f64(roots[0], "$i");
+                let index = get_f64(helper.get(), "$i");
                 zun_gc::with_current_heap_mut(|heap| {
-                    hidden(heap, roots[0], "$i", float_any(index + 1.0))
+                    hidden(heap, helper.get(), "$i", float_any(index + 1.0))
                 });
-                let callback = callback.ok_or(RunError::BadToken)?;
+                let callback = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_function(helper.get(), "$fn")
+                })
+                .ok_or(RunError::BadToken)?;
                 let args = vec![
                     zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .map(Value::Any)
@@ -561,17 +578,17 @@ impl<'a> Interp<'a> {
                 ];
                 let mapped = match self.iter_call(callback, args) {
                     Ok(mapped) => mapped,
-                    Err(error) => return Err(self.helper_abort(roots[0], error)),
+                    Err(error) => return Err(self.helper_abort(helper.get(), error)),
                 };
                 // The inner iterator must be kept alive while it is resolved.
                 let inner = match self.iter_flattenable(&mapped, false) {
                     Ok(inner) => inner,
-                    Err(error) => return Err(self.helper_abort(roots[0], error)),
+                    Err(error) => return Err(self.helper_abort(helper.get(), error)),
                 };
                 zun_gc::with_current_heap_mut(|heap| {
                     hidden(
                         heap,
-                        roots[0],
+                        helper.get(),
                         "$inner",
                         zun_core::Any::object(inner.addr() as usize),
                     )
@@ -603,11 +620,12 @@ impl<'a> Interp<'a> {
                 }
             },
         };
-        let roots = [obj];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        match self.resolve_iterator(roots[0]) {
+        // `resolve_iterator` may call a user `[Symbol.iterator]()` that evacuates `obj`;
+        // the fallback below (an object that is its own iterator) needs the new address.
+        zun_gc::root!(obj = obj);
+        match self.resolve_iterator(obj.get()) {
             Ok(iterator) => Ok(iterator),
-            Err(RunError::Native(message)) if message.contains("not iterable") => Ok(roots[0]),
+            Err(RunError::Native(message)) if message.contains("not iterable") => Ok(obj.get()),
             Err(error) => Err(error),
         }
     }
@@ -720,47 +738,49 @@ impl<'a> Interp<'a> {
             let message = format!("Iterator.prototype.{name} called on non-object");
             return Err(self.iter_error("TypeError", &message));
         };
-        let roots = [it];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        let it = roots[0];
+        // `to_number_value` can run user `valueOf`, which allocates and can evacuate the
+        // iterator before it is closed or wrapped; read it back through the guard.
+        zun_gc::root!(it = it);
         let first = args.first().cloned().unwrap_or(Value::Void);
         match index {
             K_TAKE | K_DROP => {
                 let limit = match self.to_number_value(first) {
                     Ok(number) => number,
                     Err(error) => {
-                        let _ = self.iter_close(it, true);
+                        let _ = self.iter_close(it.get(), true);
                         return Err(error);
                     }
                 };
                 if limit.is_nan() {
-                    let _ = self.iter_close(it, true);
+                    let _ = self.iter_close(it.get(), true);
                     return Err(self.iter_error("RangeError", "limit must be a number >= 0"));
                 }
                 let limit = limit.trunc();
                 if limit < 0.0 {
-                    let _ = self.iter_close(it, true);
+                    let _ = self.iter_close(it.get(), true);
                     return Err(self.iter_error("RangeError", "limit must be a number >= 0"));
                 }
-                Ok(self.helper_alloc(index, it, None, limit))
+                Ok(self.helper_alloc(index, it.get(), None, limit))
             }
             K_REDUCE => {
                 let Some(reducer) = callable(&first) else {
-                    let _ = self.iter_close(it, true);
+                    let _ = self.iter_close(it.get(), true);
                     return Err(self.iter_error("TypeError", "reducer is not a function"));
                 };
-                self.iter_reduce(it, reducer, args.get(1).cloned())
+                self.iter_reduce(it.get(), reducer, args.get(1).cloned())
             }
-            K_TO_ARRAY => self.iter_consume(index, it, None),
+            K_TO_ARRAY => self.iter_consume(index, it.get(), None),
             _ => {
                 let Some(callback) = callable(&first) else {
-                    let _ = self.iter_close(it, true);
+                    let _ = self.iter_close(it.get(), true);
                     let message = format!("{name} callback is not a function");
                     return Err(self.iter_error("TypeError", &message));
                 };
                 match index {
-                    K_MAP | K_FILTER | K_FLAT_MAP => Ok(self.helper_alloc(index, it, Some(callback), 0.0)),
-                    _ => self.iter_consume(index, it, Some(callback)),
+                    K_MAP | K_FILTER | K_FLAT_MAP => {
+                        Ok(self.helper_alloc(index, it.get(), Some(callback), 0.0))
+                    }
+                    _ => self.iter_consume(index, it.get(), Some(callback)),
                 }
             }
         }
@@ -773,43 +793,47 @@ impl<'a> Interp<'a> {
         initial: Option<Value>,
     ) -> Result<Value, RunError> {
         let scratch = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
-        let roots = [it, scratch];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Every `iter_step` and the reducer re-enter managed code and can evacuate
+        // all three: the reducer is a closure, so its environment is a managed
+        // address like the other two.
+        zun_gc::root!(it = it);
+        zun_gc::root!(scratch = scratch);
+        zun_gc::root!(reducer = reducer);
         let mut counter = 0.0;
         match initial {
-            Some(value) => state_set(roots[1], &unboxed(&value), "acc"),
+            Some(value) => state_set(scratch.get(), &unboxed(&value), "acc"),
             None => {
-                let (value, done) = self.iter_step(roots[0])?;
+                let (value, done) = self.iter_step(it.get())?;
                 if done {
                     return Err(self.iter_error(
                         "TypeError",
                         "Reduce of empty iterator with no initial value",
                     ));
                 }
-                state_set(roots[1], &value, "acc");
+                state_set(scratch.get(), &value, "acc");
                 counter = 1.0;
             }
         }
         loop {
-            let (value, done) = self.iter_step(roots[0])?;
+            let (value, done) = self.iter_step(it.get())?;
             if done {
-                return Ok(state_get(roots[1], "acc"));
+                return Ok(state_get(scratch.get(), "acc"));
             }
-            state_set(roots[1], &value, "cur");
+            state_set(scratch.get(), &value, "cur");
             let boxed = |v: &Value| {
                 zun_gc::with_current_heap_mut(|heap| v.box_any(heap))
                     .map(Value::Any)
                     .unwrap_or(Value::Void)
             };
             let args = vec![
-                boxed(&state_get(roots[1], "acc")),
+                boxed(&state_get(scratch.get(), "acc")),
                 boxed(&value),
                 Value::Any(float_any(counter)),
             ];
-            match self.iter_call(reducer, args) {
-                Ok(next) => state_set(roots[1], &unboxed(&next), "acc"),
+            match self.iter_call(reducer.get(), args) {
+                Ok(next) => state_set(scratch.get(), &unboxed(&next), "acc"),
                 Err(error) => {
-                    let _ = self.iter_close(roots[0], true);
+                    let _ = self.iter_close(it.get(), true);
                     return Err(error);
                 }
             }
@@ -830,49 +854,55 @@ impl<'a> Interp<'a> {
         } else {
             None
         };
-        let roots = [it, scratch, out.unwrap_or(scratch)];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // Every `iter_step` and the callback re-enter managed code and can evacuate
+        // all of these: the callback is a closure, so its environment is a managed
+        // address like the objects are. `K_TO_ARRAY` is the one kind without a
+        // callback, and a `None` guard simply has no address to rewrite.
+        zun_gc::root!(it = it);
+        zun_gc::root!(scratch = scratch);
+        zun_gc::root!(out = out.unwrap_or(scratch.get()));
+        zun_gc::root!(callback = callback);
         let mut counter = 0.0;
         loop {
-            let (value, done) = self.iter_step(roots[0])?;
+            let (value, done) = self.iter_step(it.get())?;
             if done {
                 return Ok(match index {
-                    K_TO_ARRAY => Value::Any(zun_core::Any::object(roots[2].addr() as usize)),
+                    K_TO_ARRAY => Value::Any(zun_core::Any::object(out.get().addr() as usize)),
                     K_EVERY => Value::Bool(true),
                     K_SOME => Value::Bool(false),
                     _ => Value::Void,
                 });
             }
-            state_set(roots[1], &value, "cur");
+            state_set(scratch.get(), &value, "cur");
             let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .unwrap_or_else(zun_core::Any::void);
             if index == K_TO_ARRAY {
-                zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[2], boxed));
+                zun_gc::with_current_heap_mut(|heap| heap.array_push(out.get(), boxed));
                 continue;
             }
-            let callback = callback.ok_or(RunError::BadToken)?;
+            let callback = callback.get().ok_or(RunError::BadToken)?;
             let args = vec![Value::Any(boxed), Value::Any(float_any(counter))];
             counter += 1.0;
             let produced = match self.iter_call(callback, args) {
                 Ok(produced) => produced,
                 Err(error) => {
-                    let _ = self.iter_close(roots[0], true);
+                    let _ = self.iter_close(it.get(), true);
                     return Err(error);
                 }
             };
             let truthy = zun_gc::with_current_heap(|heap| is_truthy(&produced, heap));
             match index {
                 K_SOME if truthy => {
-                    self.iter_close(roots[0], false)?;
+                    self.iter_close(it.get(), false)?;
                     return Ok(Value::Bool(true));
                 }
                 K_EVERY if !truthy => {
-                    self.iter_close(roots[0], false)?;
+                    self.iter_close(it.get(), false)?;
                     return Ok(Value::Bool(false));
                 }
                 K_FIND if truthy => {
-                    self.iter_close(roots[0], false)?;
-                    return Ok(state_get(roots[1], "cur"));
+                    self.iter_close(it.get(), false)?;
+                    return Ok(state_get(scratch.get(), "cur"));
                 }
                 _ => {}
             }

@@ -49,10 +49,11 @@ impl<'a> Interp<'a> {
                     _ => return Err(RunError::BadToken),
                 };
                 let promise = zun_gc::with_current_heap_mut(|heap| heap.alloc_promise());
-                let roots = [promise];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-                let resolve = self.make_promise_settler(roots[0], SETTLE_RESOLVE);
-                let reject = self.make_promise_settler(roots[0], SETTLE_REJECT);
+                // The executor runs managed code that can move the promise; it is read back
+                // through the guard afterwards (rejection on a throw, and the result).
+                zun_gc::root!(promise = promise);
+                let resolve = self.make_promise_settler(promise.get(), SETTLE_RESOLVE);
+                let reject = self.make_promise_settler(promise.get(), SETTLE_REJECT);
                 match self.invoke_function_value(
                     executor,
                     vec![Value::Function(resolve), Value::Function(reject)],
@@ -64,7 +65,7 @@ impl<'a> Interp<'a> {
                         // settler uses (see `invoke_promise_settler`).
                         match &value {
                             Value::Str(message) => {
-                                self.settle_promise_reject(roots[0], message.to_string());
+                                self.settle_promise_reject(promise.get(), message.to_string());
                             }
                             other => {
                                 let reason = zun_gc::with_current_heap_mut(|heap| {
@@ -72,13 +73,13 @@ impl<'a> Interp<'a> {
                                 })
                                 .unwrap_or_else(zun_core::Any::null);
                                 let message = value_to_error_string(other);
-                                self.settle_promise_reject_value(roots[0], reason, message);
+                                self.settle_promise_reject_value(promise.get(), reason, message);
                             }
                         }
                     }
                     Err(other) => return Err(other),
                 }
-                Ok(Value::Object(roots[0]))
+                Ok(Value::Object(promise.get()))
             }
             "promiseResolve" => {
                 let promise =

@@ -555,6 +555,12 @@ impl Interp<'_> {
             if matches!(decode_one(body.code), Ok((first, _)) if first.opcode == Opcode::AsyncStart)
                 && !unwind::ASYNC_BYPASS.with(|flag| flag.replace(false))
             {
+                // `async_start` runs the body to its first `await` through
+                // `generatorIteratorNext`, which has no link of its own. Publish the
+                // caller's activation so a collection taken inside that body still
+                // roots and rewrites the caller's stack and locals; without it the
+                // caller's eval stack (an array under construction, say) goes stale.
+                let _caller = parent.map(|link| self.publish_native_link(link));
                 return self.async_start(method_rid, args);
             }
             let mut locals: Vec<Value> = Vec::with_capacity(body.local_count as usize);
@@ -738,26 +744,34 @@ impl Interp<'_> {
                     let object = zun_gc::with_current_heap_mut(|heap| heap.global_object());
                     stack.push(Value::Object(object));
                 }
-                Opcode::LoadDynamic => {
-                    match self.op_load_dynamic(stack, pc, &body, instr, next, size)? {
-                        ArmFlow::Next => {}
-                        ArmFlow::Continue => continue,
-                    }
-                }
-                Opcode::StoreDynamic => {
-                    match self.op_store_dynamic(stack, pc, &body, instr, next, size)? {
-                        ArmFlow::Next => {}
-                        ArmFlow::Continue => continue,
-                    }
-                }
-                Opcode::LoadDynamicValue => {
-                    match self.op_load_dynamic_value(stack, pc, &body, next, size)? {
-                        ArmFlow::Next => {}
-                        ArmFlow::Continue => continue,
-                    }
-                }
-                Opcode::StoreDynamicValue => {
-                    match self.op_store_dynamic_value(stack, pc, &body, next, size)? {
+                Opcode::LoadDynamic
+                | Opcode::StoreDynamic
+                | Opcode::LoadDynamicValue
+                | Opcode::StoreDynamicValue => {
+                    // Safepoint: a getter, setter, `valueOf` or `toString` reached
+                    // from any of these ops runs managed code that can collect and
+                    // move objects. Publish this activation so a collection taken
+                    // down there still roots and rewrites this frame. `link` is
+                    // declared first so it outlives the scope.
+                    let link = RootLink {
+                        stack: std::ptr::from_mut(stack.as_mut_slice()),
+                        locals: std::ptr::from_mut(locals.as_mut_slice()),
+                        parent,
+                    };
+                    let _published = self.publish_native_link(&link);
+                    let flow = match instr.opcode {
+                        Opcode::LoadDynamic => {
+                            self.op_load_dynamic(stack, pc, &body, instr, next, size)?
+                        }
+                        Opcode::StoreDynamic => {
+                            self.op_store_dynamic(stack, pc, &body, instr, next, size)?
+                        }
+                        Opcode::LoadDynamicValue => {
+                            self.op_load_dynamic_value(stack, pc, &body, next, size)?
+                        }
+                        _ => self.op_store_dynamic_value(stack, pc, &body, next, size)?,
+                    };
+                    match flow {
                         ArmFlow::Next => {}
                         ArmFlow::Continue => continue,
                     }
@@ -1759,17 +1773,7 @@ impl Interp<'_> {
         // a resumed frame is executing: root them here so a promise still owed a
         // reaction is not reclaimed, and rewrite them when the heap moves.
         self.append_parked_roots(&mut extra_roots);
-        // A native call on the stack pins the heap. Native code keeps managed
-        // references in ordinary Rust locals - the callback a builtin pulled
-        // out of its arguments before looping over an array, the receiver it
-        // resolved once - and the collector can neither find nor rewrite them,
-        // so a moving collection leaves the native holding stale addresses and
-        // the next element it visits reads a recycled object. Sweeping is
-        // still fine: what a native holds is rooted through the argument
-        // vector the interpreter published, so it is never swept, it just must
-        // not move. See `roots::collect_young_non_moving`.
-        let pinned = self.native_link.is_some();
-        if full && parent.is_none() && !pinned {
+        if full && parent.is_none() {
             let hook = self.hook;
             roots::collect_and_compact_current(
                 &self.types,
@@ -1806,8 +1810,6 @@ impl Interp<'_> {
             )
         } else if full {
             roots::collect(&self.types, stack, locals, parent, &extra_roots)
-        } else if pinned {
-            roots::collect_young_non_moving(&self.types, stack, locals, parent, &extra_roots)
         } else {
             let hook = self.hook;
             roots::collect_young_evacuating(

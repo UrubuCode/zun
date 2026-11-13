@@ -201,7 +201,7 @@ first catch was not a pre-existing bug the hunt had missed. It was a bug the
 hunt had *introduced*, three days old, invisible to 168 fixtures under the
 normal collection budget.
 
-### Phase 2 — a rooted slot natives can hold
+### Phase 2 — a rooted slot natives can hold (done, see outcome below)
 
 Replace hoisted copies with a slot the collector rewrites. The open question is
 its shape (see below). Whatever it is, it must cover the three carriers a
@@ -216,7 +216,7 @@ Order within the phase: the mechanism and its tests first, then one native
 converted and proven under `ZUN_GC_STRESS=1` with evacuation forced on, then
 the rest in batches by file.
 
-### Phase 3 — lift the pinning policy
+### Phase 3 — lift the pinning policy (done, see outcome below)
 
 Delete the `pinned` branch in `Interp::collect` and
 `roots::collect_young_non_moving`, so every minor collection evacuates again.
@@ -275,10 +275,29 @@ folded in as `impl Trace for [T; N]`.**
 gets made: it registers a copy of `it` and then goes on using the original.
 
 What makes (c) worth the extra work is not fidelity to CoreCLR, it is that
-changing `invoke_function_value` / `invoke_callback` / `with_this_arg` to take
-`&Rooted<FunctionHandle>` / `&Rooted<Obj>` turns all 84 sites into compile
-errors until they are converted, and makes the mistake unavailable to the next
-author. Nothing short of that is loud.
+changing the dispatch entry points turns every call site into a compile error
+until it is converted, and makes the mistake unavailable to the next author.
+Nothing short of that is loud.
+
+**Narrowed once the call sites were counted (78 of them across
+`invoke_function_value` and `invoke_callback`).** The plan was for the entry
+points to take `&mut FunctionHandle` and root it *internally*, so the
+conversion would be a compile error at all 78 sites.
+
+**That forcing function was not built.** What landed is `root!` at the call
+site, applied to the natives on the failing fixtures' paths. The reason is
+that the handle turned out to be the smaller half of the problem: the same
+natives hold `Obj`s they resolved themselves, and the object and the handle
+have to be rooted together or the site is still wrong, so a signature change
+that only catches handles would have declared the sweep finished while the
+objects stayed stale. The cost of skipping it is that the compiler says
+nothing about the sites still to convert; they are listed below instead,
+which is strictly weaker and should not be mistaken for equivalent.
+
+`Rooted` is therefore the tool for both things a native holds across
+re-entry — the `Obj` it resolved or allocated, and the handle it pulled out of
+its arguments. `NativeRootScope`, which was supposed to cover the first case,
+turns out not to work at all (see below).
 
 Mechanics settled with it:
 
@@ -308,6 +327,82 @@ Mechanics settled with it:
   undefined behaviour.
 - `get()` returns a copy (`Obj`, `FunctionHandle`) or a clone (`Value`), and
   must never hand out a `&T` that outlives a safepoint.
+
+## Outcome of phases 2 and 3
+
+**Landed.** `Rooted<T>` plus `root!`, 40-odd natives converted, and the
+pinning policy deleted. Measured on the full suite (168 fixtures, 15s each):
+
+| policy | before phase 2 | after |
+| --- | --- | --- |
+| adaptive (shipping) | 120 (pinned) / 117 (unpinned) | **120** |
+| `ZUN_GC_STRESS=1` | 117 (pinned) / 103 (unpinned) | **119** |
+| `ZUN_GC_STRESS=4` | — | **119** |
+
+The adaptive pass set is byte-identical to the one at `020e678b`, so nothing
+was traded away for the lift: every minor collection evacuates again and
+conformance is where it was. The stress number is now *higher* than it was with
+the heap pinned, which is the point — pinning was hiding the bugs, not
+preventing them.
+
+Two holes were outside the natives, in the dispatch loop itself:
+
+- `async_start` reached from a `Call` opcode dropped the caller's activation,
+  so a collection inside the coroutine body left the caller's eval stack stale.
+- The four dynamic ops (`LoadDynamic`, `StoreDynamic`, `LoadDynamicValue`,
+  `StoreDynamicValue`) run user getters, setters and `valueOf` without
+  publishing the frame. They now publish it, at a small cost on the dynamic
+  path. **Other arms that reach user code the same way (`ToPrimitive` from
+  arithmetic, for one) have not been audited.**
+
+### `NativeRootScope` is not just formally unsound, it loses writes
+
+The UB predicted above (writing through a pointer derived from a `&` to a
+non-`mut` local) is observable in the release build. `generator_return`
+re-read `roots[0]` correctly after `resume_suspended` and still got the
+pre-collection address; converting the site to `root!` fixed it.
+`decorators.rs` already carried a `read_volatile(&roots[0])` to work around
+the same thing. The compiler is entitled to keep `roots[0]` in a register
+because nothing it can see ever writes to that local.
+
+So `NativeRootScope` is not an equivalent older mechanism, it is a broken one:
+anything still re-reading `roots[i]` after a call that can collect is a live
+bug, whether or not a fixture exposes it today. **Roughly 60 such sites remain
+under `collections/`** (`array_mutate.rs`, `mapset.rs`, `dynamic_call.rs`,
+`object_core.rs`, `string_num.rs`, `json.rs`, `proxy.rs`,
+`runtime_reaction.rs`, `decorators.rs`, and the `accumulate` arms of
+`typed_dyn.rs`). They convert as they are touched; the scope type should then
+be deleted rather than kept as an alternative.
+
+### What `Rooted` still does not cover
+
+A guard holds one managed *address word*, so its carriers are `Obj`,
+`FunctionHandle` and `Option<T>` of either. A `Value`/`Any` local that holds a
+boxed object across a safepoint is still unprotected, and these are known:
+
+- `generator_return` passes `value` to `make_iter_result` after
+  `resume_suspended`.
+- `typed_dyn.rs` holds `kept: Vec<Value>` and `acc` across callbacks (bigints
+  are objects).
+- `generatorIteratorNext` leaves `state.pending_return` in a state that is out
+  of the table, and therefore untraced, while the body runs.
+- `iter_step` returns a `Value` that is read after calls that can collect.
+
+That is what the `Trace` trait sketched above was for, and it is the natural
+phase 4 companion to a handle table: one impl for `Value` instead of four
+hand-rooted holders. Where a fixture forced the issue, the workaround used
+here is a rooted one-slot array as a holder (`arrayFilter`, `arrayFind`,
+`arrayGroup`, `objectGroupBy`), which is correct but is a side table standing
+in for a type that should carry itself.
+
+### Still failing
+
+`classes-errors/runtime-error-sites.ts` fails under stress only (it passes on
+the adaptive policy): a `load_field` on a poisoned object inside `call_inner`,
+reached shortly before `new (Promise as any)()`. The statement passes in
+isolation, so it needs the whole fixture's context. The candidates are the
+unconverted `new` paths and `decorators.rs`, where field transforms hold
+`FunctionHandle`s across `invoke_function_value`.
 
 ## Verification rules for every phase
 

@@ -58,8 +58,11 @@ impl<'a> Interp<'a> {
                 obj
             });
             self.init_builtin_collection_field(obj);
+            // The constructor body allocates and can evacuate the instance; the hooks and
+            // the boxed result below must see its relocated address.
+            zun_gc::root!(obj = obj);
             let mut call_args = Vec::with_capacity(values.len() + 1);
-            call_args.push(Value::Object(obj));
+            call_args.push(Value::Object(obj.get()));
             call_args.extend(values);
             let call_args = self.pack_rest_call_args(ctor, call_args);
             let mut call_args = call_args;
@@ -76,7 +79,7 @@ impl<'a> Interp<'a> {
                 call_args.push(Value::Null);
             }
             self.call(ctor, call_args, None)?;
-            let obj = self.run_instance_hooks(obj)?;
+            let obj = self.run_instance_hooks(obj.get())?;
             let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(obj).box_any(heap))
                 .unwrap_or_else(zun_core::Any::null);
             return Ok(Value::Any(boxed));

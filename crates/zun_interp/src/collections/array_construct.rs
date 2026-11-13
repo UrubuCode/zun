@@ -54,31 +54,30 @@ impl<'a> Interp<'a> {
                     return self.call_managed_collection("arrayFrom", &args[..1]);
                 };
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
-                let setup = [target];
-                let wrapper = {
-                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&setup) };
-                    object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?
-                };
-                let roots = [wrapper, setup[0]];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // Resolving and stepping the iterator run user code that can evacuate the
+                // target and the wrapper; every read goes through the guards.
+                zun_gc::root!(target = target);
+                let wrapper =
+                    object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?;
+                zun_gc::root!(wrapper = wrapper);
                 let mut exhausted = false;
                 for _ in 0..count {
-                    if matches!(self.protocol_done(roots[0])?, Value::Bool(true)) {
+                    if matches!(self.protocol_done(wrapper.get())?, Value::Bool(true)) {
                         exhausted = true;
                         break;
                     }
-                    let value = self.protocol_next(roots[0])?;
+                    let value = self.protocol_next(wrapper.get())?;
                     let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .unwrap_or_else(zun_core::Any::null);
-                    zun_gc::with_current_heap_mut(|heap| heap.array_push(roots[1], boxed));
+                    zun_gc::with_current_heap_mut(|heap| heap.array_push(target.get(), boxed));
                 }
                 if !exhausted {
                     self.call_managed_collection(
                         "generatorIteratorClose",
-                        &[Value::Object(roots[0]), Value::Bool(false)],
+                        &[Value::Object(wrapper.get()), Value::Bool(false)],
                     )?;
                 }
-                Ok(Value::Object(roots[1]))
+                Ok(Value::Object(target.get()))
             }
             "arrayLikeFill" => {
                 // `Array.prototype.fill.call(receiver, value, start, end)`: an Array
@@ -563,42 +562,49 @@ impl<'a> Interp<'a> {
                                     };
                                     let result =
                                         zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
-                                    let roots = [wrapper, result];
-                                    let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                                    // Stepping the iterator and the mapper both re-enter managed
+                                    // code and can evacuate the wrapper, the result and the mapper's
+                                    // closure environment; each is read back through its guard.
+                                    zun_gc::root!(wrapper = wrapper);
+                                    zun_gc::root!(result = result);
+                                    zun_gc::root!(callback = callback);
                                     let mut index = 0usize;
                                     loop {
                                         if matches!(
-                                            self.protocol_done(roots[0])?,
+                                            self.protocol_done(wrapper.get())?,
                                             Value::Bool(true)
                                         ) {
                                             break;
                                         }
-                                        let value = self.protocol_next(roots[0])?;
+                                        let value = self.protocol_next(wrapper.get())?;
                                         let callback_args = vec![
                                             value,
                                             Value::Any(zun_core::Any::float(index as f64)),
                                         ];
-                                        match self.invoke_callback(callback, callback_args) {
+                                        match self.invoke_callback(callback.get(), callback_args) {
                                             Ok(produced) => {
                                                 let boxed = zun_gc::with_current_heap_mut(|heap| {
                                                     produced.box_any(heap)
                                                 })
                                                 .ok_or(RunError::BadToken)?;
                                                 zun_gc::with_current_heap_mut(|heap| {
-                                                    heap.array_push(roots[1], boxed)
+                                                    heap.array_push(result.get(), boxed)
                                                 });
                                             }
                                             Err(error) => {
                                                 let _ = self.call_managed_collection(
                                                     "generatorIteratorClose",
-                                                    &[Value::Object(roots[0]), Value::Bool(true)],
+                                                    &[
+                                                        Value::Object(wrapper.get()),
+                                                        Value::Bool(true),
+                                                    ],
                                                 );
                                                 return Err(error);
                                             }
                                         }
                                         index += 1;
                                     }
-                                    return Ok(Value::Object(roots[1]));
+                                    return Ok(Value::Object(result.get()));
                                 }
                             }
                             // Any other iterable (Set, Map, iterator, user
@@ -711,21 +717,27 @@ impl<'a> Interp<'a> {
                 let length = zun_gc::with_current_heap(|heap| heap.array_len(base))
                     .ok_or(RunError::BadToken)?;
                 let result = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length));
-                let roots = [base, result];
-                let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+                // The mapper can evacuate the base, the result and its own closure
+                // environment between iterations.
+                zun_gc::root!(base = base);
+                zun_gc::root!(result = result);
+                zun_gc::root!(callback = callback);
                 for index in 0..length {
-                    let element = zun_gc::with_current_heap(|heap| heap.array_get(roots[0], index))
-                        .ok_or(RunError::BadToken)?;
+                    let element =
+                        zun_gc::with_current_heap(|heap| heap.array_get(base.get(), index))
+                            .ok_or(RunError::BadToken)?;
                     let callback_args = vec![
                         Value::Any(element),
                         Value::Any(zun_core::Any::float(index as f64)),
                     ];
-                    let produced = self.invoke_callback(callback, callback_args)?;
+                    let produced = self.invoke_callback(callback.get(), callback_args)?;
                     let boxed = zun_gc::with_current_heap_mut(|heap| produced.box_any(heap))
                         .ok_or(RunError::BadToken)?;
-                    zun_gc::with_current_heap_mut(|heap| heap.array_set(roots[1], index, boxed));
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_set(result.get(), index, boxed)
+                    });
                 }
-                Ok(Value::Object(roots[1]))
+                Ok(Value::Object(result.get()))
             }
             "arraySpreadAppend" => {
                 // Append every element of `source` (a managed Array or a

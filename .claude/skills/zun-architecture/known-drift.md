@@ -4,8 +4,11 @@ Audit snapshot: 2026-11-12, with a fix pass the same day. Line numbers move;
 re-locate with a search before acting. Mark an entry FIXED (with the commit)
 instead of deleting it.
 
-Conformance: **120/168** fixtures exit 0 at `020e678b`, and it is the same pass
-set as `2ef79483`, not just the same count. Getting there: the audit fix pass
+Conformance: **120/168** fixtures exit 0, and it is the same pass set as
+`2ef79483`, not just the same count. It survived lifting the heap-pinning
+policy: 120/168 on the shipping policy and 119/168 under `ZUN_GC_STRESS=1`
+(up from 117 *with* the heap pinned), the one stress-only failure being
+`classes-errors/runtime-error-sites`. Getting there: the audit fix pass
 took 118 (at `ef117cff`) to 120; making the garbage collector actually run cost
 13 fixtures and recovered 5 (`e77901ec`); rooting the calling frame across a
 native call brought 7 back (`dfb7a142`); pinning the heap during a native call,
@@ -152,14 +155,13 @@ harness without one never finishes.
      publishes the native's argument vector as the innermost activation -
      `pop_n` takes the arguments off the interpreter stack, so until then
      nothing rooted a callback's captured environment while the native ran.
-  7. (`020e678b`) A **native frame pins the heap.** Native code keeps managed
-     references in ordinary Rust locals - the callback a builtin pulled out of
-     its arguments before looping, the receiver it resolved once - and nothing
-     can find or rewrite those, so a minor collection taken while a native call
-     is on the stack is non-moving (`roots::collect_young_non_moving`).
-     Sweeping is still fine: what a native holds is rooted through the
-     published argument vector. Lift this only once native code has a handle
-     API (CLR `GCPROTECT`, V8 `Handle`).
+  7. (`020e678b`, **lifted again**) A **native frame pinned the heap**, because
+     native code keeps managed references in ordinary Rust locals - the
+     callback a builtin pulled out of its arguments before looping, the
+     receiver it resolved once - and nothing could find or rewrite those. The
+     policy and `roots::collect_young_non_moving` are gone now that natives
+     have a handle API (`zun_gc::Rooted` + `root!`); see the new entry below
+     for what that cost and what is left.
   8. (`020e678b`) `generator_states` and `generator_frames` were the only
      address-keyed side tables the relocation pass did not **re-key**, so a
      moved generator stopped being a generator: `generator_state` answered
@@ -213,6 +215,43 @@ harness without one never finishes.
   *following* statement in `try { ... } catch (e: any) { console.log(e.name +
   ": " + e.message) }` (the thrown message names the broken operation), then
   cut the fixture down around it.
+- **OPEN (mechanism FIXED) - `NativeRootScope` loses writes in release builds;
+  about 60 call sites still use it.** The scope registers `roots.as_ptr()` from
+  a non-`mut` local and the collector writes through `ptr as *mut Obj`. That is
+  undefined behaviour, and it is observable: `generator_return` re-read
+  `roots[0]` after `resume_suspended` and still got the pre-collection address,
+  because nothing the compiler can see ever writes that local, so it keeps it
+  in a register. `collections/decorators.rs` already carried a
+  `read_volatile(&roots[0])` against the same thing. The fix is
+  `zun_gc::Rooted<T>` + `root!` (`crates/zun_gc/src/native_roots.rs`): the
+  guard owns the value in an `UnsafeCell`, is pinned, and `get()` is the only
+  way to read it, so there is no un-rooted copy to use by mistake. Carriers are
+  `Obj`, `FunctionHandle` (its environment is the managed word; relocation goes
+  through `relocate_environment`, which keeps the bound discriminant) and
+  `Option<T>` of either. **Every site still re-reading `roots[i]` after a call
+  that can collect is a live bug**: `array_mutate.rs`, `mapset.rs`,
+  `dynamic_call.rs`, `object_core.rs`, `string_num.rs`, `json.rs`, `proxy.rs`,
+  `runtime_reaction.rs`, `decorators.rs` and the `accumulate` arms of
+  `typed_dyn.rs`. Convert as you touch them, then delete the scope type - it is
+  not an alternative mechanism, it is a broken one.
+- **OPEN - a `Value`/`Any` local held across a safepoint is still unprotected.**
+  `Rooted` holds one managed address word, so it covers `Obj` and
+  `FunctionHandle` but not an `Any` that happens to box an object (a bigint, a
+  boxed instance). Known instances: `generator_return` passes `value` to
+  `make_iter_result` after `resume_suspended`; `typed_dyn.rs` holds `kept:
+  Vec<Value>` and `acc` across callbacks; `generatorIteratorNext` leaves
+  `state.pending_return` in a state that is out of the table, and therefore
+  untraced, while the body runs; `iter_step` returns a `Value` read after calls
+  that can collect. Where a fixture forced the issue the workaround is a rooted
+  one-slot array as a holder (`arrayFilter`, `arrayFind`, `arrayGroup`,
+  `objectGroupBy`) - correct, but a side table standing in for a type that
+  should carry itself. The real fix is the `Trace` trait sketched in
+  `docs/design/gc-native-roots.md`, with one impl for `Value`.
+- **OPEN - opcode arms that reach user code without publishing the frame.** The
+  four dynamic ops now publish the activation before running a getter, setter
+  or `valueOf`, and `async_start` reached from `Call` publishes the caller. The
+  other arms that can reach user code the same way (`ToPrimitive` from
+  arithmetic, for one) have not been audited.
 - **OPEN - The interned-string table is never reclaimed.** `Heap::intern_string`
   pushes onto a `Vec<ZStr>` and `zun_gc/src/collection.rs` never touches
   `strings`. Measured: ~108 bytes per interned string, linear and unbounded

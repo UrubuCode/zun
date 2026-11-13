@@ -120,13 +120,16 @@ impl<'a> Interp<'a> {
     /// its `next()` method called and the `{ value, done }` result read back.
     pub(crate) fn protocol_step(&mut self, it: zun_gc::Obj) -> Result<(Value, bool), RunError> {
         if zun_gc::with_current_heap(|heap| heap.generator_state(it).is_some()) {
+            // `generatorIteratorDone` can run managed code and evacuate the
+            // generator; the `Next` call must see its relocated address.
+            zun_gc::root!(it = it);
             let finished =
-                self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
+                self.call_managed_collection("generatorIteratorDone", &[Value::Object(it.get())])?;
             if matches!(finished, Value::Bool(true)) {
                 return Ok((Value::Void, true));
             }
             let value =
-                self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?;
+                self.call_managed_collection("generatorIteratorNext", &[Value::Object(it.get())])?;
             return Ok((value, false));
         }
         if let Some(done) = zun_gc::with_current_heap(|heap| heap.array_iterator_done(it)) {
@@ -159,18 +162,19 @@ impl<'a> Interp<'a> {
         if zun_gc::with_current_heap(|heap| heap.dynamic_has(it, "$ih")) {
             return self.iter_step(it);
         }
-        let mut next = zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it, "next"));
+        // `iter_method` can run a getter and evacuate `it` before it is `this`.
+        zun_gc::root!(it = it);
+        let mut next =
+            zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it.get(), "next"));
         if next.is_none() {
-            next = self.iter_method(it, "next")?;
+            next = self.iter_method(it.get(), "next")?;
         }
         let Some(next) = next else {
             return Err(RunError::Native(
                 "TypeError: iterator has no next() method".into(),
             ));
         };
-        let roots = [it];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        let next_args = self.with_this_arg(next, it, Vec::new());
+        let next_args = self.with_this_arg(next, it.get(), Vec::new());
         let result = self.invoke_function_value(next, next_args)?;
         let Some(result_obj) = object(&result) else {
             return Err(RunError::Native(
@@ -272,15 +276,16 @@ impl<'a> Interp<'a> {
     /// the wrapper's cache (unless one is already pending or the iterator is
     /// exhausted) and report whether iteration is complete.
     pub(crate) fn protocol_done(&mut self, wrapper: zun_gc::Obj) -> Result<Value, RunError> {
-        let roots = [wrapper];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // `protocol_step` below runs user or generator code and can evacuate the
+        // wrapper; the cache slots are written to its relocated address.
+        zun_gc::root!(wrapper = wrapper);
         let has = zun_gc::with_current_heap(|heap| {
-            heap.dynamic_get(roots[0], "__zun_has")
+            heap.dynamic_get(wrapper.get(), "__zun_has")
                 .and_then(|any| any.as_bool())
         })
         .unwrap_or(false);
         let done_cached = zun_gc::with_current_heap(|heap| {
-            heap.dynamic_get(roots[0], "__zun_done")
+            heap.dynamic_get(wrapper.get(), "__zun_done")
                 .and_then(|any| any.as_bool())
         })
         .unwrap_or(false);
@@ -288,7 +293,7 @@ impl<'a> Interp<'a> {
             return Ok(Value::Bool(done_cached));
         }
         let it = zun_gc::with_current_heap(|heap| {
-            heap.dynamic_get(roots[0], "__zun_it")
+            heap.dynamic_get(wrapper.get(), "__zun_it")
                 .and_then(|any| any.as_object())
         })
         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
@@ -301,9 +306,9 @@ impl<'a> Interp<'a> {
                 .unwrap_or_else(zun_core::Any::null)
         };
         zun_gc::with_current_heap_mut(|heap| {
-            heap.dynamic_set(roots[0], "__zun_cur", boxed);
-            heap.dynamic_set(roots[0], "__zun_done", zun_core::Any::bool(done));
-            heap.dynamic_set(roots[0], "__zun_has", zun_core::Any::bool(true));
+            heap.dynamic_set(wrapper.get(), "__zun_cur", boxed);
+            heap.dynamic_set(wrapper.get(), "__zun_done", zun_core::Any::bool(done));
+            heap.dynamic_set(wrapper.get(), "__zun_has", zun_core::Any::bool(true));
         });
         Ok(Value::Bool(done))
     }
@@ -386,15 +391,20 @@ impl<'a> Interp<'a> {
         frame.stack = stack;
         // The state stays taken while the body runs, so a re-entrant call
         // finds no live generator.
-        let roots = [generator];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // `resume_suspended` runs the generator's `finally` blocks and can evacuate it.
+        // `NativeRootScope::enter(&[generator])` registered a copy of it, and re-reading
+        // `roots[0]` afterwards came back stale in the release build (the slice is never
+        // `mut`, so the read is not reliably redone): `generator_state_set` re-keyed the
+        // state under a dead address and the object stopped being a generator once a
+        // `finally` threw.
+        zun_gc::root!(generator = generator);
         crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(true));
         let previous_value = crate::unwind::GENERATOR_RETURN_VALUE
             .with(|slot| slot.borrow_mut().replace(value.clone()));
         let outcome = self.resume_suspended(frame);
         crate::unwind::GENERATOR_RETURN_VALUE.with(|slot| *slot.borrow_mut() = previous_value);
         crate::unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.set(false));
-        let generator = roots[0];
+        let generator = generator.get();
         let result = match outcome {
             ExecutionOutcome::Thrown(thrown) if crate::unwind::is_generator_return(&thrown) => {
                 state.done = true;
@@ -509,13 +519,18 @@ impl<'a> Interp<'a> {
             return Ok(None);
         }
         let (value, done) = if is_generator {
+            // Both generator helpers run managed code (the body allocates), so the
+            // collector can evacuate the generator. Its side tables are keyed by
+            // address: a stale `it` afterwards answers `None` and the object stops
+            // behaving like a generator.
+            zun_gc::root!(it = it);
             let finished =
-                self.call_managed_collection("generatorIteratorDone", &[Value::Object(it)])?;
+                self.call_managed_collection("generatorIteratorDone", &[Value::Object(it.get())])?;
             if matches!(finished, Value::Bool(true)) {
                 // The first completion reports the generator's return value
                 // (what `yield*` evaluates to); later ones report undefined.
                 let returned = zun_gc::with_current_heap_mut(|heap| {
-                    heap.generator_state_mut(it)
+                    heap.generator_state_mut(it.get())
                         .map(|state| std::mem::replace(&mut state.current, zun_core::Any::void()))
                 });
                 let value = returned
@@ -524,7 +539,10 @@ impl<'a> Interp<'a> {
                 (value, true)
             } else {
                 (
-                    self.call_managed_collection("generatorIteratorNext", &[Value::Object(it)])?,
+                    self.call_managed_collection(
+                        "generatorIteratorNext",
+                        &[Value::Object(it.get())],
+                    )?,
                     false,
                 )
             }
@@ -572,23 +590,24 @@ impl<'a> Interp<'a> {
     where
         F: FnMut(&mut zun_gc::Heap, zun_gc::Obj, zun_core::Any),
     {
-        let setup = [target];
-        let wrapper = {
-            let _scope = unsafe { zun_gc::NativeRootScope::enter(&setup) };
-            object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?
-        };
-        let roots = [wrapper, setup[0]];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // `protocol_iterator_new` resolves the iterator (may call `[Symbol.iterator]()`),
+        // so `target` is already rooted before it runs.
+        zun_gc::root!(target = target);
+        let wrapper = object(&self.protocol_iterator_new(source)?).ok_or(RunError::BadToken)?;
+        // `protocol_done` steps the iterator, which can run a generator body or a
+        // user `next()` and evacuate both objects; every read goes through `get()`
+        // so the loop sees the relocated addresses.
+        zun_gc::root!(wrapper = wrapper);
         loop {
-            if matches!(self.protocol_done(roots[0])?, Value::Bool(true)) {
+            if matches!(self.protocol_done(wrapper.get())?, Value::Bool(true)) {
                 break;
             }
-            let value = self.protocol_next(roots[0])?;
+            let value = self.protocol_next(wrapper.get())?;
             let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .unwrap_or_else(zun_core::Any::null);
-            zun_gc::with_current_heap_mut(|heap| sink(heap, roots[1], boxed));
+            zun_gc::with_current_heap_mut(|heap| sink(heap, target.get(), boxed));
         }
-        Ok(roots[1])
+        Ok(target.get())
     }
 
     /// Read `name` from the explicit prototype chain of `receiver` (not the

@@ -308,9 +308,11 @@ impl<'a> Interp<'a> {
             let generator = heap.alloc_generator(0, method_rid, boxed);
             (promise, generator)
         });
-        let roots = [promise, generator];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
-        self.async_step(roots[1], roots[0], Ok(Value::Void))?;
+        // `async_step` runs the body, which allocates and can evacuate the promise;
+        // the result below must be the relocated address.
+        zun_gc::root!(promise = promise);
+        zun_gc::root!(generator = generator);
+        self.async_step(generator.get(), promise.get(), Ok(Value::Void))?;
         // Closures are called through function values, whose results are
         // dynamically typed (`any`); named functions and methods return the
         // Promise object itself.
@@ -327,9 +329,11 @@ impl<'a> Interp<'a> {
             })
             .unwrap_or(false);
         if dynamic_result {
-            Ok(Value::Any(zun_core::Any::object(roots[0].addr() as usize)))
+            Ok(Value::Any(zun_core::Any::object(
+                promise.get().addr() as usize
+            )))
         } else {
-            Ok(Value::Object(roots[0]))
+            Ok(Value::Object(promise.get()))
         }
     }
 
@@ -342,8 +346,10 @@ impl<'a> Interp<'a> {
         promise: zun_gc::Obj,
         input: Result<Value, Value>,
     ) -> Result<(), RunError> {
-        let roots = [generator, promise];
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        // `generatorIteratorNext` runs the coroutine body and can evacuate both objects;
+        // the state lookup and every settle below go through the relocated addresses.
+        zun_gc::root!(generator = generator);
+        zun_gc::root!(promise = promise);
         match input {
             Ok(value) => {
                 crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = Some(value))
@@ -352,13 +358,13 @@ impl<'a> Interp<'a> {
                 .with(|slot| *slot.borrow_mut() = Some(thrown)),
         }
         crate::unwind::ASYNC_BYPASS.with(|flag| flag.set(true));
-        let result =
-            self.call_managed_collection("generatorIteratorNext", &[Value::Object(roots[0])]);
+        let result = self
+            .call_managed_collection("generatorIteratorNext", &[Value::Object(generator.get())]);
         crate::unwind::ASYNC_BYPASS.with(|flag| flag.set(false));
         crate::unwind::GENERATOR_SENT.with(|sent| *sent.borrow_mut() = None);
         crate::unwind::GENERATOR_THROW_PENDING.with(|slot| *slot.borrow_mut() = None);
         let done = zun_gc::with_current_heap(|heap| {
-            heap.generator_state(roots[0])
+            heap.generator_state(generator.get())
                 .map(|state| state.done)
                 .unwrap_or(true)
         });
@@ -368,17 +374,17 @@ impl<'a> Interp<'a> {
                 let boxed = zun_gc::with_current_heap_mut(|heap| thrown.box_any(heap));
                 match boxed {
                     Some(reason) => {
-                        self.settle_promise_reject_value(roots[1], reason, message);
+                        self.settle_promise_reject_value(promise.get(), reason, message);
                     }
                     None => {
-                        self.settle_promise_reject(roots[1], message);
+                        self.settle_promise_reject(promise.get(), message);
                     }
                 }
                 Ok(())
             }
             Err(other) => Err(other),
             Ok(value) if done => {
-                self.settle_target_with(roots[1], value);
+                self.settle_target_with(promise.get(), value);
                 Ok(())
             }
             Ok(value) => {
@@ -404,9 +410,9 @@ impl<'a> Interp<'a> {
                 self.notice_promise(awaited_roots[0]);
                 self.attach_reaction(
                     awaited_roots[0],
-                    roots[1],
+                    promise.get(),
                     ReactionKind::AsyncStep {
-                        generator: Value::Object(roots[0]),
+                        generator: Value::Object(generator.get()),
                     },
                 );
                 Ok(())
