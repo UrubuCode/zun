@@ -344,7 +344,7 @@ impl Interp<'_> {
         let getter = zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, &name));
         // A typed class instance read through `any` resolves a
         // registered getter (`get_<name>`, e.g. `Error.name`).
-        let typed_getter = if getter.is_none() {
+        let typed_getter = if getter.is_none() && self.type_rid_describes_object(object) {
             self.class_named_methods
                 .get(&object.type_rid())
                 .and_then(|methods| methods.get(&format!("get_{name}")))

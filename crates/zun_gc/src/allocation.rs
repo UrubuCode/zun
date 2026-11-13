@@ -32,6 +32,21 @@ impl Heap {
         hash
     }
 
+    /// How many field slots the object was allocated with, if it is a live
+    /// managed object.
+    ///
+    /// The object header does not record this, so a name-based field lookup
+    /// (`obj.name` on an `any`) has no other way to tell that the layout it
+    /// resolved does not belong to this object. It can resolve the wrong
+    /// layout, because the core runtime type ids (`CoreTypeId::Promise` = 6,
+    /// say) are also valid `TypeDef` rids: a promise is allocated with no
+    /// fields at all and still answers `type_rid() == 6`.
+    pub fn field_count(&self, object: Obj) -> Option<usize> {
+        let index = *self.by_addr.get(&(object.addr() as usize))?;
+        let record = self.records.get(index)?;
+        record.alive.then_some(record.field_count)
+    }
+
     pub fn alloc(&mut self, type_rid: u32, field_count: usize) -> Obj {
         let identity_hash = self.allocate_identity_hash();
         self.allocations = self.allocations.saturating_add(1);

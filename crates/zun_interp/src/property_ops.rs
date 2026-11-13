@@ -1541,7 +1541,11 @@ impl Interp<'_> {
                 && heap.array_len(object).is_none()
         });
         let rid = object.type_rid();
-        if !typed || rid < 1 || (rid as usize) > self.module.tables.type_defs.len() {
+        if !typed
+            || rid < 1
+            || (rid as usize) > self.module.tables.type_defs.len()
+            || !self.type_rid_describes_object(object)
+        {
             return None;
         }
         Some(self.class_prototype_object(rid))

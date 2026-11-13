@@ -6,9 +6,9 @@ instead of deleting it.
 
 Conformance: **120/168** fixtures exit 0, and it is the same pass set as
 `2ef79483`, not just the same count. It survived lifting the heap-pinning
-policy: 120/168 on the shipping policy and 119/168 under `ZUN_GC_STRESS=1`
-(up from 117 *with* the heap pinned), the one stress-only failure being
-`classes-errors/runtime-error-sites`. Getting there: the audit fix pass
+policy, and the same 120 now pass under `ZUN_GC_STRESS=1` and `=4` as well
+(a collection at every allocation, with released memory poisoned), which was
+117 *with* the heap pinned. Getting there: the audit fix pass
 took 118 (at `ef117cff`) to 120; making the garbage collector actually run cost
 13 fixtures and recovered 5 (`e77901ec`); rooting the calling frame across a
 native call brought 7 back (`dfb7a142`); pinning the heap during a native call,
@@ -252,6 +252,26 @@ harness without one never finishes.
   or `valueOf`, and `async_start` reached from `Call` publishes the caller. The
   other arms that can reach user code the same way (`ToPrimitive` from
   arithmetic, for one) have not been audited.
+- **OPEN (guarded, not repaired) - the core runtime type ids alias the `TypeDef`
+  rid space.** `CoreTypeId::Promise` is 6, `BigInt` is 7, and so on, and those
+  are also valid `TypeDef` rids, so an object allocated with a core id answers
+  `type_rid()` with a number that names an unrelated class. A promise is
+  allocated with **no fields at all**, so every name-based lookup keyed on the
+  object's own rid resolved the fields, accessors and methods of whatever class
+  is `TypeDef` 6 - in the prelude, an Error-family class - and then read or
+  wrote a field slot the promise does not own. `String(promise)` answered
+  `name + ": " + message` out of a neighbouring object's bytes; under
+  `ZUN_GC_STRESS`, where released memory is poisoned, the bytes were
+  `0xDEADBEEF` and the string table panicked (this was the last stress-only
+  fixture failure, `classes-errors/runtime-error-sites`).
+  `Interp::type_rid_describes_object` now gates those lookups: a real instance
+  is allocated with exactly its type's declared field count, so a core id whose
+  count disagrees is an alias rather than an instance, and the field read and
+  write are additionally bounded by `Heap::field_count`. That is a guard, not a
+  repair - `promise instanceof Error` still answers `true`, and any new lookup
+  keyed on `object.type_rid()` is wrong again by default. The repair is to stop
+  overloading the rid space: a tag bit, or a runtime-kind field in the object
+  header beside the type rid.
 - **OPEN - The interned-string table is never reclaimed.** `Heap::intern_string`
   pushes onto a `Vec<ZStr>` and `zun_gc/src/collection.rs` never touches
   `strings`. Measured: ~108 bytes per interned string, linear and unbounded

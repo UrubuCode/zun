@@ -4293,3 +4293,23 @@ fn regex_string_form_orders_flags_like_the_flags_getter() {
     assert_eq!(typeof_of(source), "/a/gsy|gsy|/a/gsy");
 }
 
+#[test]
+fn a_core_runtime_object_does_not_answer_another_classs_members() {
+    // `CoreTypeId::Promise` is 6, which is also a valid `TypeDef` rid, and a
+    // promise is allocated with no fields at all. Resolving a member by the
+    // object's rid therefore found the fields and accessors of whatever class
+    // is `TypeDef` 6 and read a field slot the promise does not own, which
+    // answered a neighbouring object's bytes as a string handle (an
+    // out-of-bounds index into the string table, once released memory was
+    // poisoned under `ZUN_GC_STRESS`). The lookup must miss instead.
+    let module = zun_compiler::compile(
+        "function main(): string { const p: any = new (Promise as any)(); return String(p.name) + \"/\" + String(p.message); }",
+    )
+    .expect("compile core-type member probe");
+    let mut output = CaptureOutput::default();
+    let result = run(&module, &mut output).expect("run core-type member probe");
+    assert!(
+        matches!(&result, Value::Str(text) if &**text == "undefined/undefined"),
+        "a promise answered {result:?} for members it does not have"
+    );
+}

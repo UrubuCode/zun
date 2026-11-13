@@ -336,14 +336,15 @@ pinning policy deleted. Measured on the full suite (168 fixtures, 15s each):
 | policy | before phase 2 | after |
 | --- | --- | --- |
 | adaptive (shipping) | 120 (pinned) / 117 (unpinned) | **120** |
-| `ZUN_GC_STRESS=1` | 117 (pinned) / 103 (unpinned) | **119** |
-| `ZUN_GC_STRESS=4` | — | **119** |
+| `ZUN_GC_STRESS=1` | 117 (pinned) / 103 (unpinned) | **120** |
+| `ZUN_GC_STRESS=4` | — | **120** |
 
 The adaptive pass set is byte-identical to the one at `020e678b`, so nothing
 was traded away for the lift: every minor collection evacuates again and
-conformance is where it was. The stress number is now *higher* than it was with
-the heap pinned, which is the point — pinning was hiding the bugs, not
-preventing them.
+conformance is where it was. Under stress it is the *same* 120 — a collection
+at every allocation, with released memory poisoned, now costs nothing, where
+pinning the heap still lost three. That is the point: pinning was hiding the
+bugs, not preventing them.
 
 Two holes were outside the natives, in the dispatch loop itself:
 
@@ -395,14 +396,35 @@ here is a rooted one-slot array as a holder (`arrayFilter`, `arrayFind`,
 `arrayGroup`, `objectGroupBy`), which is correct but is a side table standing
 in for a type that should carry itself.
 
-### Still failing
+### The last stress failure was not a GC bug at all
 
-`classes-errors/runtime-error-sites.ts` fails under stress only (it passes on
-the adaptive policy): a `load_field` on a poisoned object inside `call_inner`,
-reached shortly before `new (Promise as any)()`. The statement passes in
-isolation, so it needs the whole fixture's context. The candidates are the
-unconverted `new` paths and `decorators.rs`, where field transforms hold
-`FunctionHandle`s across `invoke_function_value`.
+`classes-errors/runtime-error-sites.ts` failed under stress only, on a
+`load_field` that read the poison pattern. The stale-object reading was the
+symptom; the cause is that **the core runtime type ids alias the `TypeDef` rid
+space**. A promise is allocated as `CoreTypeId::Promise` (6) *with no fields at
+all*, and every name-based member lookup keyed on `object.type_rid()` then
+resolved whatever class is `TypeDef` 6 — in the prelude, an Error-family class.
+So `p.name` bound that class's `get_name()` to the promise and read field slot
+0 of an object with no slots, and `String(p)` reached its `toString` and
+answered `name + ": " + message` out of a neighbouring object's bytes
+(`"Iterator: Iterator"`, a string handle that happened to be in range). Under
+`ZUN_GC_STRESS` the neighbour was released and poisoned, so the handle became
+`0xDEADBEEF` and the string table panicked. `p.name = x` wrote out of bounds
+the same way.
+
+The fix is one predicate, `Interp::type_rid_describes_object`: a real instance
+is allocated with exactly its type's declared field count, so a *core* id whose
+count disagrees is an alias, not an instance. It gates the four lookups keyed on
+an object's own rid (`instance_method_rid`, `instance_member_get`/`_set`, the
+`class_named_methods` getter in `op_load_dynamic`, the `toString`/`valueOf`
+lookup in `runtime_coerce`, and `instance_class_prototype`), and the field read
+and write are additionally bounded by `Heap::field_count`.
+
+Both conditions are needed: a prelude class that genuinely lives at a low rid
+still answers true. The real repair is to stop overloading the rid space —
+a tag bit, or a separate runtime-kind field in the object header — and it is
+worth doing, because the predicate is a guard against the confusion rather
+than an end to it. `p instanceof Error` still answers `true` for a promise.
 
 ## Verification rules for every phase
 

@@ -145,7 +145,12 @@ impl<'a> Interp<'a> {
     /// override), or `None` when the object is not a typed instance or has no
     /// such method.
     pub(crate) fn instance_method_rid(&self, object: zun_gc::Obj, name: &str) -> Option<u32> {
-        self.instance_method_map(object.type_rid())?.get(name).copied()
+        if !self.type_rid_describes_object(object) {
+            return None;
+        }
+        self.instance_method_map(object.type_rid())?
+            .get(name)
+            .copied()
     }
 
     /// Lazily built `method name -> implementation rid` index for a type's
@@ -214,6 +219,45 @@ impl<'a> Interp<'a> {
         Some(rc)
     }
 
+    /// Whether `object` really has the field slot a resolved layout names.
+    ///
+    /// A name-based lookup resolves the layout from `object.type_rid()`, and
+    /// that rid is not proof of the layout (see
+    /// [`Self::type_rid_describes_object`]), so the read or write is bounded by
+    /// the object's own storage. Reading past it answered a neighbour's bytes as
+    /// a string handle - with released memory poisoned, an out-of-bounds index
+    /// into the string table - and writing past it corrupted the next object.
+    fn object_has_slot(object: zun_gc::Obj, slot: usize) -> bool {
+        zun_gc::with_current_heap(|heap| heap.field_count(object)).is_some_and(|count| slot < count)
+    }
+
+    /// Whether `object.type_rid()` can be trusted to name the `TypeDef` the
+    /// object is an instance of.
+    ///
+    /// The core runtime type ids alias the `TypeDef` rid space: a promise is
+    /// allocated as `CoreTypeId::Promise` (6) with no fields at all, so a
+    /// name-based member lookup resolved whatever class is `TypeDef` 6 and
+    /// bound its `get_name()` to the promise, which then read a field slot the
+    /// promise does not own. A real instance is allocated with exactly its
+    /// type's declared field count, so a core id whose count disagrees is an
+    /// alias rather than an instance. Both conditions are required: a prelude
+    /// class really living at a low rid still answers true.
+    pub(crate) fn type_rid_describes_object(&self, object: zun_gc::Obj) -> bool {
+        let rid = object.type_rid();
+        if rid == 0 {
+            // Not a typed instance at all (a generator's identity object, say).
+            return false;
+        }
+        if rid > u8::MAX as u32 || zun_core::CoreTypeId::new(rid as u8).is_none() {
+            return true;
+        }
+        let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid);
+        let Ok((_, declared)) = self.type_field_range(token) else {
+            return false;
+        };
+        zun_gc::with_current_heap(|heap| heap.field_count(object)) == Some(declared)
+    }
+
     /// Read member `name` of a typed class instance reached through `any`: an
     /// instance field, else a `get_<name>` accessor. `Ok(None)` when the object
     /// is not a typed instance or has no such member.
@@ -223,12 +267,13 @@ impl<'a> Interp<'a> {
         name: &str,
     ) -> Result<Option<Value>, RunError> {
         let type_rid = object.type_rid();
-        if type_rid == 0 {
+        if type_rid == 0 || !self.type_rid_describes_object(object) {
             return Ok(None);
         }
         if let Some(layout) = self
             .instance_field_map(type_rid)
             .and_then(|map| map.get(name).copied())
+            .filter(|layout| Self::object_has_slot(object, layout.slot))
         {
             let value = zun_gc::with_current_heap(|heap| {
                 crate::value::load_field(layout.kind, object, layout.slot, heap)
@@ -258,6 +303,9 @@ impl Interp<'_> {
         name: &str,
         value: &Value,
     ) -> bool {
+        if !self.type_rid_describes_object(object) {
+            return false;
+        }
         let mut current = object.type_rid();
         for _ in 0..64 {
             if current == 0 {
@@ -270,6 +318,7 @@ impl Interp<'_> {
             if let Some(layout) = self
                 .instance_field_map(current)
                 .and_then(|map| map.get(name).copied())
+                .filter(|layout| Self::object_has_slot(object, layout.slot))
             {
                 let (slot, kind) = (layout.slot, layout.kind);
                 let value = match value {

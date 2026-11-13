@@ -553,10 +553,14 @@ impl<'a> Interp<'a> {
             // with the instance as the leading `this` argument; a dynamic
             // object's function slot is invoked as a plain closure.
             let typed = self
-                .class_named_methods
-                .get(&obj.type_rid())
-                .and_then(|methods| methods.get(name))
-                .copied();
+                .type_rid_describes_object(obj)
+                .then(|| {
+                    self.class_named_methods
+                        .get(&obj.type_rid())
+                        .and_then(|methods| methods.get(name))
+                        .copied()
+                })
+                .flatten();
             let method = match typed {
                 Some(method) => Some((method, vec![Value::Object(obj)])),
                 None => zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, name))
