@@ -14,8 +14,10 @@ use super::Interp;
 const MAX_DEPTH: usize = 256;
 
 struct JsonCtx {
-    /// Rooted object slots (two per nesting level); rewritten in place by GC.
-    roots: Vec<zun_gc::Obj>,
+    /// Rooted object slots, two per nesting level. The collector's registry
+    /// owns the storage, so a slot read after a `toJSON` or replacer call
+    /// answers the relocated address instead of a cached copy.
+    roots: zun_gc::RootArray,
     top: usize,
     replacer: Option<zun_core::FunctionHandle>,
     list: Option<Vec<String>>,
@@ -24,12 +26,12 @@ struct JsonCtx {
 
 impl JsonCtx {
     fn slot_set(&mut self, slot: usize, obj: zun_gc::Obj) {
-        // SAFETY: `slot` is within the pre-sized vector; GC reads/writes the
-        // same memory through the registered root scope.
-        unsafe { std::ptr::write_volatile(self.roots.as_mut_ptr().add(slot), obj) };
+        self.roots.set(slot, obj);
     }
     fn slot_get(&self, slot: usize) -> zun_gc::Obj {
-        unsafe { std::ptr::read_volatile(self.roots.as_ptr().add(slot)) }
+        self.roots
+            .get(slot)
+            .expect("every JSON slot is filled when the context is built")
     }
 }
 
@@ -149,14 +151,17 @@ impl Interp<'_> {
         };
         // Root slots: two per level plus the wrapper holder.
         let holder = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+        // Every slot starts at the holder, so reading one before it is written
+        // answers a live object rather than nothing.
         let mut ctx = JsonCtx {
-            roots: vec![holder; MAX_DEPTH * 2 + 4],
+            roots: zun_gc::RootArray::from_objects(
+                std::iter::repeat(holder).take(MAX_DEPTH * 2 + 4),
+            ),
             top: 1,
             replacer,
             list,
             gap,
         };
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&ctx.roots) };
         ctx.slot_set(0, holder);
         match self.json_property(&mut ctx, "", 0, value, "", 0)? {
             Some(text) => {

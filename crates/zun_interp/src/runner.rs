@@ -1001,7 +1001,7 @@ impl Interp<'_> {
             if let Some(frame) = parent {
                 unsafe { frame.append_roots(&mut native_roots) };
             }
-            let _native_roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+            let _native_roots = zun_gc::RootArray::from_objects(native_roots);
             if let Some(result) = hook.try_call(method_rid, &args) {
                 // A hooked (JIT) method may have unwound a throw out of a bridged
                 // call; route it as a thrown value rather than the result.

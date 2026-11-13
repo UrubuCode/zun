@@ -1,4 +1,21 @@
 //! Native/JIT frame root registration for precise GC safepoints.
+//!
+//! Two shapes, and the difference is whether the native reads the reference
+//! back after a safepoint:
+//!
+//! - [`Rooted`] (via [`root!`](crate::root)) holds one managed reference in a
+//!   pinned guard. This is what a native wants almost always.
+//! - [`RootArray`] holds a run of them in storage the **registry owns**, for a
+//!   native that needs more slots than it has guards — a recursive walk with a
+//!   slot per nesting level (`JSON.stringify`), or a packed argument list a JIT
+//!   entry point only needs kept alive.
+//!
+//! Both are read through the same storage the collector writes, which is the
+//! whole point. The predecessor, `NativeRootScope`, registered a pointer into
+//! the caller's non-`mut` local array and the collector wrote through it; that
+//! is undefined behaviour, and the compiler acted on it — a re-read of
+//! `roots[i]` could legitimately answer the pre-collection address out of a
+//! register. There is no API here that hands out that mistake any more.
 
 use super::Obj;
 use super::RelocationMap;
@@ -8,47 +25,116 @@ use std::pin::Pin;
 
 thread_local! {
     static NEXT_ROOT_ID: Cell<usize> = const { Cell::new(0) };
-    static NATIVE_ROOTS: RefCell<Vec<(usize, *const Obj, usize)>> = const { RefCell::new(Vec::new()) };
+    /// Managed addresses owned by live [`RootArray`]s (0 = an empty slot).
+    static ROOT_ARRAYS: RefCell<Vec<(usize, Vec<usize>)>> = const { RefCell::new(Vec::new()) };
     /// Address words of live [`Rooted`] guards. Each is a managed address (0 =
     /// none) that the collector reports and rewrites in place. Kept apart from
-    /// `NATIVE_ROOTS` because these slots are owned by their guard and written
-    /// through a pointer derived from an `UnsafeCell`, not from a `&[Obj]`.
+    /// `ROOT_ARRAYS` because these slots are owned by their guard and written
+    /// through a pointer derived from an `UnsafeCell`.
     static ROOTED_SLOTS: RefCell<Vec<*mut usize>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Guard that exposes object references held by a native/JIT frame to GC.
-#[derive(Debug)]
-pub struct NativeRootScope {
-    id: usize,
+fn next_root_id() -> usize {
+    NEXT_ROOT_ID.with(|next| {
+        let id = next.get();
+        next.set(id.wrapping_add(1));
+        id
+    })
 }
 
-impl NativeRootScope {
-    /// Register `roots` for the duration of a native call.
+/// A run of managed references the collector's registry owns on a native's
+/// behalf, addressed by index.
+///
+/// Reads and writes go through the registry, so they see the same storage the
+/// collector rewrites: there is no copy in the caller's frame to go stale, and
+/// no pointer for the optimiser to assume nothing writes through. Slots start
+/// empty, and [`RootArray::get`] answers `None` for one that was never set.
+///
+/// Drops in any order; the registry is keyed by id, not a stack.
+#[derive(Debug)]
+pub struct RootArray {
+    id: usize,
+    /// The registry is thread-local; dropping on another thread would
+    /// unregister from the wrong one and leave an entry behind.
+    _not_send: PhantomData<*const ()>,
+}
+
+impl RootArray {
+    /// Register `len` empty slots.
+    pub fn new(len: usize) -> Self {
+        Self::register(vec![0; len])
+    }
+
+    /// Register the given objects, in order.
     ///
-    /// # Safety
-    /// `roots` must remain allocated and unchanged until the returned guard is
-    /// dropped, and every entry must belong to the current heap.
-    pub unsafe fn enter(roots: &[Obj]) -> Self {
-        let id = NEXT_ROOT_ID.with(|next| {
-            let id = next.get();
-            next.set(id.wrapping_add(1));
-            id
+    /// This is the form a native uses when it only needs the objects **kept
+    /// alive** across a call and never reads them back — the JIT entry points
+    /// pack their arguments into raw words before the call, and what a
+    /// collection would have to rewrite afterwards is those words and the JIT
+    /// frame's own slots, which Cranelift stack maps describe, not this array.
+    pub fn from_objects(objects: impl IntoIterator<Item = Obj>) -> Self {
+        Self::register(
+            objects
+                .into_iter()
+                .map(|object| object.addr() as usize)
+                .collect(),
+        )
+    }
+
+    fn register(addresses: Vec<usize>) -> Self {
+        let id = next_root_id();
+        ROOT_ARRAYS.with(|arrays| arrays.borrow_mut().push((id, addresses)));
+        Self {
+            id,
+            _not_send: PhantomData,
+        }
+    }
+
+    fn with_slots<R>(&self, apply: impl FnOnce(&mut Vec<usize>) -> R) -> R {
+        ROOT_ARRAYS.with(|arrays| {
+            let mut arrays = arrays.borrow_mut();
+            let entry = arrays
+                .iter_mut()
+                .find(|(id, _)| *id == self.id)
+                .expect("a live RootArray is registered");
+            apply(&mut entry.1)
+        })
+    }
+
+    /// The object in `index`, at its current address, or `None` when the slot
+    /// is empty or out of range.
+    pub fn get(&self, index: usize) -> Option<Obj> {
+        let address = self.with_slots(|slots| slots.get(index).copied())?;
+        // SAFETY: the collector only ever writes a live object's address here.
+        (address != 0).then(|| unsafe { Obj::from_addr(address as *mut u64) })
+    }
+
+    /// Put `object` in `index`, growing the array if it is past the end.
+    pub fn set(&self, index: usize, object: Obj) {
+        self.with_slots(|slots| {
+            if index >= slots.len() {
+                slots.resize(index + 1, 0);
+            }
+            slots[index] = object.addr() as usize;
         });
-        NATIVE_ROOTS.with(|registered| {
-            registered
-                .borrow_mut()
-                .push((id, roots.as_ptr(), roots.len()));
+    }
+
+    /// Empty the slot at `index`.
+    pub fn clear(&self, index: usize) {
+        self.with_slots(|slots| {
+            if let Some(slot) = slots.get_mut(index) {
+                *slot = 0;
+            }
         });
-        Self { id }
     }
 }
 
-impl Drop for NativeRootScope {
+impl Drop for RootArray {
     fn drop(&mut self) {
-        NATIVE_ROOTS.with(|registered| {
-            let mut registered = registered.borrow_mut();
-            if let Some(index) = registered.iter().position(|&(id, _, _)| id == self.id) {
-                registered.remove(index);
+        ROOT_ARRAYS.with(|arrays| {
+            let mut arrays = arrays.borrow_mut();
+            if let Some(index) = arrays.iter().position(|(id, _)| *id == self.id) {
+                arrays.remove(index);
             }
         });
     }
@@ -110,8 +196,8 @@ impl RootCarrier for zun_core::FunctionHandle {
 /// A managed reference held by a native across a call that can collect and move
 /// objects. The guard owns the value; the only way to read it is [`Rooted::get`],
 /// which answers the current address. There is no un-rooted copy to use by
-/// mistake, unlike [`NativeRootScope`] where the registered slice and the
-/// variable the author keeps using are two different places.
+/// mistake, which is what the predecessor invited: the registered slice and
+/// the variable the author kept using were two different places.
 ///
 /// Create one with [`root!`](crate::root).
 #[derive(Debug)]
@@ -201,13 +287,17 @@ macro_rules! root {
 
 /// Append roots registered by active native frames to a GC root set.
 ///
-/// Reports both registries ([`NativeRootScope`] slices and [`Rooted`] guards),
-/// so every collection path that honoured the former honours the latter.
+/// Reports both registries ([`Rooted`] guards and [`RootArray`] slots), so
+/// every collection path honours both.
 pub fn append_native_roots(roots: &mut Vec<Obj>) {
-    NATIVE_ROOTS.with(|registered| {
-        for &(_, ptr, len) in registered.borrow().iter() {
-            // SAFETY: each scope promises that its borrowed slice remains valid.
-            roots.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr, len) });
+    ROOT_ARRAYS.with(|arrays| {
+        for (_, slots) in arrays.borrow().iter() {
+            for &address in slots {
+                if address != 0 {
+                    // SAFETY: a slot only ever holds a live object's address.
+                    roots.push(unsafe { Obj::from_addr(address as *mut u64) });
+                }
+            }
         }
     });
     ROOTED_SLOTS.with(|slots| {
@@ -221,12 +311,13 @@ pub fn append_native_roots(roots: &mut Vec<Obj>) {
     });
 }
 
-/// Rewrite object pointers held by active native root scopes and [`Rooted`]
-/// guards after relocation.
+/// Rewrite the managed references held by active [`Rooted`] guards and
+/// [`RootArray`]s after relocation.
 ///
 /// # Safety
-/// The active scopes must still satisfy the lifetime guarantees documented by
-/// [`NativeRootScope::enter`].
+/// Every live guard must still own its slot, which is what `Drop` guarantees.
+/// Nothing else is borrowed from a caller, so there is no lifetime promise
+/// left for a caller to break.
 pub unsafe fn rewrite_native_roots(relocation: &RelocationMap) -> usize {
     let mut rewritten = 0;
     ROOTED_SLOTS.with(|slots| {
@@ -244,14 +335,15 @@ pub unsafe fn rewrite_native_roots(relocation: &RelocationMap) -> usize {
             }
         }
     });
-    NATIVE_ROOTS.with(|registered| {
-        for &(_, ptr, len) in registered.borrow().iter() {
-            let roots = unsafe { std::slice::from_raw_parts_mut(ptr as *mut Obj, len) };
-            for root in roots {
-                let address = root.addr() as usize;
-                let mapped = relocation.relocate_address(address);
-                if mapped != address {
-                    *root = unsafe { Obj::from_addr(mapped as *mut u64) };
+    ROOT_ARRAYS.with(|arrays| {
+        for (_, slots) in arrays.borrow_mut().iter_mut() {
+            for slot in slots.iter_mut() {
+                if *slot == 0 {
+                    continue;
+                }
+                let mapped = relocation.relocate_address(*slot);
+                if mapped != *slot {
+                    *slot = mapped;
                     rewritten += 1;
                 }
             }
@@ -262,18 +354,49 @@ pub unsafe fn rewrite_native_roots(relocation: &RelocationMap) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{rewrite_native_roots, NativeRootScope};
+    use super::{append_native_roots, rewrite_native_roots, RootArray};
     use crate::{Obj, RelocationMap};
 
+    fn obj(address: usize) -> Obj {
+        unsafe { Obj::from_addr(address as *mut u64) }
+    }
+
     #[test]
-    fn rewrites_active_native_root_slots() {
-        let old = 0x1000usize;
-        let new = 0x2000usize;
-        let roots = [unsafe { Obj::from_addr(old as *mut u64) }];
+    fn a_root_array_slot_is_read_back_at_its_relocated_address() {
+        let array = RootArray::new(2);
+        array.set(1, obj(0x1000));
         let mut relocation = RelocationMap::new();
-        relocation.insert_addresses(old, new);
-        let _scope = unsafe { NativeRootScope::enter(&roots) };
+        relocation.insert_addresses(0x1000, 0x2000);
+
         assert_eq!(unsafe { rewrite_native_roots(&relocation) }, 1);
-        assert_eq!(roots[0].addr() as usize, new);
+
+        assert_eq!(array.get(1).map(|o| o.addr() as usize), Some(0x2000));
+        assert_eq!(array.get(0), None, "an unset slot stays empty");
+        assert_eq!(array.get(9), None, "an index past the end is empty");
+    }
+
+    #[test]
+    fn a_root_array_reports_only_its_filled_slots() {
+        let array = RootArray::from_objects([obj(0x1000), obj(0x1040)]);
+        let empty = RootArray::new(4);
+        let mut roots = Vec::new();
+        append_native_roots(&mut roots);
+        assert_eq!(roots, vec![obj(0x1000), obj(0x1040)]);
+        drop(empty);
+
+        array.clear(0);
+        roots.clear();
+        append_native_roots(&mut roots);
+        assert_eq!(roots, vec![obj(0x1040)]);
+    }
+
+    #[test]
+    fn a_dropped_root_array_is_no_longer_reported() {
+        {
+            let _array = RootArray::from_objects([obj(0x1000)]);
+        }
+        let mut roots = Vec::new();
+        append_native_roots(&mut roots);
+        assert!(roots.is_empty());
     }
 }

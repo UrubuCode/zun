@@ -449,7 +449,7 @@ impl CallHook for JitHook<'_> {
             .collect();
         // Keep object arguments visible if a future native safepoint requests
         // collection while this JIT frame is active.
-        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _roots = zun_gc::RootArray::from_objects(native_roots);
         let heap = zun_gc::current_heap_ptr()?;
         let packed: Vec<u64> = args
             .iter()

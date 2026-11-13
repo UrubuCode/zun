@@ -42,7 +42,7 @@ harness without one never finishes.
   counters, and compiled-to-compiled calls bind `func_ids` directly, so recompiling
   a callee does not redirect existing callers.
 - **OPEN - No codegen boundary trait.** `zun_codegen` uses `zun_gc::Heap`,
-  `HeapScope`, `NativeRootScope`, `StackMapRegistry`, `RelocationMap` concretely.
+  `HeapScope`, `RootArray`, `StackMapRegistry`, `RelocationMap` concretely.
   `CallHook` (`zun_interp/src/hooks.rs`) is the only real boundary trait.
 - **OPEN - Second body of opcode knowledge.** The interpreter dispatch and
   `zun_codegen/src/translate/mod.rs` hand-match opcodes (expected: each tier
@@ -215,25 +215,34 @@ harness without one never finishes.
   *following* statement in `try { ... } catch (e: any) { console.log(e.name +
   ": " + e.message) }` (the thrown message names the broken operation), then
   cut the fixture down around it.
-- **OPEN (mechanism FIXED) - `NativeRootScope` loses writes in release builds;
-  about 60 call sites still use it.** The scope registers `roots.as_ptr()` from
-  a non-`mut` local and the collector writes through `ptr as *mut Obj`. That is
-  undefined behaviour, and it is observable: `generator_return` re-read
-  `roots[0]` after `resume_suspended` and still got the pre-collection address,
-  because nothing the compiler can see ever writes that local, so it keeps it
-  in a register. `collections/decorators.rs` already carried a
-  `read_volatile(&roots[0])` against the same thing. The fix is
-  `zun_gc::Rooted<T>` + `root!` (`crates/zun_gc/src/native_roots.rs`): the
-  guard owns the value in an `UnsafeCell`, is pinned, and `get()` is the only
-  way to read it, so there is no un-rooted copy to use by mistake. Carriers are
-  `Obj`, `FunctionHandle` (its environment is the managed word; relocation goes
-  through `relocate_environment`, which keeps the bound discriminant) and
-  `Option<T>` of either. **Every site still re-reading `roots[i]` after a call
-  that can collect is a live bug**: `array_mutate.rs`, `mapset.rs`,
-  `dynamic_call.rs`, `object_core.rs`, `string_num.rs`, `json.rs`, `proxy.rs`,
-  `runtime_reaction.rs`, `decorators.rs` and the `accumulate` arms of
-  `typed_dyn.rs`. Convert as you touch them, then delete the scope type - it is
-  not an alternative mechanism, it is a broken one.
+- **FIXED - `NativeRootScope` is deleted.** It registered `roots.as_ptr()` from
+  a non-`mut` local and the collector wrote through `ptr as *mut Obj`:
+  undefined behaviour the compiler acted on, so a re-read of `roots[i]` could
+  answer the pre-collection address out of a register (`generator_return` did;
+  `decorators.rs` and `json.rs` carried `read_volatile` workarounds). Replaced
+  by two shapes, neither needing `unsafe`: `zun_gc::Rooted<T>` + `root!` for a
+  single reference (carriers `Obj`, `FunctionHandle`, `Option<T>`), and
+  `zun_gc::RootArray` for a run of them, owned by the registry and addressed by
+  index, which is what `JSON.stringify` (two slots per nesting level, read back
+  after every `toJSON`) and the JIT entry points (packed arguments, kept alive
+  only) need. **Ground truth for the next author: allocation never collects in
+  this engine** - the budget is polled only in the dispatch loop, at `newobj`
+  and loop backedges (`Interp::poll_gc`), and from `zun_rt_alloc` on the JIT's
+  allocation slow path. A native that only allocates cannot move anything; one
+  that re-enters managed code can.
+- **OPEN - the interpreter caller is marked but not rewritten across a JIT
+  call.** `runner.rs` registers the caller's frame roots so a collection taken
+  from `zun_rt_alloc` marks them (that path can evacuate and compact), but what
+  is registered is a *copy* of the addresses: nothing rewrites the caller's
+  `args` or its parent chain. Pre-dates the rooting work and is unchanged by
+  it. The same gap, one level down, is that a JIT frame's own references depend
+  on `declare_value_needs_stack_map` coverage.
+- **OPEN - the collector's root-slice API has the same unsound cast.**
+  `Heap::collect` and friends take `&[Obj]` and rewrite it through
+  `roots.as_ptr() as *mut Obj` (`zun_gc/src/collection.rs`). Less dangerous in
+  practice than the native scopes were, because callers pass a `Vec`'s heap
+  buffer rather than a stack local, but it is the same shape: it should take
+  `&mut [Obj]`.
 - **OPEN - a `Value`/`Any` local held across a safepoint is still unprotected.**
   `Rooted` holds one managed address word, so it covers `Obj` and
   `FunctionHandle` but not an `Any` that happens to box an object (a bigint, a

@@ -216,7 +216,7 @@ mod tests {
         let kinds = [JitKind::Array, JitKind::String];
         let words = [array.addr() as u64, u64::from(handle)];
         let roots = collect_native_roots(&kinds, &words, false).unwrap();
-        let _scope = unsafe { zun_gc::NativeRootScope::enter(&roots) };
+        let _scope = zun_gc::RootArray::from_objects(roots);
         let freed = unsafe {
             heap.collect_with_native_roots(&[], &|_| std::rc::Rc::from(Vec::new()))
         };

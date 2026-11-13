@@ -999,8 +999,7 @@ fn compaction_rewrites_active_native_roots_before_releasing_chunks() {
     let mut heap = Heap::new();
     let object = heap.alloc(1, 0);
     let old_address = object.addr();
-    let native_roots = [object];
-    let _scope = unsafe { NativeRootScope::enter(&native_roots) };
+    let native_roots = RootArray::from_objects([object]);
     let mut roots = vec![object];
 
     let result = unsafe { heap.compact(&mut roots, &|_| std::rc::Rc::from(Vec::new())) };
@@ -1008,7 +1007,7 @@ fn compaction_rewrites_active_native_roots_before_releasing_chunks() {
     assert_eq!(result.moved_objects, 1);
     assert_eq!(result.rewritten_references, 1);
     assert_ne!(roots[0].addr(), old_address);
-    assert_eq!(native_roots[0], roots[0]);
+    assert_eq!(native_roots.get(0), Some(roots[0]));
 }
 
 #[test]
@@ -1190,12 +1189,11 @@ fn collect_and_compact_preserves_registered_native_frame_roots() {
 }
 
 #[test]
-fn collect_and_compact_marks_native_root_scopes() {
+fn collect_and_compact_marks_root_arrays() {
     let mut heap = Heap::new();
     let object = heap.alloc(1, 0);
     let old_address = object.addr();
-    let roots = [object];
-    let _native_roots = unsafe { NativeRootScope::enter(&roots) };
+    let roots = RootArray::from_objects([object]);
     let mut registry = StackMapRegistry::new();
     registry.replace([NativeStackMap {
         pc: 75,
@@ -1213,7 +1211,7 @@ fn collect_and_compact_marks_native_root_scopes() {
 
     assert_eq!(result.reclaimed_objects, 0);
     assert_eq!(result.moved_objects, 1);
-    assert_ne!(roots[0].addr(), old_address);
+    assert_ne!(roots.get(0).expect("still rooted").addr(), old_address);
     assert_eq!(heap.live_count(), 1);
 }
 
@@ -1630,42 +1628,39 @@ fn extern_alloc_matches_method_alloc() {
 }
 
 #[test]
-fn native_root_scope_contributes_to_root_set() {
+fn a_root_array_contributes_to_the_root_set() {
     let mut heap = Heap::new();
     let object = heap.alloc(1, 0);
-    let registered = [object];
-    let _scope = unsafe { NativeRootScope::enter(&registered) };
+    let _registered = RootArray::from_objects([object]);
     let mut roots = Vec::new();
     append_native_roots(&mut roots);
-    assert_eq!(roots, registered);
+    assert_eq!(roots, [object]);
 }
 
 #[test]
 fn collection_keeps_native_roots_alive() {
     let mut heap = Heap::new();
     let object = heap.alloc(1, 0);
-    let registered = [object];
-    let _scope = unsafe { NativeRootScope::enter(&registered) };
+    let _registered = RootArray::from_objects([object]);
     let freed = unsafe { heap.collect_with_native_roots(&[], &|_| std::rc::Rc::from(Vec::new())) };
     assert_eq!(freed, 0);
     assert_eq!(heap.live_count(), 1);
 }
 
 #[test]
-fn nested_native_root_scopes_restore_the_outer_frame() {
+fn nested_root_arrays_restore_the_outer_frame() {
     let mut heap = Heap::new();
     let outer_object = heap.alloc(1, 0);
     let inner_object = heap.alloc(2, 0);
     let outer = [outer_object];
-    let inner = [inner_object];
-    let outer_scope = unsafe { NativeRootScope::enter(&outer) };
+    let outer_scope = RootArray::from_objects(outer);
 
     let mut roots = Vec::new();
     append_native_roots(&mut roots);
     assert_eq!(roots, outer);
 
     {
-        let _inner_scope = unsafe { NativeRootScope::enter(&inner) };
+        let _inner_scope = RootArray::from_objects([inner_object]);
         roots.clear();
         append_native_roots(&mut roots);
         assert_eq!(roots, vec![outer_object, inner_object]);
@@ -1688,12 +1683,12 @@ fn nested_native_root_scopes_restore_the_outer_frame() {
 }
 
 #[test]
-fn native_root_scopes_can_unwind_out_of_order() {
+fn root_arrays_can_unwind_out_of_order() {
     let mut heap = Heap::new();
     let outer_object = heap.alloc(1, 0);
     let outer = [outer_object];
-    let outer_scope = unsafe { NativeRootScope::enter(&outer) };
-    let inner_scope = unsafe { NativeRootScope::enter(&outer) };
+    let outer_scope = RootArray::from_objects(outer);
+    let inner_scope = RootArray::from_objects(outer);
 
     drop(outer_scope);
     let mut roots = Vec::new();
@@ -1776,11 +1771,10 @@ fn active_stack_map_collection_consumes_the_thread_registry() {
 }
 
 #[test]
-fn active_stack_map_collection_includes_native_root_scopes() {
+fn active_stack_map_collection_includes_root_arrays() {
     let mut heap = Heap::new();
     let object = heap.alloc(1, 0);
-    let roots = [object];
-    let _native_roots = unsafe { NativeRootScope::enter(&roots) };
+    let _native_roots = RootArray::from_objects([object]);
     let frame = [0u8; 8];
     let mut registry = StackMapRegistry::new();
     registry.replace([NativeStackMap {

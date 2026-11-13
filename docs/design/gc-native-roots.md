@@ -366,14 +366,61 @@ pre-collection address; converting the site to `root!` fixed it.
 the same thing. The compiler is entitled to keep `roots[0]` in a register
 because nothing it can see ever writes to that local.
 
-So `NativeRootScope` is not an equivalent older mechanism, it is a broken one:
-anything still re-reading `roots[i]` after a call that can collect is a live
-bug, whether or not a fixture exposes it today. **Roughly 60 such sites remain
-under `collections/`** (`array_mutate.rs`, `mapset.rs`, `dynamic_call.rs`,
-`object_core.rs`, `string_num.rs`, `json.rs`, `proxy.rs`,
-`runtime_reaction.rs`, `decorators.rs`, and the `accumulate` arms of
-`typed_dyn.rs`). They convert as they are touched; the scope type should then
-be deleted rather than kept as an alternative.
+So `NativeRootScope` was not an equivalent older mechanism, it was a broken
+one: anything re-reading `roots[i]` after a call that can collect was a live
+bug, whether or not a fixture exposed it. That is why it was swept rather than
+left as an alternative — the next section is what the sweep found and what
+replaced the type.
+
+### `NativeRootScope` is gone; what replaced it is two shapes
+
+The 55 fixed-size sites under `crates/zun_interp/` became `root!` guards. Nine
+sites could not: a guard holds one value, and they register a
+**variable-length run** of them. Those split into two genuinely different
+needs, which is why the replacement is two shapes and not one.
+
+**`RootArray`** — a run of managed references the registry **owns**, addressed
+by index. Reads and writes go through the registry, which is the same storage
+the collector rewrites, so there is no copy in the caller's frame to go stale
+and no pointer for the optimiser to assume nothing writes through. The UB is
+gone rather than avoided, and nothing here needs to be `unsafe`.
+
+It covers both remaining needs:
+
+- `JSON.stringify` keeps two slots per nesting level and reads them back after
+  every `toJSON` and replacer call. It had `write_volatile`/`read_volatile`
+  accessors to defeat exactly the register-caching described above; those are
+  deleted, because the storage is no longer a local the compiler can reason
+  about.
+- The JIT entry points (`zun_codegen`, `jit_hook`, `runner`) only need their
+  packed arguments **kept alive**: the arguments are packed into raw words
+  *before* the call, so what a collection would have to rewrite afterwards is
+  the `packed` vector and the JIT frame's own slots — neither of which is the
+  registered copy. They build a `RootArray::from_objects(…)` and never read it,
+  which is what the comment at the `jit_hook` site has always said ("keep
+  object arguments visible").
+
+Order mattered: while a site still re-read `roots[i]` and relied on the
+collector rewriting its local array, moving the storage into the registry would
+have handed that site its own un-rewritten copy. Hence two commits, conversion
+first.
+
+What this does **not** fix, and should not be read as fixing:
+
+- **A JIT frame's own references.** Marking the arguments keeps the objects
+  alive; it says nothing about the frame, which is the stack-map question
+  (`declare_value_needs_stack_map`), not this one.
+- **The interpreter caller across a JIT call.** `runner.rs` registers the
+  caller's frame roots so a collection from `zun_rt_alloc` marks them — and
+  `zun_rt_alloc` really can collect, and even evacuate — but nothing rewrites
+  the caller's `args` or its parent chain, because what is registered is a copy
+  of the addresses. That was true before this work and is still true.
+- **The collector's own root-slice API.** `Heap::collect` and friends take
+  `&[Obj]` and rewrite it through `roots.as_ptr() as *mut Obj`
+  (`collection.rs`), which is the same cast that made `NativeRootScope`
+  unsound. It is less dangerous in practice, because those callers pass a
+  `Vec`'s heap buffer rather than a stack local, but it is the same shape and
+  should take `&mut [Obj]`.
 
 ### What `Rooted` still does not cover
 

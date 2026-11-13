@@ -1214,7 +1214,7 @@ impl Jit {
             });
         }
         let native_roots = any_abi::collect_native_roots(&entry.sig.param_kinds, locals, false)?;
-        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _roots = zun_gc::RootArray::from_objects(native_roots);
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let ptr = self.module.get_finalized_function(entry.shim_id);
         let f: extern "C" fn(*const u64) -> u64 = unsafe { std::mem::transmute(ptr) };
@@ -1253,7 +1253,7 @@ impl Jit {
             });
         }
         let native_roots = any_abi::collect_native_roots(&entry.sig.param_kinds, locals, false)?;
-        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _roots = zun_gc::RootArray::from_objects(native_roots);
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let ptr = self.module.get_finalized_function(entry.shim_id);
         let f: extern "C" fn(*const u64, *mut u64) -> u64 = unsafe { std::mem::transmute(ptr) };
@@ -1396,7 +1396,7 @@ impl Jit {
         // Keep managed arguments visible for the complete native call. The VM
         // hook also registers its Value-level roots; this scope protects direct
         // callers of the public packed entry point as well.
-        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _roots = zun_gc::RootArray::from_objects(native_roots);
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let id = *self
             .shim_ids
@@ -1434,7 +1434,7 @@ impl Jit {
             });
         }
         let native_roots = any_abi::collect_native_roots(&signature.param_kinds, args, true)?;
-        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _roots = zun_gc::RootArray::from_objects(native_roots);
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let id = *self
             .shim_ids
@@ -1472,7 +1472,7 @@ impl Jit {
             });
         }
         let native_roots = any_abi::collect_native_roots(&signature.param_kinds, args, true)?;
-        let _roots = unsafe { zun_gc::NativeRootScope::enter(&native_roots) };
+        let _roots = zun_gc::RootArray::from_objects(native_roots);
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let id = *self
             .shim_ids
