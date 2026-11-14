@@ -336,6 +336,21 @@ impl<'a> Interp<'a> {
                 if let Ok(Value::Function(handle)) =
                     unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
                 {
+                    // A function's own `[Symbol.hasInstance]` decides membership
+                    // before the prototype-chain walk.
+                    let bag = crate::function_expando_bag(handle);
+                    let hook = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get_symbol_function(
+                            bag,
+                            zun_core::WellKnownSymbol::HasInstance.id(),
+                        )
+                    });
+                    if let Some(hook) = hook {
+                        let result = self.invoke_function_value(hook, vec![value])?;
+                        return Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                            is_truthy(&result, heap)
+                        })));
+                    }
                     return Ok(Value::Bool(self.function_instanceof(&value, handle)));
                 }
                 let rhs = object(args.get(1).ok_or(RunError::BadToken)?).ok_or_else(|| {

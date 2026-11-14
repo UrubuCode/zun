@@ -333,6 +333,9 @@ impl Checker<'_> {
             Ty::Proxy => "proxyDelete",
             // Modules are strict: a refused delete throws a TypeError.
             Ty::DynamicObject | Ty::Any => "deleteStrict",
+            // A function is an object: its own properties live in its
+            // expando bag, which the native resolves from the boxed value.
+            Ty::Function(_) => "deleteStrict",
             Ty::Error => return self.poison(span),
             other => {
                 self.error(
@@ -345,6 +348,11 @@ impl Checker<'_> {
         let Some((id, _)) = zun_natives::resolve("collections", native) else {
             self.error(span, format!("missing `{native}` intrinsic"));
             return self.poison(span);
+        };
+        let object = if matches!(object.ty, Ty::Function(_)) {
+            Self::box_to_any(object)
+        } else {
+            object
         };
         hir::Expr {
             kind: hir::ExprKind::CallBuiltin {
@@ -560,7 +568,12 @@ impl Checker<'_> {
             // at runtime (`C[Symbol.hasInstance](value)`); otherwise it is a
             // genuine unknown-class reference.
             let rhs = self.check_expr(cx, class);
-            if matches!(rhs.ty, Ty::Any | Ty::DynamicObject) {
+            if matches!(rhs.ty, Ty::Any | Ty::DynamicObject | Ty::Function(_)) {
+                let rhs = if matches!(rhs.ty, Ty::Function(_)) {
+                    Self::box_to_any(rhs)
+                } else {
+                    rhs
+                };
                 let Some((id, _)) = zun_natives::resolve("typeinfo", "instanceofDynamic") else {
                     self.error(span, "missing `instanceofDynamic` intrinsic".to_string());
                     return self.poison(span);

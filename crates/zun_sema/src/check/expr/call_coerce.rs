@@ -13,6 +13,73 @@ impl Checker<'_> {
     /// coercion functions (not constructors), unless the name is a user symbol.
     pub(in crate::check) fn try_call_coerce(
         &mut self,
+        cx: &mut FunctionCx,
+        name: &str,
+        args: &mut Vec<hir::Expr>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if !matches!(name, "BigInt" | "Boolean" | "String" | "Number")
+            || self.by_name.contains_key(name)
+        {
+            return self.try_call_coerce_one(name, args, span);
+        }
+        // `Boolean()` is `false` and `String()` is `""`; `BigInt()` has no
+        // value to convert and falls through to its own diagnostic.
+        if args.is_empty() {
+            let kind = match name {
+                "Boolean" => Some((hir::ExprKind::Boolean(false), Ty::Boolean)),
+                "String" => Some((hir::ExprKind::String(String::new()), Ty::String)),
+                _ => None,
+            };
+            if let Some((kind, ty)) = kind {
+                return Some(hir::Expr { kind, ty, span });
+            }
+            return self.try_call_coerce_one(name, args, span);
+        }
+        // Arguments past the first are evaluated, left to right and after
+        // the first, and then ignored.
+        let extras = args.split_off(1);
+        let result = self.try_call_coerce_one(name, args, span)?;
+        if extras.is_empty() || result.ty.is_error() {
+            return Some(result);
+        }
+        let ty = result.ty;
+        let (slot, _) = self.synthetic_local(cx, ty);
+        let mut tail = hir::Expr {
+            kind: hir::ExprKind::Local(slot),
+            ty,
+            span,
+        };
+        for extra in extras.into_iter().rev() {
+            tail = hir::Expr {
+                kind: hir::ExprKind::Sequence {
+                    effect: Box::new(extra),
+                    value: Box::new(tail),
+                },
+                ty,
+                span,
+            };
+        }
+        Some(hir::Expr {
+            kind: hir::ExprKind::Sequence {
+                effect: Box::new(hir::Expr {
+                    kind: hir::ExprKind::Assign {
+                        slot,
+                        value: Box::new(result),
+                    },
+                    ty: Ty::Any,
+                    span,
+                }),
+                value: Box::new(tail),
+            },
+            ty,
+            span,
+        })
+    }
+
+    /// The exactly-one-argument coercion forms behind [`Self::try_call_coerce`].
+    fn try_call_coerce_one(
+        &mut self,
         name: &str,
         args: &mut Vec<hir::Expr>,
         span: Span,

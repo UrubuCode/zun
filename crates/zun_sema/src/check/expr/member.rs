@@ -355,7 +355,7 @@ impl Checker<'_> {
             }
             if let Some((native, ret, _)) = crate::typed_arrays::method(kind, "get") {
                 if let Some((id, _)) = zun_natives::resolve("buffer", native) {
-                    return hir::Expr {
+                    let read = hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
                             id,
                             args: vec![object, index],
@@ -363,6 +363,18 @@ impl Checker<'_> {
                         ty: ret,
                         span,
                     };
+                    // An element read is a JS `number`: a `Float32Array`
+                    // element widens (exactly) to f64 at the boundary.
+                    if ret == Ty::F32 {
+                        return hir::Expr {
+                            kind: hir::ExprKind::Convert {
+                                value: Box::new(read),
+                            },
+                            ty: Ty::F64,
+                            span,
+                        };
+                    }
+                    return read;
                 }
             }
             self.error(span, "missing buffer index intrinsic");

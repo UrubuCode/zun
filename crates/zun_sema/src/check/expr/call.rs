@@ -20,7 +20,7 @@ impl Checker<'_> {
         }
         let mut args: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
         // Value-phase interceptors over the checked arguments, in order.
-        if let Some(e) = self.try_call_coerce(&name, &mut args, span) {
+        if let Some(e) = self.try_call_coerce(cx, &name, &mut args, span) {
             return e;
         }
         if let Some(e) = self.try_call_generator(&name, &mut args, span) {

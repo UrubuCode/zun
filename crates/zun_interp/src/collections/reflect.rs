@@ -502,6 +502,9 @@ impl<'a> Interp<'a> {
         proto_source: zun_core::FunctionHandle,
         values: Vec<Value>,
     ) -> Result<Value, RunError> {
+        // The `prototype` is created lazily; a later read must see the object
+        // this instance inherits, so materialise it before inheriting.
+        Self::ensure_function_prototype(proto_source);
         let fresh = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
         // The call below re-enters managed code, which can collect and move it.
         zun_gc::root!(fresh = fresh);

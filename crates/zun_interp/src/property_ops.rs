@@ -2,7 +2,7 @@
 //! `Reflect.defineProperty`, `Reflect.set` and the strict `delete` operator,
 //! including the integrity levels of arrays and typed arrays.
 
-use super::collections::{object, same_value};
+use super::collections::{object, same_value, unbox_arg};
 use super::errors::RunError;
 use super::integrity::{array_refusal, ArrayOp};
 use super::value::Value;
@@ -2203,7 +2203,12 @@ impl Interp<'_> {
     /// The strict-mode `delete obj.key` operator: a `TypeError` when the
     /// property is non-configurable, otherwise `true`.
     pub(crate) fn delete_strict(&mut self, args: &[Value]) -> Result<Value, RunError> {
-        let Some(target) = args.first().and_then(object) else {
+        // A function object keeps its own properties in its expando bag.
+        let function_bag = match args.first().map(unbox_arg) {
+            Some(Ok(Value::Function(handle))) => Some(super::function_expando_bag(handle)),
+            _ => None,
+        };
+        let Some(target) = function_bag.or_else(|| args.first().and_then(object)) else {
             return Ok(Value::Bool(true));
         };
         let key = args.get(1).and_then(prop_key);

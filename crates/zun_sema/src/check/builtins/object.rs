@@ -408,6 +408,25 @@ impl Checker<'_> {
                 .iter()
                 .map(|argument| self.check_expr(cx, argument))
                 .collect();
+            // The argument list is required by the spec, but an omitted one is
+            // `undefined`: it fails at run time (`CreateListFromArrayLike`
+            // throws a `TypeError`), not at compile time.
+            while checked.len() < 3 {
+                checked.push(hir::Expr {
+                    kind: hir::ExprKind::DynamicGet {
+                        object: Box::new(hir::Expr {
+                            kind: hir::ExprKind::DynamicObjectLiteral {
+                                entries: Vec::new(),
+                            },
+                            ty: Ty::DynamicObject,
+                            span,
+                        }),
+                        name: "undefined".to_string(),
+                    },
+                    ty: Ty::Any,
+                    span,
+                });
+            }
             if checked.len() != 3 {
                 self.error(
                     span,

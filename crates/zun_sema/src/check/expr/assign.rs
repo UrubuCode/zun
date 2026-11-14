@@ -279,6 +279,18 @@ impl Checker<'_> {
                         span: value_span,
                     };
                 }
+                // A JS `number` stored into a `Float32Array` element rounds
+                // to the nearest f32 (overflow -> Infinity, NaN stays NaN).
+                if elem_ty == Ty::F32 && (value.ty == Ty::F64 || value.ty.is_int()) {
+                    let value_span = value.span;
+                    value = hir::Expr {
+                        kind: hir::ExprKind::Convert {
+                            value: Box::new(value),
+                        },
+                        ty: elem_ty,
+                        span: value_span,
+                    };
+                }
                 if !value.ty.is_error() && !self.is_assignable(value.ty, elem_ty) {
                     self.error(value.span, format!("buffer element must be {elem_ty:?}"));
                 }

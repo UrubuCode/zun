@@ -714,16 +714,9 @@ impl Checker<'_> {
         // signature of a function value; a dynamic function value (a
         // closure) has no statically known name or declared arity.
         if let Ty::Function(func) = object.ty {
-            if fname == "prototype" && func < hir::DYNAMIC_FUNCTION {
-                // A function's `prototype` is an ordinary (initially empty) object.
-                return Ok(hir::Expr {
-                    kind: hir::ExprKind::DynamicObjectLiteral {
-                        entries: Vec::new(),
-                    },
-                    ty: Ty::DynamicObject,
-                    span,
-                });
-            }
+            // `prototype` is not folded here: it is one object per function,
+            // created lazily by the runtime, so every read (and the
+            // `instanceof` / `new` that consult it) must see the same one.
             if (fname == "name" || fname == "length")
                 && self.deleted_fn_meta.contains(&(func, fname.to_string()))
             {
@@ -961,6 +954,19 @@ impl Checker<'_> {
                 ty: Ty::Any,
                 span,
             },
+            // A named read off a primitive that no typed path above claimed
+            // (`(1).toFixed`, `"s".charAt`, `true.toString`) is a prototype
+            // lookup, resolved by name at run time on the boxed value.
+            Ty::String | Ty::Boolean | Ty::Float(_) | Ty::Int(_) | Ty::BigInt | Ty::Symbol => {
+                hir::Expr {
+                    kind: hir::ExprKind::DynamicGet {
+                        object: Box::new(Self::box_to_any(object)),
+                        name: fname,
+                    },
+                    ty: Ty::Any,
+                    span,
+                }
+            }
             other => {
                 self.error(object.span, format!("type {other:?} has no fields"));
                 self.poison(span)

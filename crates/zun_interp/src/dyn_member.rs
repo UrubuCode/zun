@@ -252,12 +252,32 @@ impl Interp<'_> {
                 }
             }
         }
+        // A named read off a primitive resolves on its wrapper's prototype
+        // (`(1).toFixed`, `"s".charAt`), the same lookup `Number.prototype.x`
+        // performs; a primitive owns no properties itself.
+        let primitive_proto = {
+            let class = match &concrete {
+                Value::Str(_) => Some("String"),
+                Value::Bool(_) => Some("Boolean"),
+                Value::Float(..) | Value::Int(..) => Some("Number"),
+                Value::Object(o)
+                    if zun_gc::with_current_heap(|heap| heap.bigint_value(*o).is_some()) =>
+                {
+                    Some("BigInt")
+                }
+                Value::Any(any) if any.as_symbol().is_some() => Some("Symbol"),
+                _ => None,
+            };
+            class.and_then(|class| self.builtin_prototype_by_name(class))
+        };
         // Any other named read off a primitive string / number / boolean has no
         // own properties here: it yields `undefined` rather than faulting.
-        if matches!(
-            concrete,
-            Value::Str(_) | Value::Int(..) | Value::Float(..) | Value::Bool(_)
-        ) {
+        if primitive_proto.is_none()
+            && matches!(
+                concrete,
+                Value::Str(_) | Value::Int(..) | Value::Float(..) | Value::Bool(_)
+            )
+        {
             stack.push(Value::Void);
             return Ok(ArmFlow::Continue);
         }
@@ -352,14 +372,16 @@ impl Interp<'_> {
         }
         // A primitive number/boolean/undefined/null receiver has no own
         // properties here: the read yields `undefined`.
-        if matches!(
-            concrete,
-            Value::Bool(_) | Value::Int(..) | Value::Float(..) | Value::Void | Value::Null
-        ) {
+        if primitive_proto.is_none()
+            && matches!(
+                concrete,
+                Value::Bool(_) | Value::Int(..) | Value::Float(..) | Value::Void | Value::Null
+            )
+        {
             stack.push(Value::Void);
             return Ok(ArmFlow::Continue);
         }
-        let object = concrete.as_object();
+        let object = primitive_proto.unwrap_or_else(|| concrete.as_object());
         // An accessor property invokes its getter (NUCLEUS §6);
         // a data property (or an absent key) reads the value slot.
         let getter = zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, &name));
