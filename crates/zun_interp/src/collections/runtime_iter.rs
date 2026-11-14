@@ -1005,6 +1005,13 @@ impl<'a> Interp<'a> {
         if let Some(kind) = handle.builtin_method() {
             return Self::builtin_method_meta(kind, name);
         }
+        if let Some(ctor) = self.coerce_ctor_name(handle) {
+            return Some(if name == "name" {
+                Value::Str(ctor.into())
+            } else {
+                Value::Float(1.0, zun_il::NumKind::F64)
+            });
+        }
         if handle.is_bound() || handle.generator_method().is_some() {
             return None;
         }

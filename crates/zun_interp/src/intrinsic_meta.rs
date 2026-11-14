@@ -133,6 +133,28 @@ impl Interp<'_> {
             .find_map(|name| static_method_kind(name, key))
     }
 
+    /// The value of the constant `key` the built-in constructor `token` owns
+    /// (`Number.EPSILON`), if it has one.
+    pub(crate) fn builtin_constant_value(&self, token: u32, key: &str) -> Option<f64> {
+        if token & zun_natives::USER_CLASS_FLAG != 0 {
+            return None;
+        }
+        zun_gc::with_current_heap_mut(|heap| builtin_class_names_in(heap, token))
+            .iter()
+            .find_map(|name| constant_value(name, key))
+    }
+
+    /// The names of the constants the built-in constructor `token` owns.
+    pub(crate) fn builtin_constant_names(&self, token: u32) -> Vec<&'static str> {
+        if token & zun_natives::USER_CLASS_FLAG != 0 {
+            return Vec::new();
+        }
+        zun_gc::with_current_heap_mut(|heap| builtin_class_names_in(heap, token))
+            .iter()
+            .flat_map(|name| constant_names(name))
+            .collect()
+    }
+
     /// The names of the static methods the built-in constructor `token` owns.
     pub(crate) fn builtin_static_names(&self, token: u32) -> Vec<&'static str> {
         if token & zun_natives::USER_CLASS_FLAG != 0 {
@@ -149,6 +171,9 @@ impl Interp<'_> {
     /// `Object.getOwnPropertyDescriptor(BuiltinCtor, key)` for `prototype`,
     /// `length` and `name`.
     pub(crate) fn builtin_ctor_own_descriptor(&self, token: u32, key: &str) -> Option<zun_gc::Obj> {
+        if self.user_class_rid(token).is_some_and(|rid| self.namespace_class_members(rid).is_some()) {
+            return None;
+        }
         let (value, writable, configurable) = match key {
             // A constructor's `prototype` is non-writable, non-configurable.
             "prototype" => {
@@ -157,13 +182,83 @@ impl Interp<'_> {
             }
             // `length` and `name` are read-only but configurable.
             "length" | "name" => (self.builtin_ctor_own_value(token, key)?, false, true),
+            // A constant is read-only, non-enumerable and non-configurable.
+            _ if self.builtin_constant_value(token, key).is_some() => {
+                let value = self.builtin_constant_value(token, key)?;
+                (Value::Float(value, zun_il::NumKind::F64), false, false)
+            }
             // A static method is writable, non-enumerable and configurable.
             _ => {
                 let kind = self.builtin_static_kind(token, key)?;
                 (Value::Function(zun_core::FunctionHandle::new_builtin_method(kind)), true, true)
             }
         };
-        Some(zun_gc::with_current_heap_mut(|heap| {
+        Some(Self::data_descriptor_object(value, writable, configurable))
+    }
+
+    /// The built-in constructor a `String` / `Number` / `Boolean` function
+    /// value stands for: those three globals read as a value are the coercion
+    /// functions (`xs.map(String)`), so the constructor surface is answered
+    /// for the function handle.
+    pub(crate) fn coerce_ctor_name(&self, handle: zun_core::FunctionHandle) -> Option<&'static str> {
+        if handle.builtin_method().is_some()
+            || handle.is_bound()
+            || handle.generator_method().is_some()
+        {
+            return None;
+        }
+        let method = self
+            .module
+            .tables
+            .method_defs
+            .get((handle.method_rid() as usize).wrapping_sub(1))?;
+        match self.module.strings.get(method.name) {
+            "__coerceNumber" => Some("Number"),
+            "__coerceString" => Some("String"),
+            "__coerceBoolean" => Some("Boolean"),
+            _ => None,
+        }
+    }
+
+    /// The own constant `key` of the coercion function value `handle`
+    /// (`Number.EPSILON`), if it stands for a constructor that owns one.
+    pub(crate) fn coerce_ctor_constant(
+        &self,
+        handle: zun_core::FunctionHandle,
+        key: &str,
+    ) -> Option<f64> {
+        constant_value(self.coerce_ctor_name(handle)?, key)
+    }
+
+    /// The own constant names of the coercion function value `handle`.
+    pub(crate) fn coerce_ctor_constant_names(
+        &self,
+        handle: zun_core::FunctionHandle,
+    ) -> Vec<&'static str> {
+        self.coerce_ctor_name(handle).map(constant_names).unwrap_or_default()
+    }
+
+    /// `Object.getOwnPropertyDescriptor(Number, "prototype")` for a coercion
+    /// function value: the realm constructor's own `prototype` descriptor.
+    pub(crate) fn coerce_ctor_prototype_descriptor(
+        &self,
+        handle: zun_core::FunctionHandle,
+    ) -> Option<zun_gc::Obj> {
+        let class = self.coerce_ctor_name(handle)?;
+        let token = zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            heap.dynamic_get(global, class).and_then(|any| any.as_class_descriptor())
+        })?;
+        self.builtin_ctor_own_descriptor(token, "prototype")
+    }
+
+    /// A read-only, non-enumerable, non-configurable constant descriptor.
+    pub(crate) fn constant_descriptor_object(value: f64) -> zun_gc::Obj {
+        Self::data_descriptor_object(Value::Float(value, zun_il::NumKind::F64), false, false)
+    }
+
+    fn data_descriptor_object(value: Value, writable: bool, configurable: bool) -> zun_gc::Obj {
+        zun_gc::with_current_heap_mut(|heap| {
             let out = heap.alloc_dynamic();
             let any = value.box_any_cell(heap).unwrap_or_else(zun_core::Any::void);
             heap.dynamic_set(out, "value".to_owned(), any);
@@ -171,7 +266,25 @@ impl Interp<'_> {
             heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(false));
             heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(configurable));
             out
-        }))
+        })
+    }
+}
+
+/// Prelude classes that stand for a namespace object (`JSON`) rather than a
+/// constructor, with the members the specification gives that object. The
+/// class also holds internal helper statics and, being a class, would answer
+/// `length` / `name` / `prototype`; neither is an own property of the
+/// namespace, so own-key and descriptor queries are restricted to this list.
+const NAMESPACE_CLASS_MEMBERS: &[(&str, &[&str])] =
+    &[("JSON", &["isRawJSON", "parse", "rawJSON", "stringify"])];
+
+impl Interp<'_> {
+    /// The specified own members of the prelude class `rid` when it stands for
+    /// a namespace object.
+    pub(crate) fn namespace_class_members(&self, rid: u32) -> Option<&'static [&'static str]> {
+        let def = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1))?;
+        let name = self.module.strings.get(def.name);
+        NAMESPACE_CLASS_MEMBERS.iter().find(|(class, _)| *class == name).map(|(_, m)| *m)
     }
 }
 
@@ -306,6 +419,37 @@ pub(crate) const MATH_CONSTANTS: &[(&str, f64)] = &[
     ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
     ("SQRT2", std::f64::consts::SQRT_2),
 ];
+
+/// The own data constants of the `Number` constructor (non-writable,
+/// non-enumerable, non-configurable), as `(name, value)`.
+const NUMBER_CONSTANTS: &[(&str, f64)] = &[
+    ("MAX_VALUE", f64::MAX),
+    ("MIN_VALUE", 5e-324),
+    ("NaN", f64::NAN),
+    ("NEGATIVE_INFINITY", f64::NEG_INFINITY),
+    ("POSITIVE_INFINITY", f64::INFINITY),
+    ("MAX_SAFE_INTEGER", 9_007_199_254_740_991.0),
+    ("MIN_SAFE_INTEGER", -9_007_199_254_740_991.0),
+    ("EPSILON", f64::EPSILON),
+];
+
+/// The constants a built-in constructor or namespace owns, by global name.
+fn constants_of(class: &str) -> &'static [(&'static str, f64)] {
+    match class {
+        "Number" => NUMBER_CONSTANTS,
+        _ => &[],
+    }
+}
+
+/// The value of the constant `key` of the built-in `class`.
+fn constant_value(class: &str, key: &str) -> Option<f64> {
+    constants_of(class).iter().find(|(n, _)| *n == key).map(|(_, v)| *v)
+}
+
+/// The names of the constants of the built-in `class`.
+fn constant_names(class: &str) -> Vec<&'static str> {
+    constants_of(class).iter().map(|(n, _)| *n).collect()
+}
 
 /// The static methods each built-in namespace or constructor exposes as
 /// function values: `(name, specified length, native)`. As with

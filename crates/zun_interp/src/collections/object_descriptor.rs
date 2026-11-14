@@ -437,6 +437,14 @@ impl<'a> Interp<'a> {
                                     None => Value::Void,
                                 });
                             }
+                            if key == "prototype" {
+                                if let Some(d) = self.coerce_ctor_prototype_descriptor(handle) {
+                                    return Ok(Value::Object(d));
+                                }
+                            }
+                            if let Some(constant) = self.coerce_ctor_constant(handle, &key) {
+                                return Ok(Value::Object(Self::constant_descriptor_object(constant)));
+                            }
                             if key != "name" && key != "length" {
                                 return Ok(Value::Void);
                             }
@@ -717,7 +725,8 @@ impl<'a> Interp<'a> {
                 // `name`, `prototype` and those methods.
                 if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
                     if let Some(token) = any.as_class_descriptor() {
-                        let statics = self.builtin_static_names(token);
+                        let mut statics = self.builtin_constant_names(token);
+                        statics.extend(self.builtin_static_names(token));
                         if !statics.is_empty() {
                             let mut names = vec!["length", "name", "prototype"];
                             names.extend(statics);
@@ -740,6 +749,9 @@ impl<'a> Interp<'a> {
                 if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
                     let bag = crate::function_expando_bag(handle);
                     let mut names = vec!["length".to_owned(), "name".to_owned()];
+                    if self.coerce_ctor_name(handle).is_some() {
+                        names.extend(self.coerce_ctor_constant_names(handle).into_iter().map(str::to_owned));
+                    }
                     for key in self.object_own_names(bag)? {
                         if !names.contains(&key) {
                             names.push(key);

@@ -138,6 +138,36 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Bool(found));
                     }
                 }
+                // A function value owns `name` and `length`, a `prototype` when it
+                // is a constructor, its expando properties and (for the
+                // coercion constructors) their constants; `Function.prototype`
+                // and `Object.prototype` supply the rest.
+                if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
+                    if let Some(Ok(Value::Str(key))) = args.get(1).map(unbox_arg) {
+                        let bag = crate::function_expando_bag(handle);
+                        let constructor = self.coerce_ctor_name(handle).is_some()
+                            || (handle.builtin_method().is_none()
+                                && !handle.is_bound()
+                                && handle.generator_method().is_none()
+                                && !self
+                                    .module
+                                    .tables
+                                    .method_defs
+                                    .get((handle.method_rid() as usize).wrapping_sub(1))
+                                    .is_some_and(|m| self.module.strings.get(m.name).starts_with('<')));
+                        let hit = matches!(key.as_ref(), "name" | "length")
+                            || (key.as_ref() == "prototype" && constructor)
+                            || self.coerce_ctor_constant(handle, &key).is_some()
+                            || [
+                                "apply", "bind", "call", "constructor", "toString", "toLocaleString",
+                                "valueOf", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable",
+                                "__proto__",
+                            ]
+                            .contains(&key.as_ref())
+                            || zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, &key));
+                        return Ok(Value::Bool(hit));
+                    }
+                }
                 let object = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native(
                         "TypeError: Cannot use 'in' operator to search in a non-object".into(),
@@ -358,6 +388,9 @@ impl<'a> Interp<'a> {
                     let array = object(args.get(1).ok_or(RunError::BadToken)?)
                         .ok_or(RunError::BadToken)?;
                     let values = self.read_array_values(array)?;
+                    if let Some(ctor) = self.coerce_ctor_name(handle) {
+                        return self.construct_coerce_wrapper(handle, ctor, values);
+                    }
                     let proto_source = match args.get(2).map(unbox_arg) {
                         Some(Ok(Value::Function(target))) => target,
                         _ => handle,
@@ -457,6 +490,9 @@ impl<'a> Interp<'a> {
                     let array = object(args.get(1).ok_or(RunError::BadToken)?)
                         .ok_or(RunError::BadToken)?;
                     let values = self.read_array_values(array)?;
+                    if let Some(ctor) = self.coerce_ctor_name(handle) {
+                        return self.construct_coerce_wrapper(handle, ctor, values);
+                    }
                     return self.construct_ordinary_function(handle, handle, values);
                 }
                 let token = match args.first().ok_or(RunError::BadToken)? {
@@ -552,5 +588,47 @@ impl<'a> Interp<'a> {
             }
             false
         })
+    }
+}
+
+impl<'a> Interp<'a> {
+    /// `[[Construct]]` of the `String` / `Number` / `Boolean` constructors
+    /// reached as the coercion function value `handle`: coerce the first
+    /// argument through that function (the specified ToString / ToNumber /
+    /// ToBoolean, with the specified no-argument default) and box it in the
+    /// prelude wrapper class `new String(x)` builds, so the result carries
+    /// `valueOf` and `toString` exactly like the lowered `new` form.
+    pub(super) fn construct_coerce_wrapper(
+        &mut self,
+        handle: zun_core::FunctionHandle,
+        ctor: &str,
+        values: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        let wrapper_name = format!("{ctor}Object");
+        let rid = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .position(|def| self.module.strings.get(def.name) == wrapper_name)
+            .map(|index| index as u32 + 1)
+            .ok_or_else(|| RunError::Native("TypeError: value is not a constructor".into()))?;
+        let primitive = match values.into_iter().next() {
+            Some(first) => {
+                let boxed = zun_gc::with_current_heap_mut(|heap| first.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::null);
+                self.invoke_function_value(handle, vec![Value::Any(boxed)])?
+            }
+            None => match ctor {
+                "Number" => Value::Float(0.0, zun_il::NumKind::F64),
+                "Boolean" => Value::Bool(false),
+                _ => Value::Str("".into()),
+            },
+        };
+        let primitive = match unbox_arg(&primitive) {
+            Ok(value) => value,
+            Err(_) => primitive,
+        };
+        self.construct_class_from_descriptor(zun_natives::USER_CLASS_FLAG | rid, vec![primitive])
     }
 }

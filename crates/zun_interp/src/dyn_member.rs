@@ -59,6 +59,15 @@ impl Interp<'_> {
                 Self::ensure_function_prototype(handle);
             }
         }
+        if let Some(Value::Function(handle)) = match &popped {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
+            other => Some(other.clone()),
+        } {
+            if let Some(constant) = self.coerce_ctor_constant(handle, &name) {
+                stack.push(Value::Float(constant, zun_il::NumKind::F64));
+                return Ok(ArmFlow::Continue);
+            }
+        }
         let raw = expando_receiver(popped);
         // A dynamic receiver that unboxes to a primitive string or an
         // array exposes `.length` the same as the typed forms, so a
@@ -353,6 +362,10 @@ impl Interp<'_> {
                     }
                 }
                 if !user_class {
+                    if let Some(value) = self.builtin_constant_value(token, &name) {
+                        stack.push(Value::Float(value, zun_il::NumKind::F64));
+                        return Ok(ArmFlow::Continue);
+                    }
                     if let Some(kind) = self.builtin_static_kind(token, &name) {
                         stack.push(Value::Function(zun_core::FunctionHandle::new_builtin_method(kind)));
                         return Ok(ArmFlow::Continue);

@@ -2395,6 +2395,9 @@ impl Interp<'_> {
 
     /// `Object.getOwnPropertyNames(Class)` for a user class descriptor.
     pub(crate) fn class_own_names(&self, rid: u32) -> Vec<String> {
+        if let Some(members) = self.namespace_class_members(rid) {
+            return members.iter().map(|m| (*m).to_owned()).collect();
+        }
         let mut names = vec!["length".to_owned(), "name".to_owned(), "prototype".to_owned()];
         names.extend(self.class_own_props(rid).into_iter().map(|(n, _)| n));
         names
@@ -2402,6 +2405,9 @@ impl Interp<'_> {
 
     /// `Object.getOwnPropertyDescriptor(Class, key)` for a user class.
     pub(crate) fn class_own_descriptor(&self, rid: u32, key: &str) -> Option<zun_gc::Obj> {
+        if self.namespace_class_members(rid).is_some_and(|members| !members.contains(&key)) {
+            return None;
+        }
         if key == "prototype" {
             let proto = self.class_prototype_object(rid);
             return Some(zun_gc::with_current_heap_mut(|heap| {
