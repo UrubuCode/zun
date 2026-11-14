@@ -4,9 +4,25 @@ Audit snapshot: 2026-11-12, with a fix pass the same day. Line numbers move;
 re-locate with a search before acting. Mark an entry FIXED (with the commit)
 instead of deleting it.
 
-Conformance: **120/168** fixtures exit 0, and it is the same pass set as
-`2ef79483`, not just the same count. It survived lifting the heap-pinning
-policy, and the same 120 now pass under `ZUN_GC_STRESS=1` and `=4` as well
+Conformance: **121/168** fixtures exit 0 (at `551837f2`), and the same 121
+pass under `ZUN_GC_STRESS=1` with a byte-identical pass set. The one gain over
+the long-standing 120 is `json-stringify-replacer-and-tojson` (`3ebbf3fb`).
+
+**Measure proximity, not error counts.** A failing fixture's visible error
+count is a *floor*, not a total: these are 80-160 line probe programs with
+chains of independent failures, so clearing one root cause advances a fixture
+and parks it on the next, unrelated one. Error *messages* mislead too - five
+identical "private fields require an instance receiver" lines in
+`class-private-brands-and-statics` were three different bugs (static-private
+`this`, nested-class receiver, computed key). The useful metric is output
+lines produced versus `node`'s:
+`z=$(zun run F | wc -l); n=$(node F | wc -l)`. As of `551837f2` the fixtures
+closest to passing are `structured-clone` 66%, `error-types-and-subclassing`
+62%, `weak-collections-and-refs` 56%, `scoping-functions-and-calls` 41%;
+about 40 fixtures are still at 0% because they fail to compile.
+
+It survived lifting the heap-pinning
+policy, and the same 120 then passed under `ZUN_GC_STRESS=1` and `=4` as well
 (a collection at every allocation, with released memory poisoned), which was
 117 *with* the heap pinned. Getting there: the audit fix pass
 took 118 (at `ef117cff`) to 120; making the garbage collector actually run cost
@@ -230,13 +246,35 @@ harness without one never finishes.
   and loop backedges (`Interp::poll_gc`), and from `zun_rt_alloc` on the JIT's
   allocation slow path. A native that only allocates cannot move anything; one
   that re-enters managed code can.
-- **OPEN - the interpreter caller is marked but not rewritten across a JIT
-  call.** `runner.rs` registers the caller's frame roots so a collection taken
-  from `zun_rt_alloc` marks them (that path can evacuate and compact), but what
-  is registered is a *copy* of the addresses: nothing rewrites the caller's
-  `args` or its parent chain. Pre-dates the rooting work and is unchanged by
-  it. The same gap, one level down, is that a JIT frame's own references depend
-  on `declare_value_needs_stack_map` coverage.
+- **FIXED (`551837f2`) - the interpreter caller is now rewritten across a JIT
+  bridge call.** `runner.rs` registered the caller's frame roots as a
+  `RootArray`, which kept them alive, but what is registered is a *copy* of the
+  addresses, so nothing wrote the relocated addresses back into the caller's
+  `args` or its parent chain. `Interp::dispatch` now restores the frame from the
+  registry after the call returns, through `RootLink::restore_roots` (the
+  counterpart of `append_roots`), with `roots::managed_address` as the single
+  definition of what counts as a frame root.
+  Found from a four-line program that lost a *caught* exception under
+  `ZUN_GC_STRESS=1`: `console.log` is JIT-compiled and reaches `emit` through
+  `jit_bridge::bridge_call`, which builds a nested `Interp` with no caller link;
+  the collection taken there left `main`'s `for...of` iterator stale, so the
+  iterator-done check at the loop head - which sits *outside* the `try` - raised
+  a TypeError nothing could catch. The thrown error was never the problem.
+  Still open, one level down: a collection from `zun_rt_alloc` directly in JIT
+  code evacuates without rewriting the interpreter caller chain (a different
+  path, untested), a nested bridge `Interp` that evacuates leaves the outer
+  `Interp`'s address-keyed side tables stale, and a JIT frame's own references
+  depend on `declare_value_needs_stack_map` coverage.
+- **FIXED (`551837f2`) - a full compacting collection reported no guards at
+  all.** `collect_and_compact_current` (`zun_interp/src/roots.rs`) never called
+  `zun_gc::append_native_roots`, unlike every sibling collector. An object held
+  only by a `Rooted` or `RootArray` guard was therefore swept in that path, and
+  the compaction then rewrote registry slots that no longer named a live object
+  - so every guard added by the preceding rooting series was silently ignored
+  there. A nested bridge interpreter reaches this path on every eighth
+  collection, which is what made the first regression test flaky rather than
+  failing outright. Worth remembering as a shape: a root registry is only as
+  good as the collectors that remember to ask it.
 - **OPEN - the collector's root-slice API has the same unsound cast.**
   `Heap::collect` and friends take `&[Obj]` and rewrite it through
   `roots.as_ptr() as *mut Obj` (`zun_gc/src/collection.rs`). Less dangerous in
@@ -256,6 +294,19 @@ harness without one never finishes.
   `objectGroupBy`) - correct, but a side table standing in for a type that
   should carry itself. The real fix is the `Trace` trait sketched in
   `docs/design/gc-native-roots.md`, with one impl for `Value`.
+  Note: the four-line lost-exception reproducer that led to `551837f2` was
+  *not* an instance of this, despite looking like one. Don't assume a
+  stress-only failure is the `Value`/`Any` gap until the collecting frame is
+  identified.
+- **FIXED (`3ebbf3fb`) - a natively thrown error read uninitialised heap.**
+  `make_error_value` (`zun_interp/src/native_error.rs`) allocated an Error with
+  its full field count but wrote only three of the five slots, leaving
+  `nameOverride` and the trailing flag as whatever the allocator left behind.
+  So `.name` answered garbage - a JSON TypeError reported itself as
+  `"Iterator"` - on **every** error raised through `throw_native!`. All five
+  slots are initialised now, matching `new_error_object`. Worth a look for the
+  same shape elsewhere: `heap.alloc(rid, field_count)` followed by a shorter
+  value list is silent and compiles.
 - **OPEN - opcode arms that reach user code without publishing the frame.** The
   four dynamic ops now publish the activation before running a getter, setter
   or `valueOf`, and `async_start` reached from `Call` publishes the caller. The
@@ -396,3 +447,87 @@ These now have exactly one implementation; reuse them rather than re-deriving:
   `impl Jit`), `zun_interp/src/lib.rs` (dispatch loop), `zun_compiler/src/lib.rs`,
   `zun_natives/src/lib.rs`, `zun_gc/src/lib.rs`, plus
   `zun_interp/src/property_ops.rs` (~2400 lines).
+
+## New findings from the conformance push (2026-11-13, `56ee7980`..`551837f2`)
+
+Six subsystems landed; conformance moved 120 -> 121. The gap between those two
+numbers is the lesson: see "Measure proximity, not error counts" in the header.
+
+### Engine panics from ordinary user code (both FIXED)
+A user program must never be able to panic the Rust process. Two paths could:
+
+- **FIXED (`7003b4d4`) - a nullish dynamic store.** `function g(x: any) { x.v = 1 }`
+  called with `undefined` panicked in `Value::as_object` (`value.rs`) instead of
+  throwing. It now raises `TypeError: Cannot set properties of undefined`,
+  matching the read side. The guard lives in an `#[inline(never)]` helper
+  because `op_store_dynamic` is `#[inline(always)]` into the dispatch loop -
+  keep it that way, or the hot frame grows and `zun_codegen`'s recursion
+  equivalence tests overflow their 8 MB stack.
+- **FIXED (`56ee7980`, `7003b4d4`) - `new` on a declared `function F(this: any)`.**
+  The receiver was dropped, `this` lowered to `undefined`, and constructing it
+  panicked. See the declared-receiver entry below.
+
+### Silent wrong answers (all FIXED) - the failure mode to fear here
+Three paths produced plausible but wrong output rather than an error, and the
+168-fixture suite stayed green over all of them, because no fixture covers
+them. They were caught only by probing the "known limits" an implementer
+reported, against `node`, by hand.
+
+- **FIXED (`7003b4d4`) - `f(...xs)` dropped an argument.** With a hidden
+  receiver in the signature, `function f(this: any, ...r)` let the receiver eat
+  `xs[0]`: `n=2 sum=5` for a three-element spread. `call_sugar.rs`.
+- **FIXED (`7003b4d4`) - `g(...ys)` onto fixed parameters** answered
+  `5,undefined` instead of `4,5`. `spread_optional.rs`.
+- **FIXED (`3ebbf3fb`) - a natively thrown error's `.name`** - see the
+  uninitialised-heap entry above.
+
+**Process note.** When a subagent reports a "known limit", test it against
+`node` before accepting it: two of the three above were reported as
+pre-existing limits and were in fact regressions introduced by the same change.
+A green suite is not evidence here.
+
+### Still open, with reproducers
+- **OPEN - a namespace object assigned to a dynamic local loses its members.**
+  ```ts
+  const M: any = Math;
+  Math.max(1, 2)   // 2
+  M.max(1, 2)      // throws "max is not a function"
+  M.PI             // undefined (node: 3.14159...)
+  ```
+  `JSON` in the same position works, so it is not all namespaces. This is what
+  parks `misc-platform/globalthis-namespaces-and-tags` at 8% - it opens with
+  `const g: any = globalThis`. Note for whoever picks this up: it was first
+  reported to this session as a *GC* bug ("an object held in a module-level
+  `const` dies after heavy allocation"), and it is not - it fails on the first
+  iteration with no collection at all.
+- **OPEN - `===` between two BigInts reached through `any` compares addresses.**
+  `const c: any = 255n, d: any = 255n; c === d` is `false`, and so are
+  `Object.is` and `[c].includes(d)`. `same_value` in
+  `zun_interp/src/collections/mod.rs` compares `(Object, Object)` by `addr()`
+  and needs a bigint value comparison.
+- **OPEN - a computed-key *static* method is never installed on the class.**
+  `Object.getOwnPropertyNames(C)` lists only `length,name,prototype`. The
+  instance case is fixed (`00406f3d`); the static `defineProperty` target is the
+  bare class identifier and apparently does not reach the class object.
+- **OPEN - primitive wrappers have no prototype-chain linkage.** A BigInt
+  instance's dynamic prototype does not reach `BigInt.prototype`, so a hook
+  installed there is invisible to a chain walk. `3ebbf3fb` worked around this
+  for `toJSON` by naming `BigInt` in the serializer's prototype-name lookup
+  (beside `Map` and `Set`) and by resolving dynamic member calls through
+  `builtin_prototype_by_name`. The general fix is real linkage.
+- **OPEN - `Object.*` statics are not readable as values.** `typeof
+  Object.defineProperties` is `undefined`, which parks
+  `object-meta/object-statics-tostring-hasown` at 1% right after it starts
+  compiling.
+- **OPEN - accessor properties on built-in prototypes.** `6f201f27` installs
+  method *values* but no getters: `RegExp.prototype.flags`/`source` and
+  `Symbol.prototype.description` are still missing, as are the
+  `toLocaleString` family, the String HTML methods and FinalizationRegistry
+  `register`/`unregister`.
+- **OPEN - `WeakMap` and `WeakSet` share one store**, so
+  `WeakMap.prototype.get.call(aWeakSet, k)` is not rejected as a brand error.
+- **OPEN - strict arity on declared functions.** `e(1, 2, 3, 4)` and `e(1)` on
+  a two-parameter declaration are compile errors where `node` pads with
+  `undefined`; a spread through `.call` reports "spread arguments are not
+  lowered yet". Both pre-date the receiver work and apply equally to functions
+  with no `this`.
