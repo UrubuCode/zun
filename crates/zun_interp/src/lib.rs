@@ -27,6 +27,7 @@ mod node_buffer;
 mod operands;
 mod output;
 mod property_ops;
+mod proto_methods;
 mod rare_ops;
 mod roots;
 mod runner;

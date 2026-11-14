@@ -28,10 +28,13 @@ pub(in crate::oxc) fn convert_argument(
             let property = source
                 .get(member.property.span.start as usize..member.property.span.end as usize)
                 .unwrap_or("");
-            let callable = property
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_lowercase());
+            // `prototype` is the one lowercase static that is a value, never a
+            // function to wrap (`Object.keys(Number.prototype)`).
+            let callable = property != "prototype"
+                && property
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_lowercase());
             if matches!(object_name, "Number" | "Math") && callable && !member.optional {
                 let property_name = Name {
                     span: span(member.property.span),

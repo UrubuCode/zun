@@ -625,6 +625,18 @@ impl DynamicObject {
         }
         self.string_functions.insert(name, function)
     }
+    /// Install a built-in method value: a function-slot property that is
+    /// writable and configurable but not enumerable (ECMAScript 18: built-in
+    /// function properties).
+    pub fn set_method(
+        &mut self,
+        name: impl Into<String>,
+        function: FunctionHandle,
+    ) -> Option<FunctionHandle> {
+        let name = name.into();
+        self.non_enumerable.insert(name.clone());
+        self.set_function(name, function)
+    }
     pub fn set_symbol_function(
         &mut self,
         symbol: SymbolId,

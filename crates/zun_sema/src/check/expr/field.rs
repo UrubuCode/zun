@@ -326,6 +326,28 @@ impl Checker<'_> {
                 });
             }
         }
+        // `Number.prototype` / `Boolean.prototype`: the identifier names the
+        // coercion function value, whose own `prototype` is an empty object, so
+        // read the built-in constructor's prototype through the realm global
+        // (`globalThis.Number.prototype`), the same object `Number.prototype`
+        // names when the constructor is reached as a descriptor.
+        if matches!(self.text(class_name), "Number" | "Boolean")
+            && fname == "prototype"
+            && cx.lookup(self.text(class_name)).is_none()
+            && !self.by_name.contains_key(self.text(class_name))
+        {
+            let global_ctor = ast::Expr::Field {
+                object: Box::new(ast::Expr::Ident(ast::synthetic_ident("globalThis"))),
+                field: *class_name,
+                span,
+            };
+            let read = ast::Expr::Field {
+                object: Box::new(global_ctor),
+                field: *field,
+                span,
+            };
+            return Some(self.check_expr(cx, &read));
+        }
         if self.text(class_name) == "Math" && !self.classes_by_name.contains_key("Math") {
             let constant = match fname {
                 "PI" => Some(std::f64::consts::PI),

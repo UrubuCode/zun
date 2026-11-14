@@ -236,6 +236,11 @@ impl<'a> Interp<'a> {
                         heap.dynamic_has(obj, &key)
                             || heap.dynamic_get_function(obj, &key).is_some()
                     })
+                } else if key == "length"
+                    && zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some())
+                {
+                    // An array's `length` is its own data property.
+                    true
                 } else {
                     self.object_own_entries(obj)?
                         .iter()

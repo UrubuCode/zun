@@ -393,6 +393,23 @@ impl Heap {
         result
     }
 
+    /// Install a built-in method value (non-enumerable function slot).
+    pub fn dynamic_set_method(
+        &mut self,
+        object: Obj,
+        name: impl Into<String>,
+        function: zun_core::FunctionHandle,
+    ) -> Option<zun_core::FunctionHandle> {
+        let result = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))
+            .and_then(|properties| properties.set_method(name, function));
+        if let Some(environment) = function.environment() {
+            self.write_barrier(object, environment as u64);
+        }
+        result
+    }
+
     pub fn dynamic_get_module_function(
         &self,
         object: Obj,

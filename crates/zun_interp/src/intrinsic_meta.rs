@@ -131,3 +131,132 @@ pub(crate) fn define_error_prototype_fields(
     heap.dynamic_define_data(proto, "name", name, true, false, true);
     heap.dynamic_define_data(proto, "message", message, true, false, true);
 }
+
+/// First kind of the generic built-in prototype method values. A kind past this
+/// base indexes [`prototype_method_at`]; the call itself is routed by
+/// `proto_methods.rs` through the same dynamic dispatch a member call on an
+/// `any` receiver uses.
+pub(crate) const BUILTIN_PROTO_BASE: u32 = 1000;
+
+/// The prototype methods each built-in class exposes as function values, with
+/// the `length` ECMAScript gives each. This mirrors the specification: the names
+/// and counts are data, not logic, and live only here. They cannot be derived
+/// from the `zun_natives` registry because a native's parameter list is the Zun
+/// typed signature (receiver, defaulted trailing arguments), not the specified
+/// `length`. `TypedArray` is the shared `%TypedArray%.prototype`.
+const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
+    (
+        "Array",
+        &[
+            ("at", 1), ("concat", 1), ("copyWithin", 2), ("fill", 1), ("find", 1),
+            ("findIndex", 1), ("findLast", 1), ("findLastIndex", 1), ("lastIndexOf", 1),
+            ("pop", 0), ("push", 1), ("reverse", 0), ("shift", 0), ("unshift", 1),
+            ("slice", 2), ("sort", 1), ("splice", 2), ("includes", 1), ("indexOf", 1),
+            ("join", 1), ("keys", 0), ("entries", 0), ("values", 0), ("forEach", 1),
+            ("filter", 1), ("flat", 0), ("flatMap", 1), ("map", 1), ("every", 1),
+            ("some", 1), ("reduce", 1), ("reduceRight", 1), ("toReversed", 0),
+            ("toSorted", 1), ("toSpliced", 2), ("with", 2), ("toString", 0),
+        ],
+    ),
+    (
+        "String",
+        &[
+            ("at", 1), ("charAt", 1), ("charCodeAt", 1), ("codePointAt", 1), ("concat", 1),
+            ("endsWith", 1), ("includes", 1), ("indexOf", 1), ("isWellFormed", 0),
+            ("lastIndexOf", 1), ("localeCompare", 1), ("match", 1), ("matchAll", 1),
+            ("normalize", 0), ("padEnd", 1), ("padStart", 1), ("repeat", 1), ("replace", 2),
+            ("replaceAll", 2), ("search", 1), ("slice", 2), ("split", 2), ("substr", 2),
+            ("substring", 2), ("startsWith", 1), ("toString", 0), ("toWellFormed", 0),
+            ("trim", 0), ("trimStart", 0), ("trimEnd", 0), ("toLowerCase", 0),
+            ("toUpperCase", 0), ("valueOf", 0),
+        ],
+    ),
+    (
+        "Number",
+        &[("toExponential", 1), ("toFixed", 1), ("toPrecision", 1), ("toString", 1), ("valueOf", 0)],
+    ),
+    ("BigInt", &[("toString", 0), ("valueOf", 0)]),
+    ("Symbol", &[("toString", 0), ("valueOf", 0)]),
+    ("WeakRef", &[("deref", 0)]),
+    ("WeakMap", &[("delete", 1), ("get", 1), ("set", 2), ("has", 1)]),
+    ("WeakSet", &[("delete", 1), ("has", 1), ("add", 1)]),
+    ("Promise", &[("then", 2), ("catch", 1), ("finally", 1)]),
+    ("RegExp", &[("exec", 1), ("test", 1)]),
+    ("Function", &[("apply", 2), ("bind", 1), ("call", 1)]),
+    (
+        "TypedArray",
+        &[
+            ("entries", 0), ("keys", 0), ("values", 0), ("at", 1), ("copyWithin", 2),
+            ("every", 1), ("fill", 1), ("filter", 1), ("find", 1), ("findIndex", 1),
+            ("findLast", 1), ("findLastIndex", 1), ("forEach", 1), ("includes", 1),
+            ("indexOf", 1), ("join", 1), ("lastIndexOf", 1), ("map", 1), ("reverse", 0),
+            ("reduce", 1), ("reduceRight", 1), ("set", 1), ("slice", 2), ("some", 1),
+            ("sort", 1), ("subarray", 2), ("toReversed", 0), ("toSorted", 1), ("with", 2),
+        ],
+    ),
+];
+
+/// The methods the prototype of the built-in class `class` carries as
+/// `(kind, name)` pairs, in specification order.
+pub(crate) fn prototype_methods_of(class: &str) -> Vec<(u32, &'static str)> {
+    let mut kind = BUILTIN_PROTO_BASE;
+    let mut found = Vec::new();
+    for (name, methods) in PROTOTYPE_METHODS {
+        for (method, _) in *methods {
+            if *name == class {
+                found.push((kind, *method));
+            }
+            kind += 1;
+        }
+    }
+    found
+}
+
+/// `(class, method name, specified length)` of a prototype method value kind.
+pub(crate) fn prototype_method_at(kind: u32) -> Option<(&'static str, &'static str, u32)> {
+    let mut index = kind.checked_sub(BUILTIN_PROTO_BASE)? as usize;
+    for (class, methods) in PROTOTYPE_METHODS {
+        if index < methods.len() {
+            let (name, length) = methods[index];
+            return Some((class, name, length));
+        }
+        index -= methods.len();
+    }
+    None
+}
+
+/// Install the prototype method values of `class` on `proto`: writable,
+/// non-enumerable, configurable, exactly like a built-in's own methods.
+pub(crate) fn install_prototype_methods(heap: &mut zun_gc::Heap, proto: zun_gc::Obj, class: &str) {
+    for (kind, name) in prototype_methods_of(class) {
+        heap.dynamic_set_method(proto, name, zun_core::FunctionHandle::new_builtin_method(kind));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prototype_method_kinds_round_trip() {
+        let methods = prototype_methods_of("WeakRef");
+        assert_eq!(methods.len(), 1);
+        let (kind, name) = methods[0];
+        assert_eq!(prototype_method_at(kind), Some(("WeakRef", name, 0)));
+        assert_eq!(name, "deref");
+    }
+
+    #[test]
+    fn every_kind_is_unique_and_resolves_to_its_class() {
+        let mut seen = std::collections::HashSet::new();
+        for (class, methods) in PROTOTYPE_METHODS {
+            for (kind, name) in prototype_methods_of(class) {
+                assert!(seen.insert(kind), "duplicate kind for {class}.{name}");
+                let (found_class, found_name, _) = prototype_method_at(kind).expect("kind resolves");
+                assert_eq!((found_class, found_name), (*class, name));
+            }
+            assert_eq!(prototype_methods_of(class).len(), methods.len());
+        }
+        assert_eq!(prototype_method_at(BUILTIN_PROTO_BASE + seen.len() as u32), None);
+    }
+}

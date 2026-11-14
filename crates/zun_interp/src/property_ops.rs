@@ -233,6 +233,7 @@ impl Interp<'_> {
             heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, "$TypedArray.prototype", any, false);
+            crate::intrinsic_meta::install_prototype_methods(heap, proto, "TypedArray");
             for (name, kind) in [
                 ("buffer", BUILTIN_TA_BUFFER),
                 ("byteLength", BUILTIN_TA_BYTE_LENGTH),
@@ -322,6 +323,7 @@ impl Interp<'_> {
             }
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, REGEXP_PROTOTYPE_KEY, any, false);
+            crate::intrinsic_meta::install_prototype_methods(heap, proto, "RegExp");
             proto
         })
     }
@@ -347,6 +349,7 @@ impl Interp<'_> {
             );
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, "$String.prototype", any, false);
+            crate::intrinsic_meta::install_prototype_methods(heap, proto, "String");
             proto
         })
     }
@@ -367,6 +370,7 @@ impl Interp<'_> {
             heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, "$Function.prototype", any, false);
+            crate::intrinsic_meta::install_prototype_methods(heap, proto, "Function");
             proto
         })
     }
@@ -479,6 +483,14 @@ impl Interp<'_> {
             .type_defs
             .get((rid as usize).wrapping_sub(1))
             .is_some_and(|def| self.module.strings.get(def.name) == "String");
+        // `Number` is a prelude class whose prototype methods take a hidden receiver;
+        // its prototype exposes the specified built-in method values instead.
+        let is_number_class = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .is_some_and(|def| self.module.strings.get(def.name) == "Number");
         // The `Error` family owns data `name` and `message` on its prototype
         // (ECMAScript 20.5.3); they replace the managed `name` accessor.
         let error_class = self
@@ -522,6 +534,9 @@ impl Interp<'_> {
             );
             for (name, handle) in plain_methods {
                 heap.dynamic_set_function(proto, name, handle);
+            }
+            if is_number_class {
+                crate::intrinsic_meta::install_prototype_methods(heap, proto, "Number");
             }
             if is_string_class {
                 heap.dynamic_set_symbol_function(
@@ -570,6 +585,19 @@ impl Interp<'_> {
             {
                 crate::intrinsic_meta::define_error_prototype_fields(heap, proto, &class);
             }
+            // `Builtin.prototype.constructor` is the constructor itself (writable,
+            // non-enumerable, configurable).
+            heap.dynamic_define_data(
+                proto,
+                "constructor",
+                zun_core::Any::class_descriptor(token),
+                true,
+                false,
+                true,
+            );
+            if let Some(class) = crate::intrinsic_meta::builtin_class_name_in(heap, token) {
+                crate::intrinsic_meta::install_prototype_methods(heap, proto, &class);
+            }
             if is_class(heap, "String") {
                 heap.dynamic_set_symbol_function(
                     proto,
@@ -594,7 +622,7 @@ impl Interp<'_> {
                 let class = if kind == BUILTIN_MAP_SIZE { "Map" } else { "Set" };
                 for (index, entry) in COLLECTION_METHODS.iter().enumerate() {
                     if entry.0 == class {
-                        heap.dynamic_set_function(
+                        heap.dynamic_set_method(
                             proto,
                             entry.1.to_owned(),
                             zun_core::FunctionHandle::new_builtin_method(
@@ -979,6 +1007,9 @@ impl Interp<'_> {
                     other => other,
                 })
             }
+            k if k >= crate::intrinsic_meta::BUILTIN_PROTO_BASE => {
+                self.call_prototype_method(k, this, _args)
+            }
             k if (BUILTIN_COLLECTION_BASE..BUILTIN_COLLECTION_BASE + COLLECTION_METHODS.len() as u32)
                 .contains(&k) =>
             {
@@ -1034,6 +1065,13 @@ impl Interp<'_> {
 
     /// `name` / `length` of a built-in method value (kind >= 16).
     pub(crate) fn builtin_method_meta(kind: u32, name: &str) -> Option<Value> {
+        if let Some((_, method, length)) = crate::intrinsic_meta::prototype_method_at(kind) {
+            return Some(if name == "name" {
+                Value::Str(method.into())
+            } else {
+                Value::Float(f64::from(length), zun_il::NumKind::F64)
+            });
+        }
         let label = match kind {
             BUILTIN_MAP_SIZE | BUILTIN_SET_SIZE => "get size",
             BUILTIN_ARRAY_ITER_NEXT | BUILTIN_STRING_ITER_NEXT | BUILTIN_SETMAP_ITER_NEXT | BUILTIN_GEN_NEXT => "next",

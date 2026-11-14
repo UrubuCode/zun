@@ -27,7 +27,10 @@ impl Checker<'_> {
             || mname == "isPrototypeOf"
             || mname == "propertyIsEnumerable")
             && args.len() == 1
-            && matches!(receiver.ty, Ty::DynamicObject | Ty::Any | Ty::Instance(_))
+            && matches!(
+                receiver.ty,
+                Ty::DynamicObject | Ty::Any | Ty::Instance(_) | Ty::Array
+            )
         {
             let argument = self.check_expr(cx, &args[0]);
             let (name, ty) = if mname == "hasOwnProperty" {

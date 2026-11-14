@@ -18,6 +18,12 @@ impl Heap {
         self.weak_ref_get(id)
     }
 
+    /// Whether `object` is a managed WeakRef.
+    pub fn is_weak_ref(&self, object: Obj) -> bool {
+        self.weak_ref_objects
+            .contains_key(&(object.addr() as usize))
+    }
+
     /// Whether `object` is a WeakMap / WeakSet (they share the ephemeron floor).
     pub fn is_weak_collection(&self, object: Obj) -> bool {
         self.weak_map_objects
