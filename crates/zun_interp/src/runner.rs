@@ -985,7 +985,7 @@ impl Interp<'_> {
     pub(super) fn dispatch(
         &mut self,
         method_rid: u32,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         parent: Option<&super::RootLink>,
     ) -> Result<Value, RunError> {
         // A native that re-enters a managed callee passes no link; the real
@@ -1001,8 +1001,19 @@ impl Interp<'_> {
             if let Some(frame) = parent {
                 unsafe { frame.append_roots(&mut native_roots) };
             }
-            let _native_roots = zun_gc::RootArray::from_objects(native_roots);
-            if let Some(result) = hook.try_call(method_rid, &args) {
+            let native_roots_array = zun_gc::RootArray::from_objects(native_roots);
+            let outcome = hook.try_call(method_rid, &args);
+            // The JIT body may have re-entered the interpreter (a bridged call runs
+            // on a nested `Interp` that knows nothing of this chain) and a
+            // collection there evacuates. The registry rewrote the addresses it
+            // owns; the frames themselves hold copies, so write the relocated
+            // addresses back before this activation runs again.
+            let mut cursor = 0;
+            super::roots::restore_frame_roots(&mut args, &mut [], &native_roots_array, &mut cursor);
+            if let Some(frame) = parent {
+                unsafe { frame.restore_roots(&native_roots_array, &mut cursor) };
+            }
+            if let Some(result) = outcome {
                 // A hooked (JIT) method may have unwound a throw out of a bridged
                 // call; route it as a thrown value rather than the result.
                 if let Some(exception) = hook.take_pending_exception() {

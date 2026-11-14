@@ -4313,3 +4313,61 @@ fn a_core_runtime_object_does_not_answer_another_classs_members() {
         "a promise answered {result:?} for members it does not have"
     );
 }
+
+/// Stands in for the JIT: the named method is "compiled", so the interpreter
+/// parks its caller and the call re-enters the interpreter on a nested `Interp`
+/// over the same heap, exactly as `zun_vm`'s `bridge_call` does. That nested
+/// interpreter knows nothing of the parked caller chain.
+struct BridgingHook<'m> {
+    module: &'m Module,
+    target_rid: u32,
+}
+
+impl CallHook for BridgingHook<'_> {
+    fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value> {
+        if method_rid != self.target_rid {
+            return None;
+        }
+        let mut output = CaptureOutput::default();
+        run_method_on_current_heap_bare(
+            self.module,
+            None,
+            method_rid,
+            args.to_vec(),
+            &mut output,
+        )
+        .ok()
+    }
+}
+
+fn method_rid_named(module: &Module, name: &str) -> u32 {
+    let index = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == name)
+        .unwrap_or_else(|| panic!("method `{name}` exists"));
+    index as u32 + 1
+}
+
+#[test]
+fn caller_frame_survives_a_collection_inside_a_bridged_callee() {
+    // `live` is held only by `main`'s locals while `allocate` runs on a nested
+    // interpreter that collects (and evacuates) many times. The registered
+    // `RootArray` keeps `live` alive but is a copy: unless the relocated address
+    // is written back into the parked frame, `live.value` reads a recycled slot.
+    let module = zun_compiler::compile(
+        "class Box { value: int; } function allocate(): int { let i: u64 = 0; while (i < 40000) { let garbage = new Box(1); i = i + 1; } return 0; } function main(): int { let live = new Box(9); allocate(); return live.value; }",
+    )
+    .expect("compile bridged-callee workload");
+    let hook = BridgingHook {
+        module: &module,
+        target_rid: method_rid_named(&module, "allocate"),
+    };
+    let mut output = CaptureOutput::default();
+    let result = run_with(&module, &mut output, Some(&hook)).expect("run bridged workload");
+    assert!(
+        matches!(result, Value::Int(9, _)),
+        "the parked caller must see its relocated object, got {result:?}"
+    );
+}

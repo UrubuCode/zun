@@ -659,6 +659,18 @@ impl<'a> RootLink<'a> {
         }
     }
 
+    /// Write relocated addresses back into every linked activation; the
+    /// counterpart of [`RootLink::append_roots`], visiting frames in the same
+    /// order. See [`super::roots::restore_frame_roots`].
+    pub(super) unsafe fn restore_roots(&self, roots: &zun_gc::RootArray, cursor: &mut usize) {
+        unsafe {
+            super::roots::restore_frame_roots(&mut *self.stack, &mut *self.locals, roots, cursor);
+        }
+        if let Some(parent) = self.parent {
+            unsafe { parent.restore_roots(roots, cursor) };
+        }
+    }
+
     /// Rewrite every linked activation after a moving collection.
     pub(super) unsafe fn rewrite_managed_references(
         &self,
