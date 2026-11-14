@@ -247,20 +247,7 @@ pub(crate) fn js_min(a: f64, b: f64) -> f64 {
 /// shortcut answers 1 where JS answers 0. Taking the fractional part instead
 /// keeps the comparison exact.
 pub(crate) fn js_round(x: f64) -> f64 {
-    let truncated = x.floor();
-    // NaN and the infinities fall out of this untouched: the subtraction
-    // gives NaN, the comparison is false, and `truncated` is already right.
-    let rounded = if x - truncated >= 0.5 {
-        truncated + 1.0
-    } else {
-        truncated
-    };
-    if rounded == 0.0 {
-        // -0.4 rounds to -0, not +0; +0 and -0 pass through unchanged.
-        0.0f64.copysign(x)
-    } else {
-        rounded
-    }
+    zun_natives::js_round(x)
 }
 
 /// `Math.sign`: NaN and both zeros pass through unchanged, everything else

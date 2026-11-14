@@ -40,6 +40,19 @@ const INTRINSIC_CTOR_LENGTHS: &[(&str, u32)] = &[
     ("TypeError", 1),
     ("URIError", 1),
     ("AggregateError", 2),
+    ("Proxy", 2),
+    ("parseInt", 2),
+    ("parseFloat", 1),
+    ("isNaN", 1),
+    ("isFinite", 1),
+    ("encodeURIComponent", 1),
+    ("decodeURIComponent", 1),
+    ("encodeURI", 1),
+    ("decodeURI", 1),
+    ("btoa", 1),
+    ("atob", 1),
+    ("escape", 1),
+    ("unescape", 1),
 ];
 
 /// The specified `length` of the built-in constructor called `name`.
@@ -79,6 +92,21 @@ pub(crate) fn builtin_class_name_in(heap: &mut zun_gc::Heap, token: u32) -> Opti
     })
 }
 
+/// Every realm global key bound to the class descriptor `token`. Several
+/// function-like globals share the `Object` descriptor, so a lookup that needs
+/// a specific one (statics) must consider all of them.
+fn builtin_class_names_in(heap: &mut zun_gc::Heap, token: u32) -> Vec<String> {
+    let global = heap.global_object();
+    let Some(keys) = heap.dynamic_keys(global) else {
+        return Vec::new();
+    };
+    keys.into_iter()
+        .filter(|key| {
+            heap.dynamic_get(global, key).and_then(|any| any.as_class_descriptor()) == Some(token)
+        })
+        .collect()
+}
+
 impl Interp<'_> {
     /// The own value of a built-in constructor's `length` / `name`.
     pub(crate) fn builtin_ctor_own_value(&self, token: u32, key: &str) -> Option<Value> {
@@ -94,6 +122,30 @@ impl Interp<'_> {
         }
     }
 
+    /// The kind of the static method function value `key` on the built-in
+    /// constructor `token` (`Object.keys`), if it has one.
+    pub(crate) fn builtin_static_kind(&self, token: u32, key: &str) -> Option<u32> {
+        if token & zun_natives::USER_CLASS_FLAG != 0 {
+            return None;
+        }
+        zun_gc::with_current_heap_mut(|heap| builtin_class_names_in(heap, token))
+            .iter()
+            .find_map(|name| static_method_kind(name, key))
+    }
+
+    /// The names of the static methods the built-in constructor `token` owns.
+    pub(crate) fn builtin_static_names(&self, token: u32) -> Vec<&'static str> {
+        if token & zun_natives::USER_CLASS_FLAG != 0 {
+            return Vec::new();
+        }
+        zun_gc::with_current_heap_mut(|heap| builtin_class_names_in(heap, token))
+            .iter()
+            .map(|name| static_methods_of(name))
+            .find(|methods| !methods.is_empty())
+            .map(|methods| methods.into_iter().map(|(_, method)| method).collect())
+            .unwrap_or_default()
+    }
+
     /// `Object.getOwnPropertyDescriptor(BuiltinCtor, key)` for `prototype`,
     /// `length` and `name`.
     pub(crate) fn builtin_ctor_own_descriptor(&self, token: u32, key: &str) -> Option<zun_gc::Obj> {
@@ -105,11 +157,15 @@ impl Interp<'_> {
             }
             // `length` and `name` are read-only but configurable.
             "length" | "name" => (self.builtin_ctor_own_value(token, key)?, false, true),
-            _ => return None,
+            // A static method is writable, non-enumerable and configurable.
+            _ => {
+                let kind = self.builtin_static_kind(token, key)?;
+                (Value::Function(zun_core::FunctionHandle::new_builtin_method(kind)), true, true)
+            }
         };
         Some(zun_gc::with_current_heap_mut(|heap| {
             let out = heap.alloc_dynamic();
-            let any = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+            let any = value.box_any_cell(heap).unwrap_or_else(zun_core::Any::void);
             heap.dynamic_set(out, "value".to_owned(), any);
             heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(writable));
             heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(false));
@@ -233,6 +289,131 @@ pub(crate) fn install_prototype_methods(heap: &mut zun_gc::Heap, proto: zun_gc::
     }
 }
 
+/// First kind of the built-in static method values (`Math.max`, `Object.keys`,
+/// `Reflect.get`, ...). Kinds in `BUILTIN_PROTO_BASE..BUILTIN_STATIC_BASE` are
+/// prototype methods, so the prototype table must stay below 1000 entries.
+pub(crate) const BUILTIN_STATIC_BASE: u32 = 2000;
+
+/// The own data constants of the `Math` namespace object (non-writable,
+/// non-enumerable, non-configurable).
+pub(crate) const MATH_CONSTANTS: &[(&str, f64)] = &[
+    ("E", std::f64::consts::E),
+    ("LN10", std::f64::consts::LN_10),
+    ("LN2", std::f64::consts::LN_2),
+    ("LOG10E", std::f64::consts::LOG10_E),
+    ("LOG2E", std::f64::consts::LOG2_E),
+    ("PI", std::f64::consts::PI),
+    ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
+    ("SQRT2", std::f64::consts::SQRT_2),
+];
+
+/// The static methods each built-in namespace or constructor exposes as
+/// function values: `(name, specified length, native)`. As with
+/// [`PROTOTYPE_METHODS`], names and counts mirror the specification. `native`
+/// is the `zun_natives` collection intrinsic the method runs through the
+/// ordinary managed-call path (one implementation); an empty string marks a
+/// member `static_methods.rs` adapts by name (`Math` and the few members whose
+/// result shape differs from their native).
+const STATIC_METHODS: &[(&str, &[(&str, u32, &str)])] = &[
+    (
+        "Math",
+        &[
+            ("abs", 1, ""), ("acos", 1, ""), ("acosh", 1, ""), ("asin", 1, ""), ("asinh", 1, ""),
+            ("atan", 1, ""), ("atanh", 1, ""), ("atan2", 2, ""), ("ceil", 1, ""), ("cbrt", 1, ""),
+            ("expm1", 1, ""), ("clz32", 1, ""), ("cos", 1, ""), ("cosh", 1, ""), ("exp", 1, ""),
+            ("floor", 1, ""), ("fround", 1, ""), ("f16round", 1, ""), ("hypot", 2, ""),
+            ("imul", 2, ""), ("log", 1, ""), ("log1p", 1, ""), ("log2", 1, ""), ("log10", 1, ""),
+            ("max", 2, ""), ("min", 2, ""), ("pow", 2, ""), ("random", 0, ""), ("round", 1, ""),
+            ("sign", 1, ""), ("sin", 1, ""), ("sinh", 1, ""), ("sqrt", 1, ""), ("tan", 1, ""),
+            ("tanh", 1, ""), ("trunc", 1, ""),
+        ],
+    ),
+    (
+        "Object",
+        &[
+            ("assign", 2, ""), ("create", 2, ""), ("defineProperties", 2, "objectDefineProperties"),
+            ("defineProperty", 3, "objectDefineProperty"), ("entries", 1, "objectEntries"),
+            ("freeze", 1, "objectFreeze"), ("fromEntries", 1, "objectFromEntries"),
+            ("getOwnPropertyDescriptor", 2, "objectGetOwnPropertyDescriptor"),
+            ("getOwnPropertyDescriptors", 1, "objectGetOwnPropertyDescriptors"),
+            ("getOwnPropertyNames", 1, "objectGetOwnPropertyNames"),
+            ("getOwnPropertySymbols", 1, "objectGetOwnPropertySymbols"),
+            ("getPrototypeOf", 1, "objectGetPrototypeOf"), ("groupBy", 2, "objectGroupBy"),
+            ("hasOwn", 2, "objectHasOwn"), ("is", 2, "objectIs"),
+            ("isExtensible", 1, "objectIsExtensible"), ("isFrozen", 1, "objectIsFrozen"),
+            ("isSealed", 1, "objectIsSealed"), ("keys", 1, "objectKeys"),
+            ("preventExtensions", 1, "objectPreventExtensions"), ("seal", 1, "objectSeal"),
+            ("setPrototypeOf", 2, "objectSetPrototypeOf"), ("values", 1, "objectValues"),
+        ],
+    ),
+    (
+        "Reflect",
+        &[
+            ("defineProperty", 3, "reflectDefineProperty"), ("deleteProperty", 2, "reflectDelete"),
+            ("apply", 3, ""), ("construct", 2, ""), ("get", 2, ""),
+            ("getOwnPropertyDescriptor", 2, "objectGetOwnPropertyDescriptor"),
+            ("getPrototypeOf", 1, "objectGetPrototypeOf"), ("has", 2, "reflectHas"),
+            ("isExtensible", 1, "objectIsExtensible"), ("ownKeys", 1, "reflectOwnKeys"),
+            ("preventExtensions", 1, ""), ("set", 3, "reflectSet"),
+            ("setPrototypeOf", 2, "reflectSetPrototypeOf"),
+        ],
+    ),
+];
+
+/// The static methods of the built-in `class` as `(kind, name)` pairs.
+pub(crate) fn static_methods_of(class: &str) -> Vec<(u32, &'static str)> {
+    let mut kind = BUILTIN_STATIC_BASE;
+    let mut found = Vec::new();
+    for (name, methods) in STATIC_METHODS {
+        for (method, _, _) in *methods {
+            if *name == class {
+                found.push((kind, *method));
+            }
+            kind += 1;
+        }
+    }
+    found
+}
+
+/// The kind of the static method `class.name`, if the class has one.
+pub(crate) fn static_method_kind(class: &str, name: &str) -> Option<u32> {
+    static_methods_of(class).into_iter().find(|(_, method)| *method == name).map(|(kind, _)| kind)
+}
+
+/// `(class, method name, specified length, native)` of a static method kind.
+pub(crate) fn static_method_at(
+    kind: u32,
+) -> Option<(&'static str, &'static str, u32, &'static str)> {
+    let mut index = kind.checked_sub(BUILTIN_STATIC_BASE)? as usize;
+    for (class, methods) in STATIC_METHODS {
+        if index < methods.len() {
+            let (name, length, native) = methods[index];
+            return Some((class, name, length, native));
+        }
+        index -= methods.len();
+    }
+    None
+}
+
+/// Install the namespace members of `class` (`Math`, `Reflect`) on `object`:
+/// writable, non-enumerable, configurable methods and frozen constants, exactly
+/// like a built-in's own properties.
+pub(crate) fn install_namespace_members(heap: &mut zun_gc::Heap, object: zun_gc::Obj, class: &str) {
+    if class == "Math" {
+        for (name, value) in MATH_CONSTANTS {
+            heap.dynamic_define_data(object, *name, zun_core::Any::float(*value), false, false, false);
+        }
+    }
+    for (kind, name) in static_methods_of(class) {
+        heap.dynamic_set_method(object, name, zun_core::FunctionHandle::new_builtin_method(kind));
+    }
+    // `Object.prototype.toString.call(Math)` is `[object Math]`.
+    let tag = zun_core::WellKnownSymbol::ToStringTag.id();
+    let text = zun_core::Any::string(heap.intern_string(class));
+    heap.dynamic_define_symbol(object, tag, text, false);
+    heap.dynamic_mark_symbol_readonly(object, tag);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +425,24 @@ mod tests {
         let (kind, name) = methods[0];
         assert_eq!(prototype_method_at(kind), Some(("WeakRef", name, 0)));
         assert_eq!(name, "deref");
+    }
+
+    #[test]
+    fn static_method_kinds_round_trip_and_stay_clear_of_prototype_kinds() {
+        let mut seen = std::collections::HashSet::new();
+        for (class, methods) in STATIC_METHODS {
+            for (kind, name) in static_methods_of(class) {
+                assert!(kind >= BUILTIN_STATIC_BASE, "{class}.{name} overlaps prototype kinds");
+                assert!(seen.insert(kind), "duplicate kind for {class}.{name}");
+                let (found_class, found_name, _, _) = static_method_at(kind).expect("kind resolves");
+                assert_eq!((found_class, found_name), (*class, name));
+                assert_eq!(static_method_kind(class, name), Some(kind));
+            }
+            assert_eq!(static_methods_of(class).len(), methods.len());
+        }
+        assert_eq!(static_method_at(BUILTIN_STATIC_BASE + seen.len() as u32), None);
+        let prototype_kinds: usize = PROTOTYPE_METHODS.iter().map(|(_, m)| m.len()).sum();
+        assert!(BUILTIN_PROTO_BASE as usize + prototype_kinds <= BUILTIN_STATIC_BASE as usize);
     }
 
     #[test]

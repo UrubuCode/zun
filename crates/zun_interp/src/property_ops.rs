@@ -1007,6 +1007,9 @@ impl Interp<'_> {
                     other => other,
                 })
             }
+            k if k >= crate::intrinsic_meta::BUILTIN_STATIC_BASE => {
+                self.call_static_method(k, this, _args)
+            }
             k if k >= crate::intrinsic_meta::BUILTIN_PROTO_BASE => {
                 self.call_prototype_method(k, this, _args)
             }
@@ -1065,6 +1068,13 @@ impl Interp<'_> {
 
     /// `name` / `length` of a built-in method value (kind >= 16).
     pub(crate) fn builtin_method_meta(kind: u32, name: &str) -> Option<Value> {
+        if let Some((_, method, length, _)) = crate::intrinsic_meta::static_method_at(kind) {
+            return Some(if name == "name" {
+                Value::Str(method.into())
+            } else {
+                Value::Float(f64::from(length), zun_il::NumKind::F64)
+            });
+        }
         if let Some((_, method, length)) = crate::intrinsic_meta::prototype_method_at(kind) {
             return Some(if name == "name" {
                 Value::Str(method.into())

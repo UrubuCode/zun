@@ -713,6 +713,28 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Object(array));
                     }
                 }
+                // A built-in constructor with static methods owns `length`,
+                // `name`, `prototype` and those methods.
+                if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
+                    if let Some(token) = any.as_class_descriptor() {
+                        let statics = self.builtin_static_names(token);
+                        if !statics.is_empty() {
+                            let mut names = vec!["length", "name", "prototype"];
+                            names.extend(statics);
+                            let array = zun_gc::with_current_heap_mut(|heap| {
+                                let array = heap.alloc_array(names.len());
+                                for (index, name) in names.iter().enumerate() {
+                                    let item = Value::Str((*name).into())
+                                        .box_any(heap)
+                                        .unwrap_or_else(zun_core::Any::null);
+                                    let _ = heap.array_set(array, index, item);
+                                }
+                                array
+                            });
+                            return Ok(Value::Object(array));
+                        }
+                    }
+                }
                 // A function value owns `length` and `name` plus whatever its
                 // expando bag holds.
                 if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {

@@ -505,6 +505,15 @@ impl<'a> Interp<'a> {
                         Self::install_iterator_global(namespace);
                     }
                 }
+                // `Math` and `Reflect` carry their members as function values.
+                if matches!(name.as_str(), "Math" | "Reflect") {
+                    if let Some(address) = value.as_object() {
+                        let namespace = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                        zun_gc::with_current_heap_mut(|heap| {
+                            crate::intrinsic_meta::install_namespace_members(heap, namespace, &name);
+                        });
+                    }
+                }
                 Ok(Value::Void)
             }
             "globalGet" => {

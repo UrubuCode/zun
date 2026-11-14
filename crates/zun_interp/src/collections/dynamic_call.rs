@@ -349,6 +349,21 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // A static method called through a built-in constructor value
+                // (`const O: any = Object; O.keys(x)`).
+                if let Value::Any(desc) = &receiver_concrete {
+                    if let Some(kind) = desc
+                        .as_class_descriptor()
+                        .and_then(|token| self.builtin_static_kind(token, &member))
+                    {
+                        let call_args = args[2..].to_vec();
+                        let handle = zun_core::FunctionHandle::new_builtin_method(kind);
+                        let result = self.invoke_builtin_with_this(handle, Value::Void, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // `Function.prototype.bind` on a function value reached through
                 // `any`: `[thisArg, ...partial]` becomes the bound arguments.
                 if let Value::Function(handle) = &receiver_concrete {

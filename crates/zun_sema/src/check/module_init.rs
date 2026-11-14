@@ -201,12 +201,12 @@ impl Checker<'_> {
         if !registry.is_empty() {
             let (set_id, _) = zun_natives::resolve("realm", "globalDefineBuiltin")
                 .expect("globalSet intrinsic must exist");
-            // Namespace globals are plain objects; function-like globals reuse the
-            // `Object` descriptor so `typeof globalThis[name]` reports the right kind.
-            let object_token = registry
-                .iter()
-                .find(|(n, _)| n.as_str() == "Object")
-                .map(|(_, b)| b.token);
+            // Namespace globals are plain objects; each function-like global gets a
+            // descriptor token of its own (past the registry's) so `typeof
+            // globalThis[name]` reports a function while a run-time lookup keyed on
+            // the token (statics, `name`) can tell `Proxy` from `Object`.
+            let first_free_token = registry.iter().map(|(_, b)| b.token + 1).max().unwrap_or(0);
+            let mut next_token = first_free_token;
             let extra_globals: Vec<(&str, bool)> = vec![
                 ("Math", true),
                 ("JSON", true),
@@ -227,10 +227,17 @@ impl Checker<'_> {
                 ("unescape", false),
             ];
             for (name, is_object) in extra_globals {
-                if registry.iter().any(|(n, _)| n.as_str() == name) && name != "Reflect" {
+                if registry.iter().any(|(n, _)| n.as_str() == name) {
                     continue;
                 }
-                let value = if is_object {
+                // A namespace the prelude declares as a class (`JSON`) is that
+                // class value, so `globalThis.JSON === JSON` and its statics read
+                // through the global exactly like the bare identifier.
+                let value = if let Some(&class_idx) =
+                    self.classes_by_name.get(name).filter(|_| is_object)
+                {
+                    self.realm_descriptor_expr(zun_natives::USER_CLASS_FLAG | (class_idx + 1), span)
+                } else if is_object {
                     hir::Expr {
                         kind: hir::ExprKind::BoxAny {
                             value: Box::new(hir::Expr {
@@ -244,10 +251,10 @@ impl Checker<'_> {
                         ty: Ty::Any,
                         span,
                     }
-                } else if let Some(token) = object_token {
-                    self.realm_descriptor_expr(token, span)
                 } else {
-                    continue;
+                    let token = next_token;
+                    next_token += 1;
+                    self.realm_descriptor_expr(token, span)
                 };
                 body.push(hir::Stmt::Expr(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
@@ -271,9 +278,6 @@ impl Checker<'_> {
                 }));
             }
             for (name, binding) in registry {
-                if name.as_str() == "Reflect" {
-                    continue;
-                }
                 let descriptor = self.realm_descriptor_expr(binding.token, span);
                 body.push(hir::Stmt::Expr(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {

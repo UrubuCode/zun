@@ -56,7 +56,7 @@ mod error;
 mod host;
 mod io;
 mod math;
-pub use math::{apply_math, js_max, js_min};
+pub use math::{apply_math, js_max, js_min, js_round};
 mod net;
 mod number;
 pub use number::{js_to_exponential, js_to_fixed, js_to_precision, js_to_radix_string};

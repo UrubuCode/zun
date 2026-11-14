@@ -514,6 +514,11 @@ impl<'a> Interp<'a> {
         if handle.generator_method().is_some() || self.settler_of(handle).is_some() {
             return self.invoke_function_value(handle, call_args);
         }
+        // A built-in method value used as a callback (`xs.map(Math.sqrt)`) runs
+        // with an `undefined` receiver.
+        if handle.builtin_method().is_some_and(|kind| kind >= 16) {
+            return self.invoke_builtin_with_this(handle, Value::Void, call_args);
+        }
         let (method_rid, mut final_args) = self.resolve_call_target(handle, call_args)?;
         let target = self
             .module

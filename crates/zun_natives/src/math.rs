@@ -68,6 +68,47 @@ pub fn js_max(a: f64, b: f64) -> f64 {
     }
 }
 
+/// `Math.random()`: a uniform value in `[0, 1)` from a per-thread xorshift64*
+/// generator seeded from the clock (not cryptographic, like the specification).
+fn next_random() -> f64 {
+    use std::cell::Cell;
+    thread_local! {
+        static STATE: Cell<u64> = const { Cell::new(0) };
+    }
+    STATE.with(|state| {
+        let mut x = state.get();
+        if x == 0 {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64);
+            x = nanos | 1;
+        }
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        state.set(x);
+        let bits = x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11;
+        bits as f64 / (1u64 << 53) as f64
+    })
+}
+
+/// `Math.f16round`: round to the nearest IEEE half-precision value (ties to
+/// even), widened back to a double.
+fn f16_round(x: f64) -> f64 {
+    if x.is_nan() || x.is_infinite() || x == 0.0 {
+        return x;
+    }
+    let magnitude = x.abs();
+    // Past the largest half (65504) plus half an ulp, the value rounds to infinity.
+    if magnitude >= 65520.0 {
+        return f64::INFINITY.copysign(x);
+    }
+    // Subnormal halves share the quantum 2^-24; a normal half keeps 10 fraction bits.
+    let exponent = (magnitude.log2().floor() as i32).max(-14);
+    let quantum = 2f64.powi(exponent - 10);
+    (magnitude / quantum).round_ties_even() * quantum * x.signum()
+}
+
 /// `Math.<name>.apply(null, values)`: variadic `min`/`max`/`hypot` fold over
 /// all values; fixed-arity functions use the leading values (missing = NaN).
 /// Returns `None` for an unknown function name.
@@ -104,6 +145,11 @@ pub fn apply_math(name: &str, values: &[f64]) -> Option<f64> {
             }
             return Some(sum.sqrt() * max);
         }
+        _ => {}
+    }
+    match name {
+        "random" => return Some(next_random()),
+        "f16round" => return Some(f16_round(values.first().copied().unwrap_or(f64::NAN))),
         _ => {}
     }
     let native_name = if name == "abs" {
@@ -177,8 +223,28 @@ fn ceil(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError
     unary_float(args, "ceil", f64::ceil)
 }
 
+/// `Math.round`: halves go toward +Infinity, and a zero result keeps the sign
+/// of the input. Deliberately not `floor(x + 0.5)`: for `0.49999999999999994`
+/// the addition rounds up to exactly `1.0`, where JS answers 0. Taking the
+/// fractional part keeps the comparison exact.
+pub fn js_round(x: f64) -> f64 {
+    let truncated = x.floor();
+    // NaN and the infinities fall out of this untouched.
+    let rounded = if x - truncated >= 0.5 {
+        truncated + 1.0
+    } else {
+        truncated
+    };
+    if rounded == 0.0 {
+        // -0.4 rounds to -0, not +0; +0 and -0 pass through unchanged.
+        0.0f64.copysign(x)
+    } else {
+        rounded
+    }
+}
+
 fn round(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
-    unary_float(args, "round", f64::round)
+    unary_float(args, "round", js_round)
 }
 
 fn trunc(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {

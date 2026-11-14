@@ -28,6 +28,7 @@ mod operands;
 mod output;
 mod property_ops;
 mod proto_methods;
+mod static_methods;
 mod rare_ops;
 mod roots;
 mod runner;
@@ -1372,6 +1373,40 @@ impl Interp<'_> {
                         let result = self.invoke_function_value(handle, args)?;
                         stack.push(result);
                         continue;
+                    }
+                    if handle.builtin_method().is_some_and(|kind| kind >= 16) {
+                        // A built-in method value called on its own (`const f = Math.max;
+                        // f(1, 2)`): no receiver, so `this` is `undefined`.
+                        let link = RootLink {
+                            stack: std::ptr::from_mut(stack.as_mut_slice()),
+                            locals: std::ptr::from_mut(locals.as_mut_slice()),
+                            parent,
+                        };
+                        let _native_link = self.publish_native_link(&link);
+                        match self.invoke_builtin_with_this(handle, Value::Void, args) {
+                            Ok(result) => {
+                                stack.push(result);
+                                continue;
+                            }
+                            Err(RunError::Native(message)) => {
+                                let exception = native_error::split_native_error(&message)
+                                    .and_then(|(class, text)| self.make_error_value(class, text));
+                                let Some(exception) = exception else {
+                                    return Err(RunError::Native(message));
+                                };
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        }
                     }
                     if let Some((promise, mode)) = self.settler_of(handle) {
                         // A `Promise.withResolvers` settler: settle natively and

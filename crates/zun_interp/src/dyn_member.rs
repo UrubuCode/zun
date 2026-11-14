@@ -332,6 +332,12 @@ impl Interp<'_> {
                         return Ok(ArmFlow::Continue);
                     }
                 }
+                if !user_class {
+                    if let Some(kind) = self.builtin_static_kind(token, &name) {
+                        stack.push(Value::Function(zun_core::FunctionHandle::new_builtin_method(kind)));
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 stack.push(if name == "prototype" && user_class {
                     let proto = self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))
@@ -919,9 +925,37 @@ impl Interp<'_> {
         }
         // A builtin class descriptor (e.g. `Array.prototype`) has no
         // dynamic properties to read: the lookup yields `undefined`.
-        if matches!(&object_raw, Value::Any(a) if a.tag() == zun_core::AnyTag::ClassDescriptor) {
-            stack.push(Value::Void);
-            return Ok(ArmFlow::Continue);
+        if let Value::Any(descriptor) = &object_raw {
+            if let Some(token) = descriptor.as_class_descriptor() {
+                // A static field or method of a user class, read by a computed key.
+                if let (Some(rid), Value::Str(name)) = (self.user_class_rid(token), &key) {
+                    match self.class_static_read(rid, name) {
+                        Ok(Some(value)) => {
+                            stack.push(value);
+                            return Ok(ArmFlow::Continue);
+                        }
+                        Ok(None) => {}
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
+                                return Ok(ArmFlow::Continue);
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                let kind = match &key {
+                    Value::Str(name) => self.builtin_static_kind(token, name),
+                    _ => None,
+                };
+                stack.push(match kind {
+                    Some(kind) => {
+                        Value::Function(zun_core::FunctionHandle::new_builtin_method(kind))
+                    }
+                    None => Value::Void,
+                });
+                return Ok(ArmFlow::Continue);
+            }
         }
         let object = object_raw.as_object();
         // A numeric key on a dynamic object is the canonical string key, so

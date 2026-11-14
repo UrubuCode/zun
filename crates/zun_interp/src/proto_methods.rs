@@ -362,7 +362,7 @@ impl Interp<'_> {
         }
     }
 
-    fn proto_box(&mut self, value: Value) -> Value {
+    pub(crate) fn proto_box(&mut self, value: Value) -> Value {
         match value {
             Value::Any(_) => value,
             other => Value::Any(
@@ -398,7 +398,7 @@ fn bigint_to_radix(value: &zun_core::BigInt, radix: u64) -> String {
 
 /// The concrete value behind an `any` carrier, with a callable stored in a
 /// `__boxedFn` record turned back into a function value.
-fn proto_concrete(value: Value) -> Value {
+pub(crate) fn proto_concrete(value: Value) -> Value {
     zun_gc::with_current_heap(|heap| {
         let inner = match value {
             Value::Any(any) => Value::unbox_any(any, heap).unwrap_or(Value::Void),
