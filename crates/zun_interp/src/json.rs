@@ -359,10 +359,7 @@ impl Interp<'_> {
             }) {
                 self.proxy_dynamic_get(obj, "toJSON")?;
             }
-            let is_bigint = zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some());
-            if is_bigint {
-                // BigInt has no toJSON here; serialisation fails below.
-            } else if let Some(millis) = zun_gc::with_current_heap(|heap| heap.date_millis(obj)) {
+            if let Some(millis) = zun_gc::with_current_heap(|heap| heap.date_millis(obj)) {
                 let _ = millis;
                 let iso = zun_gc::with_current_heap(|heap| {
                     if heap.date_is_valid(obj) == Some(true) {
@@ -389,6 +386,13 @@ impl Interp<'_> {
                         Some("Map")
                     } else if heap.set_values(obj).is_some() {
                         Some("Set")
+                    } else if heap.bigint_value(obj).is_some() {
+                        // A BigInt is not serialisable by itself, but a
+                        // `toJSON` installed on `BigInt.prototype` applies to
+                        // it like any other prototype hook. Without this the
+                        // unserialisable-BigInt error below wins over the
+                        // hook the program installed.
+                        Some("BigInt")
                     } else {
                         None
                     }

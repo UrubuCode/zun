@@ -260,6 +260,51 @@ impl<'a> Interp<'a> {
                         _ => {}
                     }
                 }
+                // A BigInt or Symbol primitive reached through `any` resolves
+                // the member on its own built-in prototype (`BigInt.prototype`,
+                // `Symbol.prototype`) and calls it with the receiver as `this`.
+                // The prototype holds the real method values, so a method a
+                // program installs there is found exactly like a built-in one.
+                {
+                    let class = match &receiver_concrete {
+                        Value::Object(o)
+                            if zun_gc::with_current_heap(|heap| heap.bigint_value(*o).is_some()) =>
+                        {
+                            Some("BigInt")
+                        }
+                        Value::Any(any) if any.as_symbol().is_some() => Some("Symbol"),
+                        _ => None,
+                    };
+                    if let Some(class) = class {
+                        let method = self.builtin_prototype_by_name(class).and_then(|proto| {
+                            zun_gc::with_current_heap(|heap| heap.dynamic_get_function(proto, &member))
+                        });
+                        if let Some(handle) = method {
+                            let call_values = args[2..]
+                                .iter()
+                                .map(|arg| match arg {
+                                    Value::Any(any) => {
+                                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                            .ok_or(RunError::BadToken)
+                                    }
+                                    other => Ok(other.clone()),
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let call_args =
+                                self.with_this_value(handle, receiver_concrete.clone(), call_values);
+                            let result = self.invoke_function_value(handle, call_args)?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::void);
+                            return Ok(Value::Any(boxed));
+                        }
+                        return match self
+                            .new_error_object("TypeError", &format!("{member} is not a function"))
+                        {
+                            Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                            None => Err(RunError::BadToken),
+                        };
+                    }
+                }
                 if matches!(receiver_concrete, Value::Void | Value::Null) {
                     let kind = if matches!(receiver_concrete, Value::Null) {
                         "null"

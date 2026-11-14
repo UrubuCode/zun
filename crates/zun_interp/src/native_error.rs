@@ -41,11 +41,15 @@ impl<'a> Interp<'a> {
             .map(|i| self.field_kind_at(field_start + i))
             .collect::<Result<_, _>>()
             .ok()?;
-        // Field order of `Error`: message, stackFrames, cause, nameOverride.
+        // Field order of `Error`: message, stackFrames, cause, nameOverride and
+        // the trailing flag; every slot must be initialised (see
+        // `new_error_object`), or `name` reads an unset string slot.
         let values = [
             Value::Str(message.into()),
             Value::Str("".into()),
             Value::Void,
+            Value::Str("".into()),
+            Value::Bool(false),
         ];
         let object = zun_gc::with_current_heap_mut(|heap| {
             let object = heap.alloc(rid as u32, field_count);

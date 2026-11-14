@@ -1064,10 +1064,21 @@ impl<'a> Interp<'a> {
         &self,
         handle: zun_core::FunctionHandle,
         receiver: zun_gc::Obj,
+        args: Vec<Value>,
+    ) -> Vec<Value> {
+        self.with_this_value(handle, Value::Object(receiver), args)
+    }
+
+    /// Like [`Self::with_this_arg`] for a receiver that is not a heap object
+    /// (a Symbol primitive reached through `any`).
+    pub(crate) fn with_this_value(
+        &self,
+        handle: zun_core::FunctionHandle,
+        receiver: Value,
         mut args: Vec<Value>,
     ) -> Vec<Value> {
         if handle.builtin_method().is_some_and(|kind| kind >= 16) {
-            args.insert(0, Value::Object(receiver));
+            args.insert(0, receiver);
             return args;
         }
         if !handle.is_bound() {
@@ -1086,7 +1097,7 @@ impl<'a> Interp<'a> {
                 })
                 .unwrap_or(false);
             if takes_this {
-                args.insert(0, Value::Object(receiver));
+                args.insert(0, receiver);
             }
         }
         args
