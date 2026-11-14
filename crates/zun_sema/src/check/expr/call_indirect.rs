@@ -185,10 +185,11 @@ impl Checker<'_> {
             }
             Ty::Any
         } else {
+            let hidden = usize::from(self.receiver_funcs.contains(&func));
             let (param_tys, return_ty, optional_count, signature_name) = {
                 let sig = &self.signatures[func as usize];
                 (
-                    sig.params.clone(),
+                    sig.params[hidden..].to_vec(),
                     sig.return_ty,
                     sig.optional_count,
                     sig.name.clone(),
@@ -199,7 +200,9 @@ impl Checker<'_> {
                 params: param_tys.clone(),
                 return_ty,
                 optional_count,
-                rest_param: self.signatures[func as usize].rest_param,
+                rest_param: self.signatures[func as usize]
+                    .rest_param
+                    .map(|index| index - hidden),
                 is_generator: self.signatures[func as usize].is_generator,
                 is_static: false,
             };
@@ -233,6 +236,9 @@ impl Checker<'_> {
                         let element = std::mem::replace(&mut args[index], self.poison(span));
                         args[index] = self.box_function_argument(element);
                     }
+                }
+                if hidden == 1 {
+                    args.insert(0, default_args::missing_arg(Ty::Any, span));
                 }
                 return hir::Expr {
                     kind: hir::ExprKind::IndirectCallRest {
@@ -278,6 +284,9 @@ impl Checker<'_> {
                         );
                     }
                 }
+            }
+            if hidden == 1 {
+                args.insert(0, default_args::missing_arg(Ty::Any, span));
             }
             return_ty
         };

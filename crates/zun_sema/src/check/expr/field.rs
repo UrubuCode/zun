@@ -726,7 +726,12 @@ impl Checker<'_> {
                 ) {
                     String::new()
                 } else {
-                    self.signatures[func as usize].name.clone()
+                    // The `@this` suffix marks a declared receiver parameter and
+                    // is not part of the function's name.
+                    self.signatures[func as usize]
+                        .name
+                        .trim_end_matches("@this")
+                        .to_string()
                 };
                 return Ok(hir::Expr {
                     kind: hir::ExprKind::String(name),
@@ -746,6 +751,7 @@ impl Checker<'_> {
                     signature
                         .params
                         .len()
+                        .saturating_sub(usize::from(self.receiver_funcs.contains(&func)))
                         .saturating_sub(signature.optional_count)
                         .saturating_sub(rest)
                 };

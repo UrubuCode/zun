@@ -180,7 +180,10 @@ impl Checker<'_> {
     ) -> Option<hir::Expr> {
         if let Some(ast::Expr::Spread { expr, .. }) = args.last() {
             if let Some(&func) = self.by_name.get(name) {
-                let rest_param = self.signatures[func as usize].rest_param;
+                let hidden = usize::from(self.receiver_funcs.contains(&func));
+                let rest_param = self.signatures[func as usize]
+                    .rest_param
+                    .map(|index| index - hidden);
                 if rest_param == Some(args.len() - 1) {
                     let mut fixed_args = Vec::with_capacity(args.len() - 1);
                     for argument in &args[..args.len() - 1] {
@@ -192,7 +195,7 @@ impl Checker<'_> {
                         self.error(array.span, "spread call requires an Array value");
                         return Some(self.poison(span));
                     }
-                    let params = self.signatures[func as usize].params.clone();
+                    let params = self.signatures[func as usize].params[hidden..].to_vec();
                     for (argument, &expected) in fixed_args.iter_mut().zip(&params) {
                         coerce_numeric_literal(argument, expected);
                         if !expected.is_error()
@@ -207,6 +210,9 @@ impl Checker<'_> {
                                 ),
                             );
                         }
+                    }
+                    if hidden == 1 {
+                        fixed_args.insert(0, default_args::missing_arg(Ty::Any, span));
                     }
                     let return_ty = self.signatures[func as usize].return_ty;
                     return Some(hir::Expr {
@@ -236,7 +242,9 @@ impl Checker<'_> {
             // A named function whose only parameter is the rest array
             // takes the flattened argument array directly.
             if let Some(&func) = self.by_name.get(name) {
-                if cx.lookup(name).is_none() && self.signatures[func as usize].rest_param == Some(0)
+                let hidden = usize::from(self.receiver_funcs.contains(&func));
+                if cx.lookup(name).is_none()
+                    && self.signatures[func as usize].rest_param == Some(hidden)
                 {
                     let elements = args
                         .iter()
@@ -250,6 +258,17 @@ impl Checker<'_> {
                     let literal = ast::Expr::ArrayLiteral { elements, span };
                     let array = self.check_expr(cx, &literal);
                     let return_ty = self.signatures[func as usize].return_ty;
+                    if hidden == 1 {
+                        return Some(hir::Expr {
+                            kind: hir::ExprKind::CallRestArrayFixed {
+                                func,
+                                fixed_args: vec![default_args::missing_arg(Ty::Any, span)],
+                                args: Box::new(array),
+                            },
+                            ty: return_ty,
+                            span,
+                        });
+                    }
                     return Some(hir::Expr {
                         kind: hir::ExprKind::CallRestArray {
                             func,
@@ -265,10 +284,13 @@ impl Checker<'_> {
             // one array, then split it into the fixed prefix and a
             // fresh rest array.
             if let Some(&func) = self.by_name.get(name) {
-                let rest_index = self.signatures[func as usize].rest_param;
+                let hidden = usize::from(self.receiver_funcs.contains(&func));
+                let rest_index = self.signatures[func as usize]
+                    .rest_param
+                    .map(|index| index - hidden);
                 if let (true, Some(rest_index)) = (cx.lookup(name).is_none(), rest_index) {
                     if rest_index > 0
-                        && self.signatures[func as usize].params.len() == rest_index + 1
+                        && self.signatures[func as usize].params.len() == rest_index + hidden + 1
                     {
                         let elements = args
                             .iter()
@@ -283,8 +305,11 @@ impl Checker<'_> {
                         let flat = self.check_expr(cx, &literal);
                         if flat.ty == Ty::Array {
                             let temp = cx.declare(&self.fresh_temp_name(cx), Ty::Array);
-                            let params = self.signatures[func as usize].params.clone();
-                            let mut fixed_args = Vec::with_capacity(rest_index);
+                            let params = self.signatures[func as usize].params[hidden..].to_vec();
+                            let mut fixed_args = Vec::with_capacity(rest_index + hidden);
+                            if hidden == 1 {
+                                fixed_args.push(default_args::missing_arg(Ty::Any, span));
+                            }
                             for (index, &expected) in params.iter().take(rest_index).enumerate() {
                                 let _ = expected;
                                 let read = self.array_element_read(temp, Ty::Array, index, span);

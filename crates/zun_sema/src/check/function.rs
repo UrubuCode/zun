@@ -65,7 +65,10 @@ impl Checker<'_> {
         // follow it. For a free function, the params occupy every slot.
         let mut param_tys_iter = param_tys.iter();
         self.cur_static_class = self.static_this.get(&(index as u32)).copied();
-        if this_class.is_some() || self.cur_static_class.is_some() {
+        if this_class.is_some()
+            || self.cur_static_class.is_some()
+            || self.receiver_funcs.contains(&(index as u32))
+        {
             let this_ty = *param_tys_iter.next().expect("method has a this param");
             cx.declare("this", this_ty);
         }
@@ -284,6 +287,7 @@ impl Checker<'_> {
             }
             body
         };
+        let hidden_receiver = u16::from(this_class.is_some() || self.receiver_funcs.contains(&(index as u32)));
         let defaults = f
             .params
             .iter()
@@ -296,7 +300,7 @@ impl Checker<'_> {
                         .collect();
                     let mut checked = self.check_expr(&mut cx, value);
                     cx.tdz_names.clear();
-                    let expected = param_tys[index + usize::from(this_class.is_some())];
+                    let expected = param_tys[index + usize::from(hidden_receiver)];
                     coerce_numeric_literal(&mut checked, expected);
                     if !checked.ty.is_error() && !self.is_assignable(checked.ty, expected) {
                         self.error(
@@ -319,7 +323,7 @@ impl Checker<'_> {
                 .params
                 .iter()
                 .position(|parameter| parameter.is_rest)
-                .map(|index| index as u16 + u16::from(this_class.is_some())),
+                .map(|index| index as u16 + hidden_receiver),
             defaults,
             locals: cx.locals,
             return_ty,

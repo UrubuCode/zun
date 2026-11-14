@@ -1,6 +1,25 @@
 use crate::check::*;
 
 impl Checker<'_> {
+    /// Whether a function declaration's parameter list opens with `this`.
+    fn declaration_takes_this(&self, f: &ast::Function) -> bool {
+        let Some(text) = self
+            .source
+            .get(f.name.span.end as usize..f.body.span.start as usize)
+        else {
+            return false;
+        };
+        let Some(open) = text.find('(') else {
+            return false;
+        };
+        text[open + 1..]
+            .trim_start()
+            .strip_prefix("this")
+            .is_some_and(|after| {
+                !after.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$')
+            })
+    }
+
     pub(in crate::check) fn collect_signatures(&mut self, program: &ast::Program) {
         // Register every top-level name before resolving annotations. This
         // permits a function-typed parameter to refer to a function declared
@@ -18,16 +37,22 @@ impl Checker<'_> {
                 self.arguments_functions
                     .insert(self.signatures.len() as u32);
             }
-            let params: Vec<Ty> = f
-                .params
-                .iter()
-                .map(|p| match &p.ty {
-                    // An unannotated parameter is untyped (`any`), as in JS/TS
-                    // without `--noImplicitAny`; types are erased anyway.
-                    Some(t) => self.resolve_annotation(t),
-                    None => Ty::Any,
-                })
-                .collect();
+            // A leading `this: T` parameter is the explicit receiver. The
+            // parser drops it from `params`, so the signature carries it as a
+            // hidden first parameter (as a closure does) and the emitted name
+            // gets the `@this` marker the runtime dispatches on.
+            let takes_this = self.declaration_takes_this(f);
+            let mut params: Vec<Ty> = Vec::new();
+            if takes_this {
+                params.push(Ty::Any);
+                self.receiver_funcs.insert(self.signatures.len() as u32);
+            }
+            params.extend(f.params.iter().map(|p| match &p.ty {
+                // An unannotated parameter is untyped (`any`), as in JS/TS
+                // without `--noImplicitAny`; types are erased anyway.
+                Some(t) => self.resolve_annotation(t),
+                None => Ty::Any,
+            }));
             let return_ty = match &f.return_type {
                 Some(t) => self.resolve_annotation(t),
                 // An unannotated return type is `any` when the body returns a
@@ -49,7 +74,9 @@ impl Checker<'_> {
                     if p.is_rest {
                         continue;
                     }
-                    if p.default_value.is_some() || params.get(index) == Some(&Ty::Any) {
+                    if p.default_value.is_some()
+                        || params.get(index + usize::from(takes_this)) == Some(&Ty::Any)
+                    {
                         count += 1;
                     } else {
                         break;
@@ -58,13 +85,21 @@ impl Checker<'_> {
                 count
             };
             self.signatures.push(Signature {
-                name,
+                name: if takes_this {
+                    format!("{name}@this")
+                } else {
+                    name
+                },
                 params,
                 return_ty,
                 // Trailing defaulted parameters, and trailing dynamic (`any`) ones —
                 // JS lets any argument be omitted, which reads as `undefined`.
                 optional_count,
-                rest_param: f.params.iter().position(|parameter| parameter.is_rest),
+                rest_param: f
+                    .params
+                    .iter()
+                    .position(|parameter| parameter.is_rest)
+                    .map(|index| index + usize::from(takes_this)),
                 is_generator: f.is_generator,
                 is_static: false,
             });

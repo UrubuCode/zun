@@ -763,12 +763,13 @@ impl Checker<'_> {
                     span,
                 };
             }
+            let hidden = usize::from(self.receiver_funcs.contains(&func));
             let (param_tys, optional_count, rest_param, return_ty, signature_name) = {
                 let signature = &self.signatures[func as usize];
                 (
-                    signature.params.clone(),
+                    signature.params[hidden..].to_vec(),
                     signature.optional_count,
-                    signature.rest_param,
+                    signature.rest_param.map(|index| index - hidden),
                     signature.return_ty,
                     signature.name.clone(),
                 )
@@ -795,6 +796,9 @@ impl Checker<'_> {
                             format!("argument type {:?} does not match {expected:?}", arg.ty),
                         );
                     }
+                }
+                if hidden == 1 {
+                    args.insert(0, default_args::missing_arg(Ty::Any, span));
                 }
                 return hir::Expr {
                     kind: hir::ExprKind::IndirectCallRest {
@@ -841,6 +845,9 @@ impl Checker<'_> {
                         );
                     }
                 }
+            }
+            if hidden == 1 {
+                args.insert(0, default_args::missing_arg(Ty::Any, span));
             }
             return hir::Expr {
                 kind: hir::ExprKind::IndirectCall {

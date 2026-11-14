@@ -468,6 +468,42 @@ impl Interp<'_> {
         Ok(ArmFlow::Next)
     }
 
+    /// A store whose receiver is `undefined` / `null` raises a TypeError.
+    /// `None` means the receiver is fine and the store proceeds. Kept out of
+    /// line so the inlined store arm does not grow the interpreter frame.
+    #[inline(never)]
+    fn reject_nullish_store(
+        &mut self,
+        stack: &mut Vec<Value>,
+        pc: &mut usize,
+        body: &zun_module::MethodBody<'_>,
+        name: &str,
+        next: usize,
+        size: usize,
+    ) -> Option<Result<ArmFlow, RunError>> {
+        let concrete = match stack.last().cloned()? {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)),
+            other => Some(other),
+        };
+        let kind = match concrete {
+            Some(Value::Null) => "null",
+            Some(Value::Void) => "undefined",
+            _ => return None,
+        };
+        let message = format!("Cannot set properties of {kind} (setting '{name}')");
+        Some(match self.new_error_object("TypeError", &message) {
+            Some(error) => {
+                let exception = Value::Object(error);
+                if self.route_exception(body, stack, pc, next - size, &exception) {
+                    Ok(ArmFlow::Continue)
+                } else {
+                    Err(RunError::Thrown(exception))
+                }
+            }
+            None => Err(RunError::Native(format!("TypeError: {message}"))),
+        })
+    }
+
     #[inline(always)]
     pub(super) fn op_store_dynamic(
         &mut self,
@@ -480,6 +516,12 @@ impl Interp<'_> {
     ) -> Result<ArmFlow, RunError> {
         let name = self.dynamic_name(&instr.operand)?.to_owned();
         let value = pop(stack)?;
+        // Writing a property of `undefined` / `null` is a TypeError, never an
+        // engine panic (e.g. `this.x = 1` in a declared function called with
+        // an undefined receiver).
+        if let Some(flow) = self.reject_nullish_store(stack, pc, body, &name, next, size) {
+            return flow;
+        }
         // A class value: the write lands on its static field.
         if let Some(Value::Any(descriptor)) = stack.last() {
             let descriptor = *descriptor;

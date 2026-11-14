@@ -14,12 +14,24 @@ impl Checker<'_> {
         if !matches!(callee_hir.ty, Ty::Function(_) | Ty::Any) {
             return None;
         }
-        let elements = args
-            .iter()
-            .map(|arg| match arg {
+        // A declared function with an explicit `this` parameter receives
+        // `undefined` as its receiver ahead of the spread arguments.
+        let receiver = match callee_hir.ty {
+            Ty::Function(func) if self.receiver_funcs.contains(&func) => {
+                Some(ast::ArrayElement::Expr(ast::Expr::Unary {
+                    op: ast::UnaryOp::Void,
+                    operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                    span,
+                }))
+            }
+            _ => None,
+        };
+        let elements = receiver
+            .into_iter()
+            .chain(args.iter().map(|arg| match arg {
                 ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
                 other => ast::ArrayElement::Expr(other.clone()),
-            })
+            }))
             .collect();
         let literal = ast::Expr::ArrayLiteral { elements, span };
         let mut array = self.check_expr(cx, &literal);

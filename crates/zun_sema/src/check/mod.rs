@@ -247,6 +247,7 @@ fn check_impl(
         closure_takes_this: false,
         symbol_call_guard: false,
         static_this: HashMap::new(),
+        receiver_funcs: HashSet::new(),
         cur_static_class: None,
         static_init_class: None,
         closure_self_name: None,
@@ -548,6 +549,9 @@ struct Checker<'a> {
     /// Static methods whose body uses `this`/`super`: func index -> declaring
     /// class. They take the receiving class value as a hidden first parameter.
     static_this: HashMap<u32, u32>,
+    /// Top-level functions declared with an explicit leading `this`
+    /// parameter: their signature carries it as a hidden first parameter.
+    receiver_funcs: HashSet<u32>,
     /// Declaring class of the static method currently being checked (for `super`).
     cur_static_class: Option<u32>,
     static_init_class: Option<u32>,
