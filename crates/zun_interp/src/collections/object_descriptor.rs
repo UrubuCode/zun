@@ -12,6 +12,9 @@ impl<'a> Interp<'a> {
         name: &str,
         args: &[Value],
     ) -> Result<Value, RunError> {
+        if let Some(answer) = self.object_primitive_receiver(name, args) {
+            return answer;
+        }
         match name {
             "templateObject" => {
                 let cooked =
@@ -445,6 +448,9 @@ impl<'a> Interp<'a> {
                             if let Some(constant) = self.coerce_ctor_constant(handle, &key) {
                                 return Ok(Value::Object(Self::constant_descriptor_object(constant)));
                             }
+                            if let Some(d) = self.coerce_ctor_static_descriptor(handle, &key) {
+                                return Ok(Value::Object(d));
+                            }
                             if key != "name" && key != "length" {
                                 return Ok(Value::Void);
                             }
@@ -725,8 +731,8 @@ impl<'a> Interp<'a> {
                 // `name`, `prototype` and those methods.
                 if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
                     if let Some(token) = any.as_class_descriptor() {
-                        let mut statics = self.builtin_constant_names(token);
-                        statics.extend(self.builtin_static_names(token));
+                        let mut statics = self.builtin_static_names(token);
+                        statics.extend(self.builtin_constant_names(token));
                         if !statics.is_empty() {
                             let mut names = vec!["length", "name", "prototype"];
                             names.extend(statics);
@@ -750,6 +756,10 @@ impl<'a> Interp<'a> {
                     let bag = crate::function_expando_bag(handle);
                     let mut names = vec!["length".to_owned(), "name".to_owned()];
                     if self.coerce_ctor_name(handle).is_some() {
+                        // A constructor owns `prototype`, then its statics, then
+                        // its constants (the specification's own-key order).
+                        names.push("prototype".to_owned());
+                        names.extend(self.coerce_ctor_static_names(handle).into_iter().map(str::to_owned));
                         names.extend(self.coerce_ctor_constant_names(handle).into_iter().map(str::to_owned));
                     }
                     for key in self.object_own_names(bag)? {
@@ -1075,7 +1085,10 @@ impl<'a> Interp<'a> {
                                     && obj.type_rid() != 0
                                     && self.is_error_instance(obj))
                                 .then(|| "Error".to_string())
-                            });
+                            })
+                            // A Boolean/Number/String object, or the constructor's own
+                            // `prototype` (itself such an object), carries that brand.
+                            .or_else(|| self.wrapper_kind(obj).map(str::to_owned));
                         if let Some(custom) = custom.or(class_tag) {
                             custom
                         } else {

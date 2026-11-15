@@ -815,7 +815,21 @@ impl Interp<'_> {
         } else {
             key
         };
-        let object_raw = expando_receiver(pop(stack)?);
+        let receiver = pop(stack)?;
+        // `Number["isInteger"]` / `Number["EPSILON"]` on the coercion function value.
+        if let Value::Str(name) = &key {
+            let callee = match &receiver {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
+                other => Some(other.clone()),
+            };
+            if let Some(Value::Function(handle)) = callee {
+                if let Some(member) = self.coerce_ctor_static_value(handle, name) {
+                    stack.push(member);
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
+        let object_raw = expando_receiver(receiver);
         {
             let concrete = match &object_raw {
                 Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))

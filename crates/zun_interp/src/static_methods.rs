@@ -105,6 +105,9 @@ impl Interp<'_> {
             let result = zun_natives::apply_math(name, &numbers).unwrap_or(f64::NAN);
             return Ok(Value::Float(result, zun_il::NumKind::F64));
         }
+        if class == "Number" {
+            return self.call_number_static(name, count, &arg);
+        }
         if !native.is_empty() {
             let (_, signature) =
                 zun_natives::resolve("collections", native).ok_or(RunError::BadToken)?;
@@ -187,6 +190,57 @@ impl Interp<'_> {
             }
             _ => Err(RunError::BadToken),
         }
+    }
+
+    /// `Number.<name>(...)` as a function value, on the same `number` natives a
+    /// typed `Number.isInteger(x)` call lowers to. The predicates inspect the
+    /// argument without coercion; the parsers convert to a string first (and
+    /// `parseInt`'s radix with ToInt32), exactly like the typed lowering.
+    fn call_number_static(
+        &mut self,
+        name: &str,
+        count: usize,
+        arg: &dyn Fn(usize) -> Value,
+    ) -> Result<Value, RunError> {
+        let native = match name {
+            "isNaN" => "isNaNStrict",
+            "isFinite" => "isFiniteStrict",
+            "isInteger" => "isIntegerStrict",
+            "isSafeInteger" => "isSafeIntegerStrict",
+            "parseFloat" => "parseFloatPrefix",
+            "parseInt" => "parseIntRadix",
+            _ => return Err(RunError::BadToken),
+        };
+        let (id, _) = zun_natives::resolve("number", native).ok_or(RunError::BadToken)?;
+        let first = proto_concrete(arg(0));
+        let call = match name {
+            "parseFloat" | "parseInt" => {
+                let text = Value::Str(self.dyn_to_string(&first)?.into());
+                if name == "parseFloat" {
+                    vec![text]
+                } else {
+                    let radix = if count >= 2 {
+                        let radix = proto_concrete(arg(1));
+                        let number = self.static_to_number(radix)?;
+                        // ToInt32: NaN and the infinities are 0.
+                        if number.is_finite() {
+                            (number.trunc() % 4_294_967_296.0) as i64 as i32
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    vec![text, Value::Int(i64::from(radix), zun_il::NumKind::I32)]
+                }
+            }
+            _ => vec![first],
+        };
+        let native_args: Vec<zun_natives::NativeArg> =
+            call.iter().map(crate::native::to_native_arg).collect();
+        let result = zun_natives::dispatch(id, &native_args, self.output)
+            .map_err(|error| RunError::Native(error.0))?;
+        Ok(crate::native::from_native_value(result, id))
     }
 
     /// `Reflect.get(target, key)`: the value of `key` on `target`, through the

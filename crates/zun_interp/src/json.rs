@@ -455,6 +455,9 @@ impl Interp<'_> {
                         other => other,
                     };
                 }
+            } else if let Some(ctor) = self.wrapper_kind(obj) {
+                // `Boolean.prototype` and friends are wrapper objects too.
+                value = self.wrapper_primitive(Value::Object(obj), ctor)?;
             }
         }
         // 4. serialise by kind

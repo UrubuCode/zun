@@ -564,8 +564,17 @@ impl<'a> Interp<'a> {
                 .flatten();
             let method = match typed {
                 Some(method) => Some((method, vec![Value::Object(obj)])),
+                // A built-in method value (`Number.prototype.valueOf`) is a
+                // generic function: it reads its receiver from the leading argument.
                 None => zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, name))
-                    .map(|method| (method, vec![])),
+                    .map(|method| {
+                        let call_args = if method.builtin_method().is_some() {
+                            self.with_this_arg(method, obj, Vec::new())
+                        } else {
+                            Vec::new()
+                        };
+                        (method, call_args)
+                    }),
             };
             // String hint: `Object.prototype.toString` always exists and
             // returns a primitive, so a missing own `toString` ends the

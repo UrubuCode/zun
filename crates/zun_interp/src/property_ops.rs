@@ -342,6 +342,8 @@ impl Interp<'_> {
             }
             let proto = heap.alloc_dynamic();
             heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
+            // `String.prototype` is itself a String object holding `""`.
+            heap.dynamic_define_data(proto, "length", zun_core::Any::float(0.0), false, false, false);
             heap.dynamic_set_symbol_function(
                 proto,
                 zun_core::WellKnownSymbol::Iterator.id(),

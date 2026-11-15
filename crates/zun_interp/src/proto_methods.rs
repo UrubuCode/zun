@@ -173,30 +173,24 @@ impl Interp<'_> {
                     .ok_or(RunError::BadToken)?;
                 Ok(Value::Str(bigint_to_radix(&value, radix as u64).into()))
             }
+            "Boolean" => {
+                let recv = self.wrapper_primitive(recv, "Boolean")?;
+                let Value::Bool(flag) = recv else {
+                    return Err(self.proto_type_error(&format!(
+                        "Boolean.prototype.{name} requires that 'this' be a Boolean"
+                    )));
+                };
+                Ok(if name == "valueOf" {
+                    Value::Bool(flag)
+                } else {
+                    Value::Str(if flag { "true" } else { "false" }.into())
+                })
+            }
             "Number" => {
-                // `Number.prototype` is itself a Number object whose value is +0.
-                let recv = match recv {
-                    Value::Object(o)
-                        if self.builtin_prototype_by_name("Number") == Some(o) =>
-                    {
-                        Value::Float(0.0, zun_il::NumKind::F64)
-                    }
-                    other => other,
-                };
-                // A `Number` wrapper object (or an instance of a subclass of it)
-                // carries its primitive in `value`.
-                let recv = match recv {
-                    Value::Object(o) if self.is_number_object(o) => {
-                        match self.dynamic_member_get(o, "value")? {
-                            Value::Any(any) => zun_gc::with_current_heap(|heap| {
-                                Value::unbox_any(any, heap)
-                            })
-                            .unwrap_or(Value::Void),
-                            other => other,
-                        }
-                    }
-                    other => other,
-                };
+                // `Number.prototype` is itself a Number object whose value is +0,
+                // and a `Number` wrapper object (or an instance of a subclass of
+                // it) carries its primitive in `value`.
+                let recv = self.wrapper_primitive(recv, "Number")?;
                 if !matches!(recv, Value::Float(..) | Value::Int(..)) {
                     return Err(self.proto_type_error(&format!(
                         "Number.prototype.{name} requires that 'this' be a Number"
@@ -205,6 +199,8 @@ impl Interp<'_> {
                 self.proto_dynamic_call(recv, name, args)
             }
             "String" => {
+                // `String.prototype` is a String object whose value is `""`.
+                let recv = self.wrapper_primitive(recv, "String")?;
                 let text = match &recv {
                     Value::Str(_) => recv.clone(),
                     Value::Void | Value::Null => {
@@ -409,15 +405,16 @@ pub(crate) fn proto_concrete(value: Value) -> Value {
 }
 
 impl Interp<'_> {
-    /// Whether `object` is an instance of the prelude `NumberObject` wrapper class
-    /// or of a class derived from it.
-    fn is_number_object(&self, object: zun_gc::Obj) -> bool {
+    /// Whether `object` is an instance of the prelude `<ctor>Object` wrapper
+    /// class (`NumberObject`, `BooleanObject`, `StringObject`) or of a class
+    /// derived from it.
+    fn is_wrapper_object(&self, object: zun_gc::Obj, wrapper: &str) -> bool {
         let mut rid = object.type_rid();
         for _ in 0..64 {
             let Some(def) = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1)) else {
                 return false;
             };
-            if self.module.strings.get(def.name) == "NumberObject" {
+            if self.module.strings.get(def.name) == wrapper {
                 return true;
             }
             if def.base.table() != Some(zun_metadata::TableKind::TypeDef) || def.base.is_null() {
@@ -426,5 +423,72 @@ impl Interp<'_> {
             rid = def.base.rid();
         }
         false
+    }
+
+    /// Which of `"Boolean"`, `"Number"`, `"String"` the primitive-wrapper
+    /// object `object` is, if any: an instance of the prelude wrapper class, or
+    /// the constructor's own `prototype` (the specification makes each of those
+    /// a wrapper object holding `false`, `+0` and `""`). Allocates nothing.
+    pub(crate) fn wrapper_kind(&self, object: zun_gc::Obj) -> Option<&'static str> {
+        const KINDS: [(&str, &str); 3] =
+            [("Boolean", "BooleanObject"), ("Number", "NumberObject"), ("String", "StringObject")];
+        if object.type_rid() != 0 {
+            if let Some((ctor, _)) =
+                KINDS.iter().find(|(_, wrapper)| self.is_wrapper_object(object, wrapper))
+            {
+                return Some(ctor);
+            }
+        }
+        KINDS.iter().map(|(ctor, _)| *ctor).find(|ctor| {
+            zun_gc::with_current_heap_mut(|heap| {
+                let global = heap.global_object();
+                let key = if *ctor == "String" {
+                    "$String.prototype".to_owned()
+                } else {
+                    let Some(token) =
+                        heap.dynamic_get(global, ctor).and_then(|any| any.as_class_descriptor())
+                    else {
+                        return false;
+                    };
+                    format!("$builtinProto#{token}")
+                };
+                heap.dynamic_get(global, &key).and_then(|any| any.as_object())
+                    == Some(object.addr() as usize)
+            })
+        })
+    }
+
+    /// The `prototype` object of the primitive-wrapper constructor `ctor`.
+    /// `String.prototype` is the realm singleton the typed `String.prototype`
+    /// reads; `Number` and `Boolean` own a per-descriptor prototype.
+    pub(crate) fn wrapper_prototype_object(&self, ctor: &str) -> Option<zun_gc::Obj> {
+        if ctor == "String" {
+            Some(Self::string_prototype_singleton())
+        } else {
+            self.builtin_prototype_by_name(ctor)
+        }
+    }
+
+    /// The primitive a `this` value of the wrapper constructor `ctor` stands
+    /// for: a wrapper instance yields its `value`, the constructor's prototype
+    /// its default (`false`, `+0`, `""`), anything else is returned unchanged.
+    pub(crate) fn wrapper_primitive(&mut self, recv: Value, ctor: &str) -> Result<Value, RunError> {
+        let Value::Object(object) = recv else { return Ok(recv) };
+        if self.wrapper_kind(object) != Some(ctor) {
+            return Ok(Value::Object(object));
+        }
+        if self.wrapper_prototype_object(ctor) == Some(object) {
+            return Ok(match ctor {
+                "Boolean" => Value::Bool(false),
+                "Number" => Value::Float(0.0, zun_il::NumKind::F64),
+                _ => Value::Str("".into()),
+            });
+        }
+        Ok(match self.dynamic_member_get(object, "value")? {
+            Value::Any(any) => {
+                zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void)
+            }
+            other => other,
+        })
     }
 }

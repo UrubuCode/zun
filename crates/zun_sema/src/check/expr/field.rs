@@ -702,6 +702,17 @@ impl Checker<'_> {
         Err(object)
     }
 
+    /// The constructor a `__coerce*` helper stands for when `String`, `Number` or
+    /// `Boolean` is read as a first-class value.
+    fn coerce_constructor_name(helper: &str) -> Option<&'static str> {
+        match helper {
+            "__coerceString" => Some("String"),
+            "__coerceNumber" => Some("Number"),
+            "__coerceBoolean" => Some("Boolean"),
+            _ => None,
+        }
+    }
+
     /// `Function` value metadata: `prototype`, `name`, and `length` read off a
     /// statically known function value.
     pub(in crate::check) fn field_function_value(
@@ -743,10 +754,10 @@ impl Checker<'_> {
                 } else {
                     // The `@this` suffix marks a declared receiver parameter and
                     // is not part of the function's name.
-                    self.signatures[func as usize]
-                        .name
-                        .trim_end_matches("@this")
-                        .to_string()
+                    let declared = self.signatures[func as usize].name.trim_end_matches("@this");
+                    // `String` / `Number` / `Boolean` read as values are the
+                    // `__coerce*` helpers; they answer as the constructors.
+                    Self::coerce_constructor_name(declared).unwrap_or(declared).to_string()
                 };
                 return Ok(hir::Expr {
                     kind: hir::ExprKind::String(name),
@@ -760,6 +771,13 @@ impl Checker<'_> {
                     hir::DYNAMIC_FUNCTION | hir::DYNAMIC_PREDICATE | hir::DYNAMIC_REDUCER
                 ) {
                     0
+                } else if Self::coerce_constructor_name(
+                    self.signatures[func as usize].name.trim_end_matches("@this"),
+                )
+                .is_some()
+                {
+                    // `String.length`, `Number.length` and `Boolean.length` are 1.
+                    1
                 } else {
                     let signature = &self.signatures[func as usize];
                     let rest = usize::from(signature.rest_param.is_some());

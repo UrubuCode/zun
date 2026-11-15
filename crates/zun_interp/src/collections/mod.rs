@@ -20,6 +20,7 @@ mod misc_ops;
 
 mod object_core;
 mod object_descriptor;
+mod object_primitive;
 
 mod function;
 mod promise;

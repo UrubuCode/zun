@@ -158,6 +158,7 @@ impl<'a> Interp<'a> {
                         let hit = matches!(key.as_ref(), "name" | "length")
                             || (key.as_ref() == "prototype" && constructor)
                             || self.coerce_ctor_constant(handle, &key).is_some()
+                            || self.coerce_ctor_static_kind(handle, &key).is_some()
                             || [
                                 "apply", "bind", "call", "constructor", "toString", "toLocaleString",
                                 "valueOf", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable",
@@ -604,14 +605,8 @@ impl<'a> Interp<'a> {
         ctor: &str,
         values: Vec<Value>,
     ) -> Result<Value, RunError> {
-        let wrapper_name = format!("{ctor}Object");
-        let rid = self
-            .module
-            .tables
-            .type_defs
-            .iter()
-            .position(|def| self.module.strings.get(def.name) == wrapper_name)
-            .map(|index| index as u32 + 1)
+        let token = self
+            .wrapper_class_token(ctor)
             .ok_or_else(|| RunError::Native("TypeError: value is not a constructor".into()))?;
         let primitive = match values.into_iter().next() {
             Some(first) => {
@@ -629,6 +624,6 @@ impl<'a> Interp<'a> {
             Ok(value) => value,
             Err(_) => primitive,
         };
-        self.construct_class_from_descriptor(zun_natives::USER_CLASS_FLAG | rid, vec![primitive])
+        self.construct_class_from_descriptor(token, vec![primitive])
     }
 }

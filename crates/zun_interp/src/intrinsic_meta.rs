@@ -238,6 +238,57 @@ impl Interp<'_> {
         self.coerce_ctor_name(handle).map(constant_names).unwrap_or_default()
     }
 
+    /// The kind of the static method function value `key` of the coercion
+    /// function value `handle` (`Number.isInteger`), if its constructor owns one.
+    /// Keyed on the constructor the handle stands for, so `String` and `Boolean`
+    /// never see `Number`'s statics.
+    pub(crate) fn coerce_ctor_static_kind(
+        &self,
+        handle: zun_core::FunctionHandle,
+        key: &str,
+    ) -> Option<u32> {
+        static_method_kind(self.coerce_ctor_name(handle)?, key)
+    }
+
+    /// The own static method names of the coercion function value `handle`.
+    pub(crate) fn coerce_ctor_static_names(
+        &self,
+        handle: zun_core::FunctionHandle,
+    ) -> Vec<&'static str> {
+        self.coerce_ctor_name(handle)
+            .map(|class| static_methods_of(class).into_iter().map(|(_, name)| name).collect())
+            .unwrap_or_default()
+    }
+
+    /// The own static member `key` of the coercion function value `handle`: a
+    /// constant (`Number.EPSILON`) or a static method function value.
+    pub(crate) fn coerce_ctor_static_value(
+        &self,
+        handle: zun_core::FunctionHandle,
+        key: &str,
+    ) -> Option<Value> {
+        if let Some(constant) = self.coerce_ctor_constant(handle, key) {
+            return Some(Value::Float(constant, zun_il::NumKind::F64));
+        }
+        let kind = self.coerce_ctor_static_kind(handle, key)?;
+        Some(Value::Function(zun_core::FunctionHandle::new_builtin_method(kind)))
+    }
+
+    /// The descriptor of the static method `key` of the coercion function value
+    /// `handle`: writable, non-enumerable, configurable.
+    pub(crate) fn coerce_ctor_static_descriptor(
+        &self,
+        handle: zun_core::FunctionHandle,
+        key: &str,
+    ) -> Option<zun_gc::Obj> {
+        let kind = self.coerce_ctor_static_kind(handle, key)?;
+        Some(Self::data_descriptor_object(
+            Value::Function(zun_core::FunctionHandle::new_builtin_method(kind)),
+            true,
+            true,
+        ))
+    }
+
     /// `Object.getOwnPropertyDescriptor(Number, "prototype")` for a coercion
     /// function value: the realm constructor's own `prototype` descriptor.
     pub(crate) fn coerce_ctor_prototype_descriptor(
@@ -363,6 +414,7 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
             ("sort", 1), ("subarray", 2), ("toReversed", 0), ("toSorted", 1), ("with", 2),
         ],
     ),
+    ("Boolean", &[("toString", 0), ("valueOf", 0)]),
 ];
 
 /// The methods the prototype of the built-in class `class` carries as
@@ -500,6 +552,16 @@ const STATIC_METHODS: &[(&str, &[(&str, u32, &str)])] = &[
             ("isExtensible", 1, "objectIsExtensible"), ("ownKeys", 1, "reflectOwnKeys"),
             ("preventExtensions", 1, ""), ("set", 3, "reflectSet"),
             ("setPrototypeOf", 2, "reflectSetPrototypeOf"),
+        ],
+    ),
+    // `Number`'s statics. `Number` read as a value is the coercion function, so
+    // they are reached through `coerce_ctor_static_kind`; `static_methods.rs`
+    // runs them on the strict `number` natives (empty native name).
+    (
+        "Number",
+        &[
+            ("isFinite", 1, ""), ("isInteger", 1, ""), ("isNaN", 1, ""),
+            ("isSafeInteger", 1, ""), ("parseFloat", 1, ""), ("parseInt", 2, ""),
         ],
     ),
 ];

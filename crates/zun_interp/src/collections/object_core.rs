@@ -11,6 +11,9 @@ impl<'a> Interp<'a> {
         name: &str,
         args: &[Value],
     ) -> Result<Value, RunError> {
+        if let Some(answer) = self.object_primitive_receiver(name, args) {
+            return answer;
+        }
         match name {
             "objectForInKeys" => {
                 // `for (k in obj)`: own enumerable keys first, then enumerable
@@ -261,7 +264,11 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(array))
             }
             "objectAssign" => {
-                let Some(target) = object(args.first().ok_or(RunError::BadToken)?) else {
+                // ToObject on a primitive target: it receives the properties on its
+                // wrapper object (`null` and `undefined` throw below).
+                let first = args.first().ok_or(RunError::BadToken)?;
+                let wrapped = self.primitive_wrapper_object(first)?;
+                let Some(target) = wrapped.or_else(|| object(first)) else {
                     return Err(RunError::Native(
                         "TypeError: Cannot convert undefined or null to object".into(),
                     ));

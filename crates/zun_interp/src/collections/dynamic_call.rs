@@ -364,6 +364,18 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Any(boxed));
                     }
                 }
+                // The same for `Number`, which reads as its coercion function
+                // (`const N: any = Number; N.isInteger(x)`).
+                if let Value::Function(ctor) = &receiver_concrete {
+                    if let Some(kind) = self.coerce_ctor_static_kind(*ctor, &member) {
+                        let call_args = args[2..].to_vec();
+                        let handle = zun_core::FunctionHandle::new_builtin_method(kind);
+                        let result = self.invoke_builtin_with_this(handle, Value::Void, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // `Function.prototype.bind` on a function value reached through
                 // `any`: `[thisArg, ...partial]` becomes the bound arguments.
                 if let Value::Function(handle) = &receiver_concrete {
