@@ -195,10 +195,21 @@ impl Checker<'_> {
                     ty: Ty::DynamicObject,
                     span,
                 };
+                // The trailing marker tells the native this is `Object.create`,
+                // whose `undefined` property map means "no properties" rather
+                // than the TypeError `Object.defineProperties` raises.
                 let define = builtin(
                     self,
                     "objectDefineProperties",
-                    vec![local(span), props],
+                    vec![
+                        local(span),
+                        props,
+                        hir::Expr {
+                            kind: hir::ExprKind::Boolean(true),
+                            ty: Ty::Boolean,
+                            span,
+                        },
+                    ],
                     Ty::Any,
                 );
                 hir::Expr {
@@ -224,7 +235,18 @@ impl Checker<'_> {
             "groupBy" => builtin(self, "objectGroupBy", checked, Ty::DynamicObject),
             "is" => builtin(self, "objectIs", checked, Ty::Boolean),
             "defineProperty" => builtin(self, "objectDefineProperty", checked, Ty::Any),
-            "defineProperties" => builtin(self, "objectDefineProperties", checked, Ty::Any),
+            "defineProperties" => {
+                // The marker is `false` here: `Object.defineProperties` throws
+                // for an `undefined` property map, where `Object.create` does
+                // not. See the native's parameter comment.
+                let mut args = checked;
+                args.push(hir::Expr {
+                    kind: hir::ExprKind::Boolean(false),
+                    ty: Ty::Boolean,
+                    span,
+                });
+                builtin(self, "objectDefineProperties", args, Ty::Any)
+            }
             "getOwnPropertyDescriptor" => {
                 builtin(self, "objectGetOwnPropertyDescriptor", checked, Ty::Any)
             }

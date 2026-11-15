@@ -339,8 +339,23 @@ impl<'a> Interp<'a> {
             "objectDefineProperties" => {
                 let obj =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let descs =
-                    object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // `Object.create(proto, props)` marks itself with a third
+                // argument: there, an absent or `undefined` property map means
+                // "no properties", while `Object.defineProperties` throws for it
+                // the way the specification's `ToObject(Properties)` does.
+                // `null` throws in both, so only `undefined` is let through.
+                let from_create =
+                    matches!(args.get(2).map(unbox_arg), Some(Ok(Value::Bool(true))));
+                let properties = args.get(1).ok_or(RunError::BadToken)?;
+                if from_create && matches!(unbox_arg(properties), Ok(Value::Void) | Err(_)) {
+                    return Ok(args.first().cloned().unwrap_or(Value::Void));
+                }
+                if matches!(unbox_arg(properties), Ok(Value::Void) | Ok(Value::Null)) {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot convert undefined or null to object".into(),
+                    ));
+                }
+                let descs = object(properties).ok_or(RunError::BadToken)?;
                 // Each own enumerable key of `descs` maps a property name to a
                 // descriptor object.
                 let names = self.object_own_names(descs)?;

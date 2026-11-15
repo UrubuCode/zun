@@ -1091,7 +1091,11 @@ pub const MODULE: crate::Module = crate::Module {
         },
         NativeFn {
             name: "objectDefineProperties",
-            params: &[DynamicObject, Opaque],
+            // The third argument marks the `Object.create(proto, props)` caller,
+            // where an absent or `undefined` property map means "no properties".
+            // `Object.defineProperties` passes nothing and keeps throwing there,
+            // as the specification's `ToObject(Properties)` does.
+            params: &[DynamicObject, Opaque, Opaque],
             ret: Opaque,
             imp: unavailable,
         },
