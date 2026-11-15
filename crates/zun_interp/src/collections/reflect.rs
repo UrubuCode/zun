@@ -179,10 +179,22 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Bool(hit));
                     }
                 }
-                let name = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Str(name) => name,
-                    _ => return Err(RunError::BadToken),
+                // `ToPropertyKey`: a non-string, non-symbol key is coerced to its
+                // string spelling, so `Reflect.has(o, undefined)` asks for
+                // `"undefined"` rather than failing. `prop_key` already covers
+                // the string and numeric forms; the other primitives spell
+                // themselves.
+                let key_arg = args.get(1).ok_or(RunError::BadToken)?;
+                let owned = match crate::property_ops::prop_key(key_arg) {
+                    Some(crate::property_ops::PropKey::Str(text)) => text,
+                    _ => match unbox_arg(key_arg) {
+                        Ok(Value::Void) => "undefined".to_string(),
+                        Ok(Value::Null) => "null".to_string(),
+                        Ok(Value::Bool(flag)) => flag.to_string(),
+                        _ => return Err(RunError::BadToken),
+                    },
                 };
+                let name = &owned;
                 // An array answers for its elements (holes are absent) and `length`.
                 if zun_gc::with_current_heap(|heap| heap.array_len(object).is_some()) {
                     let in_array = self.call_managed_collection("arrayHas", args)?;
