@@ -1589,8 +1589,13 @@ impl Interp<'_> {
                     let obj = pop(stack)?.as_object();
                     // A dynamic object never carries a class's fixed fields
                     // (a private-brand mismatch): TypeError, not a bad read.
+                    // An *instance bag* is the exception: a typed instance that
+                    // gained an expando property still has every fixed field, so
+                    // reading one is valid. Without this, any typed class with a
+                    // getter stopped working the moment an instance took an
+                    // expando. `instance_class_prototype` draws the same line.
                     let loaded = zun_gc::with_current_heap(|h| {
-                        if h.is_dynamic_object(obj) {
+                        if h.is_dynamic_object(obj) && !h.is_instance_bag(obj) {
                             None
                         } else {
                             Some(value::load_field(kind, obj, slot, h))

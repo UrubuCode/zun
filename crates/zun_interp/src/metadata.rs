@@ -341,3 +341,27 @@ impl Interp<'_> {
         false
     }
 }
+
+impl Interp<'_> {
+    /// Run the `set <name>` accessor a typed class instance declares (searching
+    /// base classes too) with `value`, the way a dynamic write must: a declared
+    /// accessor takes the assignment, never an expando shadowing it. `Ok(false)`
+    /// when the instance declares no such setter.
+    pub(crate) fn instance_member_setter_call(
+        &mut self,
+        object: zun_gc::Obj,
+        name: &str,
+        value: &Value,
+    ) -> Result<bool, RunError> {
+        let Some(rid) = self.instance_method_rid(object, &format!("set_{name}")) else {
+            return Ok(false);
+        };
+        let value = match value {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                .unwrap_or(Value::Void),
+            other => other.clone(),
+        };
+        self.call(rid, vec![Value::Object(object), value], None)?;
+        Ok(true)
+    }
+}

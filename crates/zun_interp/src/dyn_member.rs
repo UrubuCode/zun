@@ -721,6 +721,22 @@ impl Interp<'_> {
                         && object.type_rid() >= 1
                 });
                 let handled = typed_instance && self.instance_member_set(object, &name, &value);
+                // A declared `set <name>` accessor takes the write, as the read
+                // path resolves `get <name>`; it must never be shadowed by an expando.
+                let handled = if typed_instance && !handled {
+                    match self.instance_member_setter_call(object, &name, &value) {
+                        Ok(ran) => ran,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
+                                return Ok(ArmFlow::Continue);
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                } else {
+                    handled
+                };
                 // An accessor defined on the class prototype chain
                 // (`Object.defineProperty(C.prototype, ...)`) takes the write.
                 let proto_accessor = if typed_instance && !handled {
@@ -1420,7 +1436,21 @@ impl Interp<'_> {
             {
                 // A typed class instance: a declared field takes the
                 // value in place; any other name becomes an expando.
-                if !self.instance_member_set(object, key, &value) {
+                let setter_ran = if self.instance_member_set(object, key, &value) {
+                    true
+                } else {
+                    match self.instance_member_setter_call(object, key, &value) {
+                        Ok(ran) => ran,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
+                                return Ok(ArmFlow::Continue);
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                };
+                if !setter_ran {
                     zun_gc::with_current_heap_mut(|heap| {
                         heap.ensure_instance_bag(object);
                         heap.dynamic_set(object, key.as_ref().to_owned(), any);

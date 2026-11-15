@@ -53,6 +53,16 @@ class Error {
     // the key); distinguishes `{ cause: undefined }` from no options at all.
     hasCause: boolean = false;
 
+    // True once `name` was assigned a value (possibly the empty string); an
+    // empty `nameOverride` alone cannot tell "assigned empty" from "never assigned".
+    // Declared last: the native error allocators fill slots positionally.
+    hasName: boolean = false;
+
+    // True when `name` was assigned `undefined`: JS then reads `undefined`, and
+    // `toString` substitutes "Error" - even on a subclass. A `string` getter cannot
+    // answer `undefined`, so `name` itself reads as the class name.
+    nameUndefined: boolean = false;
+
     constructor(message: string, options?: any) {
         this.message = message;
         if (__zunErrorHasCause(options)) {
@@ -66,23 +76,36 @@ class Error {
     }
 
     get name(): string {
-        if (this.nameOverride != "") {
+        if (this.hasName) {
             return this.nameOverride;
         }
         return this.errorName;
     }
 
-    set name(value: string) {
-        this.nameOverride = value;
+    // Takes `any` because JS lets any value be assigned: `undefined` clears the
+    // override (see `nameUndefined`), anything else is stringified.
+    set name(value: any) {
+        this.nameUndefined = value === undefined;
+        if (value === undefined) {
+            this.hasName = false;
+            this.nameOverride = "";
+            return;
+        }
+        this.nameOverride = typeof value === "string" ? value : String(value);
+        this.hasName = true;
     }
 
     // JS omits the separator when either half is empty: `new Error()` prints
-    // "Error", not "Error: ".
+    // "Error", not "Error: ", and an explicitly empty name prints the message.
     toString(): string {
+        const name = this.nameUndefined ? "Error" : this.name;
         if (this.message == "") {
-            return this.name;
+            return name;
         }
-        return this.name + ": " + this.message;
+        if (name == "") {
+            return this.message;
+        }
+        return name + ": " + this.message;
     }
 
     // `err.stack`: the JS-shaped header line followed by the captured frames.
