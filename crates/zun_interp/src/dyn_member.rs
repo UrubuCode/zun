@@ -63,8 +63,12 @@ impl Interp<'_> {
             Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
             other => Some(other.clone()),
         } {
-            if let Some(constant) = self.coerce_ctor_constant(handle, &name) {
-                stack.push(Value::Float(constant, zun_il::NumKind::F64));
+            // A constant (`Number.EPSILON`) or a static method read as a value
+            // (`Number.isInteger`). `Number`/`String`/`Boolean` arrive here as
+            // the coercion function sema lowers them to, not as a class
+            // descriptor, so the static tables are reached through that name.
+            if let Some(member) = self.coerce_ctor_static_value(handle, &name) {
+                stack.push(member);
                 return Ok(ArmFlow::Continue);
             }
         }
