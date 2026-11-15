@@ -324,6 +324,9 @@ impl<'a> Interp<'a> {
                     }
                     object = target;
                 }
+                if name.as_ref() == "name" && self.error_delete_assigned_name(object) {
+                    return Ok(Value::Bool(true));
+                }
                 // Arrays: an in-range index becomes a hole (unless sealed/frozen),
                 // `length` is non-configurable, anything else is a plain key.
                 if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(object)) {

@@ -549,6 +549,20 @@ impl Checker<'_> {
                 span,
             },
         };
+        // A message whose static type is not `string` follows JS `ToString` (`undefined`
+        // means no message) instead of an unchecked unbox to `string`.
+        if message.ty != Ty::String && !message.ty.is_error() {
+            if let Some(func) = self.by_name.get("__zunErrorMessage").copied() {
+                message = hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        func,
+                        args: vec![Self::box_to_any(message)],
+                    },
+                    ty: Ty::String,
+                    span,
+                };
+            }
+        }
         coerce_numeric_literal(&mut message, Ty::String);
         if !message.ty.is_error() && !self.is_assignable(message.ty, Ty::String) {
             self.error(message.span, format!("`{name}` message must be a string"));

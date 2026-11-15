@@ -328,6 +328,19 @@ impl Interp<'_> {
                     }
                     other => other.clone(),
                 };
+                // A string-typed slot cannot hold another value: coerce with
+                // ECMAScript ToString (`undefined` becomes the empty string).
+                let value = if kind == crate::value::FIELD_STRING && !matches!(value, Value::Str(_)) {
+                    match value {
+                        Value::Void => Value::Str("".into()),
+                        other => match self.dyn_to_string(&other) {
+                            Ok(text) => Value::Str(text.as_str().into()),
+                            Err(_) => Value::Str("".into()),
+                        },
+                    }
+                } else {
+                    value
+                };
                 zun_gc::with_current_heap_mut(|heap| {
                     crate::value::store_field(kind, object, slot, &value, heap);
                 });

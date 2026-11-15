@@ -21,6 +21,15 @@
 
 import { captureStackTrace } from "zun:core";
 
+// ECMAScript `new Error(message)`: an absent (`undefined`) message installs no
+// own property (it reads back as the empty string); anything else is ToString'd.
+function __zunErrorMessage(message: any): string {
+    if (message === undefined) {
+        return "";
+    }
+    return `${message}`;
+}
+
 // True when `options` is an object that carries a `cause` key (own or inherited).
 function __zunErrorHasCause(options: any): boolean {
     if (options === undefined || options === null) {

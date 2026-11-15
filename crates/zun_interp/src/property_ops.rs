@@ -2246,6 +2246,9 @@ impl Interp<'_> {
             }
             return Ok(Value::Bool(true));
         }
+        if name == "name" && self.error_delete_assigned_name(target) {
+            return Ok(Value::Bool(true));
+        }
         let allowed = zun_gc::with_current_heap(|heap| heap.dynamic_can_delete(target, &name));
         if !allowed {
             return Err(RunError::Native(format!(
