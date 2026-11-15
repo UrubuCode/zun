@@ -354,6 +354,15 @@ fn sign_extend(value: u64, width: usize) -> i64 {
     }
 }
 
+/// `text` repeated and truncated to exactly `len` bytes (Node's string fill);
+/// an empty pattern fills with zeros.
+fn repeat_to(pattern: &[u8], len: usize) -> Vec<u8> {
+    if pattern.is_empty() {
+        return vec![0; len];
+    }
+    pattern.iter().cycle().take(len).copied().collect()
+}
+
 /// Run a `nodeBuffer*` intrinsic, or `None` when `name` is not one.
 pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>> {
     match name {
@@ -395,6 +404,69 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let size = as_usize(args.first()).ok_or(RunError::BadToken)?;
             let fill = as_usize(args.get(1)).unwrap_or(0) as u8;
             buffer_from_bytes(&vec![fill; size]).ok_or(RunError::BadToken)
+        })()),
+        "nodeBufferAllocFillString" => Some((|| {
+            let size = as_usize(args.first()).ok_or(RunError::BadToken)?;
+            let text = as_string(args.get(1)).unwrap_or_else(|| "".into());
+            let encoding = as_string(args.get(2)).unwrap_or_else(|| "utf8".into());
+            buffer_from_bytes(&repeat_to(&encode(&text, &encoding), size))
+                .ok_or(RunError::BadToken)
+        })()),
+        "nodeBufferFillString" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let text = as_string(args.get(1)).unwrap_or_else(|| "".into());
+            let encoding = as_string(args.get(2)).unwrap_or_else(|| "utf8".into());
+            let len = view_len(view).ok_or(RunError::BadToken)?;
+            let bytes = repeat_to(&encode(&text, &encoding), len);
+            zun_gc::with_current_heap_mut(|heap| {
+                for (i, byte) in bytes.iter().enumerate() {
+                    heap.u8_array_set(view, i, *byte);
+                }
+            });
+            Ok(Value::Bool(true))
+        })()),
+        "nodeBufferFromAny" => Some((|| {
+            let source = match args.first().ok_or(RunError::BadToken)? {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                    .ok_or(RunError::BadToken)?,
+                other => other.clone(),
+            };
+            let encoding = as_string(args.get(1)).unwrap_or_else(|| "utf8".into());
+            match &source {
+                Value::Str(text) => {
+                    buffer_from_bytes(&encode(text, &encoding)).ok_or(RunError::BadToken)
+                }
+                Value::Object(obj) => {
+                    // A byte view is copied; an array is read element-wise; an
+                    // ArrayBuffer is wrapped.
+                    if let Some(bytes) = view_bytes(*obj) {
+                        return buffer_from_bytes(&bytes).ok_or(RunError::BadToken);
+                    }
+                    if let Some(bytes) = zun_gc::with_current_heap(|heap| {
+                        let len = heap.array_len(*obj)?;
+                        let mut bytes = Vec::with_capacity(len);
+                        for index in 0..len {
+                            let any = heap.array_get(*obj, index)?;
+                            let value = any
+                                .as_int()
+                                .or_else(|| any.as_float().map(|f| f as i64))
+                                .unwrap_or(0);
+                            bytes.push((value & 0xff) as u8);
+                        }
+                        Some(bytes)
+                    }) {
+                        return buffer_from_bytes(&bytes).ok_or(RunError::BadToken);
+                    }
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let len = heap.buffer_len(*obj)?;
+                        let view =
+                            heap.alloc_typed_array(*obj, 0, len, zun_core::TypedElement::U8)?;
+                        Some(Value::Object(view))
+                    })
+                    .ok_or(RunError::BadToken)
+                }
+                _ => Err(RunError::BadToken),
+            }
         })()),
         "nodeBufferAllocUnsafe" => Some((|| {
             let size = as_usize(args.first()).ok_or(RunError::BadToken)?;

@@ -470,6 +470,76 @@ impl Interp<'_> {
         Ok(None)
     }
 
+    /// The members only a Node `Buffer` has (plus `toString`, whose Buffer form
+    /// takes an encoding): routed to the `nodeBuffer` natives the typed path
+    /// lowers to, with the same optional-argument defaults
+    /// (`zun_natives::view_member`). `Ok(None)` for every other member, which the
+    /// typed-array arms answer.
+    fn node_buffer_member_call(
+        &mut self,
+        view: zun_gc::Obj,
+        member: &str,
+        args: &[Value],
+    ) -> Result<Option<Value>, RunError> {
+        use zun_natives::{NativeTy, ViewArg};
+        let buffer_member = matches!(
+            member,
+            "toString" | "write" | "equals" | "copy" | "swap16" | "swap32" | "swap64"
+        ) || member.starts_with("read")
+            || (member.starts_with("write") && member.len() > "write".len());
+        if !buffer_member {
+            return Ok(None);
+        }
+        let Some(spec) = zun_natives::view_member(member, true, args.len()) else {
+            return Ok(None);
+        };
+        if spec.module != "nodeBuffer" {
+            return Ok(None);
+        }
+        let present = |slot: usize| args.get(slot).filter(|value| !matches!(value, Value::Void));
+        let mut slots = Vec::with_capacity(spec.args.len());
+        for (slot, kind) in spec.args.iter().enumerate() {
+            let value = match (present(slot), kind) {
+                (Some(value), ViewArg::RequiredAny) => {
+                    let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    Value::Any(boxed)
+                }
+                (Some(value), _) => value.clone(),
+                (None, ViewArg::U64(default)) => Value::Int(*default as i64, NumKind::U64),
+                (None, ViewArg::I64(default)) => Value::Int(*default, NumKind::I64),
+                (None, ViewArg::Str(default)) => Value::Str((*default).into()),
+                (None, ViewArg::Required | ViewArg::RequiredAny) => return Ok(None),
+            };
+            slots.push(value);
+        }
+        if spec.value_first && slots.len() >= 2 {
+            slots.swap(0, 1);
+        }
+        let params = zun_natives::resolve(spec.module, &spec.native).map(|(_, info)| info.params);
+        let mut native_args = Vec::with_capacity(slots.len() + 1);
+        native_args.push(Value::Object(view));
+        for (slot, value) in slots.into_iter().enumerate() {
+            let kind = match params.and_then(|params| params.get(slot + 1)) {
+                Some(NativeTy::I8) => Some(NumKind::I8),
+                Some(NativeTy::I16) => Some(NumKind::I16),
+                Some(NativeTy::I32) => Some(NumKind::I32),
+                Some(NativeTy::I64) => Some(NumKind::I64),
+                Some(NativeTy::U8) => Some(NumKind::U8),
+                Some(NativeTy::U16) => Some(NumKind::U16),
+                Some(NativeTy::U32) => Some(NumKind::U32),
+                Some(NativeTy::U64) => Some(NumKind::U64),
+                _ => None,
+            };
+            native_args.push(match (value, kind) {
+                (Value::Float(n, _), Some(kind)) => Value::Int(n as i64, kind),
+                (Value::Int(n, _), Some(kind)) => Value::Int(n, kind),
+                (other, _) => other,
+            });
+        }
+        self.call_managed_collection(&spec.native, &native_args).map(Some)
+    }
+
     fn array_buffer_call(
         &mut self,
         buffer: zun_gc::Obj,
@@ -658,6 +728,14 @@ impl Interp<'_> {
         args: &[Value],
     ) -> Result<Option<Value>, RunError> {
         let kind = crate::typed_arrays::element_of(view).ok_or(RunError::BadToken)?;
+        // A byte view is a Node `Buffer` here (the checker types both as the same
+        // view and lowers `buf.toString(..)` to the Buffer native), so the
+        // Buffer-only members answer through `any` as they do when typed.
+        if kind == TypedElement::U8 {
+            if let Some(result) = self.node_buffer_member_call(view, member, args)? {
+                return Ok(Some(result));
+            }
+        }
         let len = crate::typed_arrays::element_len(view).unwrap_or(0);
         let truthy = |v: &Value| zun_gc::with_current_heap(|h| crate::collections::is_truthy(v, h));
         let callback = |args: &[Value]| match args.first() {

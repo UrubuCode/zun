@@ -265,6 +265,23 @@ impl<'a> Interp<'a> {
                 .any(|def| (def.method_start..def.method_end).contains(&rid))
     }
 
+    /// Whether `target` is an unbound closure marked `@this` (it declares or
+    /// reads a receiver as its hidden first parameter).
+    pub(crate) fn handle_is_this_closure(&self, target: zun_core::FunctionHandle) -> bool {
+        if target.is_bound() || target.builtin_method().is_some() {
+            return false;
+        }
+        let rid = target.method_rid();
+        self.module
+            .tables
+            .method_defs
+            .get((rid as usize).wrapping_sub(1))
+            .is_some_and(|method| {
+                let name = self.module.strings.get(method.name);
+                name.starts_with("<closure") && (name.contains("@this>") || name.contains("@this@rest>"))
+            })
+    }
+
     /// Whether a function value receives the `this` argument of `apply` /
     /// `bind` as its leading parameter. Receivers are positional for an
     /// unbound `@this` closure, a class instance method and a receiver-taking

@@ -435,5 +435,27 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Bool,
             imp: unavailable,
         },
+        // `Buffer.alloc(size, "text", encoding?)` and `buf.fill("text", ..)`: the
+        // text, encoded, is repeated (and truncated) over the whole buffer.
+        NativeFn {
+            name: "nodeBufferAllocFillString",
+            params: &[U64, Str, Str],
+            ret: U8Array,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "nodeBufferFillString",
+            params: &[U8Array, Str, Str],
+            ret: Bool,
+            imp: unavailable,
+        },
+        // `Buffer.from(x)` where `x` is only known at run time (`any`): a
+        // string (under the encoding), a byte view, an array or an ArrayBuffer.
+        NativeFn {
+            name: "nodeBufferFromAny",
+            params: &[Opaque, Str],
+            ret: U8Array,
+            imp: unavailable,
+        },
     ],
 };
