@@ -477,34 +477,16 @@ impl Interp<'_> {
         };
         // An inherited `Object.prototype` method read off a plain dynamic
         // object is a callable function value.
+        let proto_mode = crate::object_proto_mode(name.as_str());
         let value = if matches!(value, Value::Void)
-            && matches!(
-                name.as_str(),
-                "toString"
-                    | "toLocaleString"
-                    | "valueOf"
-                    | "hasOwnProperty"
-                    | "isPrototypeOf"
-                    | "propertyIsEnumerable"
-            )
+            && proto_mode.is_some()
             && zun_gc::with_current_heap(|heap| {
                 heap.is_dynamic_object(object)
                     && !heap.is_instance_bag(object)
                     && heap.array_len(object).is_none()
                     && !matches!(heap.dynamic_prototype(object), Some(p) if p.tag() == zun_core::AnyTag::Null)
             }) {
-            let mode = 100.0
-                + [
-                    "toString",
-                    "toLocaleString",
-                    "valueOf",
-                    "hasOwnProperty",
-                    "isPrototypeOf",
-                    "propertyIsEnumerable",
-                ]
-                .iter()
-                .position(|n| *n == name.as_str())
-                .unwrap_or(0) as f64;
+            let mode = proto_mode.unwrap_or(100.0);
             Value::Function(self.make_promise_settler(object, mode))
         } else {
             value

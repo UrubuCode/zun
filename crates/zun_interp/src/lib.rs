@@ -1942,6 +1942,27 @@ impl Interp<'_> {
 #[cfg(test)]
 mod method_tests;
 
+/// The `Object.prototype` methods a plain object inherits, in the order the
+/// receiver-bound stand-in encodes them (mode 100 upwards). One list, shared by
+/// the member read in `dyn_member` and the direct call in `dynamic_call`, so
+/// the two cannot drift apart.
+pub(crate) const OBJECT_PROTO_METHODS: [&str; 6] = [
+    "toString",
+    "toLocaleString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+];
+
+/// The stand-in mode for an `Object.prototype` method name.
+pub(crate) fn object_proto_mode(name: &str) -> Option<f64> {
+    OBJECT_PROTO_METHODS
+        .iter()
+        .position(|candidate| *candidate == name)
+        .map(|index| 100.0 + index as f64)
+}
+
 /// Resolve the expando property bag of a function object, creating it on
 /// first use. Bags are dynamic objects rooted in the statics object under a
 /// hidden `__fnbag:<method>:<env>` key, so `fn['x'] = v` on a function value

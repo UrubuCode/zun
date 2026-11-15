@@ -990,6 +990,22 @@ impl<'a> Interp<'a> {
                         .is_some()
                 });
                 if !is_module_member {
+                    // An `Object.prototype` method inherited by a plain object.
+                    // Reading `o.valueOf` already answers a receiver-bound
+                    // stand-in (see `dyn_member`); calling `o.valueOf()`
+                    // directly reaches here instead, so it builds the same
+                    // stand-in rather than a second implementation.
+                    if let Some(mode) = crate::object_proto_mode(&member) {
+                        if zun_gc::with_current_heap(|heap| {
+                            heap.is_dynamic_object(namespace) && heap.array_len(namespace).is_none()
+                        }) {
+                            let handle = self.make_promise_settler(namespace, mode);
+                            let result = self.invoke_function_value(handle, call_args)?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::null);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
                     // Neither a method nor a namespace export: the member is
                     // missing or not callable.
                     if OPTIONAL_PROBE.with(|flag| flag.get()) {
