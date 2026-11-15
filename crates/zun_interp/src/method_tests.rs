@@ -4371,3 +4371,43 @@ fn caller_frame_survives_a_collection_inside_a_bridged_callee() {
         "the parked caller must see its relocated object, got {result:?}"
     );
 }
+
+/// `call`/`apply` on an `any`-typed function value must bind `this` (when the
+/// function declares one) without shifting the arguments of a function that
+/// does not. A method's vtable slot is not proof of a class member: every
+/// method has one.
+#[test]
+fn call_and_apply_on_any_typed_functions_keep_arguments_aligned() {
+    let source = r#"
+const self: any = { name: "self" };
+const plain: any = function (a: any, b: any): void { console.log("plain", a, b); };
+plain.call(undefined, 1, 2);
+plain.call(self, 1, 2);
+plain.apply(self, [1, 2]);
+const arrow: any = (a: any, b: any): void => { console.log("arrow", a, b); };
+arrow.call(undefined, 1, 2);
+function declared(a: any, b: any): void { console.log("declared", a, b); }
+const d: any = declared;
+d.call(undefined, 1, 2);
+const withThis: any = function (this: any, a: any, b: any): void {
+  console.log("this", this.name, a, b);
+};
+withThis.call(self, 1, 2);
+withThis.apply(self, [1, 2]);
+"#;
+    let module = zun_compiler::compile(source).expect("compile call/apply workload");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run call/apply workload");
+    assert_eq!(
+        output.lines,
+        [
+            "plain 1 2",
+            "plain 1 2",
+            "plain 1 2",
+            "arrow 1 2",
+            "declared 1 2",
+            "this self 1 2",
+            "this self 1 2",
+        ]
+    );
+}
