@@ -87,6 +87,7 @@ impl<'a> Interp<'a> {
                         heap.dynamic_get_symbol(current, symbol).is_some()
                             || heap.dynamic_get_symbol_function(current, symbol).is_some()
                             || heap.dynamic_symbol_getter(current, symbol).is_some()
+                    || heap.dynamic_symbol_setter(current, symbol).is_some()
                     });
                     if found {
                         return Ok(Value::Bool(true));
@@ -112,6 +113,7 @@ impl<'a> Interp<'a> {
                             heap.dynamic_get_symbol(current, symbol).is_some()
                                 || heap.dynamic_get_symbol_function(current, symbol).is_some()
                                 || heap.dynamic_symbol_getter(current, symbol).is_some()
+                    || heap.dynamic_symbol_setter(current, symbol).is_some()
                         });
                         if found {
                             return Ok(Value::Bool(true));
@@ -431,6 +433,9 @@ impl<'a> Interp<'a> {
                         Some(Ok(Value::Function(target))) => target,
                         _ => handle,
                     };
+                    if !self.function_is_constructor(proto_source) || !self.function_is_constructor(handle) {
+                        return Err(RunError::Native("TypeError: value is not a constructor".into()));
+                    }
                     return self.construct_ordinary_function(handle, proto_source, values);
                 }
                 let token = args
@@ -511,6 +516,9 @@ impl<'a> Interp<'a> {
                     if let Some(ctor) = self.coerce_ctor_name(handle) {
                         return self.construct_coerce_wrapper(handle, ctor, values);
                     }
+                    if !self.function_is_constructor(handle) {
+                        return Err(RunError::Native("TypeError: value is not a constructor".into()));
+                    }
                     return self.construct_ordinary_function(handle, handle, values);
                 }
                 let token = match args.first().ok_or(RunError::BadToken)? {
@@ -558,6 +566,50 @@ impl<'a> Interp<'a> {
     /// object inheriting `proto_source.prototype` (falling back to
     /// `Object.prototype`), call `handle` with it as `this`, and return the
     /// call's result when it is an object, else the fresh object.
+    /// Whether `handle` can be the target of `new`. A class member (method,
+    /// accessor, static method) and a generator are not constructors; a plain
+    /// function, which owns no class membership, is.
+    pub(super) fn function_is_constructor(&self, handle: zun_core::FunctionHandle) -> bool {
+        if handle.builtin_method().is_some() || handle.generator_method().is_some() {
+            return false;
+        }
+        if handle.is_bound() {
+            return true;
+        }
+        let rid = handle.method_rid();
+        let owned_by_class = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .any(|def| rid >= def.method_start && rid < def.method_end);
+        if owned_by_class {
+            return false;
+        }
+        let Some(method) = self
+            .module
+            .tables
+            .method_defs
+            .get((rid as usize).wrapping_sub(1))
+        else {
+            return true;
+        };
+        let Ok(body) = read_body(&self.module.code, method.body_offset) else {
+            return true;
+        };
+        let mut offset = 0;
+        while offset < body.code.len() {
+            let Ok((instruction, size)) = decode_one(&body.code[offset..]) else {
+                break;
+            };
+            if instruction.opcode == Opcode::Yield {
+                return false;
+            }
+            offset += size;
+        }
+        true
+    }
+
     pub(super) fn construct_ordinary_function(
         &mut self,
         handle: zun_core::FunctionHandle,

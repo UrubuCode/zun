@@ -228,6 +228,7 @@ impl<'a> Interp<'a> {
                             heap.dynamic_get_symbol(obj, symbol).is_some()
                                 || heap.dynamic_get_symbol_function(obj, symbol).is_some()
                                 || heap.dynamic_symbol_getter(obj, symbol).is_some()
+                    || heap.dynamic_symbol_setter(obj, symbol).is_some()
                         });
                         return Ok(Value::Bool(has));
                     }
@@ -711,7 +712,19 @@ impl<'a> Interp<'a> {
             "objectGetOwnPropertyNames" => {
                 if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
                     if let Some(rid) = any.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
-                        let names = self.class_own_names(rid);
+                        let mut names = self.class_own_names(rid);
+                        if let Some(bag) = any
+                            .as_class_descriptor()
+                            .and_then(Self::class_expando_peek)
+                        {
+                            for key in zun_gc::with_current_heap(|heap| heap.dynamic_keys(bag))
+                                .unwrap_or_default()
+                            {
+                                if !names.contains(&key) {
+                                    names.push(key);
+                                }
+                            }
+                        }
                         let array = zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(names.len());
                             for (index, name) in names.iter().enumerate() {
@@ -858,8 +871,18 @@ impl<'a> Interp<'a> {
                 // A class constructor value is not a heap object: its symbol
                 // statics are not modelled as own properties, so it reports none.
                 if let Ok(Value::Any(any)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
-                    if any.as_class_descriptor().is_some() {
-                        let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                    if let Some(token) = any.as_class_descriptor() {
+                        // Only symbols a script defined on the class value are modelled.
+                        let symbols = Self::class_expando_peek(token)
+                            .map(|bag| zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(bag)))
+                            .unwrap_or_default();
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(symbols.len());
+                            for (index, symbol) in symbols.iter().enumerate() {
+                                let _ = heap.array_set(array, index, zun_core::Any::symbol(*symbol));
+                            }
+                            array
+                        });
                         return Ok(Value::Object(array));
                     }
                 }

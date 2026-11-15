@@ -212,7 +212,7 @@ impl Checker<'_> {
                         .iter()
                         .position(|parameter| parameter.is_rest)
                         .map(|index| index + 1),
-                    is_generator: false,
+                    is_generator: m.is_generator,
                     is_static: m.is_static,
                 });
             }

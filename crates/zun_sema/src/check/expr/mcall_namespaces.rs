@@ -620,6 +620,9 @@ impl Checker<'_> {
                         let token = zun_natives::USER_CLASS_FLAG | (class_index + 1);
                         checked.insert(0, self.realm_descriptor_expr(token, span));
                     }
+                    if self.signatures[func as usize].is_generator {
+                        return Some(self.generator_method_call(func, checked, span));
+                    }
                     return Some(hir::Expr {
                         kind: hir::ExprKind::StaticCall {
                             func,

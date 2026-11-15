@@ -85,6 +85,8 @@ pub struct DynamicObject {
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
     /// Getter functions of symbol-keyed accessor properties.
     symbol_getters: BTreeMap<SymbolId, FunctionHandle>,
+    /// Setter functions of symbol-keyed accessor properties.
+    symbol_setters: BTreeMap<SymbolId, FunctionHandle>,
     string_functions: BTreeMap<String, FunctionHandle>,
     module_functions: BTreeMap<String, ModuleBoundFunction>,
     module_classes: BTreeMap<String, ModuleBoundClass>,
@@ -108,6 +110,7 @@ impl PartialEq for DynamicObject {
             && self.non_configurable_symbols == other.non_configurable_symbols
             && self.symbol_functions == other.symbol_functions
             && self.symbol_getters == other.symbol_getters
+            && self.symbol_setters == other.symbol_setters
             && self.string_functions == other.string_functions
             && self.module_functions == other.module_functions
             && self.module_classes == other.module_classes
@@ -523,6 +526,7 @@ impl DynamicObject {
         self.symbol_properties.contains_key(&symbol)
             || self.symbol_functions.contains_key(&symbol)
             || self.symbol_getters.contains_key(&symbol)
+            || self.symbol_setters.contains_key(&symbol)
     }
     /// Record a symbol key in first-insertion order (idempotent).
     fn note_symbol_key(&mut self, symbol: SymbolId) {
@@ -543,6 +547,7 @@ impl DynamicObject {
         // function slot or getter held under the key.
         self.symbol_functions.remove(&symbol);
         self.symbol_getters.remove(&symbol);
+        self.symbol_setters.remove(&symbol);
         if enumerable {
             self.non_enumerable_symbols.remove(&symbol);
         } else {
@@ -626,6 +631,7 @@ impl DynamicObject {
         self.symbol_properties.remove(&symbol);
         self.symbol_functions.remove(&symbol);
         self.symbol_getters.remove(&symbol);
+        self.symbol_setters.remove(&symbol);
         self.non_enumerable_symbols.remove(&symbol);
         self.non_writable_symbols.remove(&symbol);
         self.non_configurable_symbols.remove(&symbol);
@@ -648,6 +654,17 @@ impl DynamicObject {
     ) -> Option<FunctionHandle> {
         self.note_symbol_key(symbol);
         self.symbol_getters.insert(symbol, function)
+    }
+    pub fn get_symbol_setter(&self, symbol: SymbolId) -> Option<FunctionHandle> {
+        self.symbol_setters.get(&symbol).copied()
+    }
+    pub fn set_symbol_setter(
+        &mut self,
+        symbol: SymbolId,
+        function: FunctionHandle,
+    ) -> Option<FunctionHandle> {
+        self.note_symbol_key(symbol);
+        self.symbol_setters.insert(symbol, function)
     }
     pub fn get_symbol_function(&self, symbol: SymbolId) -> Option<FunctionHandle> {
         self.symbol_functions.get(&symbol).copied()
@@ -799,6 +816,7 @@ impl DynamicObject {
         self.symbol_functions
             .values()
             .chain(self.symbol_getters.values())
+            .chain(self.symbol_setters.values())
             .chain(self.string_functions.values())
             .chain(self.accessor_get.values())
             .chain(self.accessor_set.values())
@@ -809,6 +827,7 @@ impl DynamicObject {
         self.symbol_functions
             .values_mut()
             .chain(self.symbol_getters.values_mut())
+            .chain(self.symbol_setters.values_mut())
             .chain(self.string_functions.values_mut())
             .chain(self.accessor_get.values_mut())
             .chain(self.accessor_set.values_mut())

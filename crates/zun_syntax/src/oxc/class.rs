@@ -557,6 +557,12 @@ fn convert_method(
     method_index: &mut MethodIndex,
     symbol_methods: &mut Vec<crate::ast::ClassSymbolMethod>,
 ) -> Result<(), Vec<String>> {
+    let _super_context = push_super_context(
+        class_declaration.id.as_ref().map(|id| Name {
+            span: Span::new(id.span.start, id.span.end),
+        }),
+        method.r#static,
+    );
     let (name_span, computed_key) = method_name_and_key(source, method)?;
     let Some(body) = method.value.body.as_ref() else {
         // `extern m(..): T;` arrives as a bodiless method
@@ -867,4 +873,52 @@ fn register_method(
             }
         }
     }
+}
+
+thread_local! {
+    /// The class (and whether the method being converted is static) that a
+    /// `super[key]` expression in the current method body refers to. A stack:
+    /// a class declared inside a method body nests.
+    static SUPER_CONTEXT: std::cell::RefCell<Vec<Option<(Name, bool)>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Pops the `super` context pushed by [`push_super_context`] when dropped.
+struct SuperContextGuard;
+
+impl Drop for SuperContextGuard {
+    fn drop(&mut self) {
+        SUPER_CONTEXT.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+fn push_super_context(class_name: Option<Name>, is_static: bool) -> SuperContextGuard {
+    SUPER_CONTEXT.with(|stack| stack.borrow_mut().push(class_name.map(|name| (name, is_static))));
+    SuperContextGuard
+}
+
+/// The home object a computed `super[key]` reads from: the base class's
+/// prototype (`Object.getPrototypeOf(C.prototype)`) in an instance method,
+/// the base class itself (`Object.getPrototypeOf(C)`) in a static one. `None`
+/// outside a class method of a named class.
+pub(super) fn super_home_object(span: Span) -> Option<Expr> {
+    let (class, is_static) = SUPER_CONTEXT.with(|stack| stack.borrow().last().copied().flatten())?;
+    let class_ref = Expr::Ident(class);
+    let subject = if is_static {
+        class_ref
+    } else {
+        Expr::Field {
+            object: Box::new(class_ref),
+            field: crate::ast::synthetic_ident("prototype"),
+            span,
+        }
+    };
+    Some(Expr::MethodCall {
+        receiver: Box::new(Expr::Ident(crate::ast::synthetic_ident("Object"))),
+        method: crate::ast::synthetic_ident("getPrototypeOf"),
+        args: vec![subject],
+        span,
+    })
 }

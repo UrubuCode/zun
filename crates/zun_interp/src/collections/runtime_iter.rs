@@ -87,6 +87,13 @@ impl<'a> Interp<'a> {
                 })
                 .or_else(|| {
                     super::iterator_helpers::symbol_function_in_chain(source, iterator_id)
+                })
+                // A class member installed by a computed key whose value is the
+                // well-known symbol (`[iterKey]() {}`) lives on the class
+                // prototype object, not in the literal-symbol side table.
+                .or_else(|| {
+                    let proto = self.instance_class_prototype(source)?;
+                    super::iterator_helpers::symbol_function_in_chain(proto, iterator_id)
                 });
         let Some(handle) = handle else {
             // An object inheriting from an array iterates the inherited elements

@@ -111,14 +111,55 @@ impl<'a> Interp<'a> {
                 })))
             }
             "weakRefNew" => {
-                let target =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A function value has no heap object of its own: the reference is
+                // held through its closure environment.
+                if let Value::Function(handle) = args.first().ok_or(RunError::BadToken)? {
+                    let object =
+                        zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_ref_function(*handle));
+                    return Ok(Value::Any(zun_core::Any::object(object.addr() as usize)));
+                }
+                let invalid = || RunError::Native("TypeError: WeakRef: invalid target".into());
+                let argument = args.first().ok_or(RunError::BadToken)?;
+                // An unregistered symbol is a legal target; it owns no managed storage.
+                if let Value::Any(any) = argument {
+                    if let Some(symbol) = any.as_symbol() {
+                        if zun_gc::with_current_heap(|heap| heap.symbol_key_for(symbol).is_some()) {
+                            return Err(invalid());
+                        }
+                        let object =
+                            zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_ref_symbol(symbol));
+                        return Ok(Value::Any(zun_core::Any::object(object.addr() as usize)));
+                    }
+                }
+                // Any other primitive (and a BigInt, which is a managed object here)
+                // is not a valid target.
+                let target = object(argument)
+                    .filter(|candidate| {
+                        zun_gc::with_current_heap(|heap| heap.bigint_value(*candidate).is_none())
+                    })
+                    .ok_or_else(invalid)?;
+                // A function boxed into `any` arrives as its cell: hold the function.
+                if let Some(function) = zun_gc::with_current_heap(|heap| heap.function_of_cell(target)) {
+                    let object =
+                        zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_ref_function(function));
+                    return Ok(Value::Any(zun_core::Any::object(object.addr() as usize)));
+                }
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_ref(target));
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
             }
             "weakRefDeref" => {
                 let ref_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                if let Some(function) =
+                    zun_gc::with_current_heap(|heap| heap.weak_ref_get_function(ref_object))
+                {
+                    return Ok(Value::Function(function));
+                }
+                if let Some(symbol) =
+                    zun_gc::with_current_heap(|heap| heap.weak_ref_get_symbol(ref_object))
+                {
+                    return Ok(Value::Any(zun_core::Any::symbol(symbol)));
+                }
                 Ok(
                     zun_gc::with_current_heap(|heap| heap.weak_ref_get_object(ref_object))
                         .map(|target| Value::Any(zun_core::Any::object(target.addr() as usize)))

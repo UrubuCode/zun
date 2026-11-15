@@ -353,6 +353,14 @@ impl Interp<'_> {
                         Err(error) => return Err(error),
                     }
                 }
+                if name != "prototype" {
+                    if let Some(value) =
+                        self.class_expando_read(token, &Value::Str(name.as_str().into()))
+                    {
+                        stack.push(value);
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 if name == "BYTES_PER_ELEMENT" && !user_class {
                     if let Some(kind) = self.typed_ctor_kind(token) {
                         stack.push(Value::Float(kind.size() as f64, zun_il::NumKind::F64));
@@ -716,7 +724,7 @@ impl Interp<'_> {
                 // A typed class instance: a declared field takes the
                 // value in place; any other name becomes an expando.
                 let typed_instance = zun_gc::with_current_heap(|heap| {
-                    !heap.is_dynamic_object(object)
+                    (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
                         && heap.array_len(object).is_none()
                         && object.type_rid() >= 1
                 });
@@ -994,6 +1002,10 @@ impl Interp<'_> {
                         }
                         Err(error) => return Err(error),
                     }
+                }
+                if let Some(value) = self.class_expando_read(token, &key) {
+                    stack.push(value);
+                    return Ok(ArmFlow::Continue);
                 }
                 let kind = match &key {
                     Value::Str(name) => self.builtin_static_kind(token, name),
@@ -1432,6 +1444,28 @@ impl Interp<'_> {
                 throw_native_arm!(self, body, stack, pc, next - size, message);
             }
         }
+        // A symbol-keyed accessor with a setter runs it instead of storing.
+        if let Value::Any(key_any) = &key {
+            if let Some(setter) = key_any
+                .as_symbol()
+                .and_then(|symbol| self.symbol_setter_lookup(object, symbol))
+            {
+                let call_args = self.with_this_arg(setter, object, vec![value.clone()]);
+                match self.invoke_function_value(setter, call_args) {
+                    Ok(_) => {
+                        stack.push(value);
+                        return Ok(ArmFlow::Next);
+                    }
+                    Err(RunError::Thrown(exception)) => {
+                        if self.route_exception(body, stack, pc, next - size, &exception) {
+                            return Ok(ArmFlow::Continue);
+                        }
+                        return Err(RunError::Thrown(exception));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         match &key {
             Value::Any(key_any) if key_any.as_symbol().is_some() => {
                 let symbol = key_any.as_symbol().expect("symbol key");
@@ -1462,7 +1496,9 @@ impl Interp<'_> {
             }
             Value::Str(key)
                 if zun_gc::with_current_heap(|heap| {
-                    !heap.is_dynamic_object(object)
+                    // An instance that already took an expando is dynamic too,
+                    // but its declared fields still live in the fixed layout.
+                    (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
                         && heap.array_len(object).is_none()
                         && object.type_rid() >= 1
                 }) =>

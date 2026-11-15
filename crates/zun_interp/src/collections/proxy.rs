@@ -248,6 +248,13 @@ impl<'a> Interp<'a> {
                     let array = object(args.get(1).ok_or(RunError::BadToken)?)
                         .ok_or(RunError::BadToken)?;
                     let values = self.read_array_values(array)?;
+                    if self.coerce_ctor_name(handle).is_none()
+                        && !self.function_is_constructor(handle)
+                    {
+                        return Err(RunError::Native(
+                            "TypeError: value is not a constructor".into(),
+                        ));
+                    }
                     return self.construct_ordinary_function(handle, handle, values);
                 }
                 let proxy = args.first().and_then(object);

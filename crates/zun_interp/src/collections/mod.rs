@@ -93,6 +93,12 @@ pub(super) fn weak_key(value: &Value) -> Option<zun_gc::Obj> {
         Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| {
             heap.function_cell(*handle)
         })),
+        // A class value is a legal weak key. It has no heap object of its own;
+        // its expando bag (anchored on the realm global, one per class) stands
+        // for it, so the key outlives every collection like the class does.
+        Value::Any(any) if any.as_class_descriptor().is_some() => {
+            any.as_class_descriptor().map(Interp::class_expando_bag)
+        }
         // An unregistered symbol (user-created or well-known) is a legal weak key.
         Value::Any(any) if any.as_symbol().is_some() => {
             let id = any.as_symbol()?;

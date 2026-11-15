@@ -263,7 +263,14 @@ impl Interp<'_> {
                 }));
             }
         }
-        if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
+        // A typed instance carrying an expando bag reads its declared fields from
+        // the fixed layout; only a key held by the bag takes the dynamic route.
+        if zun_gc::with_current_heap(|heap| {
+            heap.is_dynamic_object(obj)
+                && (!heap.is_instance_bag(obj)
+                    || heap.dynamic_descriptor(obj, key).is_some()
+                    || heap.dynamic_get_function(obj, key).is_some())
+        }) {
             let (enumerable, getter, accessor, data, function) =
                 zun_gc::with_current_heap(|heap| {
                     (
@@ -588,7 +595,9 @@ impl Interp<'_> {
         let keys: Vec<String> = match &ctx.list {
             Some(list) => list.clone(),
             None => {
-                if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
+                if zun_gc::with_current_heap(|heap| {
+                    heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
+                }) {
                     zun_gc::with_current_heap(|heap| {
                         heap.dynamic_keys(obj)
                             .unwrap_or_default()

@@ -41,7 +41,7 @@ impl Checker<'_> {
         if let ast::Expr::Function(function) = value {
             if !function.is_arrow {
                 let body = &self.source[function.span.start as usize..function.span.end as usize];
-                self.closure_takes_this = body.contains("this");
+                self.closure_takes_this = body_takes_this(body);
             }
         }
     }
@@ -70,7 +70,7 @@ impl Checker<'_> {
                         if !function.is_arrow {
                             let body = &self.source
                                 [function.span.start as usize..function.span.end as usize];
-                            self.closure_takes_this = body.contains("this");
+                            self.closure_takes_this = body_takes_this(body);
                         }
                     }
                 }
@@ -186,7 +186,7 @@ impl Checker<'_> {
                 if let ast::Expr::Function(function) = &property.value {
                     let body =
                         &self.source[function.span.start as usize..function.span.end as usize];
-                    self.closure_takes_this = body.contains("this");
+                    self.closure_takes_this = body_takes_this(body);
                 }
                 let func = self.check_expr(cx, &property.value);
                 self.closure_takes_this = false;
@@ -241,7 +241,7 @@ impl Checker<'_> {
                 if let ast::Expr::Function(function) = &property.value {
                     let body =
                         &self.source[function.span.start as usize..function.span.end as usize];
-                    self.closure_takes_this = body.contains("this");
+                    self.closure_takes_this = body_takes_this(body);
                 }
                 let func = self.check_expr(cx, &property.value);
                 self.closure_takes_this = false;
@@ -457,4 +457,10 @@ impl Checker<'_> {
         }
         result
     }
+}
+
+/// Whether a function body's source text needs the receiver: it mentions
+/// `this`, or a computed `super[key]` (lowered to a call that forwards `this`).
+fn body_takes_this(body: &str) -> bool {
+    body.contains("this") || body.contains("super[")
 }

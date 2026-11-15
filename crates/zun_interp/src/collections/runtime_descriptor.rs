@@ -291,7 +291,9 @@ impl<'a> Interp<'a> {
             names.extend(expandos);
             return Ok(names);
         }
-        if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
+        if zun_gc::with_current_heap(|heap| {
+            heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
+        }) {
             zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).ok_or(RunError::BadToken)
         } else {
             let mut names: Vec<String> = self
@@ -299,6 +301,20 @@ impl<'a> Interp<'a> {
                 .into_iter()
                 .map(|(name, _)| name)
                 .collect();
+            // A typed instance that took an expando keeps its declared fields;
+            // the bag's non-enumerable keys follow them.
+            let bag_keys = zun_gc::with_current_heap(|heap| {
+                if heap.is_instance_bag(obj) {
+                    heap.dynamic_keys(obj).unwrap_or_default()
+                } else {
+                    Vec::new()
+                }
+            });
+            for key in bag_keys {
+                if !names.contains(&key) {
+                    names.push(key);
+                }
+            }
             for (name, _) in self.error_hidden_own(obj) {
                 if !names.contains(&name) {
                     names.push(name);
@@ -325,10 +341,26 @@ impl<'a> Interp<'a> {
         symbol: zun_core::SymbolId,
     ) -> Option<zun_gc::Obj> {
         zun_gc::with_current_heap_mut(|heap| {
-            if let Some(getter) = heap.dynamic_symbol_getter(obj, symbol) {
+            let getter = heap.dynamic_symbol_getter(obj, symbol);
+            let setter = heap.dynamic_symbol_setter(obj, symbol);
+            if getter.is_some() || setter.is_some() {
                 let out = heap.alloc_dynamic();
-                heap.dynamic_set_function(out, "get", getter);
-                heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
+                match getter {
+                    Some(getter) => {
+                        heap.dynamic_set_function(out, "get", getter);
+                    }
+                    None => {
+                        heap.dynamic_set(out, "get".to_owned(), zun_core::Any::void());
+                    }
+                };
+                match setter {
+                    Some(setter) => {
+                        heap.dynamic_set_function(out, "set", setter);
+                    }
+                    None => {
+                        heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
+                    }
+                };
                 let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
                 let configurable = heap.dynamic_is_symbol_configurable(obj, symbol);
                 heap.dynamic_set(

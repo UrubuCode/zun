@@ -349,6 +349,31 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // A function a script defined on the class value itself
+                // (`Object.defineProperty(Cls, "m", { value: fn })`, a computed
+                // static method): called with the class as `this`.
+                if let Value::Any(desc) = &receiver_concrete {
+                    if let Some(Value::Function(handle)) = desc.as_class_descriptor().and_then(|token| {
+                        self.class_expando_read(token, &Value::Str(member.as_ref().into()))
+                    }) {
+                        let call_values = args[2..]
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Any(any) => zun_gc::with_current_heap(|heap| {
+                                    Value::unbox_any(*any, heap)
+                                })
+                                .ok_or(RunError::BadToken),
+                                other => Ok(other.clone()),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let call_args =
+                            self.with_this_value(handle, receiver_concrete.clone(), call_values);
+                        let result = self.invoke_function_value(handle, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // A static method called through a built-in constructor value
                 // (`const O: any = Object; O.keys(x)`).
                 if let Value::Any(desc) = &receiver_concrete {
@@ -919,7 +944,12 @@ impl<'a> Interp<'a> {
                         method_args.push(Value::Object(namespace));
                         method_args.extend(call_args.iter().cloned());
                         let method_args = self.pack_rest_call_args(rid, method_args);
-                        let result = self.call(rid, method_args, None)?;
+                        // A generator method mints its iterator instead of running.
+                        let result = if self.method_contains_yield(rid) {
+                            self.create_generator(rid, &method_args)?
+                        } else {
+                            self.call(rid, method_args, None)?
+                        };
                         let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                             .unwrap_or_else(zun_core::Any::void);
                         return Ok(Value::Any(boxed));

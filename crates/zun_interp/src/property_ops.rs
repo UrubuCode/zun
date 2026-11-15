@@ -1289,6 +1289,39 @@ impl Interp<'_> {
         None
     }
 
+    /// The setter of a symbol-keyed accessor reachable from `object`: its own
+    /// slot first, then the class prototype chain of a typed instance, then the
+    /// dynamic prototype chain.
+    pub(crate) fn symbol_setter_lookup(
+        &self,
+        object: zun_gc::Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_core::FunctionHandle> {
+        let mut current = Some(object);
+        let mut class_proto = self.instance_class_prototype(object);
+        for _ in 0..256 {
+            let at = current?;
+            let step = zun_gc::with_current_heap(|heap| {
+                if let Some(setter) = heap.dynamic_symbol_setter(at, symbol) {
+                    return Err(Some(setter));
+                }
+                if heap.dynamic_has_symbol_key(at, symbol) {
+                    // A data property or getter-only accessor shadows the chain.
+                    return Err(None);
+                }
+                Ok(heap
+                    .dynamic_prototype(at)
+                    .and_then(|any| any.as_object())
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }))
+            });
+            match step {
+                Err(found) => return found,
+                Ok(next) => current = class_proto.take().or(next),
+            }
+        }
+        None
+    }
+
     /// TypeDef rid of a user-class descriptor token, when it names a class of
     /// this module.
     pub(crate) fn user_class_rid(&self, token: u32) -> Option<u32> {
@@ -1455,6 +1488,69 @@ impl Interp<'_> {
             heap.dynamic_define(global, key, any, false);
             bag
         })
+    }
+
+    /// The expando bag of a class value when one exists (never created here).
+    pub(crate) fn class_expando_peek(token: u32) -> Option<zun_gc::Obj> {
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            let address = heap
+                .dynamic_get(global, &format!("$classBag#{token}"))
+                .and_then(|a| a.as_object())?;
+            Some(unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+        })
+    }
+
+    /// Read a property a script defined on a class value (its expando bag)
+    /// under a string or symbol `key`: a function slot or a data value. A
+    /// class whose bag was never created has nothing to read, and the lookup
+    /// does not create it.
+    pub(crate) fn class_expando_read_own(token: u32, key: &Value) -> Option<Value> {
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            let address = heap
+                .dynamic_get(global, &format!("$classBag#{token}"))
+                .and_then(|a| a.as_object())?;
+            let bag = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            match key {
+                Value::Str(name) => heap
+                    .dynamic_get_function(bag, name)
+                    .map(Value::Function)
+                    .or_else(|| {
+                        heap.dynamic_get(bag, name)
+                            .and_then(|any| Value::unbox_any(any, heap))
+                    }),
+                Value::Any(any) => {
+                    let symbol = any.as_symbol()?;
+                    heap.dynamic_get_symbol_function(bag, symbol)
+                        .map(Value::Function)
+                        .or_else(|| {
+                            heap.dynamic_get_symbol(bag, symbol)
+                                .and_then(|any| Value::unbox_any(any, heap))
+                        })
+                }
+                _ => None,
+            }
+        })
+    }
+
+    /// [`Self::class_expando_read_own`] on the class, then on each base class
+    /// (a static member is inherited by the subclass constructor).
+    pub(crate) fn class_expando_read(&self, token: u32, key: &Value) -> Option<Value> {
+        let mut rid = self.user_class_rid(token);
+        let mut current = token;
+        for _ in 0..64 {
+            if let Some(found) = Self::class_expando_read_own(current, key) {
+                return Some(found);
+            }
+            let def = self.module.tables.type_defs.get((rid? as usize).wrapping_sub(1))?;
+            if def.base.table() != Some(zun_metadata::TableKind::TypeDef) || def.base.is_null() {
+                return None;
+            }
+            rid = Some(def.base.rid());
+            current = def.base.rid() | zun_natives::USER_CLASS_FLAG;
+        }
+        None
     }
 
     /// `Object.hasOwn(Class, name)`: whether the class value itself (not its
@@ -1856,6 +1952,10 @@ impl Interp<'_> {
                 let flag_configurable = desc.configurable.or((!existing).then_some(false));
                 if desc.is_accessor() {
                     return zun_gc::with_current_heap_mut(|heap| {
+                        // A half-specified redefinition (`{ set }` over an existing
+                        // accessor) keeps the half it does not mention.
+                        let prior_get = if existing { heap.dynamic_symbol_getter(obj, *symbol) } else { None };
+                        let prior_set = if existing { heap.dynamic_symbol_setter(obj, *symbol) } else { None };
                         let ok = heap.dynamic_define_symbol(
                             obj,
                             *symbol,
@@ -1864,6 +1964,19 @@ impl Interp<'_> {
                         );
                         if let Some(getter) = desc.get {
                             heap.dynamic_set_symbol_getter(obj, *symbol, getter);
+                        }
+                        if let Some(setter) = desc.set {
+                            heap.dynamic_set_symbol_setter(obj, *symbol, setter);
+                        }
+                        if !desc.has_get {
+                            if let Some(getter) = prior_get {
+                                heap.dynamic_set_symbol_getter(obj, *symbol, getter);
+                            }
+                        }
+                        if !desc.has_set {
+                            if let Some(setter) = prior_set {
+                                heap.dynamic_set_symbol_setter(obj, *symbol, setter);
+                            }
                         }
                         heap.dynamic_set_symbol_attributes(obj, *symbol, None, flag_configurable);
                         ok
