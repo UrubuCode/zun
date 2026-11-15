@@ -91,9 +91,7 @@ impl<'a> Interp<'a> {
                     if found {
                         return Ok(Value::Bool(true));
                     }
-                    cursor = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(current))
-                        .and_then(|proto| proto.as_object())
-                        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                    cursor = self.symbol_chain_next(current);
                     depth += 1;
                     if depth > 64 {
                         break;
@@ -118,9 +116,7 @@ impl<'a> Interp<'a> {
                         if found {
                             return Ok(Value::Bool(true));
                         }
-                        cursor = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(current))
-                            .and_then(|proto| proto.as_object())
-                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                        cursor = self.symbol_chain_next(current);
                         depth += 1;
                         if depth > 64 {
                             break;
@@ -430,21 +426,9 @@ impl<'a> Interp<'a> {
                         .and_then(Self::class_token_of)
                         .and_then(|t| self.user_class_rid(t))
                     {
-                        let wanted = zun_gc::with_current_heap_mut(|heap| {
-                            let global = heap.global_object();
-                            ["Map", "Set"].into_iter().find(|name| {
-                                heap.dynamic_get(global, name)
-                                    .and_then(|a| a.as_class_descriptor())
-                                    == Some(token)
-                            })
-                        });
-                        if let Some(wanted) = wanted {
-                            let base_name = if wanted == "Map" {
-                                "__BuiltinMap"
-                            } else {
-                                "__BuiltinSet"
-                            };
-                            if self.class_chain_has_name(sub, base_name) {
+                        if let Some(wanted) = Self::builtin_ctor_global_name(token) {
+                            let base_name = format!("__Builtin{wanted}");
+                            if self.class_chain_has_name(sub, &base_name) {
                                 return self.construct_class_from_descriptor(
                                     zun_natives::USER_CLASS_FLAG | sub,
                                     values,
@@ -456,24 +440,13 @@ impl<'a> Interp<'a> {
                 let built = if self.user_class_rid(token).is_some() || self.error_family_rid(token).is_some() {
                     self.construct_class_from_descriptor(token, values)?
                 } else {
-                    let named = |this: &mut Self, name: &str| {
-                        zun_gc::with_current_heap_mut(|heap| {
-                            let global = heap.global_object();
-                            heap.dynamic_get(global, name).and_then(|a| a.as_class_descriptor())
-                        })
-                        .is_some_and(|t| t == token)
-                            && {
-                                let _ = this;
-                                true
-                            }
-                    };
-                    let source = values.into_iter().next().unwrap_or(Value::Void);
-                    if named(self, "Map") {
-                        self.call_managed_collection("mapFromIterable", &[source])?
-                    } else if named(self, "Set") {
-                        self.call_managed_collection("setFromIterable", &[source])?
-                    } else {
-                        return Err(RunError::Native("TypeError: value is not a constructor".into()));
+                    match self.construct_builtin_descriptor(token, array, values) {
+                        Some(built) => built?,
+                        None => {
+                            return Err(RunError::Native(
+                                "TypeError: value is not a constructor".into(),
+                            ))
+                        }
                     }
                 };
                 // The result inherits `newTarget.prototype` when that is an object.
@@ -532,6 +505,14 @@ impl<'a> Interp<'a> {
                 let array =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let values = self.read_array_values(array)?;
+                if token & zun_natives::USER_CLASS_FLAG == 0
+                    && self.error_family_rid(token).is_none()
+                {
+                    if let Some(built) = self.construct_builtin_descriptor(token, array, values.clone())
+                    {
+                        return built;
+                    }
+                }
                 self.construct_class_from_descriptor(token, values)
             }
             _ => Err(RunError::BadToken),
@@ -637,5 +618,18 @@ impl<'a> Interp<'a> {
             Err(_) => primitive,
         };
         self.construct_class_from_descriptor(token, vec![primitive])
+    }
+}
+
+impl<'a> Interp<'a> {
+    /// The next link of `current`'s prototype chain for a symbol-keyed lookup: the
+    /// class prototype object of a typed instance (where instance symbol methods
+    /// and accessors live), else the dynamic prototype link.
+    pub(super) fn symbol_chain_next(&self, current: zun_gc::Obj) -> Option<zun_gc::Obj> {
+        self.instance_class_prototype(current).or_else(|| {
+            zun_gc::with_current_heap(|heap| heap.dynamic_prototype(current))
+                .and_then(|proto| proto.as_object())
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+        })
     }
 }

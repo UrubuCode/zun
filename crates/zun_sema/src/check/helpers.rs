@@ -98,7 +98,7 @@ impl Checker<'_> {
             return source;
         }
         let span = source.span;
-        match zun_natives::resolve("array", "arrayFromArrayLike") {
+        match zun_natives::resolve("array", "arrayFromArgumentList") {
             Some((id, _)) => hir::Expr {
                 kind: hir::ExprKind::CallBuiltin {
                     id,

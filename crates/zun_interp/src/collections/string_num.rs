@@ -183,18 +183,7 @@ impl<'a> Interp<'a> {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
                             prim.display()
                         } else {
-                            let tag = zun_gc::with_current_heap(|heap| {
-                                heap.dynamic_get_symbol(
-                                    obj,
-                                    zun_core::WellKnownSymbol::ToStringTag.id(),
-                                )
-                                .and_then(|any| {
-                                    match Value::unbox_any(any, heap) {
-                                        Some(Value::Str(text)) => Some(text.to_string()),
-                                        _ => None,
-                                    }
-                                })
-                            });
+                            let tag = self.string_tag_of(obj)?;
                             match tag {
                                 Some(tag) => format!("[object {tag}]"),
                                 None => "[object Object]".to_string(),

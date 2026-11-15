@@ -179,6 +179,31 @@ impl<'a> Interp<'a> {
                 }
                 Ok(Value::Void)
             }
+            "classSetSymbolGetter" => {
+                // An instance `get [Symbol.x]()`: an own, non-enumerable accessor
+                // property of the class prototype object, so it is reported by
+                // `getOwnPropertyDescriptor` / `getOwnPropertySymbols` and found by
+                // a prototype-chain read (`Object.prototype.toString`, `obj[sym]`).
+                let class_rid = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let symbol = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
+                    _ => return Err(RunError::BadToken),
+                };
+                let function = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(function) => *function,
+                    _ => return Err(RunError::BadToken),
+                };
+                let proto = self.class_prototype_object(class_rid);
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_define_symbol(proto, symbol, zun_core::Any::void(), false);
+                    heap.dynamic_set_symbol_getter(proto, symbol, function);
+                });
+                Ok(Value::Void)
+            }
             "classSetMethod" => {
                 let class_rid = match args.first().ok_or(RunError::BadToken)? {
                     Value::Int(value, _) => *value as u32,

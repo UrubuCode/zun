@@ -1135,6 +1135,34 @@ impl Interp<'_> {
                                         let mut rid = object.type_rid();
                                         while rid >= 1 {
                                             let proto = self.class_prototype_object(rid);
+                                            // An instance `get [Symbol.x]()` is an accessor
+                                            // on the class prototype: run it with the
+                                            // instance as receiver.
+                                            if let Some(getter) = zun_gc::with_current_heap(|heap| {
+                                                heap.dynamic_symbol_getter(proto, symbol)
+                                            }) {
+                                                let call_args =
+                                                    self.with_this_arg(getter, object, Vec::new());
+                                                match self.invoke_function_value(getter, call_args) {
+                                                    Ok(v) => {
+                                                        found = v;
+                                                        break;
+                                                    }
+                                                    Err(RunError::Thrown(exception)) => {
+                                                        if self.route_exception(
+                                                            body,
+                                                            stack,
+                                                            pc,
+                                                            next - size,
+                                                            &exception,
+                                                        ) {
+                                                            return Ok(ArmFlow::Continue);
+                                                        }
+                                                        return Err(RunError::Thrown(exception));
+                                                    }
+                                                    Err(error) => return Err(error),
+                                                }
+                                            }
                                             let hit = zun_gc::with_current_heap(|heap| {
                                                 heap.dynamic_get_symbol_function(proto, symbol)
                                                     .map(Value::Function)

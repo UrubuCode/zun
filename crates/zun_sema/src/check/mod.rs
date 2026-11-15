@@ -241,6 +241,7 @@ fn check_impl(
         realm_globals: crate::realm::registry().into_iter().collect(),
         regex_matchers: Vec::new(),
         class_symbol_methods: Vec::new(),
+        class_symbol_getters: Vec::new(),
         classes_with_has_instance: HashSet::new(),
         classes_with_iterator: HashSet::new(),
         closure_param_hint: None,
@@ -526,6 +527,11 @@ struct Checker<'a> {
     /// `(class index, well-known symbol id, global func index)`. The module
     /// initializer attaches each to the per-type symbol-method side table.
     class_symbol_methods: Vec<(u32, u64, u32)>,
+    /// Non-static class computed-symbol-key *getters* (`get [Symbol.toStringTag]()`),
+    /// same shape as `class_symbol_methods`. They are accessor properties of the
+    /// class prototype, not methods, so the initializer installs them through
+    /// `classSetSymbolGetter`.
+    class_symbol_getters: Vec<(u32, u64, u32)>,
     /// Class indices that define a `[Symbol.hasInstance]` method. Such classes
     /// force the runtime `instanceof` path (the method decides membership).
     classes_with_has_instance: HashSet<u32>,

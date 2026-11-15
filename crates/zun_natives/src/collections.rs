@@ -1665,6 +1665,15 @@ pub const MODULE: crate::Module = crate::Module {
             ret: DynamicObject,
             imp: unavailable,
         },
+        // `classSetSymbolGetter(classRid, symbol, fn)` installs an instance
+        // `get [Symbol.x]()` as an accessor property of the class prototype
+        // object (the accessor counterpart of `classSetSymbolFunction`).
+        NativeFn {
+            name: "classSetSymbolGetter",
+            params: &[U32, Opaque, Function],
+            ret: Void,
+            imp: unavailable,
+        },
     ],
 };
 

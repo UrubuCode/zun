@@ -1057,19 +1057,11 @@ impl<'a> Interp<'a> {
                     Value::Function(_) => "Function".into(),
                     Value::Any(a) if a.as_symbol().is_some() => "Symbol".into(),
                     Value::Object(obj) => {
-                        let obj = *obj;
-                        let custom = zun_gc::with_current_heap(|heap| {
-                            heap.dynamic_get_symbol(
-                                obj,
-                                zun_core::WellKnownSymbol::ToStringTag.id(),
-                            )
-                            .and_then(|any| {
-                                match Value::unbox_any(any, heap) {
-                                    Some(Value::Str(text)) => Some(text.to_string()),
-                                    _ => None,
-                                }
-                            })
-                        });
+                        // The tag read can run a user getter, which can move the
+                        // object: read its address back afterwards.
+                        zun_gc::root!(held = *obj);
+                        let custom = self.string_tag_of(held.get())?;
+                        let obj = held.get();
                         let class_tag = self
                             .module
                             .tables

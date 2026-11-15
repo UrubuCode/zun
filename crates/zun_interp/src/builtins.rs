@@ -388,6 +388,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "mathApply",
         "bigIntUshr",
         "proxyRevocable",
+        "classSetSymbolGetter",
     ]
     .into_iter()
     .find(|&name| {
@@ -539,6 +540,7 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
         "arrayLikeReverse",
         "arrayLikePop",
         "arrayFromArrayLike",
+        "arrayFromArgumentList",
         "destructOpen",
         "destructStep",
         "destructRest",

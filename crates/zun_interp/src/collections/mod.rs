@@ -26,6 +26,8 @@ mod function;
 mod promise;
 mod proxy;
 mod reflect;
+mod reflect_builtin;
+mod to_string_tag;
 mod regexp;
 mod string_num;
 
@@ -446,7 +448,9 @@ impl<'a> Interp<'a> {
             "reflectConstruct" | "reflectConstructNew" => self.col_reflect(name, args),
             "proxyConstruct" => self.col_proxy(name, args),
             "applyDecorator" => self.col_class_decorator(name, args),
-            "classSetSymbolFunction" => self.col_class_decorator(name, args),
+            "classSetSymbolFunction" | "classSetSymbolGetter" => {
+                self.col_class_decorator(name, args)
+            }
             "classSetMethod" => self.col_class_decorator(name, args),
             "classSetFieldDefault" => self.col_class_decorator(name, args),
             "dynamicSetSymbolFunction" => self.col_class_decorator(name, args),
@@ -517,9 +521,11 @@ impl<'a> Interp<'a> {
                             if let Some(text) = self.array_join_dyn(obj, ",")? {
                                 Value::Str(text.into())
                             } else {
+                                // The fallback below reads the object again after managed code ran.
+                                zun_gc::root!(held = obj);
                                 match self.ordinary_to_primitive(obj, "default")? {
                                     Some(prim) => prim,
-                                    None => Value::Str("[object Object]".into()),
+                                    None => Value::Str(self.default_object_string(held.get())?.into()),
                                 }
                             }
                         }
@@ -590,7 +596,7 @@ impl<'a> Interp<'a> {
             "arrayLikeFill" => self.col_array_construct(name, args),
             "arrayLikeReverse" => self.col_array_construct(name, args),
             "arrayLikePush" | "arrayLikePop" => self.col_array_construct(name, args),
-            "arrayFromArrayLike" => self.col_array_construct(name, args),
+            "arrayFromArrayLike" | "arrayFromArgumentList" => self.col_array_construct(name, args),
             "destructOpen" => self.col_array_construct(name, args),
             "destructStep" => self.col_array_construct(name, args),
             "destructRest" => self.col_array_construct(name, args),

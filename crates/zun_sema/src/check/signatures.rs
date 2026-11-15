@@ -276,6 +276,20 @@ impl Checker<'_> {
                     is_static: !takes_this,
                 });
                 match self.well_known_symbol_of_key(&sm.key) {
+                    // An instance `get [Symbol.x]()` is an accessor property of the
+                    // class prototype, not a method: the initializer installs it as
+                    // such. (A static getter, e.g. `static get [Symbol.species]()`,
+                    // keeps the function-valued registration the runtime reads.)
+                    Some(symbol)
+                        if sm.function.accessor == Some(ast::AccessorKind::Get)
+                            && !sm.function.is_static =>
+                    {
+                        self.class_symbol_getters.push((
+                            class_idx as u32,
+                            symbol.id().get(),
+                            func_index,
+                        ));
+                    }
                     Some(symbol) => {
                         self.class_symbol_methods.push((
                             class_idx as u32,
