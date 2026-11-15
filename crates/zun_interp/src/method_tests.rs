@@ -4413,3 +4413,27 @@ function main(): string {
         "true,true,3,true,5,true,true,true,shared"
     );
 }
+
+#[test]
+fn call_and_apply_do_not_shift_a_free_function_s_arguments() {
+    // A class instance method reached as `Class.prototype.m` takes its receiver
+    // as a hidden first argument, but a *free* function must not get one:
+    // handing it the receiver shifted every real argument one place, so
+    // `f.call(undefined, 1, 2)` arrived as `f(undefined, 1)`. A free function
+    // can own a virtual slot too, so the test for "takes a receiver" has to be
+    // ownership by a class, not slot presence. The class-method half of the
+    // behaviour is covered by the conformance suite.
+    let module = zun_compiler::compile(
+        "function main(): void {
+             const free: any = function (a: any, b: any) { console.log(a + \"|\" + b); };
+             free.call(undefined, 1, 2);
+             free.apply({ t: 1 }, [1, 2]);
+             const one: any = function (a: any) { console.log(a); };
+             one.call(undefined, 9);
+         }",
+    )
+    .expect("compile call/apply receiver workload");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run call/apply receiver workload");
+    assert_eq!(output.lines, vec!["1|2", "1|2", "9"]);
+}

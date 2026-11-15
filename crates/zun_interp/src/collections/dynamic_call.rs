@@ -510,10 +510,14 @@ impl<'a> Interp<'a> {
                                 })
                                 .unwrap_or(false);
                         // A class instance method (`Class.prototype.m`) takes its
-                        // receiver as the implicit first argument.
+                        // receiver as the implicit first argument. This must test
+                        // for a method *owned by a class*: a free function can own
+                        // a virtual slot as well, and giving one the receiver
+                        // shifts every real argument one place, so
+                        // `f.call(undefined, 1, 2)` arrived as `f(undefined, 1)`.
                         let takes_this = takes_this
                             || (!handle.is_bound()
-                                && self.types.virtual_slot(handle.method_rid()).is_some())
+                                && self.method_rid_is_instance_method(handle.method_rid()))
                             || handle.builtin_method().is_some_and(|kind| kind >= 16);
                         if takes_this {
                             rest.insert(0, this_arg);

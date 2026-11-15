@@ -141,6 +141,30 @@ impl<'a> Interp<'a> {
             .copied()
     }
 
+    /// Whether `method_rid` is an *instance* method owned by some class, as
+    /// opposed to a free function, a closure or a class static.
+    ///
+    /// A class instance method takes its receiver as a hidden first argument, so
+    /// `Class.prototype.m.call(obj, x)` has to pass `obj` along. A free function
+    /// does not, and handing it the receiver shifts every real argument one
+    /// place — which is what a `virtual_slot` test did here, because a free
+    /// function can own a virtual slot too.
+    pub(crate) fn method_rid_is_instance_method(&self, method_rid: u32) -> bool {
+        let owned_by_a_class = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .any(|def| (def.method_start..def.method_end).contains(&method_rid));
+        owned_by_a_class
+            && self
+                .module
+                .tables
+                .method_defs
+                .get((method_rid as usize).wrapping_sub(1))
+                .is_some_and(|method| !method.is_static)
+    }
+
     /// The method RID implementing `name` on a typed instance (most-derived
     /// override), or `None` when the object is not a typed instance or has no
     /// such method.
