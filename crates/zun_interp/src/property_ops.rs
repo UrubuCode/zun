@@ -377,6 +377,77 @@ impl Interp<'_> {
         })
     }
 
+    /// Whether `target` appears on the prototype chain of `start` (excluding
+    /// `start` itself). Each step is `Object.getPrototypeOf`, so a typed
+    /// instance walks its class-prototype links and an array its
+    /// `Array.prototype`, exactly like a reflective read of the chain.
+    pub(crate) fn proto_chain_contains(
+        &mut self,
+        start: zun_gc::Obj,
+        target: zun_gc::Obj,
+    ) -> Result<bool, RunError> {
+        // `getPrototypeOf` can reach a proxy trap, i.e. managed code.
+        zun_gc::root!(target = target);
+        let mut current = start;
+        for _ in 0..1024 {
+            zun_gc::root!(held = current);
+            let next = self.call_managed_collection(
+                "objectGetPrototypeOf",
+                &[Value::Object(held.get())],
+            )?;
+            let next = match next {
+                Value::Any(any) => any.as_object(),
+                Value::Object(obj) => Some(obj.addr() as usize),
+                _ => None,
+            };
+            let Some(address) = next else {
+                return Ok(false);
+            };
+            if address == target.get().addr() as usize {
+                return Ok(true);
+            }
+            current = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+        }
+        Ok(false)
+    }
+
+    /// TypeDef rid of the prelude class behind the realm `Error`-family
+    /// constructor descriptor `token` (`Error`, `TypeError`, ...), if it is one.
+    pub(crate) fn error_family_rid(&self, token: u32) -> Option<u32> {
+        if token & zun_natives::USER_CLASS_FLAG != 0 {
+            return None;
+        }
+        zun_gc::with_current_heap_mut(|heap| {
+            crate::intrinsic_meta::builtin_class_name_in(heap, token)
+        })
+        .filter(|name| crate::intrinsic_meta::is_error_family(name))
+        .and_then(|name| self.type_rid_of(&name))
+    }
+
+    /// The class descriptor a program sees for the class with TypeDef `rid`:
+    /// the realm global's descriptor for a prelude `Error`-family class (so
+    /// `Object.getPrototypeOf(Sub) === Error` compares equal to the global),
+    /// else the user-class descriptor.
+    pub(crate) fn canonical_class_descriptor(&self, rid: u32) -> zun_core::Any {
+        let user = zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid);
+        let Some(name) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .map(|def| self.module.strings.get(def.name).to_owned())
+            .filter(|name| crate::intrinsic_meta::is_error_family(name))
+        else {
+            return user;
+        };
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            heap.dynamic_get(global, &name)
+        })
+        .filter(|any| any.as_class_descriptor().is_some())
+        .unwrap_or(user)
+    }
+
     /// The real `Class.prototype` object of the user class with TypeDef `rid`:
     /// created on first use, anchored (non-enumerable) on the realm global so
     /// it is rooted, and linked to its base class's prototype.
@@ -448,7 +519,7 @@ impl Interp<'_> {
                         .chars()
                         .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
                         && !name.is_empty();
-                    if ident && method.body_offset != u32::MAX {
+                    if ident && name != "constructor" && method.body_offset != u32::MAX {
                         plain_methods.push((
                             name.to_owned(),
                             zun_core::FunctionHandle::new(method_rid, None),
@@ -513,8 +584,24 @@ impl Interp<'_> {
                     Some(zun_core::Any::object(base.addr() as usize)),
                 );
             }
+            // `Class.prototype.constructor` is writable (ES2024 15.7.14 step 12
+            // defines it with `{ [[Writable]]: true, [[Enumerable]]: false,
+            // [[Configurable]]: true }`), so a program may replace it. Defining
+            // it read-only made `C.prototype.constructor = C` throw, which is
+            // the idiom `lib/events.js` and every library modelled on it uses
+            // to restore the entry after reassigning a prototype.
+            // A prelude `Error`-family class is reached through its realm
+            // global, so `Error.prototype.constructor === Error` keeps holding.
+            let ctor = error_class
+                .as_deref()
+                .and_then(|class| heap.dynamic_get(global, class))
+                .filter(|any| any.as_class_descriptor().is_some())
+                .unwrap_or_else(|| {
+                    zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid)
+                });
+            heap.dynamic_define_data(proto, "constructor", ctor, true, false, true);
             for (name, get, set) in accessors {
-                if error_class.is_some() && name == "name" {
+                if error_class.is_some() && matches!(name.as_str(), "name" | "errorName" | "stack") {
                     continue;
                 }
                 heap.dynamic_define_accessor(proto, name, get, set, false, true);
@@ -522,20 +609,9 @@ impl Interp<'_> {
             if let Some(class) = &error_class {
                 crate::intrinsic_meta::define_error_prototype_fields(heap, proto, class);
             }
-            // `Class.prototype.constructor` is writable (ES2024 15.7.14 step 12
-            // defines it with `{ [[Writable]]: true, [[Enumerable]]: false,
-            // [[Configurable]]: true }`), so a program may replace it. Defining
-            // it read-only made `C.prototype.constructor = C` throw, which is
-            // the idiom `lib/events.js` and every library modelled on it uses
-            // to restore the entry after reassigning a prototype.
-            heap.dynamic_define(
-                proto,
-                "constructor".to_owned(),
-                zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid),
-                true,
-            );
+            // Class methods are non-enumerable (ECMAScript ClassDefinitionEvaluation).
             for (name, handle) in plain_methods {
-                heap.dynamic_set_function(proto, name, handle);
+                heap.dynamic_set_method(proto, name, handle);
             }
             if is_number_class {
                 crate::intrinsic_meta::install_prototype_methods(heap, proto, "Number");
@@ -555,6 +631,12 @@ impl Interp<'_> {
     /// descriptor `token`: a plain dynamic object anchored (non-enumerable) on
     /// the realm global so it is rooted and identity-stable.
     pub(crate) fn builtin_prototype_object(&self, token: u32) -> zun_gc::Obj {
+        // The `Error` family is backed by prelude classes: `Error.prototype`
+        // IS the class prototype object, so instances, subclasses and the
+        // global constructor all share one link in the chain.
+        if let Some(rid) = self.error_family_rid(token) {
+            return self.class_prototype_object(rid);
+        }
         let key = format!("$builtinProto#{token}");
         zun_gc::with_current_heap_mut(|heap| {
             let global = heap.global_object();
@@ -1632,7 +1714,18 @@ impl Interp<'_> {
         {
             return None;
         }
-        Some(self.class_prototype_object(rid))
+        // A relinked instance (`Object.setPrototypeOf(inst, p)`, or
+        // `Reflect.construct(.., newTarget)`) records its prototype in its
+        // expando bag; that link wins over the class prototype.
+        let relinked = zun_gc::with_current_heap(|heap| {
+            if !heap.is_instance_bag(object) {
+                return None;
+            }
+            heap.dynamic_prototype(object)
+                .and_then(|any| any.as_object())
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+        });
+        Some(relinked.unwrap_or_else(|| self.class_prototype_object(rid)))
     }
 
     /// Map a prototype argument to the stored link: an explicit `null` is kept

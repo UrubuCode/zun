@@ -41,6 +41,24 @@ function __zunErrorHasCause(options: any): boolean {
     return "cause" in options;
 }
 
+// The `name` an error inherits: the first own data `name` on its prototype chain
+// (ECMAScript: `Error.prototype.name`, then `TypeError.prototype.name`, ...), so a
+// `name` assigned on a class prototype, or a relinked chain, is what an instance
+// reads. `fallback` is the class name, used when the chain carries none.
+function __zunProtoName(self: any, fallback: string): string {
+    let proto: any = Object.getPrototypeOf(self);
+    let depth = 0;
+    while (proto !== null && proto !== undefined && depth < 64) {
+        const desc: any = Object.getOwnPropertyDescriptor(proto, "name");
+        if (desc !== undefined && "value" in desc) {
+            return String(desc.value);
+        }
+        proto = Object.getPrototypeOf(proto);
+        depth = depth + 1;
+    }
+    return fallback;
+}
+
 class Error {
     message: string;
     stackFrames: string = captureStackTrace();
@@ -88,7 +106,7 @@ class Error {
         if (this.hasName) {
             return this.nameOverride;
         }
-        return this.errorName;
+        return __zunProtoName(this, this.errorName);
     }
 
     // Takes `any` because JS lets any value be assigned: `undefined` clears the

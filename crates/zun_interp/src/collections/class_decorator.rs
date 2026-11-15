@@ -309,13 +309,7 @@ impl<'a> Interp<'a> {
                     // class of that name (or the built-in constructor check).
                     if let Some(token) = descriptor.as_class_descriptor() {
                         let class_name = zun_gc::with_current_heap_mut(|heap| {
-                            let global = heap.global_object();
-                            heap.dynamic_entries(global).and_then(|entries| {
-                                entries
-                                    .into_iter()
-                                    .find(|(_, any)| any.as_class_descriptor() == Some(token))
-                                    .map(|(name, _)| name)
-                            })
+                            crate::intrinsic_meta::builtin_class_name_in(heap, token)
                         });
                         if let Some(class_name) = class_name {
                             let rid = self.type_rid_of(&class_name);
@@ -351,7 +345,7 @@ impl<'a> Interp<'a> {
                             is_truthy(&result, heap)
                         })));
                     }
-                    return Ok(Value::Bool(self.function_instanceof(&value, handle)));
+                    return Ok(Value::Bool(self.function_instanceof(&value, handle)?));
                 }
                 let rhs = object(args.get(1).ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native(

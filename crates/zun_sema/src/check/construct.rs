@@ -9,6 +9,10 @@ impl Checker<'_> {
         new: hir::Expr,
         span: Span,
     ) -> hir::Expr {
+        // A constructor that may return another object already yields `any`.
+        if new.ty == Ty::Any {
+            return new;
+        }
         if self.hooked_classes.contains(&class_idx) {
             if let Some((init_id, _)) = zun_natives::resolve("collections", "classInstanceInit") {
                 let boxed = hir::Expr {
@@ -365,6 +369,16 @@ impl Checker<'_> {
             defaults.push(value);
         }
 
+        // A constructor that can `return <expr>` hands back a possibly different
+        // object, so the `new` expression is dynamic (`any`) and carries a scratch
+        // local for the swap.
+        let result_slot = (self.signatures[ctor as usize].return_ty == Ty::Any)
+            .then(|| self.synthetic_local(cx, Ty::Any).0);
+        let new_ty = if result_slot.is_some() {
+            Ty::Any
+        } else {
+            Ty::Instance(class_idx)
+        };
         let (param_tys, optional_count, rest_param, sig_name) = {
             let sig = &self.signatures[ctor as usize];
             (
@@ -426,8 +440,9 @@ impl Checker<'_> {
                     defaults,
                     func: ctor,
                     args: call_args,
+                    result_slot,
                 },
-                ty: Ty::Instance(class_idx),
+                ty: new_ty,
                 span,
             };
         }
@@ -499,8 +514,9 @@ impl Checker<'_> {
                 defaults,
                 func: ctor,
                 args: call_args,
+                result_slot,
             },
-            ty: Ty::Instance(class_idx),
+            ty: new_ty,
             span,
         };
         for extra in extra_args {

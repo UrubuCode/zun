@@ -453,7 +453,7 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
-                let built = if self.user_class_rid(token).is_some() {
+                let built = if self.user_class_rid(token).is_some() || self.error_family_rid(token).is_some() {
                     self.construct_class_from_descriptor(token, values)?
                 } else {
                     let named = |this: &mut Self, name: &str| {
@@ -481,10 +481,15 @@ impl<'a> Interp<'a> {
                 let proto: Option<zun_gc::Obj> = match Self::class_token_of(&new_target) {
                     Some(t) => match self.user_class_rid(t) {
                         Some(rid) => Some(self.class_prototype_object(rid)),
-                        None => None,
+                        None => self
+                            .error_family_rid(t)
+                            .map(|rid| self.class_prototype_object(rid)),
                     },
                     None => match unbox_arg(&new_target) {
-                        Ok(Value::Function(handle)) => Self::function_prototype_property(handle),
+                        Ok(Value::Function(handle)) => {
+                            Self::ensure_function_prototype(handle);
+                            Self::function_prototype_property(handle)
+                        }
                         _ => None,
                     },
                 };
@@ -583,27 +588,19 @@ impl<'a> Interp<'a> {
 impl<'a> Interp<'a> {
     /// `value instanceof fn` for an ordinary function: whether `fn.prototype`
     /// appears on the dynamic prototype chain of `value`.
-    pub(super) fn function_instanceof(&self, value: &Value, handle: zun_core::FunctionHandle) -> bool {
+    pub(super) fn function_instanceof(
+        &mut self,
+        value: &Value,
+        handle: zun_core::FunctionHandle,
+    ) -> Result<bool, RunError> {
         Self::ensure_function_prototype(handle);
         let Some(target) = Self::function_prototype_property(handle) else {
-            return false;
+            return Ok(false);
         };
-        let Some(mut current) = unbox_arg(value).ok().as_ref().and_then(object) else {
-            return false;
+        let Some(current) = unbox_arg(value).ok().as_ref().and_then(object) else {
+            return Ok(false);
         };
-        zun_gc::with_current_heap(|heap| {
-            for _ in 0..256 {
-                let Some(next) = heap.dynamic_prototype(current).and_then(|any| any.as_object())
-                else {
-                    return false;
-                };
-                if next == target.addr() as usize {
-                    return true;
-                }
-                current = unsafe { zun_gc::Obj::from_addr(next as *mut u64) };
-            }
-            false
-        })
+        self.proto_chain_contains(current, target)
     }
 }
 

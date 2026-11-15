@@ -84,12 +84,22 @@ pub(crate) fn is_error_family(name: &str) -> bool {
 }
 
 /// The realm global key bound to the class descriptor `token`, found on an
-/// already-borrowed heap.
+/// already-borrowed heap. A realm builtin is defined read-only, so a read-only
+/// key wins over a writable one: a program's own `const C = Error` is stored on
+/// the same global under the same descriptor and must not rename it.
 pub(crate) fn builtin_class_name_in(heap: &mut zun_gc::Heap, token: u32) -> Option<String> {
     let global = heap.global_object();
-    heap.dynamic_keys(global)?.into_iter().find(|key| {
-        heap.dynamic_get(global, key).and_then(|any| any.as_class_descriptor()) == Some(token)
-    })
+    let keys: Vec<String> = heap
+        .dynamic_keys(global)?
+        .into_iter()
+        .filter(|key| {
+            heap.dynamic_get(global, key).and_then(|any| any.as_class_descriptor()) == Some(token)
+        })
+        .collect();
+    keys.iter()
+        .find(|key| !heap.dynamic_is_writable(global, key))
+        .or_else(|| keys.first())
+        .cloned()
 }
 
 /// Every realm global key bound to the class descriptor `token`. Several

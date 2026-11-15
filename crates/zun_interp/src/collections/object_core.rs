@@ -707,9 +707,7 @@ impl<'a> Interp<'a> {
                             });
                         if let Some(base) = base {
                             if self.user_class_rid(zun_natives::USER_CLASS_FLAG | base).is_some() {
-                                return Ok(Value::Any(zun_core::Any::class_descriptor(
-                                    zun_natives::USER_CLASS_FLAG | base,
-                                )));
+                                return Ok(Value::Any(self.canonical_class_descriptor(base)));
                             }
                         }
                         // A base-less class constructor inherits `Function.prototype`.
@@ -729,6 +727,21 @@ impl<'a> Interp<'a> {
                             {
                                 let ctor = Self::typed_array_intrinsic_singleton();
                                 return Ok(Value::Any(zun_core::Any::object(ctor.addr() as usize)));
+                            }
+                        }
+                    }
+                    // A built-in `Error` subclass constructor inherits `Error`.
+                    if let Value::Any(any) = &first {
+                        if let Some(token) = any.as_class_descriptor() {
+                            let error_sub = zun_gc::with_current_heap_mut(|heap| {
+                                crate::intrinsic_meta::builtin_class_name_in(heap, token)
+                            })
+                            .filter(|name| {
+                                name != "Error" && crate::intrinsic_meta::is_error_family(name)
+                            })
+                            .and_then(|_| self.type_rid_of("Error"));
+                            if let Some(error_rid) = error_sub {
+                                return Ok(Value::Any(self.canonical_class_descriptor(error_rid)));
                             }
                         }
                     }
@@ -949,6 +962,24 @@ impl<'a> Interp<'a> {
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
                 };
+                // A typed instance keeps its relinked prototype in its expando
+                // bag; an explicit `Object.prototype` link must stay explicit
+                // there, because the default link would fall back to the class
+                // prototype.
+                if self.instance_class_prototype(obj).is_some() {
+                    if let Some(link) = prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?)
+                    {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.ensure_instance_bag(obj);
+                            heap.dynamic_set_prototype(obj, Some(link));
+                        });
+                        return Ok(if reflect {
+                            Value::Bool(true)
+                        } else {
+                            Value::Object(obj)
+                        });
+                    }
+                }
                 let prototype = Self::normalize_prototype(
                     prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?),
                     args.get(1).ok_or(RunError::BadToken)?,

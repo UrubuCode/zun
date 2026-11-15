@@ -57,6 +57,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         defaults: &[hir::Expr],
         func: &hir::FuncIndex,
         args: &[hir::Expr],
+        result_slot: Option<hir::LocalSlot>,
     ) {
         // Allocate with default field values, then run the constructor
         // on a duplicate of the instance handle. Every call leaves one
@@ -72,7 +73,28 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         }
         let ctor = Token::new(TableKind::MethodDef, *func + 1);
         self.emit(Instruction::new(Opcode::CallVirt, Operand::Token(ctor)));
+        let Some(slot) = result_slot else {
+            self.emit(Instruction::simple(Opcode::Pop));
+            return;
+        };
+        // The constructor returned a value (stack: instance, returned). A nullish
+        // return keeps the instance; anything else replaces it (JS `[[Construct]]`).
+        self.emit(Instruction::new(Opcode::StoreLocal, Operand::Local(slot)));
+        let mut keep = Vec::new();
+        for nullish in [Opcode::ConstUndef, Opcode::ConstNull] {
+            self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
+            self.emit(Instruction::simple(nullish));
+            self.emit(Instruction::simple(Opcode::CmpEq));
+            keep.push(self.emit_branch(Opcode::BranchTrue));
+        }
         self.emit(Instruction::simple(Opcode::Pop));
+        self.emit(Instruction::new(Opcode::LoadLocal, Operand::Local(slot)));
+        let end = self.emit_branch(Opcode::Branch);
+        for branch in keep {
+            self.patch_to_here(branch);
+        }
+        self.emit(Instruction::simple(Opcode::BoxAny));
+        self.patch_to_here(end);
     }
 
     /// Array literal of fixed length, with holes.

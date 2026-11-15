@@ -257,24 +257,7 @@ impl<'a> Interp<'a> {
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let target =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let prototype_addr = prototype.addr() as usize;
-                let mut current = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(target));
-                let mut found = false;
-                while let Some(link) = current {
-                    match link.as_object() {
-                        Some(addr) if addr == prototype_addr => {
-                            found = true;
-                            break;
-                        }
-                        Some(addr) => {
-                            let next = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
-                            current =
-                                zun_gc::with_current_heap(|heap| heap.dynamic_prototype(next));
-                        }
-                        None => break,
-                    }
-                }
-                Ok(Value::Bool(found))
+                Ok(Value::Bool(self.proto_chain_contains(target, prototype)?))
             }
             "objectDefineProperty" | "reflectDefineProperty" => {
                 let strict = name == "objectDefineProperty";
@@ -1183,7 +1166,24 @@ impl<'a> Interp<'a> {
                     {
                         false
                     }
-                    Some(obj) => self.types.is_assignable(obj.type_rid(), class_rid),
+                    // A typed instance answers through its prototype chain, so a
+                    // relinked class prototype (`Object.setPrototypeOf(C.prototype, ..)`)
+                    // changes the answer; typed code that statically knows the
+                    // class still folds at compile time.
+                    Some(obj) if self.instance_class_prototype(obj).is_some() => {
+                        let target = self.class_prototype_object(class_rid);
+                        self.proto_chain_contains(obj, target)?
+                    }
+                    // A dynamic object (`Object.create(C.prototype)`) is an instance when the
+                    // class prototype is on its chain.
+                    Some(obj) => {
+                        self.types.is_assignable(obj.type_rid(), class_rid)
+                            || zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                && {
+                                    let target = self.class_prototype_object(class_rid);
+                                    self.proto_chain_contains(obj, target)?
+                                }
+                    }
                     None => false,
                 };
                 Ok(Value::Bool(found))
