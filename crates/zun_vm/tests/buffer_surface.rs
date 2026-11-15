@@ -233,3 +233,63 @@ fn copy_with_negative_source_indices() {
     );
     assert_eq!(out, vec!["3", "llo", "3", "ell"]);
 }
+
+#[test]
+fn alloc_and_fill_take_a_number_or_a_string() {
+    let out = run_source(
+        r#"function main() {
+            let n: number = 4;
+            let a = Buffer.alloc(n, 7);
+            print(a.length);
+            print(a[0]);
+            let s = Buffer.alloc(5, "ab");
+            print(s.toString());
+            s.fill("xyz");
+            print(s.toString());
+            let any_size: any = 3;
+            print(Buffer.allocUnsafe(any_size).length);
+            let b = Buffer.alloc(2);
+            b.fill(n);
+            print(b[1]);
+        }"#,
+    );
+    assert_eq!(out, vec!["4", "7", "ababa", "xyzxy", "3", "4"]);
+}
+
+#[test]
+fn from_any_and_buffer_members_through_any() {
+    let out = run_source(
+        r#"function main() {
+            let raw: any = "hello";
+            let b = Buffer.from(raw);
+            print(b.toString());
+            let via: any = b;
+            print(String(via.toString()));
+            print(String(via.toString("hex")));
+            print(String(via.equals(Buffer.from("hello"))));
+            print(String(via.readUInt8(1)));
+            let copy = Buffer.from(via);
+            print(copy.length);
+        }"#,
+    );
+    assert_eq!(out, vec!["hello", "hello", "68656c6c6f", "true", "101", "5"]);
+}
+
+#[test]
+fn plain_function_expression_receives_this_via_call_and_stays_positional() {
+    let out = run_source(
+        r#"function main() {
+            let holder: any = { list: [] };
+            holder.list.push(function (): any { return this.name; });
+            let f: any = holder.list.pop;
+            let g: any = function (a: any, b: any): any { return a + b; };
+            let h: any = function (a: any): any { return this === undefined ? "bare" + a : this.k + a; };
+            print(String(h.call({ k: "k" }, 1)));
+            print(String(h(2)));
+            let rest: any[] = [3];
+            print(String(h(...rest)));
+            print(String(g(1, 2)));
+        }"#,
+    );
+    assert_eq!(out, vec!["k1", "bare2", "bare3", "3"]);
+}

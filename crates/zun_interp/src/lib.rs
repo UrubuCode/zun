@@ -1415,6 +1415,17 @@ impl Interp<'_> {
                         stack.push(result);
                         continue;
                     }
+                    // A plain call of a receiver-taking closure value (`const f =
+                    // function () { this.x }; f(1)`): the receiver is `undefined`,
+                    // so the hidden first parameter must not swallow an argument.
+                    let args = if (counted || dynamic) && self.handle_is_this_closure(handle) {
+                        let mut with_receiver = Vec::with_capacity(args.len() + 1);
+                        with_receiver.push(Value::Void);
+                        with_receiver.extend(args);
+                        with_receiver
+                    } else {
+                        args
+                    };
                     if handle.is_bound() {
                         // A `bind`-produced bound function: resolve its target and
                         // prepended arguments, then dispatch through the shared

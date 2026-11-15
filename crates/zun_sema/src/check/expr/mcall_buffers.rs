@@ -280,6 +280,11 @@ impl Checker<'_> {
                     if node {
                         return false;
                     }
+                    // `fill(value)` is the Buffer form (a byte, or a string repeated
+                    // over the buffer); the ranged forms stay typed-array.
+                    if mname == "fill" && argc == 1 {
+                        return false;
+                    }
                 }
                 match mname {
                     "length" | "byteLength" | "byteOffset" | "buffer" => argc != 0,

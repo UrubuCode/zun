@@ -467,6 +467,9 @@ pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
         "nodeBufferIndexOf",
         "nodeBufferLastIndexOf",
         "nodeBufferIncludes",
+        "nodeBufferAllocFillString",
+        "nodeBufferFillString",
+        "nodeBufferFromAny",
     ]
     .into_iter()
     .find(|&name| {

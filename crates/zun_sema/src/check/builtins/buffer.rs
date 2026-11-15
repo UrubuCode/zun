@@ -1,6 +1,39 @@
 use crate::check::*;
 
 impl Checker<'_> {
+    /// A `Buffer` size or byte argument. An integer (or an untyped literal that
+    /// fits) is taken as is; a JS `number` (`f64`) or an `any` -- a size or fill
+    /// byte computed at run time -- is converted (`any` is unboxed to `number`
+    /// first), as Node coerces it. Anything else is `message`.
+    fn buffer_int_arg(&mut self, mut value: hir::Expr, kind: IntKind, message: &str) -> hir::Expr {
+        coerce_numeric_literal(&mut value, Ty::Int(kind));
+        if value.ty.is_int() || value.ty.is_error() {
+            return value;
+        }
+        if value.ty != Ty::Any && !matches!(value.ty, Ty::Float(_)) {
+            self.error(value.span, message);
+            return value;
+        }
+        let span = value.span;
+        let mut value = value;
+        if value.ty == Ty::Any {
+            value = hir::Expr {
+                kind: hir::ExprKind::Convert {
+                    value: Box::new(value),
+                },
+                ty: Ty::F64,
+                span,
+            };
+        }
+        hir::Expr {
+            kind: hir::ExprKind::Convert {
+                value: Box::new(value),
+            },
+            ty: Ty::Int(kind),
+            span,
+        }
+    }
+
     pub(in crate::check) fn check_buffer_static(
         &mut self,
         cx: &mut FunctionCx,
@@ -62,6 +95,19 @@ impl Checker<'_> {
                     }
                     Ty::Array => call(self, "nodeBufferFromArray", vec![source], u8_view),
                     Ty::Buffer => call(self, "nodeBufferFromArrayBuffer", vec![source], u8_view),
+                    Ty::Any => {
+                        let encoding = match args.get(1) {
+                            Some(arg) => {
+                                let value = self.check_expr(cx, arg);
+                                if value.ty != Ty::String && !value.ty.is_error() {
+                                    self.error(value.span, "Buffer encoding must be a string");
+                                }
+                                value
+                            }
+                            None => string_lit("utf8", span),
+                        };
+                        call(self, "nodeBufferFromAny", vec![source, encoding], u8_view)
+                    }
                     other if !other.is_error() => {
                         self.error(
                             source.span,
@@ -73,26 +119,34 @@ impl Checker<'_> {
                 }
             }
             "alloc" => {
-                if args.is_empty() || args.len() > 2 {
-                    self.error(span, "`Buffer.alloc` expects 1 or 2 arguments".to_string());
+                if args.is_empty() || args.len() > 3 {
+                    self.error(span, "`Buffer.alloc` expects 1 to 3 arguments".to_string());
                     return self.poison(span);
                 }
-                let mut size = self.check_expr(cx, &args[0]);
-                coerce_numeric_literal(&mut size, Ty::Int(IntKind::U64));
-                if !size.ty.is_int() && !size.ty.is_error() {
-                    self.error(size.span, "Buffer size must be an integer");
-                }
-                let fill = match args.get(1) {
-                    Some(arg) => {
-                        let mut value = self.check_expr(cx, arg);
-                        coerce_numeric_literal(&mut value, Ty::Int(IntKind::U8));
-                        if !value.ty.is_int() && !value.ty.is_error() {
-                            self.error(value.span, "Buffer fill byte must be an integer");
-                        }
-                        value
-                    }
-                    None => int_lit(0, span),
+                let size = self.check_expr(cx, &args[0]);
+                let size = self.buffer_int_arg(
+                    size,
+                    IntKind::U64,
+                    "Buffer size must be an integer",
+                );
+                let Some(arg) = args.get(1) else {
+                    return call(self, "nodeBufferAlloc", vec![size, int_lit(0, span)], u8_view);
                 };
+                let value = self.check_expr(cx, arg);
+                if value.ty == Ty::String {
+                    let encoding = match args.get(2) {
+                        Some(arg) => self.check_expr(cx, arg),
+                        None => string_lit("utf8", span),
+                    };
+                    return call(
+                        self,
+                        "nodeBufferAllocFillString",
+                        vec![size, value, encoding],
+                        u8_view,
+                    );
+                }
+                let fill =
+                    self.buffer_int_arg(value, IntKind::U8, "Buffer fill byte must be an integer");
                 call(self, "nodeBufferAlloc", vec![size, fill], u8_view)
             }
             "allocUnsafe" => {
@@ -100,11 +154,12 @@ impl Checker<'_> {
                     self.error(span, "`Buffer.allocUnsafe` expects 1 argument".to_string());
                     return self.poison(span);
                 }
-                let mut size = self.check_expr(cx, &args[0]);
-                coerce_numeric_literal(&mut size, Ty::Int(IntKind::U64));
-                if !size.ty.is_int() && !size.ty.is_error() {
-                    self.error(size.span, "Buffer size must be an integer");
-                }
+                let size = self.check_expr(cx, &args[0]);
+                let size = self.buffer_int_arg(
+                    size,
+                    IntKind::U64,
+                    "Buffer size must be an integer",
+                );
                 call(self, "nodeBufferAllocUnsafe", vec![size], u8_view)
             }
             "concat" => {
@@ -308,11 +363,17 @@ impl Checker<'_> {
                     self.error(span, "`fill` expects 1 argument (a byte value)".to_string());
                     return self.poison(span);
                 }
-                let mut value = self.check_expr(cx, &args[0]);
-                coerce_numeric_literal(&mut value, Ty::Int(IntKind::U8));
-                if !value.ty.is_int() && !value.ty.is_error() {
-                    self.error(value.span, "Buffer fill byte must be an integer");
+                let value = self.check_expr(cx, &args[0]);
+                if value.ty == Ty::String {
+                    return call(
+                        self,
+                        "nodeBufferFillString",
+                        vec![receiver, value, string_lit("utf8", span)],
+                        Ty::Boolean,
+                    );
                 }
+                let value =
+                    self.buffer_int_arg(value, IntKind::U8, "Buffer fill byte must be an integer");
                 call(self, "nodeBufferFill", vec![receiver, value], Ty::Boolean)
             }
             "equals" => {
