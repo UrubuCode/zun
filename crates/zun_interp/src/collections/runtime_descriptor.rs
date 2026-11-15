@@ -400,7 +400,13 @@ impl<'a> Interp<'a> {
             }
         }
         let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
-        if is_dynamic || zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) {
+        // A typed instance with an expando bag is a dynamic object too, but a declared
+        // field lives in its fixed layout: only a key present in the bag is read there.
+        let in_dynamic_storage = (is_dynamic
+            || zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()))
+            && (!zun_gc::with_current_heap(|heap| heap.is_instance_bag(obj))
+                || zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key).is_some()));
+        if in_dynamic_storage {
             let Some(descriptor) =
                 zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key))
             else {

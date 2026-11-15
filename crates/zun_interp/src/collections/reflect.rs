@@ -376,6 +376,30 @@ impl<'a> Interp<'a> {
                 })))
             }
             "deleteStrict" => self.delete_strict(args),
+            "reflectSetReceiver" => self.reflect_set_receiver(args),
+            "reflectGetReceiver" => self.reflect_get_receiver(args),
+            "reflectRequireObject" => {
+                // `Reflect.*` on a primitive target is a TypeError. A string is let
+                // through: `Object("s")` is still modelled as the primitive, so a
+                // string target is how a boxed string reaches here.
+                let first = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let primitive = match &first {
+                    Value::Int(..) | Value::Float(..) | Value::Bool(_)
+                    | Value::Null | Value::Void => true,
+                    Value::Any(any) => matches!(any.tag(), zun_core::AnyTag::Symbol),
+                    _ => false,
+                };
+                if primitive {
+                    let method = match args.get(1).map(unbox_arg) {
+                        Some(Ok(Value::Str(method))) => method.to_string(),
+                        _ => "method".to_owned(),
+                    };
+                    return Err(RunError::Native(format!(
+                        "TypeError: Reflect.{method} called on non-object"
+                    )));
+                }
+                Ok(args[0].clone())
+            }
             "reflectSet" => {
                 // `Reflect.set(target, key, value)` returns a boolean success,
                 // respecting writability (existing own data property) and

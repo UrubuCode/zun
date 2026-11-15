@@ -233,6 +233,7 @@ impl<'a> Interp<'a> {
         if matches!(
             name,
             "reflectSet"
+                | "reflectSetReceiver"
                 | "reflectHas"
                 | "reflectDelete"
                 | "reflectOwnKeys"
@@ -429,7 +430,9 @@ impl<'a> Interp<'a> {
             "arrayHas" => self.col_misc(name, args),
             "reflectDelete" => self.col_reflect(name, args),
             "deleteStrict" => self.col_reflect(name, args),
-            "reflectSet" => self.col_reflect(name, args),
+            "reflectSet" | "reflectSetReceiver" | "reflectRequireObject" | "reflectGetReceiver" => {
+                self.col_reflect(name, args)
+            }
             "proxyNew" => self.col_proxy(name, args),
             "proxyGet" => self.col_proxy(name, args),
             "proxySet" => self.col_proxy(name, args),

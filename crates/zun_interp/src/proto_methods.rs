@@ -252,6 +252,7 @@ impl Interp<'_> {
                 self.proto_dynamic_call(recv, name, args)
             }
             "Array" => self.call_array_prototype_method(name, recv, args),
+            "Object" => self.call_object_prototype_method(name, recv, args),
             _ => Err(RunError::BadToken),
         }
     }
@@ -490,5 +491,85 @@ impl Interp<'_> {
             }
             other => other,
         })
+    }
+}
+
+impl Interp<'_> {
+    /// `Object.prototype.<name>` on any receiver. This is the one implementation
+    /// of the six methods: the unbound function value read off `Object.prototype`
+    /// reaches it through `call_prototype_method`, and the receiver-bound stand-in
+    /// of a plain object reaches it with that object as the receiver.
+    pub(crate) fn call_object_prototype_method(
+        &mut self,
+        name: &str,
+        recv: Value,
+        args: Vec<Value>,
+    ) -> Result<Value, RunError> {
+        let recv = proto_concrete(recv);
+        let arg = args.into_iter().next().map(proto_concrete).unwrap_or(Value::Void);
+        let nullish = matches!(recv, Value::Void | Value::Null);
+        // Every method but `toString` / `isPrototypeOf` coerces the receiver with
+        // ToObject first, which rejects `undefined` and `null`.
+        let reject_nullish = |this: &mut Self| {
+            this.proto_type_error("Cannot convert undefined or null to object")
+        };
+        match name {
+            "toString" => self.call_managed_collection("objectToStringTag", &[recv]),
+            "toLocaleString" => {
+                if nullish {
+                    return Err(reject_nullish(self));
+                }
+                self.proto_dynamic_call(recv, "toString", Vec::new())
+            }
+            "valueOf" => {
+                if nullish {
+                    return Err(reject_nullish(self));
+                }
+                // A function rides the `any` lane as a `functionBox` record.
+                if matches!(recv, Value::Function(_)) {
+                    return self.call_managed_collection("functionBox", &[recv]);
+                }
+                // ToObject: a primitive becomes its wrapper object.
+                Ok(match self.primitive_wrapper_object(&recv)? {
+                    Some(wrapper) => Value::Object(wrapper),
+                    None => recv,
+                })
+            }
+            "hasOwnProperty" => {
+                if nullish {
+                    return Err(reject_nullish(self));
+                }
+                self.call_managed_collection("objectHasOwn", &[recv, arg])
+            }
+            "isPrototypeOf" => {
+                let (Value::Object(value), true) = (&arg, !nullish) else {
+                    if nullish && matches!(arg, Value::Object(_)) {
+                        return Err(reject_nullish(self));
+                    }
+                    return Ok(Value::Bool(false));
+                };
+                match &recv {
+                    Value::Object(proto) => Ok(Value::Bool(self.proto_chain_contains(*value, *proto)?)),
+                    _ => Ok(Value::Bool(false)),
+                }
+            }
+            "propertyIsEnumerable" => {
+                if nullish {
+                    return Err(reject_nullish(self));
+                }
+                let descriptor = self.call_managed_collection(
+                    "objectGetOwnPropertyDescriptor",
+                    &[recv, arg],
+                )?;
+                let Value::Object(descriptor) = descriptor else {
+                    return Ok(Value::Bool(false));
+                };
+                Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get(descriptor, "enumerable")
+                        .is_some_and(|any| crate::collections::is_truthy(&Value::Any(any), heap))
+                })))
+            }
+            _ => Err(RunError::BadToken),
+        }
     }
 }

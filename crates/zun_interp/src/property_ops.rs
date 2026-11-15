@@ -2135,6 +2135,37 @@ impl Interp<'_> {
                     )?;
                     return Ok(Value::Bool(true));
                 }
+                // An inherited read-only data property refuses the write. Only plain
+                // dynamic ancestors are inspected, so no proxy trap runs for a plain set.
+                let blocked = zun_gc::with_current_heap(|heap| {
+                    if heap.dynamic_has(target, &name) {
+                        return false;
+                    }
+                    let mut current = target;
+                    for _ in 0..4096 {
+                        let Some(next) = heap
+                            .dynamic_prototype(current)
+                            .and_then(|link| link.as_object())
+                        else {
+                            return false;
+                        };
+                        current = unsafe { zun_gc::Obj::from_addr(next as *mut u64) };
+                        if heap.proxy_target(current).is_some() || !heap.is_dynamic_object(current) {
+                            return false;
+                        }
+                        match heap.dynamic_descriptor(current, &name) {
+                            Some(zun_core::PropertyDescriptor::Data { writable, .. }) => {
+                                return !writable;
+                            }
+                            Some(_) => return false,
+                            None => {}
+                        }
+                    }
+                    false
+                });
+                if blocked {
+                    return Ok(Value::Bool(false));
+                }
                 if !zun_gc::with_current_heap(|heap| heap.dynamic_can_set(target, &name)) {
                     return Ok(Value::Bool(false));
                 }
@@ -2152,6 +2183,148 @@ impl Interp<'_> {
                 Ok(Value::Bool(true))
             }
         }
+    }
+
+    /// The descriptor of `key` on `start` or the nearest object of its prototype
+    /// chain that owns it, or `None` when no object on the chain does.
+    fn find_property_desc(
+        &mut self,
+        start: zun_gc::Obj,
+        key_value: &Value,
+    ) -> Result<Option<Desc>, RunError> {
+        let mut current = start;
+        for _ in 0..4096 {
+            let descriptor = self.call_managed_collection(
+                "objectGetOwnPropertyDescriptor",
+                &[Value::Object(current), key_value.clone()],
+            )?;
+            if let Some(desc_obj) = object(&descriptor) {
+                return Ok(Some(Desc::parse(desc_obj)));
+            }
+            let parent =
+                self.call_managed_collection("objectGetPrototypeOf", &[Value::Object(current)])?;
+            match object(&parent) {
+                Some(next) => current = next,
+                None => break,
+            }
+        }
+        Ok(None)
+    }
+
+    /// `Reflect.get(target, key, receiver)`: ECMAScript `OrdinaryGet`. The
+    /// property is found on the target's chain; an accessor's getter runs with
+    /// the receiver as `this`.
+    pub(crate) fn reflect_get_receiver(&mut self, args: &[Value]) -> Result<Value, RunError> {
+        let Some(target) = args.first().and_then(object) else {
+            return Ok(Value::Void);
+        };
+        let receiver_arg = args.get(2).ok_or(RunError::BadToken)?;
+        let receiver = unbox_arg(receiver_arg).unwrap_or_else(|_| receiver_arg.clone());
+        let is_proxy = zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some());
+        let key = args.get(1).and_then(prop_key);
+        if is_proxy || object(&receiver) == Some(target) {
+            return match key {
+                Some(PropKey::Str(name)) => self.dynamic_member_get(target, &name),
+                _ => Ok(Value::Void),
+            };
+        }
+        let Some(desc) = self.find_property_desc(target, args.get(1).ok_or(RunError::BadToken)?)?
+        else {
+            return Ok(Value::Void);
+        };
+        if desc.is_accessor() {
+            let Some(getter) = desc.get else {
+                return Ok(Value::Void);
+            };
+            return self.invoke_function_value(getter, self.with_this_value(getter, receiver, vec![]));
+        }
+        if let Some(handle) = desc.value_fn {
+            return Ok(Value::Function(handle));
+        }
+        Ok(match desc.value {
+            Some(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                .unwrap_or(Value::Any(any)),
+            None => Value::Void,
+        })
+    }
+
+    /// `Reflect.set(target, key, value, receiver)`: ECMAScript `OrdinarySet`. The
+    /// property is looked up on the target and its prototype chain, but a data
+    /// property is defined on the *receiver* and an accessor's setter runs with
+    /// the receiver as `this`. Without a receiver (or with the target as the
+    /// receiver) this is plain [`Self::reflect_set`].
+    pub(crate) fn reflect_set_receiver(&mut self, args: &[Value]) -> Result<Value, RunError> {
+        let Some(receiver_arg) = args.get(3) else {
+            return self.reflect_set(args);
+        };
+        let Some(target) = args.first().and_then(object) else {
+            return Ok(Value::Bool(false));
+        };
+        let receiver = unbox_arg(receiver_arg).unwrap_or_else(|_| receiver_arg.clone());
+        if object(&receiver) == Some(target) {
+            return self.reflect_set(&args[..3]);
+        }
+        let Some(_) = args.get(1).and_then(prop_key) else {
+            return Ok(Value::Bool(false));
+        };
+        let key_value = args[1].clone();
+        let value_arg = args.get(2).ok_or(RunError::BadToken)?;
+        let found = self.find_property_desc(target, &key_value)?;
+        if let Some(desc) = found.as_ref().filter(|desc| desc.is_accessor()) {
+            let Some(setter) = desc.set else {
+                return Ok(Value::Bool(false));
+            };
+            let any = zun_gc::with_current_heap_mut(|heap| value_arg.box_any(heap))
+                .unwrap_or_else(zun_core::Any::null);
+            let arg = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                .unwrap_or(Value::Any(any));
+            self.invoke_function_value(setter, self.with_this_value(setter, receiver, vec![arg]))?;
+            return Ok(Value::Bool(true));
+        }
+        if found
+            .as_ref()
+            .is_some_and(|desc| desc.writable == Some(false))
+        {
+            return Ok(Value::Bool(false));
+        }
+        // A data property: it lands on the receiver, which must be an object.
+        let Some(receiver) = object(&receiver) else {
+            return Ok(Value::Bool(false));
+        };
+        let existing = self.call_managed_collection(
+            "objectGetOwnPropertyDescriptor",
+            &[Value::Object(receiver), key_value.clone()],
+        )?;
+        let existing = object(&existing).map(Desc::parse);
+        if let Some(existing) = &existing {
+            if existing.is_accessor() || existing.writable == Some(false) {
+                return Ok(Value::Bool(false));
+            }
+        }
+        let desc_obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+        zun_gc::root!(desc_obj = desc_obj);
+        zun_gc::with_current_heap_mut(|heap| {
+            match value_arg {
+                Value::Function(handle) => {
+                    heap.dynamic_set_function(desc_obj.get(), "value", *handle);
+                }
+                other => {
+                    let any = other.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                    heap.dynamic_set(desc_obj.get(), "value".to_owned(), any);
+                }
+            }
+            if existing.is_none() {
+                for flag in ["writable", "enumerable", "configurable"] {
+                    heap.dynamic_set(desc_obj.get(), flag.to_owned(), zun_core::Any::bool(true));
+                }
+            }
+        });
+        // Through `Reflect.defineProperty`, so a proxy receiver reaches its
+        // `defineProperty` trap and a typed receiver its expando bag.
+        self.call_managed_collection(
+            "reflectDefineProperty",
+            &[Value::Object(receiver), key_value, Value::Object(desc_obj.get())],
+        )
     }
 
     /// ToPropertyDescriptor: read a descriptor object's fields in spec order

@@ -220,11 +220,9 @@ impl<'a> Interp<'a> {
         if mode >= 100.0 {
             // An `Object.prototype` method value: `valueOf` answers the receiver
             // object, the predicates answer false, the string forms the tag.
-            return Ok(match mode as u32 - 100 {
-                2 => Value::Object(promise),
-                3..=5 => Value::Bool(false),
-                _ => Value::Str("[object Object]".into()),
-            });
+            let index = mode as usize - 100;
+            let name = crate::OBJECT_PROTO_METHODS.get(index).copied().ok_or(RunError::BadToken)?;
+            return self.call_object_prototype_method(name, Value::Object(promise), args);
         }
         let value = if args.is_empty() {
             Value::Void

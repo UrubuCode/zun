@@ -197,7 +197,7 @@ impl Interp<'_> {
     /// ToObject for a primitive: its wrapper object (`"ab"` -> `StringObject`).
     /// `None` for an object, `null` and `undefined`, which the caller handles.
     /// A symbol has no wrapper class and becomes a plain object.
-    pub(super) fn primitive_wrapper_object(
+    pub(crate) fn primitive_wrapper_object(
         &mut self,
         value: &Value,
     ) -> Result<Option<zun_gc::Obj>, RunError> {

@@ -425,6 +425,16 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
         ],
     ),
     ("Boolean", &[("toString", 0), ("valueOf", 0)]),
+    // `Object.prototype`'s methods are not installed as own properties (the
+    // prototype object answers them through its member read); the table only
+    // gives the unbound method values their kind, name and length.
+    (
+        "Object",
+        &[
+            ("toString", 0), ("toLocaleString", 0), ("valueOf", 0), ("hasOwnProperty", 1),
+            ("isPrototypeOf", 1), ("propertyIsEnumerable", 1),
+        ],
+    ),
 ];
 
 /// The methods the prototype of the built-in class `class` carries as

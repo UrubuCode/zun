@@ -2011,3 +2011,27 @@ pub(crate) fn expando_receiver(value: Value) -> Value {
         other => other,
     }
 }
+
+impl Interp<'_> {
+    /// The function value of the `Object.prototype` method `name` as read off
+    /// `object`. Read off `Object.prototype` itself it is the real, unbound
+    /// method (the receiver arrives with `call` / `apply` / `bind`); read off
+    /// any other object it is the stand-in bound to that object.
+    pub(crate) fn object_proto_method_value(
+        &mut self,
+        object: zun_gc::Obj,
+        name: &str,
+    ) -> Option<Value> {
+        let mode = object_proto_mode(name)?;
+        if object == Self::object_prototype_singleton() {
+            let kind = crate::intrinsic_meta::prototype_methods_of("Object")
+                .into_iter()
+                .find(|(_, method)| *method == name)
+                .map(|(kind, _)| kind)?;
+            return Some(Value::Function(
+                zun_core::FunctionHandle::new_builtin_method(kind),
+            ));
+        }
+        Some(Value::Function(self.make_promise_settler(object, mode)))
+    }
+}

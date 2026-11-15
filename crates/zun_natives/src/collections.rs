@@ -1674,6 +1674,30 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Void,
             imp: unavailable,
         },
+        // `Reflect.set(target, key, value, receiver)`: `OrdinarySet` with an
+        // explicit receiver. Appended last so existing dispatch ids stay stable.
+        NativeFn {
+            name: "reflectSetReceiver",
+            params: &[Opaque, Opaque, Opaque, Opaque],
+            ret: Bool,
+            imp: unavailable,
+        },
+        // `Reflect.get(target, key, receiver)`: an accessor's getter runs with the
+        // receiver as `this`.
+        NativeFn {
+            name: "reflectGetReceiver",
+            params: &[Opaque, Opaque, Opaque],
+            ret: Opaque,
+            imp: unavailable,
+        },
+        // `reflectRequireObject(target, methodName)`: returns `target`, or throws
+        // a TypeError when a `Reflect` method is handed a primitive.
+        NativeFn {
+            name: "reflectRequireObject",
+            params: &[Opaque, Opaque],
+            ret: Opaque,
+            imp: unavailable,
+        },
     ],
 };
 

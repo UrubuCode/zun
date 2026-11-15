@@ -587,11 +587,14 @@ impl Checker<'_> {
                 }
             }
         }
-        // The optional `receiver` of `Reflect.get` / `Reflect.set` is accepted and
-        // ignored: the operation is applied to the target directly.
-        if (method == "get" && checked.len() == 3) || (method == "set" && checked.len() == 4) {
-            checked.pop();
-        }
+        // The optional receivers of `Reflect.get` / `Reflect.set` are honoured by
+        // `reflectGetReceiver` / `reflectSetReceiver`.
+        let get_receiver = if method == "get" && checked.len() == 3 {
+            checked.pop()
+        } else {
+            None
+        };
+        let expected = if method == "set" && checked.len() == 4 { 4 } else { expected };
         if checked.len() != expected {
             self.error(
                 span,
@@ -622,6 +625,32 @@ impl Checker<'_> {
             let target = checked.remove(0);
             checked.insert(0, Self::box_to_any(target));
         }
+        // A dynamic (`any`) target may hold a primitive at run time, which every
+        // `Reflect` method rejects with a TypeError.
+        if checked[0].ty == Ty::Any {
+            if let Some((id, _)) = zun_natives::resolve("collections", "reflectRequireObject") {
+                let target = checked.remove(0);
+                let target_span = target.span;
+                checked.insert(
+                    0,
+                    hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![
+                                target,
+                                Self::box_to_any(hir::Expr {
+                                    kind: hir::ExprKind::String(method.to_string()),
+                                    ty: Ty::String,
+                                    span: target_span,
+                                }),
+                            ],
+                        },
+                        ty: Ty::Any,
+                        span: target_span,
+                    },
+                );
+            }
+        }
         let target_ok = matches!(checked[0].ty, Ty::DynamicObject | Ty::Any | Ty::Proxy)
             || checked[0].ty.is_error();
         if !target_ok {
@@ -642,6 +671,25 @@ impl Checker<'_> {
             "get" => {
                 let key = checked.pop().unwrap();
                 let object = checked.pop().unwrap();
+                if let Some(receiver) = get_receiver {
+                    let Some((id, _)) = zun_natives::resolve("collections", "reflectGetReceiver")
+                    else {
+                        self.error(span, "missing `reflectGetReceiver` intrinsic");
+                        return self.poison(span);
+                    };
+                    return hir::Expr {
+                        kind: hir::ExprKind::CallBuiltin {
+                            id,
+                            args: vec![
+                                Self::box_to_any(object),
+                                Self::box_to_any(key),
+                                Self::box_to_any(receiver),
+                            ],
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
                 hir::Expr {
                     kind: hir::ExprKind::DynamicGetValue {
                         object: Box::new(object),
@@ -655,21 +703,29 @@ impl Checker<'_> {
                 // `Reflect.set` returns a boolean success and respects
                 // writability/extensibility (unlike `target[key] = value`),
                 // so it routes to the dedicated `reflectSet` native.
+                let receiver = (checked.len() == 4).then(|| checked.pop().unwrap());
                 let value = checked.pop().unwrap();
                 let key = checked.pop().unwrap();
                 let object = checked.pop().unwrap();
-                let Some((id, _)) = zun_natives::resolve("collections", "reflectSet") else {
-                    self.error(span, "missing `reflectSet` intrinsic");
+                let native = if receiver.is_some() {
+                    "reflectSetReceiver"
+                } else {
+                    "reflectSet"
+                };
+                let Some((id, _)) = zun_natives::resolve("collections", native) else {
+                    self.error(span, format!("missing `{native}` intrinsic"));
                     return self.poison(span);
                 };
+                let mut native_args = vec![
+                    Self::box_to_any(object),
+                    Self::box_to_any(key),
+                    Self::box_to_any(value),
+                ];
+                native_args.extend(receiver.map(Self::box_to_any));
                 hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
                         id,
-                        args: vec![
-                            Self::box_to_any(object),
-                            Self::box_to_any(key),
-                            Self::box_to_any(value),
-                        ],
+                        args: native_args,
                     },
                     ty: Ty::Boolean,
                     span,

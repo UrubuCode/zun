@@ -1071,10 +1071,21 @@ impl<'a> Interp<'a> {
                             .filter(|name| *name == "__AsyncGenerator")
                             .map(|_| "AsyncGenerator".to_string())
                             .or_else(|| {
-                                (!zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                (!zun_gc::with_current_heap(|heap| {
+                                    heap.is_dynamic_object(obj)
+                                        || heap.promise_state(obj).is_some()
+                                        || heap.bigint_value(obj).is_some()
+                                })
                                     && obj.type_rid() != 0
                                     && self.is_error_instance(obj))
                                 .then(|| "Error".to_string())
+                            })
+                            // A `Date` instance (a prelude class) carries the Date brand.
+                            .or_else(|| {
+                                (!zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                    && obj.type_rid() != 0
+                                    && self.class_chain_has_name(obj.type_rid(), "Date"))
+                                .then(|| "Date".to_string())
                             })
                             // A Boolean/Number/String object, or the constructor's own
                             // `prototype` (itself such an object), carries that brand.

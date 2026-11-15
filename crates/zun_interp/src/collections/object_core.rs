@@ -984,6 +984,40 @@ impl<'a> Interp<'a> {
                     prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?),
                     args.get(1).ok_or(RunError::BadToken)?,
                 );
+                // OrdinarySetPrototypeOf: an unchanged link always succeeds; a
+                // changed one is refused on a non-extensible object or when it
+                // would close a prototype cycle.
+                let root = Self::object_prototype_singleton();
+                let refusal = zun_gc::with_current_heap(|heap| {
+                    if !heap.is_dynamic_object(obj) {
+                        return None;
+                    }
+                    let current = heap
+                        .dynamic_prototype(obj)
+                        .filter(|link| link.as_object() != Some(root.addr() as usize));
+                    if current == prototype {
+                        return None;
+                    }
+                    if !heap.dynamic_is_extensible(obj) {
+                        return Some("#<Object> is not extensible");
+                    }
+                    let mut next = prototype.and_then(|link| link.as_object());
+                    for _ in 0..100_000 {
+                        let Some(address) = next else { break };
+                        if address == obj.addr() as usize {
+                            return Some("Cyclic __proto__ value");
+                        }
+                        let step = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                        next = heap.dynamic_prototype(step).and_then(|link| link.as_object());
+                    }
+                    None
+                });
+                if let Some(message) = refusal {
+                    if reflect {
+                        return Ok(Value::Bool(false));
+                    }
+                    return Err(RunError::Native(format!("TypeError: {message}")));
+                }
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
                 if reflect {
                     return Ok(Value::Bool(true));
