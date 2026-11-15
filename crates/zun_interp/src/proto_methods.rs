@@ -235,6 +235,32 @@ impl Interp<'_> {
                 self.proto_dynamic_call(text, name, args)
             }
             "Function" => {
+                // `Function.prototype.toString`. A built-in constructor value
+                // (`Object`, `Date`) reads as its native-function text; any
+                // other function keeps the generic object text, since no source
+                // text is retained for it.
+                if name == "toString" {
+                    if let Value::Any(any) = &recv {
+                        if let Some(Value::Str(ctor)) = any
+                            .as_class_descriptor()
+                            .and_then(|token| self.builtin_ctor_own_value(token, "name"))
+                        {
+                            return Ok(Value::Str(
+                                format!("function {ctor}() {{ [native code] }}").into(),
+                            ));
+                        }
+                    }
+                    if let Value::Function(handle) = &recv {
+                        if let Some(ctor) = self.coerce_ctor_name(*handle) {
+                            return Ok(Value::Str(
+                                format!("function {ctor}() {{ [native code] }}").into(),
+                            ));
+                        }
+                    }
+                    if matches!(recv, Value::Function(_) | Value::Any(_)) {
+                        return self.call_object_prototype_method("toString", recv, args);
+                    }
+                }
                 if !matches!(recv, Value::Function(_)) {
                     return Err(self.proto_type_error(&format!(
                         "Function.prototype.{name} requires that 'this' be a Function"

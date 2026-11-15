@@ -412,7 +412,7 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
     ("WeakSet", &[("delete", 1), ("has", 1), ("add", 1)]),
     ("Promise", &[("then", 2), ("catch", 1), ("finally", 1)]),
     ("RegExp", &[("exec", 1), ("test", 1)]),
-    ("Function", &[("apply", 2), ("bind", 1), ("call", 1)]),
+    ("Function", &[("apply", 2), ("bind", 1), ("call", 1), ("toString", 0)]),
     (
         "TypedArray",
         &[

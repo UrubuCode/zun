@@ -364,6 +364,43 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Any(boxed));
                     }
                 }
+                // A built-in constructor value inherits `Function.prototype`
+                // (`Object.toString()`): the member
+                // resolves there and runs with the constructor as `this`.
+                let inherits_function_proto = member.as_ref() == "toString"
+                    && match &receiver_concrete {
+                    Value::Any(desc) => desc.as_class_descriptor().is_some(),
+                    Value::Function(ctor) => {
+                        self.coerce_ctor_name(*ctor).is_some()
+                            && self.coerce_ctor_static_kind(*ctor, &member).is_none()
+                    }
+                    _ => false,
+                };
+                {
+                    if inherits_function_proto {
+                        let method = Some(Self::function_prototype_singleton()).and_then(|proto| {
+                            zun_gc::with_current_heap(|heap| heap.dynamic_get_function(proto, &member))
+                        });
+                        if let Some(handle) = method {
+                            let call_values = args[2..]
+                                .iter()
+                                .map(|arg| match arg {
+                                    Value::Any(any) => {
+                                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                            .ok_or(RunError::BadToken)
+                                    }
+                                    other => Ok(other.clone()),
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let call_args =
+                                self.with_this_value(handle, receiver_concrete.clone(), call_values);
+                            let result = self.invoke_function_value(handle, call_args)?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::void);
+                            return Ok(Value::Any(boxed));
+                        }
+                    }
+                }
                 // The same for `Number`, which reads as its coercion function
                 // (`const N: any = Number; N.isInteger(x)`).
                 if let Value::Function(ctor) = &receiver_concrete {
