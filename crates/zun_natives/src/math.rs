@@ -664,3 +664,21 @@ pub const MODULE: crate::Module = crate::Module {
         },
     ],
 };
+
+/// `Math.f16round(x)` for the `mathLate` group (see `math_late.rs`: the `math`
+/// group's dispatch ids are frozen, so the entry lives there and the
+/// implementation stays here beside its siblings).
+pub(crate) fn f16round_late(
+    args: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
+    unary_float(args, "f16round", f16_round)
+}
+
+/// `Math.random()` for the `mathLate` group.
+pub(crate) fn random_late(
+    _: &[NativeArg],
+    _: &mut dyn Sink,
+) -> Result<NativeValue, NativeError> {
+    Ok(NativeValue::Float(next_random()))
+}

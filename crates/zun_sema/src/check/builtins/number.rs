@@ -256,12 +256,23 @@ impl Checker<'_> {
             "fround" => "froundNumber",
             "min" => "minNumber",
             "max" => "maxNumber",
+            // These two live in the `mathLate` group: the `math` group's
+            // dispatch ids are frozen, so a new entry there would shift every
+            // id after it.
+            "f16round" => "mathLate:f16roundNumber",
+            "random" => "mathLate:randomNumber",
             _ => {
                 self.error(method_span, format!("`Math.{method}` is not supported yet"));
                 return self.poison(span);
             }
         };
-        let Some((id, native)) = zun_natives::resolve("math", native_name) else {
+        // A `group:name` spelling names a group other than `math` (see the
+        // `mathLate` arms above); a bare name is in `math`.
+        let (group, native_name) = match native_name.split_once(':') {
+            Some((group, name)) => (group, name),
+            None => ("math", native_name),
+        };
+        let Some((id, native)) = zun_natives::resolve(group, native_name) else {
             self.error(span, format!("missing Math intrinsic `{native_name}`"));
             return self.poison(span);
         };

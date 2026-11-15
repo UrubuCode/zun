@@ -23,7 +23,7 @@ pub(in crate::check) fn math_function_length(name: &str) -> Option<f64> {
         "abs" | "acos" | "acosh" | "asin" | "asinh" | "atan" | "atanh" | "cbrt" | "ceil"
         | "clz32" | "cos" | "cosh" | "exp" | "expm1" | "floor" | "fround" | "log" | "log10"
         | "log1p" | "log2" | "round" | "sign" | "sin" | "sinh" | "sqrt" | "tan" | "tanh"
-        | "trunc" => 1.0,
+        | "trunc" | "f16round" => 1.0,
         "random" => 0.0,
         _ => return None,
     })
