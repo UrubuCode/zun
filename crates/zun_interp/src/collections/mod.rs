@@ -1023,6 +1023,12 @@ pub(crate) fn builtin_constructor_name(
         Some("RegExp")
     } else if heap.date_millis(obj).is_some() {
         Some("Date")
+    } else if let Some(kind) = heap.typed_array_element(obj) {
+        Some(kind.js_name())
+    } else if heap.buffer_len(obj).is_some() {
+        Some("ArrayBuffer")
+    } else if heap.data_view_buffer(obj).is_some() {
+        Some("DataView")
     } else if heap.is_dynamic_object(obj)
         && !heap.is_instance_bag(obj)
         && heap.dynamic_get(obj, "constructor").is_none()

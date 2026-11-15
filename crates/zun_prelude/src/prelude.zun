@@ -65,9 +65,43 @@ function fmax(a: float, b: float): float {
 import { serialize as serdeSerialize, deserialize as serdeDeserialize, nodeBuffer as globalsBuffer } from "zun:core";
 
 // Deep clone through the binary ser/de primitive; cycles and shared
-// references round-trip.
+// references round-trip. `options.transfer` lists ArrayBuffers to move: each
+// must be an attached, distinct ArrayBuffer (else a `DataCloneError`), and is
+// detached once the clone has been built, so a failed clone leaves them intact.
 function structuredClone(value: any, options: any = undefined): any {
-    return serdeDeserialize(serdeSerialize(value));
+    let transfer: any = undefined;
+    if (options !== undefined && options !== null) {
+        transfer = options.transfer;
+    }
+    if (transfer === undefined || transfer === null) {
+        return serdeDeserialize(serdeSerialize(value));
+    }
+    const list: any[] = [...transfer];
+    let i = 0;
+    while (i < list.length) {
+        const item: any = list[i];
+        if (!(item instanceof ArrayBuffer)) {
+            throw new DOMException("Value not transferable", "DataCloneError");
+        }
+        if (item.detached) {
+            throw new DOMException("An ArrayBuffer is detached and could not be cloned.", "DataCloneError");
+        }
+        let j = 0;
+        while (j < i) {
+            if (list[j] === item) {
+                throw new DOMException("ArrayBuffer at index " + i + " is a duplicate of an earlier ArrayBuffer.", "DataCloneError");
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    const cloned: any = serdeDeserialize(serdeSerialize(value));
+    i = 0;
+    while (i < list.length) {
+        list[i].transfer();
+        i = i + 1;
+    }
+    return cloned;
 }
 
 // Base64-encode a binary string (code points 0-255, as in the web `btoa`).

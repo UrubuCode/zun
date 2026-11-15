@@ -365,7 +365,8 @@ impl<'a> Interp<'a> {
                         )
                     });
                     if let Some(hook) = hook {
-                        let result = self.invoke_function_value(hook, vec![value])?;
+                        let call_args = self.with_this_value(hook, Value::Function(handle), vec![value]);
+                        let result = self.invoke_function_value(hook, call_args)?;
                         return Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
                             is_truthy(&result, heap)
                         })));
@@ -417,18 +418,38 @@ impl<'a> Interp<'a> {
                         );
                     }
                 }
+                // The hook is an ordinary property read: an inherited one (a
+                // prototype of `rhs` carrying `[Symbol.hasInstance]`) counts too.
                 let handler = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get_symbol_function(
-                        rhs,
-                        zun_core::WellKnownSymbol::HasInstance.id(),
-                    )
+                    let symbol = zun_core::WellKnownSymbol::HasInstance.id();
+                    let mut current = Some(rhs);
+                    let mut found = None;
+                    for _ in 0..256 {
+                        let Some(holder) = current else { break };
+                        if let Some(hook) = heap.dynamic_get_symbol_function(holder, symbol) {
+                            found = Some(hook);
+                            break;
+                        }
+                        current = heap
+                            .dynamic_prototype(holder)
+                            .and_then(|any| any.as_object())
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                    }
+                    found
                 });
                 let found = match handler {
                     Some(handle) => {
-                        let result = self.invoke_function_value(handle, vec![value])?;
+                        let call_args = self.with_this_arg(handle, rhs, vec![value]);
+                        let result = self.invoke_function_value(handle, call_args)?;
                         zun_gc::with_current_heap(|heap| is_truthy(&result, heap))
                     }
-                    None => false,
+                    // No `[Symbol.hasInstance]` anywhere on the chain and the
+                    // dynamic object is not callable: `instanceof` refuses it.
+                    None => {
+                        return Err(RunError::Native(
+                            "TypeError: Right-hand side of 'instanceof' is not callable".into(),
+                        ))
+                    }
                 };
                 Ok(Value::Bool(found))
             }

@@ -208,14 +208,19 @@ fn instanceof_dispatches_to_symbol_has_instance_on_dynamic_object() {
              }";
     assert!(!bool_of(selective));
 
-    // Without a `[Symbol.hasInstance]` method a dynamic object has no class
-    // identity, so the operand is never an instance.
+    // Without a `[Symbol.hasInstance]` method a dynamic object is not callable,
+    // so `instanceof` refuses it with a `TypeError` (as in ECMAScript).
     let bare = "function main(): boolean {\n\
                let c = dynamic_new();\n\
                let x: any = box_any(5);\n\
                return x instanceof c;\n\
              }";
-    assert!(!bool_of(bare));
+    let module = zun_compiler::compile(bare).expect("compile instanceof program");
+    let mut output = CaptureOutput::default();
+    assert!(matches!(
+        run(&module, &mut output),
+        Err(RunError::Thrown(_))
+    ));
 }
 
 #[test]

@@ -137,6 +137,8 @@ pub(crate) const BUILTIN_TA_BYTE_LENGTH: u32 = 101;
 pub(crate) const BUILTIN_TA_BYTE_OFFSET: u32 = 102;
 pub(crate) const BUILTIN_TA_LENGTH: u32 = 103;
 pub(crate) const BUILTIN_TA_TAG: u32 = 104;
+/// `Function.prototype[Symbol.hasInstance]`: `OrdinaryHasInstance(this, value)`.
+pub(crate) const BUILTIN_FN_HAS_INSTANCE: u32 = 105;
 pub(crate) const BUILTIN_MAP_SIZE: u32 = 16;
 pub(crate) const BUILTIN_SET_SIZE: u32 = 17;
 pub(crate) const BUILTIN_ARRAY_ITER_NEXT: u32 = 18;
@@ -373,6 +375,11 @@ impl Interp<'_> {
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, "$Function.prototype", any, false);
             crate::intrinsic_meta::install_prototype_methods(heap, proto, "Function");
+            heap.dynamic_set_symbol_function(
+                proto,
+                zun_core::WellKnownSymbol::HasInstance.id(),
+                zun_core::FunctionHandle::new_builtin_method(BUILTIN_FN_HAS_INSTANCE),
+            );
             proto
         })
     }
@@ -997,6 +1004,15 @@ impl Interp<'_> {
                 self.call_generator_method(kind - BUILTIN_GEN_NEXT, generator, &_args)
             }
             BUILTIN_ITER_SELF | BUILTIN_SPECIES_GETTER => Ok(this),
+            BUILTIN_FN_HAS_INSTANCE => {
+                // `OrdinaryHasInstance(C, O)`: a non-callable `this`, or a
+                // non-object operand, answers false.
+                let Ok(Value::Function(target)) = unbox_arg(&this) else {
+                    return Ok(Value::Bool(false));
+                };
+                let operand = _args.first().cloned().unwrap_or(Value::Void);
+                Ok(Value::Bool(self.function_instanceof(&operand, target)?))
+            }
             k if (super::collections::iterator_helpers::BUILTIN_ITER_HELPER_BASE
                 ..=super::collections::iterator_helpers::BUILTIN_WRAP_RETURN)
                 .contains(&k) =>
@@ -1174,6 +1190,13 @@ impl Interp<'_> {
             BUILTIN_ITER_SELF => "[Symbol.iterator]",
             BUILTIN_PROXY_REVOKE => "",
             BUILTIN_STRING_ITERATOR => "[Symbol.iterator]",
+            BUILTIN_FN_HAS_INSTANCE => {
+                return Some(if name == "name" {
+                    Value::Str("[Symbol.hasInstance]".into())
+                } else {
+                    Value::Float(1.0, zun_il::NumKind::F64)
+                });
+            }
             BUILTIN_SPECIES_GETTER => "get [Symbol.species]",
             BUILTIN_TA_BUFFER => "get buffer",
             BUILTIN_TA_BYTE_LENGTH => "get byteLength",

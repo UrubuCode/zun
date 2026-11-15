@@ -97,7 +97,7 @@ impl Interp<'_> {
             Value::Str(s) => write_str(out, s),
             Value::Function(_) => {
                 return Err(RunError::Native(
-                    "serialize: a function value is not serializable".into(),
+                    "DOMException: DataCloneError: function could not be cloned.".into(),
                 ))
             }
             Value::Object(obj) => self.ser_object(*obj, out, memo)?,
@@ -109,7 +109,7 @@ impl Interp<'_> {
                 }
                 zun_core::AnyTag::Symbol | zun_core::AnyTag::ClassDescriptor => {
                     return Err(RunError::Native(
-                        "serialize: a symbol value is not serializable".into(),
+                        "DOMException: DataCloneError: Symbol() could not be cloned.".into(),
                     ))
                 }
                 // A primitive carrier: unbox to its concrete Value and encode.
@@ -325,21 +325,30 @@ impl Interp<'_> {
                 }
             }
             ObjKind::Instance(type_rid) => {
-                // Metadata shape-walk: declared instance fields, layout order,
-                // static/private excluded — the exact helper `Object.keys` uses.
-                let entries = self.object_own_entries(obj)?;
+                // Metadata shape-walk: the declared instance fields in layout
+                // order, from the SAME `(slot, kind)` table deserialize rebuilds
+                // from, so the two sides agree field for field. Reflection such
+                // as `object_own_entries` hides a wrapper's `value` and an
+                // `Error`'s record slots and adds expandos, so it cannot define
+                // the wire shape.
+                // An error clones as the ES error type its name denotes (a
+                // subclass or `AggregateError` flattens to `Error`); own extras
+                // are not part of the layout, so they are dropped.
+                let type_rid = self.error_clone_rid(type_rid).unwrap_or(type_rid);
+                let layout = self.instance_serialized_fields(type_rid)?;
                 out.push(Tag::Instance.to_u8());
                 write_uvarint(out, u64::from(type_rid));
-                write_uvarint(out, entries.len() as u64);
-                for (_name, value) in entries {
+                write_uvarint(out, layout.len() as u64);
+                for (slot, kind) in layout {
+                    let value = zun_gc::with_current_heap(|heap| {
+                        value::load_field(kind, obj, slot, heap)
+                    });
                     self.ser_value(&value, out, memo)?;
                 }
             }
             ObjKind::Unsupported => {
                 return Err(RunError::Native(
-                    "serialize: unsupported object kind (functions, promises, \
-                     proxies, weak collections, errors and regexps are not data)"
-                        .into(),
+                    "DOMException: DataCloneError: #<Object> could not be cloned.".into(),
                 ))
             }
         }
@@ -372,7 +381,9 @@ impl Interp<'_> {
                 Some(ObjKind::RegExp)
             } else if heap.date_is_valid(obj).is_some() {
                 Some(ObjKind::Date)
-            } else if heap.is_dynamic_object(obj) {
+            } else if heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj) {
+                // (A typed instance carrying expandos is an instance bag: it
+                // falls through to the metadata shape-walk below.)
                 Some(ObjKind::Dynamic)
             } else {
                 None
@@ -646,29 +657,49 @@ impl Interp<'_> {
         }
     }
 
-    /// The `(slot, kind)` of each instance field serialized for `type_rid`, in
-    /// the exact order and with the exact filter [`Interp::object_own_entries`]
-    /// uses (declared instance fields, base classes first, `static`/`private`
-    /// excluded), so serialize and deserialize agree field-for-field.
-    fn instance_serialized_fields(&self, type_rid: u32) -> Result<Vec<(usize, u8)>, RunError> {
-        let mut chain = Vec::new();
+    /// For an error instance of type `type_rid`: the TypeDef the structured
+    /// clone carries it as. The nearest ancestor (or the type itself) that is one
+    /// of the ES error types or `DOMException` wins; anything else falls back to
+    /// `Error`. `None` when `type_rid` is not an error type.
+    fn error_clone_rid(&self, type_rid: u32) -> Option<u32> {
+        const CLONED: [&str; 8] = [
+            "Error",
+            "EvalError",
+            "RangeError",
+            "ReferenceError",
+            "SyntaxError",
+            "TypeError",
+            "URIError",
+            "DOMException",
+        ];
+        let mut found = None;
         let mut current = type_rid;
-        loop {
-            chain.push(current);
-            let ty = self
-                .module
-                .tables
-                .type_defs
-                .get(current as usize - 1)
-                .ok_or(RunError::BadToken)?;
+        while current != 0 {
+            let ty = self.module.tables.type_defs.get(current as usize - 1)?;
+            let name = self.module.strings.get(ty.name);
+            if found.is_none() && CLONED.contains(&name) {
+                found = Some(current);
+            }
+            if name == "Error" {
+                return found.or(Some(current));
+            }
             if ty.base.is_null() || ty.base.table() != Some(zun_metadata::TableKind::TypeDef) {
-                break;
+                return None;
             }
             current = ty.base.rid();
         }
-        chain.reverse();
+        None
+    }
+
+    /// The `(slot, kind)` of each instance field serialized for `type_rid`, in
+    /// declaration order (declared instance fields, base classes first,
+    /// `static`/`private` excluded), so serialize and deserialize agree
+    /// field-for-field.
+    fn instance_serialized_fields(&self, type_rid: u32) -> Result<Vec<(usize, u8)>, RunError> {
+        // A `TypeDef`'s field range already includes the inherited fields (base
+        // first), so only the concrete type is walked.
         let mut out = Vec::new();
-        for type_rid in chain {
+        for type_rid in [type_rid] {
             let (field_start, field_end) = {
                 let ty = self
                     .module

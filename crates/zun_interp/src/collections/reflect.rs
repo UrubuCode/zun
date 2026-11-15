@@ -593,7 +593,7 @@ impl<'a> Interp<'a> {
 impl<'a> Interp<'a> {
     /// `value instanceof fn` for an ordinary function: whether `fn.prototype`
     /// appears on the dynamic prototype chain of `value`.
-    pub(super) fn function_instanceof(
+    pub(crate) fn function_instanceof(
         &mut self,
         value: &Value,
         handle: zun_core::FunctionHandle,
