@@ -333,6 +333,12 @@ impl<'a> Interp<'a> {
                     // A realm base-type descriptor: resolve its global name, then the
                     // class of that name (or the built-in constructor check).
                     if let Some(token) = descriptor.as_class_descriptor() {
+                        if !self.builtin_ctor_has_prototype(token) {
+                            return Err(RunError::Native(
+                                "TypeError: Function has non-object prototype 'undefined' in instanceof check"
+                                    .into(),
+                            ));
+                        }
                         let class_name = zun_gc::with_current_heap_mut(|heap| {
                             crate::intrinsic_meta::builtin_class_name_in(heap, token)
                         });

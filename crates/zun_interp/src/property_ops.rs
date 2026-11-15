@@ -1708,32 +1708,7 @@ impl Interp<'_> {
                 });
         }
         if name == "length" {
-            let declared = self
-                .module
-                .tables
-                .type_defs
-                .get((rid as usize).wrapping_sub(1))
-                .and_then(|def| crate::intrinsic_meta::intrinsic_ctor_length(self.module.strings.get(def.name)));
-            if let Some(count) = declared {
-                return Ok(Some(Value::Float(f64::from(count), zun_il::NumKind::F64)));
-            }
-        }
-        if name == "length" {
-            // A class's `length` is its constructor's declared parameter count
-            // (excluding the receiver); 0 without an explicit constructor.
-            let count = self
-                .class_constructor(rid)
-                .and_then(|mrid| {
-                    let method = self
-                        .module
-                        .tables
-                        .method_defs
-                        .get((mrid as usize).wrapping_sub(1))?;
-                    let body = zun_module::read_body(&self.module.code, method.body_offset).ok()?;
-                    Some((body.param_count as usize).saturating_sub(1))
-                })
-                .unwrap_or(0);
-            return Ok(Some(Value::Float(count as f64, zun_il::NumKind::F64)));
+            return Ok(Some(Value::Float(self.class_ctor_length(rid), zun_il::NumKind::F64)));
         }
         if name == "name" {
             let def = self
@@ -1746,6 +1721,28 @@ impl Interp<'_> {
             }
         }
         Ok(None)
+    }
+
+    /// The `length` of the class `rid` as a constructor: the specified value for
+    /// a built-in (prelude) constructor, else its constructor's declared
+    /// parameter count (excluding the receiver), 0 without an explicit one.
+    pub(crate) fn class_ctor_length(&self, rid: u32) -> f64 {
+        let declared = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .and_then(|def| crate::intrinsic_meta::intrinsic_ctor_length(self.module.strings.get(def.name)));
+        if let Some(count) = declared {
+            return f64::from(count);
+        }
+        self.class_constructor(rid)
+            .and_then(|mrid| {
+                let method = self.module.tables.method_defs.get((mrid as usize).wrapping_sub(1))?;
+                let body = zun_module::read_body(&self.module.code, method.body_offset).ok()?;
+                Some((body.param_count as usize).saturating_sub(1))
+            })
+            .unwrap_or(0) as f64
     }
 
     /// MethodDef rid of the instance `constructor` declared by `rid` or the
@@ -2909,10 +2906,19 @@ impl Interp<'_> {
                 out
             }));
         }
-        let (_, own) = self
-            .class_own_props(rid)
-            .into_iter()
-            .find(|(n, _)| n == key)?;
+        let Some((_, own)) = self.class_own_props(rid).into_iter().find(|(n, _)| n == key) else {
+            // `length` and `name` are the constructor's own read-only,
+            // configurable data properties unless a static member replaces them.
+            let value = match key {
+                "length" => Value::Float(self.class_ctor_length(rid), zun_il::NumKind::F64),
+                "name" => {
+                    let def = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1))?;
+                    Value::Str(self.module.strings.get(def.name).into())
+                }
+                _ => return None,
+            };
+            return Some(Self::data_descriptor_object(value, false, true));
+        };
         Some(zun_gc::with_current_heap_mut(|heap| {
             let out = heap.alloc_dynamic();
             let flag = |heap: &mut zun_gc::Heap, n: &str, f: bool| {

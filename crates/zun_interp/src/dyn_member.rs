@@ -390,6 +390,8 @@ impl Interp<'_> {
                 stack.push(if name == "prototype" && user_class {
                     let proto = self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))
+                } else if name == "prototype" && !self.builtin_ctor_has_prototype(token) {
+                    Value::Void
                 } else if name == "prototype" {
                     let proto = self.builtin_prototype_object(token);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))

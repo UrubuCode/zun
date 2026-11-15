@@ -540,6 +540,10 @@ impl<'a> Interp<'a> {
                         if let Some(d) = self.builtin_ctor_own_descriptor(token, &key) {
                             return Ok(Value::Object(d));
                         }
+                        // A built-in constructor has no other own string-keyed property.
+                        if token & zun_natives::USER_CLASS_FLAG == 0 {
+                            return Ok(Value::Void);
+                        }
                     }
                 }
                 // A built-in constructor owns an accessor `[Symbol.species]`
@@ -761,7 +765,10 @@ impl<'a> Interp<'a> {
                         let mut statics = self.builtin_static_names(token);
                         statics.extend(self.builtin_constant_names(token));
                         if !statics.is_empty() {
-                            let mut names = vec!["length", "name", "prototype"];
+                            let mut names = vec!["length", "name"];
+                            if self.builtin_ctor_has_prototype(token) {
+                                names.push("prototype");
+                            }
                             names.extend(statics);
                             let array = zun_gc::with_current_heap_mut(|heap| {
                                 let array = heap.alloc_array(names.len());

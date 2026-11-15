@@ -28,6 +28,7 @@ const INTRINSIC_CTOR_LENGTHS: &[(&str, u32)] = &[
     ("FinalizationRegistry", 1),
     ("Promise", 1),
     ("RegExp", 2),
+    ("Date", 7),
     ("ArrayBuffer", 1),
     ("SharedArrayBuffer", 1),
     ("DataView", 1),
@@ -41,6 +42,27 @@ const INTRINSIC_CTOR_LENGTHS: &[(&str, u32)] = &[
     ("URIError", 1),
     ("AggregateError", 2),
     ("Proxy", 2),
+    // Web-platform constructors: the specified (WebIDL) length is the count of
+    // required arguments, not the declared parameter count of the prelude class.
+    ("URL", 1),
+    ("URLSearchParams", 0),
+    ("TextEncoder", 0),
+    ("TextDecoder", 0),
+    ("Blob", 0),
+    ("File", 2),
+    ("Headers", 0),
+    ("Request", 1),
+    ("Response", 0),
+    ("FormData", 0),
+    ("AbortController", 0),
+    ("AbortSignal", 0),
+    ("DOMException", 0),
+    ("Event", 1),
+    ("CustomEvent", 1),
+    ("EventTarget", 0),
+    ("ReadableStream", 0),
+    ("WritableStream", 0),
+    ("TransformStream", 0),
     ("parseInt", 2),
     ("parseFloat", 1),
     ("isNaN", 1),
@@ -117,6 +139,22 @@ fn builtin_class_names_in(heap: &mut zun_gc::Heap, token: u32) -> Vec<String> {
         .collect()
 }
 
+/// Built-in constructors the specification gives no `prototype` property
+/// (`Proxy` is a constructor only for `new`): reading it yields `undefined`, it
+/// is not an own key, and `instanceof` against it throws.
+const PROTOTYPELESS_CTORS: &[&str] = &["Proxy"];
+
+impl Interp<'_> {
+    /// Whether the built-in constructor `token` owns a `prototype` property.
+    pub(crate) fn builtin_ctor_has_prototype(&self, token: u32) -> bool {
+        if token & zun_natives::USER_CLASS_FLAG != 0 {
+            return true;
+        }
+        zun_gc::with_current_heap_mut(|heap| builtin_class_name_in(heap, token))
+            .map_or(true, |name| !PROTOTYPELESS_CTORS.contains(&name.as_str()))
+    }
+}
+
 impl Interp<'_> {
     /// The own value of a built-in constructor's `length` / `name`.
     pub(crate) fn builtin_ctor_own_value(&self, token: u32, key: &str) -> Option<Value> {
@@ -187,6 +225,9 @@ impl Interp<'_> {
         let (value, writable, configurable) = match key {
             // A constructor's `prototype` is non-writable, non-configurable.
             "prototype" => {
+                if !self.builtin_ctor_has_prototype(token) {
+                    return None;
+                }
                 let proto = self.builtin_prototype_object(token);
                 (Value::Any(zun_core::Any::object(proto.addr() as usize)), false, false)
             }
@@ -318,7 +359,7 @@ impl Interp<'_> {
         Self::data_descriptor_object(Value::Float(value, zun_il::NumKind::F64), false, false)
     }
 
-    fn data_descriptor_object(value: Value, writable: bool, configurable: bool) -> zun_gc::Obj {
+    pub(crate) fn data_descriptor_object(value: Value, writable: bool, configurable: bool) -> zun_gc::Obj {
         zun_gc::with_current_heap_mut(|heap| {
             let out = heap.alloc_dynamic();
             let any = value.box_any_cell(heap).unwrap_or_else(zun_core::Any::void);
