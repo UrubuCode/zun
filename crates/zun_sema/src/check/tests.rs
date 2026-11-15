@@ -1100,3 +1100,34 @@ fn partial_does_not_specialize_a_function_with_a_default_parameter() {
         "a function with a default/spread/rest parameter must stay generic",
     );
 }
+
+#[test]
+fn closure_in_a_initializer_captures_the_variable_being_declared() {
+    // `const req = get(..., () => ... req ...)`: the callback runs after the
+    // initializer completes, so it must capture `req` (by cell), not resolve it
+    // as an undeclared global.
+    let hir = check_ok(
+        "function get(cb: any): any { return cb; } \
+         function f(): void { const req: any = get(() => { print(req); }); }",
+    );
+    let captured = hir
+        .closures
+        .iter()
+        .any(|closure| closure.captures.iter().any(|capture| capture.name == "req"
+            && capture.mode == hir::CaptureMode::ByCell));
+    assert!(captured, "the closure must capture `req` by cell");
+}
+
+#[test]
+fn closure_nested_in_a_callback_captures_the_callbacks_const() {
+    let hir = check_ok(
+        "function later(cb: any): void { cb(); } \
+         function outer(cb: any): void { cb(1); } \
+         function f(): void { outer((x: any) => { const r: any = { n: x }; later(() => { print(r); }); }); }",
+    );
+    let captured = hir
+        .closures
+        .iter()
+        .any(|closure| closure.captures.iter().any(|capture| capture.name == "r"));
+    assert!(captured, "the inner closure must capture `r`");
+}
