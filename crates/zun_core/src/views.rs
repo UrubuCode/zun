@@ -441,6 +441,11 @@ impl TypedArrayView {
         })
     }
 
+    /// Whether this view is length-tracking (created with no explicit length).
+    pub fn is_tracking(self) -> bool {
+        self.track
+    }
+
     /// The effective view against a (possibly resized) buffer of
     /// `buffer_length` bytes, or `None` when a fixed-length view no longer
     /// fits (ES2024: the view is out-of-bounds — length 0, access fails). A

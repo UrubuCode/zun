@@ -4376,3 +4376,40 @@ fn caller_frame_survives_a_collection_inside_a_bridged_callee() {
         "the parked caller must see its relocated object, got {result:?}"
     );
 }
+
+/// `structuredClone` reads an accessor property by running its getter, which is
+/// user code. Here each getter allocates enough to trigger collections in the
+/// middle of the walk, while the walk holds a shared object it has already
+/// emitted, a cyclic reference, and a container it is still filling. If the
+/// walk kept raw addresses across the call, the identity checks below would
+/// fail (stale memo keys) or the heap would be corrupted.
+#[test]
+fn structured_clone_survives_collections_inside_getters() {
+    let program = r#"
+function churn(n: number): number {
+  const keep: any[] = [];
+  for (let i = 0; i < n; i++) {
+    keep.push({ i: i, a: [i, i + 1], s: "x" + i });
+  }
+  return keep.length;
+}
+function main(): string {
+  const shared: any = { tag: "shared" };
+  const o: any = {
+    first: shared,
+    get g() { churn(3000); return { deep: [1, 2, shared] }; },
+    last: shared,
+    arr: [shared, { get h() { churn(3000); return 5; } }, [shared]],
+  };
+  o.self = o;
+  const c: any = structuredClone(o);
+  return "" + (c.first === c.last) + "," + (c.g.deep[2] === c.first) + "," + c.g.deep.length
+    + "," + (c.arr[0] === c.first) + "," + c.arr[1].h + "," + (c.arr[2][0] === c.first)
+    + "," + (c.self === c) + "," + (c !== o) + "," + c.first.tag;
+}
+"#;
+    assert_eq!(
+        typeof_of(program),
+        "true,true,3,true,5,true,true,true,shared"
+    );
+}

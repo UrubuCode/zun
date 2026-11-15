@@ -6,6 +6,22 @@
 use super::*;
 
 impl<'a> Interp<'a> {
+    /// Whether a realm class descriptor stands for an ECMAScript namespace object
+    /// (`JSON`, `Atomics`) that the prelude models as a class of statics.
+    fn descriptor_is_namespace(&self, token: u32) -> bool {
+        if token & zun_natives::USER_CLASS_FLAG == 0 {
+            return false;
+        }
+        let rid = (token & !zun_natives::USER_CLASS_FLAG) as usize;
+        self.module
+            .tables
+            .type_defs
+            .get(rid.wrapping_sub(1))
+            .is_some_and(|def| {
+                zun_natives::NAMESPACE_CLASSES.contains(&self.module.strings.get(def.name))
+            })
+    }
+
     #[allow(clippy::redundant_guards)] // guard reads clearer than the equivalent pattern
     pub(super) fn col_object_descriptor(
         &mut self,
@@ -1062,7 +1078,16 @@ impl<'a> Interp<'a> {
                         zun_core::AnyTag::String => "string",
                         zun_core::AnyTag::Symbol => "symbol",
                         // A realm class descriptor is a constructor value.
-                        zun_core::AnyTag::ClassDescriptor => "function",
+                        // (except an ECMAScript namespace the prelude models as a
+                        // class: `JSON`, `Atomics` are plain objects).
+                        zun_core::AnyTag::ClassDescriptor => {
+                            if self.descriptor_is_namespace(any.as_class_descriptor().unwrap_or(0))
+                            {
+                                "object"
+                            } else {
+                                "function"
+                            }
+                        }
                         zun_core::AnyTag::Void => "undefined",
                         zun_core::AnyTag::Null => "object",
                         zun_core::AnyTag::Object => match any.as_object() {

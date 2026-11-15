@@ -75,8 +75,10 @@ pub enum Tag {
     /// An `ArrayBuffer` (memoized): a uvarint byte length then the raw bytes.
     ArrayBuffer = 15,
     /// A typed array / `Buffer` (memoized): a one-byte element-kind
-    /// discriminant (`TypedElement::index`) then a uvarint byte length then
-    /// the raw bytes.
+    /// discriminant (`TypedElement::index`), then its backing buffer as a full
+    /// value (an [`Tag::ArrayBuffer`], [`Tag::ResizableBuffer`] or a
+    /// [`Tag::Ref`], so views of one buffer keep sharing it), then a uvarint
+    /// byte offset, a uvarint element count and a one-byte length-tracking flag.
     TypedArray = 16,
     /// A back-reference to an already-encoded object: a uvarint memo index.
     Ref = 17,
@@ -88,15 +90,19 @@ pub enum Tag {
     /// cross-deserialize identity). An object with no encodable symbol key is
     /// still written as plain [`Tag::Object`], keeping that path byte-compatible.
     ObjectSym = 18,
-    /// A `DataView` (memoized): the whole backing buffer (uvarint length +
-    /// raw bytes), a uvarint `byteOffset`, a uvarint `byteLength`, and a
-    /// one-byte length-tracking flag (`1` = tracks the buffer's length).
+    /// A `DataView` (memoized): its backing buffer as a full value (so views
+    /// of one buffer keep sharing it), a uvarint `byteOffset`, a uvarint
+    /// `byteLength`, and a one-byte length-tracking flag (`1` = tracks the
+    /// buffer's length).
     DataView = 19,
     /// An array hole (only valid as an array element): no payload.
     Hole = 20,
     /// A `RegExp` (memoized): a length-prefixed source string then a
     /// length-prefixed flags string. `lastIndex` is not preserved (it resets to 0).
     RegExp = 21,
+    /// A resizable `ArrayBuffer` (memoized): the [`Tag::ArrayBuffer`] body
+    /// (current length + raw bytes) then a uvarint `maxByteLength`.
+    ResizableBuffer = 22,
 }
 
 impl Tag {
@@ -126,6 +132,7 @@ impl Tag {
             19 => Self::DataView,
             20 => Self::Hole,
             21 => Self::RegExp,
+            22 => Self::ResizableBuffer,
             _ => return None,
         })
     }

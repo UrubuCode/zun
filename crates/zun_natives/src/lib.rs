@@ -65,6 +65,7 @@ pub use string::normalize_form as string_normalize_form;
 mod promise;
 mod math_late;
 mod realm_define;
+pub use realm_define::NAMESPACE_CLASSES;
 mod view_members;
 pub use view_members::{node_buffer_accessor_native, view_member, ViewArg, ViewMember, LENGTH_SENTINEL};
 mod serde;

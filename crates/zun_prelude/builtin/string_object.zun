@@ -9,4 +9,6 @@ class StringObject {
     valueOf(): string { return this.value; }
 
     toString(): string { return this.value; }
+
+    get length(): number { return this.value.length; }
 }

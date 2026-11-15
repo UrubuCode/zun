@@ -226,7 +226,7 @@ impl Checker<'_> {
                 ("escape", false),
                 ("unescape", false),
             ];
-            for (name, is_object) in extra_globals {
+            for &(name, is_object) in &extra_globals {
                 if registry.iter().any(|(n, _)| n.as_str() == name) {
                     continue;
                 }
@@ -252,9 +252,27 @@ impl Checker<'_> {
                         span,
                     }
                 } else {
+                    // The token is always consumed so the numbering of the
+                    // later globals never depends on the program text.
                     let token = next_token;
                     next_token += 1;
-                    self.realm_descriptor_expr(token, span)
+                    // A function the prelude implements (`btoa`, `escape`, ...)
+                    // is its function value, so `globalThis.btoa === btoa`; when
+                    // the prelude function is absent from this program (the
+                    // checker drops a prelude function the user source appears
+                    // to redefine) the opaque token keeps the global present.
+                    match self
+                        .by_name
+                        .get(name)
+                        .filter(|_| PRELUDE_FUNCTION_GLOBALS.contains(&name))
+                    {
+                        Some(&func) => Self::box_to_any(hir::Expr {
+                            kind: hir::ExprKind::FunctionRef { func },
+                            ty: Ty::Function(func),
+                            span,
+                        }),
+                        None => self.realm_descriptor_expr(token, span),
+                    }
                 };
                 body.push(hir::Stmt::Expr(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
@@ -271,20 +289,25 @@ impl Checker<'_> {
                                 ty: Ty::Boolean,
                                 span,
                             },
+                            hir::Expr {
+                                kind: hir::ExprKind::Boolean(Self::platform_global_enumerable(name)),
+                                ty: Ty::Boolean,
+                                span,
+                            },
                         ],
                     },
                     ty: Ty::Void,
                     span,
                 }));
             }
-            for (name, binding) in registry {
+            for (name, binding) in registry.iter() {
                 let descriptor = self.realm_descriptor_expr(binding.token, span);
                 body.push(hir::Stmt::Expr(hir::Expr {
                     kind: hir::ExprKind::CallBuiltin {
                         id: set_id,
                         args: vec![
                             hir::Expr {
-                                kind: hir::ExprKind::String(name),
+                                kind: hir::ExprKind::String(name.clone()),
                                 ty: Ty::String,
                                 span,
                             },
@@ -294,6 +317,61 @@ impl Checker<'_> {
                                 ty: Ty::Boolean,
                                 span,
                             },
+                            hir::Expr {
+                                kind: hir::ExprKind::Boolean(false),
+                                ty: Ty::Boolean,
+                                span,
+                            },
+                        ],
+                    },
+                    ty: Ty::Void,
+                    span,
+                }));
+            }
+            // Platform globals the prelude implements as ordinary top-level
+            // functions and classes (not base types with compile-time facets, so
+            // the realm registry above does not carry them). Each resolvable
+            // name becomes an own property of the global object holding the same
+            // value the bare identifier evaluates to: a function is the function
+            // value, a class is its descriptor. Names the prelude does not define
+            // are skipped.
+            let already_seeded: std::collections::HashSet<&str> = registry
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .chain(extra_globals.iter().map(|(n, _)| *n))
+                .collect();
+            for name in PLATFORM_FUNCTIONS.iter().chain(PLATFORM_CLASSES) {
+                if already_seeded.contains(name) {
+                    continue;
+                }
+                let value = if let Some(&func) = self.by_name.get(*name) {
+                    Self::box_to_any(hir::Expr {
+                        kind: hir::ExprKind::FunctionRef { func },
+                        ty: Ty::Function(func),
+                        span,
+                    })
+                } else if let Some(&class_idx) = self.classes_by_name.get(*name) {
+                    self.realm_descriptor_expr(zun_natives::USER_CLASS_FLAG | (class_idx + 1), span)
+                } else {
+                    continue;
+                };
+                let flag = |value: bool| hir::Expr {
+                    kind: hir::ExprKind::Boolean(value),
+                    ty: Ty::Boolean,
+                    span,
+                };
+                body.push(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: set_id,
+                        args: vec![
+                            hir::Expr {
+                                kind: hir::ExprKind::String((*name).to_string()),
+                                ty: Ty::String,
+                                span,
+                            },
+                            value,
+                            flag(false),
+                            flag(Self::platform_global_enumerable(name)),
                         ],
                     },
                     ty: Ty::Void,
@@ -359,6 +437,11 @@ impl Checker<'_> {
                                 ty: Ty::Boolean,
                                 span,
                             },
+                            hir::Expr {
+                                kind: hir::ExprKind::Boolean(false),
+                                ty: Ty::Boolean,
+                                span,
+                            },
                         ],
                     },
                     ty: Ty::Void,
@@ -401,5 +484,77 @@ impl Checker<'_> {
             generator_plan: None,
             body,
         })
+    }
+}
+
+/// Globals that are function-valued prelude functions when the program has them.
+const PRELUDE_FUNCTION_GLOBALS: &[&str] = &[
+    "encodeURIComponent",
+    "decodeURIComponent",
+    "encodeURI",
+    "decodeURI",
+    "btoa",
+    "atob",
+    "escape",
+    "unescape",
+];
+
+/// Prelude functions that are own properties of the global object in Node.
+const PLATFORM_FUNCTIONS: &[&str] = &[
+    "structuredClone",
+    "queueMicrotask",
+    "setTimeout",
+    "clearTimeout",
+    "setInterval",
+    "clearInterval",
+    "setImmediate",
+    "clearImmediate",
+    "fetch",
+];
+
+/// Prelude classes (constructors, and the `Atomics` namespace) that are own
+/// properties of the global object in Node.
+const PLATFORM_CLASSES: &[&str] = &[
+    "Date",
+    "Atomics",
+    "DOMException",
+    "TextEncoder",
+    "TextDecoder",
+    "URL",
+    "URLSearchParams",
+    "AbortController",
+    "AbortSignal",
+    "Event",
+    "EventTarget",
+    "CustomEvent",
+    "Headers",
+    "Request",
+    "Response",
+    "FormData",
+    "Blob",
+    "ReadableStream",
+    "WritableStream",
+    "TransformStream",
+];
+
+impl Checker<'_> {
+    /// Whether Node reports the global's own property as enumerable. Every
+    /// ECMAScript and web-platform class, namespace and function is not; the
+    /// Node timer, microtask, clone and base64 functions (and `fetch`) are.
+    fn platform_global_enumerable(name: &str) -> bool {
+        matches!(
+            name,
+            "structuredClone"
+                | "queueMicrotask"
+                | "setTimeout"
+                | "clearTimeout"
+                | "setInterval"
+                | "clearInterval"
+                | "setImmediate"
+                | "clearImmediate"
+                | "fetch"
+                | "atob"
+                | "btoa"
+        )
     }
 }

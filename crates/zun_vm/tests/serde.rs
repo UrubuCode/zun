@@ -211,18 +211,21 @@ fn deserialize_of_garbage_bytes_is_a_clean_error() {
 }
 
 #[test]
-fn serialize_of_a_function_is_a_clean_error() {
-    let error = run_expect_error(
-        r#"import { serialize } from "zun:core";
+fn serialize_of_a_function_throws_a_catchable_data_clone_error() {
+    // It used to raise an uncatchable engine-level error, which this test
+    // matched by its text. A program can now catch it, so the test asserts the
+    // thrown error's shape instead of the diagnostic string.
+    let lines = run(r#"import { serialize } from "zun:core";
            function helper(): number { return 1.0; }
            function main() {
-               serialize(helper);
-           }"#,
-    );
-    assert!(
-        error.contains("function"),
-        "expected a function-not-serializable error, got: {error}"
-    );
+               try {
+                   serialize(helper as any);
+                   console.log("no-throw");
+               } catch (e: any) {
+                   console.log(e.name + "|" + e.message);
+               }
+           }"#);
+    assert_eq!(lines, vec!["DataCloneError|function could not be cloned."]);
 }
 
 /// Registered `Symbol.for` keys round-trip; a unique `Symbol()` key is dropped.
@@ -246,7 +249,10 @@ function main() {
 
 /// A `DataView` round-trips: the deserialized view re-serializes to identical
 /// bytes (buffer contents, offset, length and the length-tracking flag all
-/// survive), and the wire form carries the written bytes.
+/// survive), and the wire form carries the written bytes. The wire form is
+/// `[version, DataView tag, ArrayBuffer tag, buffer length, buffer bytes...,
+/// offset, length, tracking]`: the buffer is a value of its own so views of one
+/// buffer keep sharing it after a clone.
 #[test]
 fn data_view_round_trips_bytes_offset_and_length() {
     let out = run_stable(
@@ -256,16 +262,16 @@ fn data_view_round_trips_bytes_offset_and_length() {
            v.setUint8(3, 44);
            let s = serialize(box_any(v));
            print(stable(s));
-           print(s[5] as number);
            print(s[6] as number);
-           print(s[8] as number);
-           print(s[11] as number);
+           print(s[7] as number);
+           print(s[9] as number);
            print(s[12] as number);
            print(s[13] as number);
+           print(s[14] as number);
            let t = new DataView(new ArrayBuffer(6), 1);
            let ts = serialize(box_any(t));
            print(stable(ts));
-           print(ts[11] as number);"#,
+           print(ts[12] as number);"#,
     );
     assert_eq!(out, ["true", "11", "22", "44", "2", "4", "0", "true", "1"]);
 }

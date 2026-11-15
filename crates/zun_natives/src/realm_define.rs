@@ -17,15 +17,25 @@ unavailable_stub!(unavailable, "realm intrinsic requires an interpreter heap");
 pub const MODULE: crate::Module = crate::Module {
     name: "realm",
     functions: &[
-        // `globalDefineBuiltin(name, value, constant)`: define `name` on the realm
-        // global as a non-enumerable data property. `constant` selects the value
+        // `globalDefineBuiltin(name, value, constant, enumerable)`: define `name` on
+        // the realm global as a data property. `constant` selects the value
         // properties (`undefined`, `NaN`, `Infinity`), which are non-writable and
         // non-configurable; otherwise the property is writable and configurable.
+        // `enumerable` is false for every ECMAScript and web-platform class and
+        // namespace, and true for the handful of Node platform functions
+        // (`structuredClone`, `atob`, ...) whose own property is enumerable.
         NativeFn {
             name: "globalDefineBuiltin",
-            params: &[Str, Opaque, Bool],
+            params: &[Str, Opaque, Bool, Bool],
             ret: Void,
             imp: unavailable,
         },
     ],
 };
+
+/// The ECMAScript namespace objects the prelude declares as classes (a class
+/// holds their static members), so the bare identifier evaluates to a class
+/// descriptor. `typeof` must still answer `"object"` for these: they are plain
+/// objects, not constructors. `Math`, `Reflect` and `Iterator` are seeded as
+/// real objects and need no entry.
+pub const NAMESPACE_CLASSES: &[&str] = &["JSON", "Atomics"];

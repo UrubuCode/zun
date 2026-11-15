@@ -476,7 +476,30 @@ impl<'a> Interp<'a> {
                 let readonly = matches!(args.get(2), Some(Value::Bool(true)));
                 zun_gc::with_current_heap_mut(|heap| {
                     let global = heap.global_object();
-                    heap.dynamic_define(global, name.clone(), value, !readonly);
+                    // Storing to a binding the realm already holds (a built-in
+                    // global the program mirrors, such as a prelude function
+                    // it reassigns) is an assignment: the property keeps its
+                    // enumerable and configurable attributes rather than being
+                    // redefined as an ordinary enumerable one.
+                    match heap.dynamic_descriptor(global, &name) {
+                        Some(zun_core::PropertyDescriptor::Data {
+                            enumerable,
+                            configurable,
+                            ..
+                        }) => {
+                            heap.dynamic_define_data(
+                                global,
+                                name.clone(),
+                                value,
+                                !readonly,
+                                enumerable,
+                                configurable,
+                            );
+                        }
+                        _ => {
+                            heap.dynamic_define(global, name.clone(), value, !readonly);
+                        }
+                    }
                 });
                 if name == "Iterator" {
                     if let Some(address) = value.as_object() {
@@ -488,16 +511,33 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(value))
             }
             "globalDefineBuiltin" => {
-                // A built-in global property: non-enumerable, and either an
-                // ordinary writable/configurable binding or (`constant`) a
-                // frozen value property such as `undefined`.
+                // A built-in global property: non-enumerable unless the fourth
+                // argument says otherwise, and either an ordinary
+                // writable/configurable binding or (`constant`) a frozen value
+                // property such as `undefined`.
                 let name = match args.first().ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
+                let constant = matches!(args.get(2), Some(Value::Bool(true)));
+                let enumerable = matches!(args.get(3), Some(Value::Bool(true)));
+                // A function value rides the global object's function slot (as
+                // in `globalSet`); it is writable and configurable like any
+                // other built-in global, and enumerable only where Node says so.
+                if let Some(Value::Function(handle)) = args.get(1) {
+                    let handle = *handle;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let global = heap.global_object();
+                        if enumerable {
+                            heap.dynamic_set_function(global, name, handle);
+                        } else {
+                            heap.dynamic_set_method(global, name, handle);
+                        }
+                    });
+                    return Ok(Value::Void);
+                }
                 let value =
                     any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let constant = matches!(args.get(2), Some(Value::Bool(true)));
                 zun_gc::with_current_heap_mut(|heap| {
                     let global = heap.global_object();
                     heap.dynamic_define_data(
@@ -505,7 +545,7 @@ impl<'a> Interp<'a> {
                         name.clone(),
                         value,
                         !constant,
-                        false,
+                        enumerable,
                         !constant,
                     );
                 });

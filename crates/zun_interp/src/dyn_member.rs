@@ -318,6 +318,10 @@ impl Interp<'_> {
                     "unicodeSets" => flag_of('v'),
                     "sticky" => flag_of('y'),
                     "hasIndices" => flag_of('d'),
+                    "lastIndex" => zun_gc::with_current_heap(|heap| {
+                        heap.regex_last_index_any(*regex)
+                            .and_then(|any| Value::unbox_any(any, heap))
+                    }),
                     _ => None,
                 };
                 if let Some(answer) = answer {

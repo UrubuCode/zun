@@ -49,14 +49,113 @@ enum ObjKind {
     Unsupported,
 }
 
+/// An element parked across a child walk: either a plain value (no heap
+/// reference to keep current) or an index into the walk's rooted scratch slots.
+enum Item {
+    Plain(Value),
+    Slot(usize),
+}
+
+/// The serialize walk's state. Everything that names a heap object is held
+/// in registry-owned [`zun_gc::RootArray`]s and addressed by index, because a
+/// getter (user code) can run mid-walk and a collection can move every object.
+struct SerState {
+    out: Vec<u8>,
+    /// Every object met so far, by memo index. The collector keeps these slots
+    /// current, and they keep the objects alive.
+    nodes: zun_gc::RootArray,
+    count: usize,
+    /// Address → memo index. Only valid while no user code has run since the
+    /// last [`SerState::rebuild`]; a collection invalidates every key.
+    by_addr: HashMap<usize, u32>,
+    /// A stack of parked snapshot elements (see [`Item`]).
+    scratch: zun_gc::RootArray,
+    scratch_top: usize,
+}
+
+impl SerState {
+    fn new() -> Self {
+        Self {
+            out: vec![SERDE_VERSION],
+            nodes: zun_gc::RootArray::new(0),
+            count: 0,
+            by_addr: HashMap::new(),
+            scratch: zun_gc::RootArray::new(0),
+            scratch_top: 0,
+        }
+    }
+
+    fn lookup(&self, obj: Obj) -> Option<u32> {
+        self.by_addr.get(&(obj.addr() as usize)).copied()
+    }
+
+    /// Give `obj` the next memo index and root it; answers the index.
+    fn register(&mut self, obj: Obj) -> usize {
+        let index = self.count;
+        self.count += 1;
+        self.nodes.set(index, obj);
+        self.by_addr.insert(obj.addr() as usize, index as u32);
+        index
+    }
+
+    /// The object with memo index `index`, at its current address.
+    fn node(&self, index: usize) -> Obj {
+        self.nodes
+            .get(index)
+            .expect("every registered memo index holds an object")
+    }
+
+    /// Rebuild the address memo from the rooted slots after user code ran.
+    fn rebuild(&mut self) {
+        self.by_addr.clear();
+        for index in 0..self.count {
+            self.by_addr
+                .insert(self.node(index).addr() as usize, index as u32);
+        }
+    }
+
+    fn mark(&self) -> usize {
+        self.scratch_top
+    }
+
+    fn stash(&mut self, value: Value) -> Item {
+        match value {
+            Value::Object(obj) => {
+                self.scratch.set(self.scratch_top, obj);
+                self.scratch_top += 1;
+                Item::Slot(self.scratch_top - 1)
+            }
+            other => Item::Plain(other),
+        }
+    }
+
+    fn unstash(&self, item: &Item) -> Value {
+        match item {
+            Item::Plain(value) => value.clone(),
+            Item::Slot(slot) => Value::Object(
+                self.scratch
+                    .get(*slot)
+                    .expect("a stashed slot is filled until released"),
+            ),
+        }
+    }
+
+    fn release(&mut self, mark: usize) {
+        for slot in mark..self.scratch_top {
+            self.scratch.clear(slot);
+        }
+        self.scratch_top = mark;
+    }
+}
+
 impl Interp<'_> {
     // ---- serialize ---------------------------------------------------------
 
     /// `serialize(value)` → a fresh `Uint8Array` of the encoded bytes.
     pub(crate) fn serialize_value(&mut self, value: &Value) -> Result<Value, RunError> {
-        let mut out = vec![SERDE_VERSION];
-        let mut memo: HashMap<usize, u32> = HashMap::new();
-        self.ser_value(value, &mut out, &mut memo)?;
+        let mut state = SerState::new();
+        self.ser_value(value, &mut state)?;
+        let out = state.out;
         // Allocate the output only after the walk, so no allocation interleaves
         // with the read walk (and no live handle needs rooting across it).
         let view = zun_gc::with_current_heap_mut(|heap| {
@@ -70,42 +169,41 @@ impl Interp<'_> {
         Ok(Value::Object(view))
     }
 
-    fn ser_value(
-        &mut self,
-        value: &Value,
-        out: &mut Vec<u8>,
-        memo: &mut HashMap<usize, u32>,
-    ) -> Result<(), RunError> {
+    /// Encode one value. A `Value::Object` handed in is registered in the walk's
+    /// rooted tables before anything else can run, so the caller may drop its
+    /// own copy of the reference as soon as this call starts.
+    fn ser_value(&mut self, value: &Value, st: &mut SerState) -> Result<(), RunError> {
         match value {
-            Value::Null => out.push(Tag::Null.to_u8()),
-            Value::Void => out.push(Tag::Undefined.to_u8()),
-            Value::Bool(false) => out.push(Tag::False.to_u8()),
-            Value::Bool(true) => out.push(Tag::True.to_u8()),
+            Value::Null => st.out.push(Tag::Null.to_u8()),
+            Value::Void => st.out.push(Tag::Undefined.to_u8()),
+            Value::Bool(false) => st.out.push(Tag::False.to_u8()),
+            Value::Bool(true) => st.out.push(Tag::True.to_u8()),
             Value::Int(v, kind) => {
-                out.push(Tag::Int.to_u8());
-                out.push(kind.to_imm() as u8);
-                out.extend_from_slice(&v.to_le_bytes());
+                st.out.push(Tag::Int.to_u8());
+                st.out.push(kind.to_imm() as u8);
+                st.out.extend_from_slice(&v.to_le_bytes());
             }
             Value::Float(v, NumKind::F32) => {
-                out.push(Tag::Float32.to_u8());
-                out.extend_from_slice(&(*v as f32).to_bits().to_le_bytes());
+                st.out.push(Tag::Float32.to_u8());
+                st.out
+                    .extend_from_slice(&(*v as f32).to_bits().to_le_bytes());
             }
             Value::Float(v, _) => {
-                out.push(Tag::Float64.to_u8());
-                out.extend_from_slice(&v.to_bits().to_le_bytes());
+                st.out.push(Tag::Float64.to_u8());
+                st.out.extend_from_slice(&v.to_bits().to_le_bytes());
             }
-            Value::Str(s) => write_str(out, s),
+            Value::Str(s) => write_str(&mut st.out, s),
             Value::Function(_) => {
                 return Err(RunError::Native(
                     "DOMException: DataCloneError: function could not be cloned.".into(),
                 ))
             }
-            Value::Object(obj) => self.ser_object(*obj, out, memo)?,
+            Value::Object(obj) => self.ser_object(*obj, st)?,
             Value::Any(any) => match any.tag() {
                 zun_core::AnyTag::Object => {
                     let address = any.as_object().ok_or(RunError::BadToken)?;
                     let obj = unsafe { Obj::from_addr(address as *mut u64) };
-                    self.ser_object(obj, out, memo)?;
+                    self.ser_object(obj, st)?;
                 }
                 zun_core::AnyTag::Symbol | zun_core::AnyTag::ClassDescriptor => {
                     return Err(RunError::Native(
@@ -116,29 +214,33 @@ impl Interp<'_> {
                 _ => {
                     let v = zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
                         .ok_or(RunError::BadToken)?;
-                    self.ser_value(&v, out, memo)?;
+                    self.ser_value(&v, st)?;
                 }
             },
         }
         Ok(())
     }
 
-    fn ser_object(
-        &mut self,
-        obj: Obj,
-        out: &mut Vec<u8>,
-        memo: &mut HashMap<usize, u32>,
-    ) -> Result<(), RunError> {
-        let address = obj.addr() as usize;
-        if let Some(&index) = memo.get(&address) {
-            out.push(Tag::Ref.to_u8());
-            write_uvarint(out, u64::from(index));
+    /// Encode a heap object.
+    ///
+    /// **Reentrancy contract.** An accessor property is read by calling its
+    /// getter, which is user code and can collect (and move) any object. So the
+    /// walk never keeps a heap reference in a Rust local across a child walk or
+    /// a getter call: `obj` is registered in `st.nodes` on entry, and every
+    /// container re-reads itself from that rooted slot (`st.node(node)`) and
+    /// re-reads each child from the container just before descending into it.
+    /// Snapshots that must outlive a child walk (a `Map`'s entries) live in
+    /// `st.scratch`, also registry-owned. The `obj` parameter is only used
+    /// before the first child walk.
+    fn ser_object(&mut self, obj: Obj, st: &mut SerState) -> Result<(), RunError> {
+        if let Some(index) = st.lookup(obj) {
+            st.out.push(Tag::Ref.to_u8());
+            write_uvarint(&mut st.out, u64::from(index));
             return Ok(());
         }
         // Assign this object's memo index BEFORE encoding its children, so a
         // back-reference inside them resolves to this object.
-        let index = memo.len() as u32;
-        memo.insert(address, index);
+        let node = st.register(obj);
 
         match self.classify(obj) {
             ObjKind::BigInt => {
@@ -146,103 +248,126 @@ impl Interp<'_> {
                     heap.bigint_value(obj).map(|value| value.to_string())
                 })
                 .ok_or(RunError::BadToken)?;
-                out.push(Tag::BigInt.to_u8());
-                write_bytes(out, text.as_bytes());
+                st.out.push(Tag::BigInt.to_u8());
+                write_bytes(&mut st.out, text.as_bytes());
             }
             ObjKind::TypedArray => {
-                let (element, bytes) = zun_gc::with_current_heap(|heap| {
-                    let element = heap.typed_array_element(obj)?;
-                    let buffer = heap.typed_array_buffer(obj)?;
-                    let offset = heap.typed_array_byte_offset(obj)?;
-                    let byte_len = heap.typed_array_byte_len(obj)?;
-                    let mut bytes = Vec::with_capacity(byte_len);
-                    for i in 0..byte_len {
-                        bytes.push(heap.buffer_get(buffer, offset + i)?);
-                    }
-                    Some((element.index(), bytes))
-                })
-                .ok_or(RunError::BadToken)?;
-                out.push(Tag::TypedArray.to_u8());
-                out.push(element as u8);
-                write_bytes(out, &bytes);
+                let (element, buffer, offset, length, tracking) =
+                    zun_gc::with_current_heap(|heap| {
+                        Some((
+                            heap.typed_array_element(obj)?,
+                            heap.typed_array_buffer(obj)?,
+                            heap.typed_array_byte_offset(obj)?,
+                            heap.typed_array_len(obj)?,
+                            heap.typed_array_is_tracking(obj)?,
+                        ))
+                    })
+                    .ok_or(RunError::BadToken)?;
+                st.out.push(Tag::TypedArray.to_u8());
+                st.out.push(element.index() as u8);
+                // The backing buffer is a value of its own: views of one buffer
+                // meet at the same memo entry and keep aliasing after the clone.
+                self.ser_object(buffer, st)?;
+                write_uvarint(&mut st.out, offset as u64);
+                write_uvarint(&mut st.out, length as u64);
+                st.out.push(u8::from(tracking));
             }
             ObjKind::DataView => {
-                let (bytes, offset, length, tracking) = zun_gc::with_current_heap(|heap| {
-                    let buffer = heap.data_view_buffer(obj)?;
-                    let len = heap.buffer_len(buffer)?;
-                    let mut bytes = Vec::with_capacity(len);
-                    for i in 0..len {
-                        bytes.push(heap.buffer_get(buffer, i)?);
-                    }
+                let (buffer, offset, length, tracking) = zun_gc::with_current_heap(|heap| {
                     Some((
-                        bytes,
+                        heap.data_view_buffer(obj)?,
                         heap.data_view_byte_offset(obj)?,
                         heap.data_view_byte_len(obj)?,
                         heap.data_view_is_tracking(obj)?,
                     ))
                 })
                 .ok_or(RunError::BadToken)?;
-                out.push(Tag::DataView.to_u8());
-                write_bytes(out, &bytes);
-                write_uvarint(out, offset as u64);
-                write_uvarint(out, length as u64);
-                out.push(u8::from(tracking));
+                st.out.push(Tag::DataView.to_u8());
+                self.ser_object(buffer, st)?;
+                write_uvarint(&mut st.out, offset as u64);
+                write_uvarint(&mut st.out, length as u64);
+                st.out.push(u8::from(tracking));
             }
             ObjKind::ArrayBuffer => {
-                let bytes = zun_gc::with_current_heap(|heap| {
+                let (bytes, max) = zun_gc::with_current_heap(|heap| {
                     let len = heap.buffer_len(obj)?;
                     let mut bytes = Vec::with_capacity(len);
                     for i in 0..len {
                         bytes.push(heap.buffer_get(obj, i)?);
                     }
-                    Some(bytes)
+                    let max = heap
+                        .buffer_resizable(obj)?
+                        .then(|| heap.buffer_max_byte_length(obj))
+                        .flatten();
+                    Some((bytes, max))
                 })
                 .ok_or(RunError::BadToken)?;
-                out.push(Tag::ArrayBuffer.to_u8());
-                write_bytes(out, &bytes);
+                match max {
+                    Some(max) => {
+                        st.out.push(Tag::ResizableBuffer.to_u8());
+                        write_bytes(&mut st.out, &bytes);
+                        write_uvarint(&mut st.out, max as u64);
+                    }
+                    None => {
+                        st.out.push(Tag::ArrayBuffer.to_u8());
+                        write_bytes(&mut st.out, &bytes);
+                    }
+                }
             }
             ObjKind::Array => {
-                let elements = zun_gc::with_current_heap(|heap| {
-                    let len = heap.array_len(obj)?;
-                    let mut elements = Vec::with_capacity(len);
-                    for i in 0..len {
-                        elements.push(heap.array_get(obj, i)?);
+                let len = zun_gc::with_current_heap(|heap| heap.array_len(obj))
+                    .ok_or(RunError::BadToken)?;
+                st.out.push(Tag::Array.to_u8());
+                write_uvarint(&mut st.out, len as u64);
+                for i in 0..len {
+                    // Re-read the array and the element: a child walk may have
+                    // moved the array, and shrunk it.
+                    let array = st.node(node);
+                    let element = zun_gc::with_current_heap(|heap| heap.array_get(array, i));
+                    match element {
+                        Some(element) if !element.is_hole() => {
+                            let value = self.any_to_value(element)?;
+                            self.ser_value(&value, st)?;
+                        }
+                        _ => st.out.push(Tag::Hole.to_u8()),
                     }
-                    Some(elements)
-                })
-                .ok_or(RunError::BadToken)?;
-                out.push(Tag::Array.to_u8());
-                write_uvarint(out, elements.len() as u64);
-                for element in elements {
-                    if element.is_hole() {
-                        out.push(Tag::Hole.to_u8());
-                        continue;
-                    }
-                    let value = self.any_to_value(element)?;
-                    self.ser_value(&value, out, memo)?;
                 }
             }
             ObjKind::Map => {
                 let entries = zun_gc::with_current_heap(|heap| heap.map_entries(obj))
                     .ok_or(RunError::BadToken)?;
-                out.push(Tag::Map.to_u8());
-                write_uvarint(out, entries.len() as u64);
+                st.out.push(Tag::Map.to_u8());
+                write_uvarint(&mut st.out, entries.len() as u64);
+                let mark = st.mark();
+                let mut items = Vec::with_capacity(entries.len());
                 for (key, value) in entries {
-                    let key = self.any_to_value(key)?;
-                    let value = self.any_to_value(value)?;
-                    self.ser_value(&key, out, memo)?;
-                    self.ser_value(&value, out, memo)?;
+                    let key = self.stash(st, key)?;
+                    let value = self.stash(st, value)?;
+                    items.push((key, value));
                 }
+                for (key, value) in &items {
+                    let key = st.unstash(key);
+                    self.ser_value(&key, st)?;
+                    let value = st.unstash(value);
+                    self.ser_value(&value, st)?;
+                }
+                st.release(mark);
             }
             ObjKind::Set => {
                 let values = zun_gc::with_current_heap(|heap| heap.set_values(obj))
                     .ok_or(RunError::BadToken)?;
-                out.push(Tag::Set.to_u8());
-                write_uvarint(out, values.len() as u64);
+                st.out.push(Tag::Set.to_u8());
+                write_uvarint(&mut st.out, values.len() as u64);
+                let mark = st.mark();
+                let mut items = Vec::with_capacity(values.len());
                 for value in values {
-                    let value = self.any_to_value(value)?;
-                    self.ser_value(&value, out, memo)?;
+                    items.push(self.stash(st, value)?);
                 }
+                for item in &items {
+                    let value = st.unstash(item);
+                    self.ser_value(&value, st)?;
+                }
+                st.release(mark);
             }
             ObjKind::RegExp => {
                 let (source, flags) = zun_gc::with_current_heap(|heap| {
@@ -254,45 +379,59 @@ impl Interp<'_> {
                 let (Some(source), Some(flags)) = (source, flags) else {
                     return Err(RunError::BadToken);
                 };
-                out.push(Tag::RegExp.to_u8());
-                write_bytes(out, source.as_bytes());
-                write_bytes(out, flags.as_bytes());
+                st.out.push(Tag::RegExp.to_u8());
+                write_bytes(&mut st.out, source.as_bytes());
+                write_bytes(&mut st.out, flags.as_bytes());
             }
             ObjKind::Date => {
                 let (valid, millis) = zun_gc::with_current_heap(|heap| {
                     (heap.date_is_valid(obj), heap.date_millis(obj))
                 });
-                out.push(Tag::Date.to_u8());
+                st.out.push(Tag::Date.to_u8());
                 match (valid, millis) {
                     (Some(true), Some(millis)) => {
-                        out.push(1);
-                        out.extend_from_slice(&millis.to_le_bytes());
+                        st.out.push(1);
+                        st.out.extend_from_slice(&millis.to_le_bytes());
                     }
-                    _ => out.push(0),
+                    _ => st.out.push(0),
                 }
             }
             ObjKind::Dynamic => {
-                let entries = zun_gc::with_current_heap(|heap| heap.dynamic_entries(obj))
-                    .ok_or(RunError::BadToken)?;
+                // Own enumerable string keys in property order. A data property
+                // is read when its turn comes; an accessor property is read by
+                // calling its getter, and the result is cloned as a plain data
+                // property. A function-valued property cannot be cloned.
+                let keys: Vec<(String, bool)> = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_keys(obj)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|key| heap.dynamic_is_enumerable(obj, key))
+                        .map(|key| {
+                            let accessor = heap.dynamic_is_accessor(obj, &key);
+                            (key, accessor)
+                        })
+                        .collect()
+                });
                 // Symbol-keyed entries: only registered (`Symbol.for`) and
                 // well-known symbols have an identity that survives a
                 // deserialize. Unique `Symbol()` keys cannot be reconstructed, so
                 // they are silently omitted (the rest of the graph still
-                // round-trips).
-                let symbol_entries: Vec<(u8, Option<String>, u64, zun_core::Any)> =
+                // round-trips). Only the keys are collected here; each value is
+                // re-read from the rooted object when its turn comes.
+                let symbol_entries: Vec<(u8, Option<String>, u64, zun_core::SymbolId)> =
                     zun_gc::with_current_heap(|heap| {
                         let mut found = Vec::new();
                         for symbol in heap.dynamic_symbol_keys(obj) {
-                            let Some(value) = heap.dynamic_get_symbol(obj, symbol) else {
+                            if heap.dynamic_get_symbol(obj, symbol).is_none() {
                                 continue;
-                            };
+                            }
                             if let Some(key) = heap.symbol_key_for(symbol) {
-                                found.push((0u8, Some(key.to_string()), 0, value));
+                                found.push((0u8, Some(key.to_string()), 0, symbol));
                             } else if zun_core::WellKnownSymbol::ALL
                                 .iter()
                                 .any(|w| w.id() == symbol)
                             {
-                                found.push((1u8, None, symbol.get(), value));
+                                found.push((1u8, None, symbol.get(), symbol));
                             }
                         }
                         found
@@ -302,25 +441,47 @@ impl Interp<'_> {
                 } else {
                     Tag::ObjectSym
                 };
-                out.push(tag.to_u8());
-                write_uvarint(out, entries.len() as u64);
-                for (key, value) in entries {
+                st.out.push(tag.to_u8());
+                write_uvarint(&mut st.out, keys.len() as u64);
+                for (key, accessor) in keys {
                     // The key is a bare length-prefixed string (no value tag);
                     // deserialize reads it with `read_str`.
-                    write_bytes(out, key.as_bytes());
-                    let value = self.any_to_value(value)?;
-                    self.ser_value(&value, out, memo)?;
+                    write_bytes(&mut st.out, key.as_bytes());
+                    let value = if accessor {
+                        self.ser_read_accessor(st, node, &key)?
+                    } else {
+                        let holder = st.node(node);
+                        if zun_gc::with_current_heap(|heap| heap.dynamic_get_function(holder, &key))
+                            .is_some()
+                        {
+                            return Err(RunError::Native(
+                                "DOMException: DataCloneError: function could not be cloned.".into(),
+                            ));
+                        }
+                        // A key a getter deleted meanwhile reads as undefined.
+                        match zun_gc::with_current_heap(|heap| heap.dynamic_get(holder, &key)) {
+                            Some(any) => self.any_to_value(any)?,
+                            None => Value::Void,
+                        }
+                    };
+                    self.ser_value(&value, st)?;
                 }
                 if !symbol_entries.is_empty() {
-                    write_uvarint(out, symbol_entries.len() as u64);
-                    for (kind, key, id, value) in symbol_entries {
-                        out.push(kind);
+                    write_uvarint(&mut st.out, symbol_entries.len() as u64);
+                    for (kind, key, id, symbol) in symbol_entries {
+                        st.out.push(kind);
                         match key {
-                            Some(key) => write_bytes(out, key.as_bytes()),
-                            None => write_uvarint(out, id),
+                            Some(key) => write_bytes(&mut st.out, key.as_bytes()),
+                            None => write_uvarint(&mut st.out, id),
                         }
-                        let value = self.any_to_value(value)?;
-                        self.ser_value(&value, out, memo)?;
+                        let holder = st.node(node);
+                        let value = match zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get_symbol(holder, symbol)
+                        }) {
+                            Some(any) => self.any_to_value(any)?,
+                            None => Value::Void,
+                        };
+                        self.ser_value(&value, st)?;
                     }
                 }
             }
@@ -336,14 +497,15 @@ impl Interp<'_> {
                 // are not part of the layout, so they are dropped.
                 let type_rid = self.error_clone_rid(type_rid).unwrap_or(type_rid);
                 let layout = self.instance_serialized_fields(type_rid)?;
-                out.push(Tag::Instance.to_u8());
-                write_uvarint(out, u64::from(type_rid));
-                write_uvarint(out, layout.len() as u64);
+                st.out.push(Tag::Instance.to_u8());
+                write_uvarint(&mut st.out, u64::from(type_rid));
+                write_uvarint(&mut st.out, layout.len() as u64);
                 for (slot, kind) in layout {
+                    let holder = st.node(node);
                     let value = zun_gc::with_current_heap(|heap| {
-                        value::load_field(kind, obj, slot, heap)
+                        value::load_field(kind, holder, slot, heap)
                     });
-                    self.ser_value(&value, out, memo)?;
+                    self.ser_value(&value, st)?;
                 }
             }
             ObjKind::Unsupported => {
@@ -353,6 +515,41 @@ impl Interp<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Read an accessor property of the rooted object `node` by calling its
+    /// getter with the object as receiver (an accessor without a getter reads as
+    /// `undefined`). The getter is user code: afterwards the address memo is
+    /// rebuilt from the rooted slots, since a collection may have moved
+    /// everything. The returned value is not rooted; the caller must hand it to
+    /// `ser_value` immediately.
+    fn ser_read_accessor(
+        &mut self,
+        st: &mut SerState,
+        node: usize,
+        key: &str,
+    ) -> Result<Value, RunError> {
+        let holder = st.node(node);
+        let Some(getter) =
+            zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(holder, key))
+        else {
+            return Ok(Value::Void);
+        };
+        let args = self.with_this_arg(getter, holder, Vec::new());
+        let result = self.invoke_function_value(getter, args);
+        st.rebuild();
+        Ok(match result? {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                .ok_or(RunError::BadToken)?,
+            other => other,
+        })
+    }
+
+    /// Park an element of a snapshot: a heap object goes into a rooted scratch
+    /// slot, anything else is kept as a plain value.
+    fn stash(&self, st: &mut SerState, any: Any) -> Result<Item, RunError> {
+        let value = self.any_to_value(any)?;
+        Ok(st.stash(value))
     }
 
     /// Classify a heap object into its serializable kind. Side-table probes
@@ -474,28 +671,36 @@ impl Interp<'_> {
                 memo.push(Value::Object(obj));
                 Ok(Value::Object(obj))
             }
-            Tag::ArrayBuffer => {
+            Tag::ArrayBuffer | Tag::ResizableBuffer => {
                 let bytes = reader.read_bytes().ok_or_else(bad)?.to_vec();
+                let max = if tag == Tag::ResizableBuffer {
+                    Some(reader.read_uvarint().ok_or_else(bad)? as usize)
+                } else {
+                    None
+                };
                 let obj = zun_gc::with_current_heap_mut(|heap| {
-                    let buffer = heap.alloc_buffer(bytes.len());
+                    let buffer = match max {
+                        Some(max) => heap.alloc_resizable_buffer(bytes.len(), max),
+                        None => Some(heap.alloc_buffer(bytes.len())),
+                    }?;
                     for (i, byte) in bytes.iter().enumerate() {
                         heap.buffer_set(buffer, i, *byte);
                     }
-                    buffer
-                });
+                    Some(buffer)
+                })
+                .ok_or_else(bad)?;
                 memo.push(Value::Object(obj));
                 Ok(Value::Object(obj))
             }
             Tag::DataView => {
-                let bytes = reader.read_bytes().ok_or_else(bad)?.to_vec();
+                // Reserve the memo index first: the buffer is a child value.
+                let slot = memo.len();
+                memo.push(Value::Void);
+                let buffer = self.de_buffer(reader, memo)?;
                 let offset = reader.read_uvarint().ok_or_else(bad)? as usize;
                 let length = reader.read_uvarint().ok_or_else(bad)? as usize;
                 let tracking = de_u8(reader)? == 1;
                 let obj = zun_gc::with_current_heap_mut(|heap| {
-                    let buffer = heap.alloc_buffer(bytes.len());
-                    for (i, byte) in bytes.iter().enumerate() {
-                        heap.buffer_set(buffer, i, *byte);
-                    }
                     if tracking {
                         heap.alloc_data_view_tracking(buffer, offset)
                     } else {
@@ -503,7 +708,7 @@ impl Interp<'_> {
                     }
                 })
                 .ok_or_else(bad)?;
-                memo.push(Value::Object(obj));
+                memo[slot] = Value::Object(obj);
                 Ok(Value::Object(obj))
             }
             Tag::TypedArray => {
@@ -511,17 +716,21 @@ impl Interp<'_> {
                     .ok_or_else(|| {
                         RunError::Native("deserialize: unknown typed-array kind".into())
                     })?;
-                let bytes = reader.read_bytes().ok_or_else(bad)?.to_vec();
-                let length = bytes.len() / element.size().max(1);
+                let slot = memo.len();
+                memo.push(Value::Void);
+                let buffer = self.de_buffer(reader, memo)?;
+                let offset = reader.read_uvarint().ok_or_else(bad)? as usize;
+                let length = reader.read_uvarint().ok_or_else(bad)? as usize;
+                let tracking = de_u8(reader)? == 1;
                 let obj = zun_gc::with_current_heap_mut(|heap| {
-                    let buffer = heap.alloc_buffer(bytes.len());
-                    for (i, byte) in bytes.iter().enumerate() {
-                        heap.buffer_set(buffer, i, *byte);
+                    if tracking {
+                        heap.alloc_typed_array_tracking(buffer, offset, element)
+                    } else {
+                        heap.alloc_typed_array(buffer, offset, length, element)
                     }
-                    heap.alloc_typed_array(buffer, 0, length, element)
                 })
                 .ok_or_else(bad)?;
-                memo.push(Value::Object(obj));
+                memo[slot] = Value::Object(obj);
                 Ok(Value::Object(obj))
             }
             Tag::RegExp => {
@@ -654,6 +863,19 @@ impl Interp<'_> {
                 }
                 Ok(Value::Object(obj))
             }
+        }
+    }
+
+    /// Read the backing buffer of a view: a full value that must decode to an
+    /// `ArrayBuffer` (a back-reference to one shared with another view is fine).
+    fn de_buffer(&mut self, reader: &mut Reader, memo: &mut Vec<Value>) -> Result<Obj, RunError> {
+        match self.de_value(reader, memo)? {
+            Value::Object(buffer)
+                if zun_gc::with_current_heap(|heap| heap.buffer_len(buffer).is_some()) =>
+            {
+                Ok(buffer)
+            }
+            _ => Err(bad()),
         }
     }
 
