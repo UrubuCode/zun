@@ -242,6 +242,29 @@ impl<'a> Interp<'a> {
         Ok(Value::Void)
     }
 
+    /// Whether `rid` is a non-static, non-closure method declared by a class
+    /// type: such a method takes its receiver as the implicit first argument.
+    /// Every method owns a vtable slot, so a slot alone says nothing about it.
+    pub(crate) fn is_class_instance_method(&self, rid: u32) -> bool {
+        let Some(method) = self
+            .module
+            .tables
+            .method_defs
+            .get((rid as usize).wrapping_sub(1))
+        else {
+            return false;
+        };
+        let name = self.module.strings.get(method.name);
+        !method.is_static
+            && !name.starts_with('<')
+            && self
+                .module
+                .tables
+                .type_defs
+                .iter()
+                .any(|def| (def.method_start..def.method_end).contains(&rid))
+    }
+
     /// Whether a function value receives the `this` argument of `apply` /
     /// `bind` as its leading parameter. Receivers are positional for an
     /// unbound `@this` closure, a class instance method and a receiver-taking

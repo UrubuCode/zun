@@ -198,10 +198,14 @@ impl Checker<'_> {
         }
         self.closures.push(hir::ClosureFunction {
             name: {
+                // An arrow function has no `prototype` and is not
+                // constructible; the runtime reads that off the `@arrow`
+                // marker (it never combines with `@this`).
+                let arrow = if function.is_arrow { "@arrow" } else { "" };
                 let rest_suffix = if function.params.iter().any(|p| p.is_rest) {
-                    "@rest"
+                    format!("{arrow}@rest")
                 } else {
-                    ""
+                    arrow.to_string()
                 };
                 // The same source closure can be checked more than once (e.g. each
                 // arm of a runtime-key dispatch chain re-checks its arguments);
