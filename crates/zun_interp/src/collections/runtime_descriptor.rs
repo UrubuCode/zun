@@ -329,8 +329,37 @@ impl<'a> Interp<'a> {
                 let out = heap.alloc_dynamic();
                 heap.dynamic_set_function(out, "get", getter);
                 heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
-                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(false));
-                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(true));
+                let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
+                let configurable = heap.dynamic_is_symbol_configurable(obj, symbol);
+                heap.dynamic_set(
+                    out,
+                    "enumerable".to_owned(),
+                    zun_core::Any::bool(enumerable),
+                );
+                heap.dynamic_set(
+                    out,
+                    "configurable".to_owned(),
+                    zun_core::Any::bool(configurable),
+                );
+                return Some(out);
+            }
+            if let Some(function) = heap.dynamic_get_symbol_function(obj, symbol) {
+                let out = heap.alloc_dynamic();
+                heap.dynamic_set_function(out, "value", function);
+                let writable = heap.dynamic_is_symbol_writable(obj, symbol);
+                let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
+                let configurable = heap.dynamic_is_symbol_configurable(obj, symbol);
+                heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(writable));
+                heap.dynamic_set(
+                    out,
+                    "enumerable".to_owned(),
+                    zun_core::Any::bool(enumerable),
+                );
+                heap.dynamic_set(
+                    out,
+                    "configurable".to_owned(),
+                    zun_core::Any::bool(configurable),
+                );
                 return Some(out);
             }
             let value = heap.dynamic_get_symbol(obj, symbol)?;
@@ -345,7 +374,12 @@ impl<'a> Interp<'a> {
                 "enumerable".to_owned(),
                 zun_core::Any::bool(enumerable),
             );
-            heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(!frozen));
+            let configurable = !frozen && heap.dynamic_is_symbol_configurable(obj, symbol);
+            heap.dynamic_set(
+                out,
+                "configurable".to_owned(),
+                zun_core::Any::bool(configurable),
+            );
             Some(out)
         })
     }

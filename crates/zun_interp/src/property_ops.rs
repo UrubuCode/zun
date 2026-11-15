@@ -317,7 +317,7 @@ impl Interp<'_> {
             .into_iter()
             .enumerate()
             {
-                heap.dynamic_set_symbol_function(
+                heap.dynamic_set_symbol_method(
                     proto,
                     symbol.id(),
                     zun_core::FunctionHandle::new_builtin_method(kind as u32),
@@ -346,7 +346,7 @@ impl Interp<'_> {
             heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
             // `String.prototype` is itself a String object holding `""`.
             heap.dynamic_define_data(proto, "length", zun_core::Any::float(0.0), false, false, false);
-            heap.dynamic_set_symbol_function(
+            heap.dynamic_set_symbol_method(
                 proto,
                 zun_core::WellKnownSymbol::Iterator.id(),
                 zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
@@ -375,10 +375,18 @@ impl Interp<'_> {
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, "$Function.prototype", any, false);
             crate::intrinsic_meta::install_prototype_methods(heap, proto, "Function");
-            heap.dynamic_set_symbol_function(
+            heap.dynamic_set_symbol_method(
                 proto,
                 zun_core::WellKnownSymbol::HasInstance.id(),
                 zun_core::FunctionHandle::new_builtin_method(BUILTIN_FN_HAS_INSTANCE),
+            );
+            // `Function.prototype[Symbol.hasInstance]` is the one well-known
+            // method that is non-writable, non-enumerable and non-configurable.
+            heap.dynamic_set_symbol_attributes(
+                proto,
+                zun_core::WellKnownSymbol::HasInstance.id(),
+                Some(false),
+                Some(false),
             );
             proto
         })
@@ -624,7 +632,7 @@ impl Interp<'_> {
                 crate::intrinsic_meta::install_prototype_methods(heap, proto, "Number");
             }
             if is_string_class {
-                heap.dynamic_set_symbol_function(
+                heap.dynamic_set_symbol_method(
                     proto,
                     zun_core::WellKnownSymbol::Iterator.id(),
                     zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
@@ -690,7 +698,7 @@ impl Interp<'_> {
                 crate::intrinsic_meta::install_prototype_methods(heap, proto, &class);
             }
             if is_class(heap, "String") {
-                heap.dynamic_set_symbol_function(
+                heap.dynamic_set_symbol_method(
                     proto,
                     zun_core::WellKnownSymbol::Iterator.id(),
                     zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
@@ -724,7 +732,7 @@ impl Interp<'_> {
                 }
             }
             if let Some((kind, tag)) = size_kind {
-                heap.dynamic_set_symbol_function(
+                heap.dynamic_set_symbol_method(
                     proto,
                     zun_core::WellKnownSymbol::Iterator.id(),
                     zun_core::FunctionHandle::new_builtin_method(if kind == BUILTIN_MAP_SIZE {
@@ -777,7 +785,7 @@ impl Interp<'_> {
             heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(link.addr() as usize)));
             match kind {
                 0 => {
-                    heap.dynamic_set_symbol_function(
+                    heap.dynamic_set_symbol_method(
                         proto,
                         zun_core::WellKnownSymbol::Iterator.id(),
                         zun_core::FunctionHandle::new_builtin_method(BUILTIN_ITER_SELF),
@@ -1803,6 +1811,49 @@ impl Interp<'_> {
                         heap.dynamic_is_symbol_enumerable(obj, *symbol)
                     })
                 });
+                // An array (or regexp) carries symbol-keyed expandos in a dynamic entry.
+                zun_gc::with_current_heap_mut(|heap| {
+                    if heap.array_len(obj).is_some() || heap.regex_source(obj).is_some() {
+                        heap.ensure_dynamic_entry(obj);
+                    }
+                });
+                let existing =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_has_symbol_key(obj, *symbol));
+                if existing {
+                    // ValidateAndApplyPropertyDescriptor: a non-configurable key
+                    // refuses a change of its configurable / enumerable
+                    // attributes, and (once non-writable) of its value.
+                    let (configurable, current_enumerable, writable, current_fn, accessor) =
+                        zun_gc::with_current_heap(|heap| {
+                            (
+                                heap.dynamic_is_symbol_configurable(obj, *symbol),
+                                heap.dynamic_is_symbol_enumerable(obj, *symbol),
+                                heap.dynamic_is_symbol_writable(obj, *symbol),
+                                heap.dynamic_get_symbol_function(obj, *symbol),
+                                heap.dynamic_symbol_getter(obj, *symbol).is_some(),
+                            )
+                        });
+                    if !configurable {
+                        let value_changes = desc.value_fn.is_some_and(|f| Some(f) != current_fn)
+                            || desc.value.is_some_and(|v| {
+                                current_fn.is_some()
+                                    || zun_gc::with_current_heap(|heap| {
+                                        heap.dynamic_get_symbol(obj, *symbol) != Some(v)
+                                    })
+                            });
+                        if desc.configurable == Some(true)
+                            || desc.enumerable.is_some_and(|e| e != current_enumerable)
+                            || (desc.is_accessor() != accessor
+                                && (desc.is_accessor() || desc.is_data()))
+                            || (!writable
+                                && !accessor
+                                && (desc.writable == Some(true) || value_changes))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                let flag_configurable = desc.configurable.or((!existing).then_some(false));
                 if desc.is_accessor() {
                     return zun_gc::with_current_heap_mut(|heap| {
                         let ok = heap.dynamic_define_symbol(
@@ -1814,13 +1865,35 @@ impl Interp<'_> {
                         if let Some(getter) = desc.get {
                             heap.dynamic_set_symbol_getter(obj, *symbol, getter);
                         }
+                        heap.dynamic_set_symbol_attributes(obj, *symbol, None, flag_configurable);
                         ok
                     });
                 }
+                // A descriptor naming no value on an existing key only updates
+                // its attributes (the value, function slot or getter stays).
+                let attributes_only =
+                    existing && desc.value.is_none() && desc.value_fn.is_none();
+                let flag_writable = desc.writable.or((!existing).then_some(false));
                 return zun_gc::with_current_heap_mut(|heap| {
-                    let ok = heap.dynamic_define_symbol(obj, *symbol, value, enumerable);
+                    let ok = if attributes_only {
+                        true
+                    } else {
+                        heap.dynamic_define_symbol(obj, *symbol, value, enumerable)
+                    };
+                    if ok && attributes_only {
+                        // Re-apply the enumerable flag without touching the value.
+                        heap.dynamic_set_symbol_enumerable(obj, *symbol, enumerable);
+                    }
                     if let (true, Some(function)) = (ok, desc.value_fn) {
                         heap.dynamic_set_symbol_function(obj, *symbol, function);
+                    }
+                    if ok {
+                        heap.dynamic_set_symbol_attributes(
+                            obj,
+                            *symbol,
+                            flag_writable,
+                            flag_configurable,
+                        );
                     }
                     ok
                 });
@@ -2502,7 +2575,12 @@ impl Interp<'_> {
         let Some(target) = function_bag.or_else(|| args.first().and_then(object)) else {
             return Ok(Value::Bool(true));
         };
-        let key = args.get(1).and_then(prop_key);
+        let key = args.get(1).and_then(prop_key).or_else(|| {
+            // An `any` key that is not a string, number or symbol (a boolean,
+            // an object, ...) names the property its string form spells.
+            let raw = args.get(1)?;
+            self.dyn_to_string(raw).ok().map(PropKey::Str)
+        });
         if let Some(PropKey::Sym(symbol)) = key {
             let removed =
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_delete_symbol(target, symbol));

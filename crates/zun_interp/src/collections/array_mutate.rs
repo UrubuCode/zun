@@ -370,6 +370,10 @@ impl<'a> Interp<'a> {
                         }
                         if let Some(value) = heap.dynamic_get_symbol(source, symbol) {
                             heap.dynamic_set_symbol(result, symbol, value);
+                        } else if let Some(function) =
+                            heap.dynamic_get_symbol_function(source, symbol)
+                        {
+                            heap.dynamic_set_symbol_function(result, symbol, function);
                         }
                     }
                     result

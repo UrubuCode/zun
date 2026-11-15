@@ -303,7 +303,9 @@ impl Checker<'_> {
             }
             ast::Expr::Index { object, index, .. } => {
                 let key = self.check_expr(cx, index);
-                let key = if matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int() {
+                // An `any` key stays boxed: it may be a Symbol, which `deleteStrict`
+                // resolves at run time (other `any` keys are stringified there).
+                let key = if matches!(key.ty, Ty::F64) || key.ty.is_int() {
                     self.to_string_for_parse(key)
                 } else {
                     key

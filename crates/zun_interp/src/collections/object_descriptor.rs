@@ -855,6 +855,14 @@ impl<'a> Interp<'a> {
                 // `Object.getOwnPropertySymbols(obj)` — an array of the object's
                 // own symbol keys (as `Any` symbol values), in insertion-stable
                 // id order. A non-dynamic/typed object has no symbol keys.
+                // A class constructor value is not a heap object: its symbol
+                // statics are not modelled as own properties, so it reports none.
+                if let Ok(Value::Any(any)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if any.as_class_descriptor().is_some() {
+                        let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                        return Ok(Value::Object(array));
+                    }
+                }
                 let obj =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(obj));

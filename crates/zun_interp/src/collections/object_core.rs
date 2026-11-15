@@ -326,7 +326,10 @@ impl<'a> Interp<'a> {
                                 heap.dynamic_set_function(target, name, handle);
                             }
                             for (symbol, handle) in symbolic {
-                                heap.dynamic_set_symbol_function(target, symbol, handle);
+                                // Only an enumerable own symbol key is copied.
+                                if heap.dynamic_is_symbol_enumerable(source, symbol) {
+                                    heap.dynamic_set_symbol_function(target, symbol, handle);
+                                }
                             }
                         });
                     }

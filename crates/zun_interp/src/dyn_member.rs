@@ -1393,6 +1393,22 @@ impl Interp<'_> {
                     }
                     return None;
                 }
+                if let Value::Any(key_any) = &key {
+                    // A symbol key: an own non-writable data property or
+                    // function slot refuses the write.
+                    let symbol = key_any.as_symbol()?;
+                    if heap.is_dynamic_object(object)
+                        && heap.dynamic_has_symbol_key(object, symbol)
+                        && heap.dynamic_symbol_getter(object, symbol).is_none()
+                        && !heap.dynamic_is_symbol_writable(object, symbol)
+                    {
+                        let label = heap.symbol_description(symbol).unwrap_or("");
+                        return Some(format!(
+                            "TypeError: Cannot assign to read only property 'Symbol({label})' of object '#<Object>'"
+                        ));
+                    }
+                    return None;
+                }
                 let name = key_name.as_deref()?;
                 if heap.dynamic_is_accessor(object, name) {
                     if heap.dynamic_accessor_setter(object, name).is_none() {

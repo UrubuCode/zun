@@ -471,6 +471,16 @@ pub(crate) fn prototype_method_at(kind: u32) -> Option<(&'static str, &'static s
 pub(crate) fn install_prototype_methods(heap: &mut zun_gc::Heap, proto: zun_gc::Obj, class: &str) {
     for (kind, name) in prototype_methods_of(class) {
         heap.dynamic_set_method(proto, name, zun_core::FunctionHandle::new_builtin_method(kind));
+        // In the specification `Array.prototype[Symbol.iterator]` *is* the same
+        // function object as `Array.prototype.values`, so it is installed under
+        // both keys.
+        if class == "Array" && name == "values" {
+            heap.dynamic_set_symbol_method(
+                proto,
+                zun_core::WellKnownSymbol::Iterator.id(),
+                zun_core::FunctionHandle::new_builtin_method(kind),
+            );
+        }
     }
 }
 
@@ -685,3 +695,4 @@ mod tests {
         assert_eq!(prototype_method_at(BUILTIN_PROTO_BASE + seen.len() as u32), None);
     }
 }
+

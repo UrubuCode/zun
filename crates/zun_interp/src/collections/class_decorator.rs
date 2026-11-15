@@ -146,7 +146,7 @@ impl<'a> Interp<'a> {
                 if instance_method && !function.is_bound() && function.builtin_method().is_none() {
                     let proto = self.class_prototype_object(class_rid);
                     zun_gc::with_current_heap_mut(|heap| {
-                        heap.dynamic_set_symbol_function(proto, symbol, function);
+                        heap.dynamic_set_symbol_method(proto, symbol, function);
                     });
                 }
                 // Subclasses inherit the symbol method unless they declare their own.
