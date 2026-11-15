@@ -56,7 +56,7 @@ impl Interp<'_> {
                 other => Some(other.clone()),
             };
             if let Some(Value::Function(handle)) = callee {
-                Self::ensure_function_prototype(handle);
+                self.ensure_function_prototype(handle);
             }
         }
         if let Some(Value::Function(handle)) = match &popped {
@@ -1477,12 +1477,29 @@ impl Interp<'_> {
 }
 
 impl Interp<'_> {
+    /// Whether `handle` is an arrow function (its closure name carries `@arrow`).
+    pub(crate) fn is_arrow_closure(&self, handle: zun_core::FunctionHandle) -> bool {
+        !handle.is_bound()
+            && handle.builtin_method().is_none()
+            && self
+                .module
+                .tables
+                .method_defs
+                .get((handle.method_rid() as usize).wrapping_sub(1))
+                .is_some_and(|method| self.module.strings.get(method.name).contains("@arrow"))
+    }
+
     /// An ordinary function owns a `prototype` object (with a non-enumerable
     /// back-reference `constructor`) from the moment it is created. Functions
     /// here materialise it lazily, on the first read of `fn.prototype`, unless
     /// the script already stored its own value.
-    pub(crate) fn ensure_function_prototype(handle: zun_core::FunctionHandle) {
+    pub(crate) fn ensure_function_prototype(&self, handle: zun_core::FunctionHandle) {
         if handle.builtin_method().is_some() || handle.is_bound() {
+            return;
+        }
+        // An arrow function owns no `prototype` (and is not constructible); its
+        // closure name carries the `@arrow` marker.
+        if self.is_arrow_closure(handle) {
             return;
         }
         let bag = crate::function_expando_bag(handle);

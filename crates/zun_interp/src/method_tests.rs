@@ -4411,3 +4411,54 @@ withThis.apply(self, [1, 2]);
         ]
     );
 }
+
+/// An arrow function has no `prototype`; an ordinary function expression and a
+/// declared function do. `assert.throws` in zun-node tells a validation
+/// predicate from a constructor by that distinction.
+#[test]
+fn arrow_functions_have_no_prototype_but_ordinary_functions_do() {
+    let source = r#"
+const arrow: any = (x: any): any => x;
+const rest: any = (...xs: any[]): any => xs;
+const expr: any = function (x: any): any { return x; };
+function declared(x: any): any { return x; }
+const d: any = declared;
+console.log(typeof arrow.prototype, typeof rest.prototype, typeof expr.prototype, typeof d.prototype);
+console.log(arrow(1), rest(1, 2).length);
+"#;
+    let module = zun_compiler::compile(source).expect("compile prototype workload");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run prototype workload");
+    assert_eq!(
+        output.lines,
+        ["undefined undefined object object", "1 2"]
+    );
+}
+
+/// `fn.length` counts declared parameters only: not a closure's captured
+/// environment, an explicit `this`, the rest parameter, or a class method's
+/// implicit receiver.
+#[test]
+fn function_length_excludes_hidden_parameters() {
+    let source = r#"
+function d0() {}
+function d2(a: any, b: any) {}
+function dr(a: any, ...r: any[]) {}
+const x: any = d0, y: any = d2, z: any = dr;
+console.log(x.length, y.length, z.length);
+let cap = 1;
+const c1: any = function (a: any) { return cap + a; };
+const c2: any = (a: any, b: any) => cap + a + b;
+const c3: any = (a: any, ...r: any[]) => cap;
+const c4: any = function (this: any, a: any) { return cap; };
+const c5: any = () => {};
+console.log(c1.length, c2.length, c3.length, c4.length, c5.length);
+class K { m(a: any, b: any) {} static s(a: any) {} }
+const k: any = new K();
+console.log(k.m.length, (K as any).s.length);
+"#;
+    let module = zun_compiler::compile(source).expect("compile length workload");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run length workload");
+    assert_eq!(output.lines, ["0 2 1", "1 2 1 1 0", "2 1"]);
+}

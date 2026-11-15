@@ -1042,11 +1042,22 @@ impl<'a> Interp<'a> {
                 ));
             }
             let body = read_body(&self.module.code, method.body_offset).ok()?;
+            // `param_count` counts every hidden parameter: the `@this`
+            // receiver, a class instance method's implicit receiver, the
+            // captured environment of a closure, and the rest array, none of
+            // which ECMAScript's `length` includes.
             let mut receiver = usize::from(method_name.contains("@this"));
-            if !method.is_static && !method_name.starts_with('<') {
+            if self.is_class_instance_method(rid) {
                 receiver = 1;
             }
-            if method_name.ends_with("@rest>") {
+            if method_name.starts_with('<') && handle.environment().is_some() {
+                receiver += 1;
+            }
+            let rest = method_name.ends_with("@rest>")
+                || (!method_name.starts_with('<')
+                    && method.signature.0 != 0
+                    && self.module.blobs.get(method.signature) == b"R");
+            if rest {
                 receiver += 1;
             }
             let length = (body.param_count as usize).saturating_sub(receiver);
