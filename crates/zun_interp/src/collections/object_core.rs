@@ -80,7 +80,7 @@ impl<'a> Interp<'a> {
                     }
                 } else {
                     keys = self
-                        .object_own_entries(obj)?
+                        .object_own_entries_impl(obj, false)?
                         .into_iter()
                         .map(|(key, _)| key)
                         .collect();

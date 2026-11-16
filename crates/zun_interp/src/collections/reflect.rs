@@ -196,9 +196,12 @@ impl<'a> Interp<'a> {
                 // An array answers for its elements (holes are absent) and `length`.
                 if zun_gc::with_current_heap(|heap| heap.array_len(object).is_some()) {
                     let in_array = self.call_managed_collection("arrayHas", args)?;
-                    if matches!(in_array, Value::Bool(true))
-                        || !zun_gc::with_current_heap(|heap| heap.dynamic_has(object, name))
-                    {
+                    // A method installed on the array lives in its function slot.
+                    let own_named = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_has(object, name)
+                            || heap.dynamic_get_function(object, name).is_some()
+                    });
+                    if matches!(in_array, Value::Bool(true)) || !own_named {
                         return Ok(in_array);
                     }
                     return Ok(Value::Bool(true));

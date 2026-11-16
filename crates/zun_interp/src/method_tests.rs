@@ -4437,3 +4437,29 @@ fn call_and_apply_do_not_shift_a_free_function_s_arguments() {
     run(&module, &mut output).expect("run call/apply receiver workload");
     assert_eq!(output.lines, vec!["1|2", "1|2", "9"]);
 }
+
+#[test]
+fn a_bound_free_function_with_a_rest_parameter_keeps_its_arguments() {
+    // The receiver gate had a second way to reach the same mistake: for a
+    // function with a rest parameter it answered "takes a receiver" whenever
+    // two or more parameters were declared, on the theory that the leading
+    // fixed one could hold it. That is true only for a class instance method
+    // or an explicit `@this`, both of which the gate decides earlier, so a
+    // free function lost its first argument to a phantom receiver and
+    // `restFree.bind(null, 1)(2, 3)` arrived as `restFree(null, 1, 2, 3)`.
+    let module = zun_compiler::compile(
+        "function restFree(a: any, ...rest: any[]): void {
+             console.log(String(a) + \"|\" + rest.join(\",\"));
+         }
+         function main(): void {
+             const f: any = restFree;
+             f.bind(null, 1)(2, 3);
+             f.call(null, 1, 2, 3);
+             f.apply(null, [1, 2, 3]);
+         }",
+    )
+    .expect("compile bound rest workload");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run bound rest workload");
+    assert_eq!(output.lines, vec!["1|2,3", "1|2,3", "1|2,3"]);
+}

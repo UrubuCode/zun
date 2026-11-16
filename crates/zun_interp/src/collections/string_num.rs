@@ -162,7 +162,10 @@ impl<'a> Interp<'a> {
                     Value::Object(obj)
                         if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) =>
                     {
-                        self.array_join_dyn(obj, ",")?.unwrap_or_default()
+                        match self.array_own_primitive(obj, "string")? {
+                            Some(primitive) => primitive.display(),
+                            None => self.array_join_dyn(obj, ",")?.unwrap_or_default(),
+                        }
                     }
                     Value::Object(obj)
                         if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) =>

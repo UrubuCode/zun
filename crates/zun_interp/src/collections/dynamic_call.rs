@@ -493,7 +493,17 @@ impl<'a> Interp<'a> {
                         let array = zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(unboxed.len());
                             for (index, value) in unboxed.iter().enumerate() {
-                                let any = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                // A callable has no `Any` form (`f.bind(g)`, `f.bind(null, g)`):
+                                // it rides in a `functionBox` record the call path unwraps.
+                                let any = match value {
+                                    Value::Function(function) => {
+                                        let record = heap.alloc_dynamic();
+                                        heap.dynamic_set_function(record, "__boxedFn", *function);
+                                        Value::Object(record).box_any(heap)
+                                    }
+                                    other => other.box_any(heap),
+                                }
+                                .unwrap_or_else(zun_core::Any::void);
                                 let _ = heap.array_set(array, index, any);
                             }
                             array
@@ -643,6 +653,69 @@ impl<'a> Interp<'a> {
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // An own function property (`arr.join = fn`, `obj.m = fn`) shadows
+                // every built-in and inherited method of the same name, so it is
+                // consulted before the typed-view, prototype-chain, array and
+                // collection dispatch below.
+                // A dynamic object may carry a callable member in its function
+                // slot (e.g. the `resolve`/`reject` of `Promise.withResolvers`,
+                // or a `bind`-stored function). Invoke it directly; the result
+                // is re-boxed to `Any` for the dynamic call site. Only when no
+                // such member exists is this a namespace call routed to the
+                // loader.
+                // A function stored through an `any` slot rides in a `__boxedFn`
+                // record; it is called the same way.
+                if let Some(handle) = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_function(namespace, &member).or_else(|| {
+                        let any = heap.dynamic_get(namespace, &member)?;
+                        let value = Value::unbox_any(any, heap)?;
+                        match unbox_function_box(value, heap) {
+                            Value::Function(handle) => Some(handle),
+                            _ => None,
+                        }
+                    })
+                }) {
+                    // An object-literal method that uses `this` takes the
+                    // receiver as a hidden first argument (marked by the
+                    // `@this` suffix on its closure name).
+                    let mut call_args = call_args;
+                    if handle.builtin_method().is_some_and(|kind| kind >= 16) {
+                        call_args.insert(0, Value::Object(namespace));
+                    } else if !handle.is_bound() {
+                        let takes_this = self
+                            .module
+                            .tables
+                            .method_defs
+                            .get((handle.method_rid() as usize).wrapping_sub(1))
+                            .map(|method| {
+                                let n = self.module.strings.get(method.name);
+                                n.ends_with("@this>") || n.ends_with("@this@rest>")
+                            })
+                            .unwrap_or(false);
+                        if takes_this {
+                            call_args.insert(0, Value::Object(namespace));
+                        }
+                    }
+                    let result = self.invoke_function_value(handle, call_args)?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    return Ok(Value::Any(boxed));
+                }
+                // An own non-callable data property on an array (`arr.join = "x"`)
+                // shadows the built-in method of that name: calling it is a
+                // TypeError, not a call of the built-in.
+                if zun_gc::with_current_heap(|heap| {
+                    heap.array_len(namespace).is_some()
+                        && heap.dynamic_has(namespace, &member)
+                        && !heap.dynamic_is_accessor(namespace, &member)
+                }) {
+                    return match self
+                        .new_error_object("TypeError", &format!("{member} is not a function"))
+                    {
+                        Some(object) => Err(RunError::Thrown(Value::Object(object))),
+                        None => Err(RunError::BadToken),
+                    };
+                }
                 // A typed array / ArrayBuffer / DataView reached through `any`.
                 if let Some(result) = self.typed_view_call(namespace, &member, &call_args)? {
                     let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
@@ -794,6 +867,16 @@ impl<'a> Interp<'a> {
                         }
                     });
                     return Ok(Value::Any(removed.unwrap_or_else(zun_core::Any::void)));
+                }
+                // `arr.toString()` calls an own `join` the array took, as
+                // `Array.prototype.toString` does (an own `toString` was
+                // already called above).
+                if is_array && member.as_ref() == "toString" {
+                    if let Some(primitive) = self.array_own_primitive(namespace, "string")? {
+                        let boxed = zun_gc::with_current_heap_mut(|heap| primitive.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
                 }
                 if is_array
                     && member.as_ref() == "toLocaleString"
@@ -1050,50 +1133,6 @@ impl<'a> Interp<'a> {
                             });
                         }
                     }
-                }
-                // A dynamic object may carry a callable member in its function
-                // slot (e.g. the `resolve`/`reject` of `Promise.withResolvers`,
-                // or a `bind`-stored function). Invoke it directly; the result
-                // is re-boxed to `Any` for the dynamic call site. Only when no
-                // such member exists is this a namespace call routed to the
-                // loader.
-                // A function stored through an `any` slot rides in a `__boxedFn`
-                // record; it is called the same way.
-                if let Some(handle) = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get_function(namespace, &member).or_else(|| {
-                        let any = heap.dynamic_get(namespace, &member)?;
-                        let value = Value::unbox_any(any, heap)?;
-                        match unbox_function_box(value, heap) {
-                            Value::Function(handle) => Some(handle),
-                            _ => None,
-                        }
-                    })
-                }) {
-                    // An object-literal method that uses `this` takes the
-                    // receiver as a hidden first argument (marked by the
-                    // `@this` suffix on its closure name).
-                    let mut call_args = call_args;
-                    if handle.builtin_method().is_some_and(|kind| kind >= 16) {
-                        call_args.insert(0, Value::Object(namespace));
-                    } else if !handle.is_bound() {
-                        let takes_this = self
-                            .module
-                            .tables
-                            .method_defs
-                            .get((handle.method_rid() as usize).wrapping_sub(1))
-                            .map(|method| {
-                                let n = self.module.strings.get(method.name);
-                                n.ends_with("@this>") || n.ends_with("@this@rest>")
-                            })
-                            .unwrap_or(false);
-                        if takes_this {
-                            call_args.insert(0, Value::Object(namespace));
-                        }
-                    }
-                    let result = self.invoke_function_value(handle, call_args)?;
-                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
-                        .unwrap_or_else(zun_core::Any::null);
-                    return Ok(Value::Any(boxed));
                 }
                 // A dynamically-imported class instance (built by
                 // `construct_namespace_class`) keeps its real typed instance in a

@@ -264,7 +264,7 @@ impl<'a> Interp<'a> {
                     // An array's `length` is its own data property.
                     true
                 } else {
-                    self.object_own_entries(obj)?
+                    self.object_own_entries_impl(obj, false)?
                         .iter()
                         .any(|(name, _)| name == &key)
                         || self.error_hidden_own(obj).iter().any(|(name, _)| name == &key)
@@ -1016,7 +1016,7 @@ impl<'a> Interp<'a> {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(obj, &key))
                 } else {
                     // Typed declared fields are enumerable own properties.
-                    self.object_own_entries(obj)?
+                    self.object_own_entries_impl(obj, false)?
                         .iter()
                         .any(|(name, _)| name == &key)
                 };

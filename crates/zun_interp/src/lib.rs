@@ -1419,7 +1419,49 @@ impl Interp<'_> {
                         // A `bind`-produced bound function: resolve its target and
                         // prepended arguments, then dispatch through the shared
                         // interpreter path (routing exceptions like a direct call).
-                        let (target_rid, call_args) = self.resolve_call_target(handle, args)?;
+                        let (inner, chain_args) = self.unwrap_bound_chain(handle, args)?;
+                        if inner.builtin_method().is_some() || inner.generator_method().is_some() {
+                            // A bound built-in method value
+                            // (`Function.prototype.bind.bind(f)`): invoke it as a value.
+                            let link = RootLink {
+                                stack: std::ptr::from_mut(stack.as_mut_slice()),
+                                locals: std::ptr::from_mut(locals.as_mut_slice()),
+                                parent,
+                            };
+                            let _native_link = self.publish_native_link(&link);
+                            match self.invoke_function_value(inner, chain_args) {
+                                Ok(result) => {
+                                    stack.push(result);
+                                    continue;
+                                }
+                                Err(RunError::Native(message)) => {
+                                    let exception = native_error::split_native_error(&message)
+                                        .and_then(|(class, text)| {
+                                            self.make_error_value(class, text)
+                                        });
+                                    let Some(exception) = exception else {
+                                        return Err(RunError::Native(message));
+                                    };
+                                    if self.route_exception(&body, stack, pc, next - size, &exception)
+                                    {
+                                        continue;
+                                    }
+                                    return Err(RunError::Thrown(exception));
+                                }
+                                Err(RunError::Thrown(exception)) => {
+                                    if self.route_exception(&body, stack, pc, next - size, &exception)
+                                    {
+                                        continue;
+                                    }
+                                    return Err(RunError::Thrown(exception));
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
+                        let (target_rid, call_args) = Self::finish_call_target(inner, chain_args);
+                        // A declared target ending in a rest parameter takes its
+                        // trailing arguments (bound ones included) packed.
+                        let call_args = self.pack_rest_call_args(target_rid, call_args);
                         let link = RootLink {
                             stack: std::ptr::from_mut(stack.as_mut_slice()),
                             locals: std::ptr::from_mut(locals.as_mut_slice()),

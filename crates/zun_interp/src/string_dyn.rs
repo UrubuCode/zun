@@ -43,6 +43,11 @@ impl<'a> Interp<'a> {
             Value::Void => f64::NAN,
             Value::Str(text) => js_string_to_number(&text),
             Value::Object(obj) if array_join_text(obj).is_some() => {
+                // An array with an own `valueOf` / `toString` / `join` converts
+                // through the primitive that override answers.
+                if let Some(primitive) = self.array_own_primitive(obj, "number")? {
+                    return self.dyn_to_number(&primitive);
+                }
                 js_string_to_number(&array_join_text(obj).unwrap_or_default())
             }
             Value::Object(obj) => match self.ordinary_to_primitive(obj, "number")? {
@@ -75,6 +80,9 @@ impl<'a> Interp<'a> {
                 }
                 // An array stringifies as its comma-joined elements.
                 if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(obj)) {
+                    if let Some(primitive) = self.array_own_primitive(obj, "string")? {
+                        return Ok(primitive.display());
+                    }
                     let mut parts: Vec<String> = Vec::with_capacity(len);
                     for index in 0..len {
                         let element = zun_gc::with_current_heap(|heap| heap.array_get(obj, index));

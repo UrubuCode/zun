@@ -2747,6 +2747,24 @@ impl Interp<'_> {
             return Ok(Value::Bool(true));
         };
         if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(target)) {
+            // A named property of an array (`arr.join = fn`) lives in its
+            // expando table and is removed like any dynamic property; only an
+            // index or `length` is handled here.
+            let is_index = name.parse::<usize>().is_ok();
+            if !is_index && name != "length" {
+                // A sealed or frozen array keeps its named properties too.
+                let allowed = zun_gc::with_current_heap(|heap| {
+                    heap.array_integrity(target) < 2
+                        || !heap.dynamic_has(target, &name) && heap.dynamic_get_function(target, &name).is_none()
+                }) && zun_gc::with_current_heap(|heap| heap.dynamic_can_delete(target, &name));
+                if !allowed {
+                    return Err(RunError::Native(format!(
+                        "TypeError: Cannot delete property '{name}' of [object Array]"
+                    )));
+                }
+                zun_gc::with_current_heap_mut(|heap| heap.dynamic_delete(target, &name));
+                return Ok(Value::Bool(true));
+            }
             // `delete arr[i]` leaves a hole at an in-range index.
             if let Ok(index) = name.parse::<usize>() {
                 if index < len {

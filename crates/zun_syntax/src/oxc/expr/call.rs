@@ -39,6 +39,13 @@ pub(in crate::oxc) fn convert_argument(
                 let property_name = Name {
                     span: span(member.property.span),
                 };
+                // `Math.max` / `Math.min` / `Math.hypot` take any number of
+                // arguments, so their function value is `(...f) => Math.f(...f)`:
+                // `Reflect.apply(Math.max, null, [2, 7])` reaches every element.
+                let variadic = object_name == "Math" && matches!(property, "max" | "min" | "hypot");
+                let argument = Expr::Ident(Name {
+                    span: span(member.property.span),
+                });
                 let call = Expr::MethodCall {
                     receiver: Box::new(Expr::Ident(Name {
                         span: span(object.span),
@@ -46,9 +53,14 @@ pub(in crate::oxc) fn convert_argument(
                     method: Name {
                         span: span(member.property.span),
                     },
-                    args: vec![Expr::Ident(Name {
-                        span: span(member.property.span),
-                    })],
+                    args: vec![if variadic {
+                        Expr::Spread {
+                            expr: Box::new(argument),
+                            span: span(member.span),
+                        }
+                    } else {
+                        argument
+                    }],
                     span: span(member.span),
                 };
                 return Ok(Expr::Function(FunctionExpr {
@@ -56,7 +68,7 @@ pub(in crate::oxc) fn convert_argument(
                         name: property_name,
                         ty: None,
                         default_value: None,
-                        is_rest: false,
+                        is_rest: variadic,
                     }],
                     return_type: None,
                     body: Block {

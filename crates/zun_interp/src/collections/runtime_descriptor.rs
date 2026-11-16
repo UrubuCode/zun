@@ -106,6 +106,17 @@ impl<'a> Interp<'a> {
                     .into_iter()
                     .filter(|key| heap.dynamic_is_enumerable(obj, key))
                     .filter_map(|key| {
+                        // A method installed on the array (`arr.join = fn`)
+                        // rides in the function slot and is an own property too.
+                        // Listed by `Object.keys`; the value readers (`values`,
+                        // `entries`, `assign`) cannot carry a function here yet.
+                        if let Some(function) = heap.dynamic_get_function(obj, &key) {
+                            return if read_values {
+                                None
+                            } else {
+                                Some((key, Value::Function(function)))
+                            };
+                        }
                         heap.dynamic_get(obj, &key)
                             .and_then(|any| Value::unbox_any(any, heap))
                             .map(|value| (key, value))

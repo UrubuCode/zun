@@ -348,6 +348,9 @@ impl<'a> Interp<'a> {
     /// ToPrimitive with the default hint: arrays join, objects run their
     /// `valueOf`/`toString` hooks, a bare object is `"[object Object]"`.
     pub(crate) fn to_primitive_default(&mut self, obj: zun_gc::Obj) -> Result<Value, RunError> {
+        if let Some(primitive) = self.array_own_primitive(obj, "default")? {
+            return Ok(primitive);
+        }
         if let Some(text) = array_join_text(obj) {
             return Ok(Value::Str(text.into()));
         }
@@ -355,6 +358,42 @@ impl<'a> Interp<'a> {
             Some(primitive) => primitive,
             None => Value::Str("[object Object]".into()),
         })
+    }
+
+    /// The primitive an array that took an own `toString`, `valueOf` or `join`
+    /// (an expando property, e.g. `arr.toString = fn`) converts to under `hint`,
+    /// or `None` when it has no such override and the built-in join applies.
+    /// `Array.prototype.toString` calls `join`, so an own `join` counts too. The
+    /// one place every array-to-primitive conversion consults for an override.
+    pub(crate) fn array_own_primitive(
+        &mut self,
+        obj: zun_gc::Obj,
+        hint: &str,
+    ) -> Result<Option<Value>, RunError> {
+        let overridable = zun_gc::with_current_heap(|heap| {
+            heap.array_len(obj).is_some() && heap.is_dynamic_object(obj)
+        });
+        if !overridable {
+            return Ok(None);
+        }
+        zun_gc::root!(held = obj);
+        if let Some(primitive) = self.ordinary_to_primitive(obj, hint)? {
+            return Ok(Some(primitive));
+        }
+        let own_join =
+            zun_gc::with_current_heap(|heap| heap.dynamic_get_function(held.get(), "join"));
+        let Some(join) = own_join else {
+            // A non-callable own `join` makes `Array.prototype.toString` fall
+            // back to `Object.prototype.toString`.
+            let shadowed = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_has(held.get(), "join") && !heap.dynamic_is_accessor(held.get(), "join")
+            });
+            return Ok(shadowed.then(|| Value::Str("[object Array]".into())));
+        };
+        let call_args = self.with_this_arg(join, held.get(), Vec::new());
+        let result = unbox_arg(&self.invoke_function_value(join, call_args)?)?;
+        // An object answer is not a primitive; the built-in join applies.
+        Ok((!matches!(result, Value::Object(_) | Value::Function(_))).then_some(result))
     }
 
     /// ECMAScript ToNumber of an (already unboxed) value, running object
@@ -424,7 +463,13 @@ impl<'a> Interp<'a> {
                     if zun_gc::with_current_heap(|heap| heap.bigint_value(inner).is_none()) =>
                 {
                     if zun_gc::with_current_heap(|heap| heap.array_len(inner).is_some()) {
-                        self.array_join_guarded(inner, ",", stack, depth + 1)?.unwrap_or_default()
+                        // A nested array that took an own `toString` / `join` answers it.
+                        match self.array_own_primitive(inner, "string")? {
+                            Some(primitive) => primitive.display(),
+                            None => self
+                                .array_join_guarded(inner, ",", stack, depth + 1)?
+                                .unwrap_or_default(),
+                        }
                     } else {
                         match self
                             .call_managed_collection("stringCoerce", &[Value::Object(inner)])?
@@ -510,7 +555,10 @@ impl<'a> Interp<'a> {
         for value in [a, b] {
             let prim = match value {
                 Value::Object(obj) if is_plain_object(&Value::Object(obj)) => {
-                    if let Some(text) = self.array_join_dyn(obj, ",")? {
+                    let overridden = self.array_own_primitive(obj, "number")?;
+                    if let Some(primitive) = overridden {
+                        primitive
+                    } else if let Some(text) = self.array_join_dyn(obj, ",")? {
                         Value::Str(text.into())
                     } else {
                         match self.ordinary_to_primitive(obj, "number")? {
@@ -604,11 +652,9 @@ impl<'a> Interp<'a> {
                 // generic function: it reads its receiver from the leading argument.
                 None => zun_gc::with_current_heap(|heap| heap.dynamic_get_function(obj, name))
                     .map(|method| {
-                        let call_args = if method.builtin_method().is_some() {
-                            self.with_this_arg(method, obj, Vec::new())
-                        } else {
-                            Vec::new()
-                        };
+                        // A closure that reads `this` takes the receiver as its
+                        // hidden first argument, like a built-in method value.
+                        let call_args = self.with_this_arg(method, obj, Vec::new());
                         (method, call_args)
                     }),
             };

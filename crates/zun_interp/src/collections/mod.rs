@@ -529,7 +529,10 @@ impl<'a> Interp<'a> {
                     let value = unbox_arg(args.get(index).ok_or(RunError::BadToken)?)?;
                     let prim = match value {
                         Value::Object(obj) => {
-                            if let Some(text) = self.array_join_dyn(obj, ",")? {
+                            let overridden = self.array_own_primitive(obj, "default")?;
+                            if let Some(primitive) = overridden {
+                                primitive
+                            } else if let Some(text) = self.array_join_dyn(obj, ",")? {
                                 Value::Str(text.into())
                             } else {
                                 // The fallback below reads the object again after managed code ran.

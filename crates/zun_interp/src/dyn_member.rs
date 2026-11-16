@@ -48,6 +48,16 @@ impl Interp<'_> {
                     stack.push(meta);
                     return Ok(ArmFlow::Continue);
                 }
+                // An anonymous closure has no name metadata: the same `""` / `0`
+                // the compile-time fold used to answer for a dynamic function.
+                if handle.builtin_method().is_none() && handle.generator_method().is_none() {
+                    stack.push(if name == "name" {
+                        Value::Str("".into())
+                    } else {
+                        Value::Float(0.0, zun_il::NumKind::F64)
+                    });
+                    return Ok(ArmFlow::Continue);
+                }
             }
         }
         if name == "prototype" {

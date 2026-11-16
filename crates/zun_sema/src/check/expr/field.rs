@@ -800,6 +800,12 @@ impl Checker<'_> {
                     }
                 });
             }
+            // A dynamic function value may be a bound function (`f.bind(..)`),
+            // a closure or a function with a script-defined `name`: only the
+            // runtime knows which, so the read is not folded.
+            if func == hir::DYNAMIC_FUNCTION && (fname == "name" || fname == "length") {
+                return Err(object);
+            }
             if fname == "name" {
                 let name = if matches!(
                     func,

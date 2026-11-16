@@ -298,17 +298,35 @@ impl<'a> Interp<'a> {
         let rest = name.ends_with("@rest>")
             || (method.signature.0 != 0 && self.module.blobs.get(method.signature) == b"R");
         if rest {
-            // A leading fixed parameter before the rest can hold the receiver.
-            return declared >= 2;
+            // Only a class instance method or an explicit `@this` takes a
+            // receiver, and both were answered above. A free function with a
+            // rest parameter does not: reading its leading fixed parameter as
+            // a receiver slot made `restFree.bind(null, 1)(2, 3)` arrive as
+            // `restFree(null, 1, 2, 3)`. This is the same mistake as the
+            // `virtual_slot` clause fixed in `4ae8a539`.
+            return false;
         }
         total_args <= declared
     }
 
     pub(crate) fn resolve_call_target(
         &self,
+        handle: zun_core::FunctionHandle,
+        call_args: Vec<Value>,
+    ) -> Result<(u32, Vec<Value>), RunError> {
+        let (handle, call_args) = self.unwrap_bound_chain(handle, call_args)?;
+        Ok(Self::finish_call_target(handle, call_args))
+    }
+
+    /// Unwrap a chain of bound functions down to the first non-bound target,
+    /// prepending each level's bound arguments. The target may be a built-in
+    /// method value (`Function.prototype.bind.bind(f)`), which has no method
+    /// to dispatch to and is invoked as a value instead.
+    pub(crate) fn unwrap_bound_chain(
+        &self,
         mut handle: zun_core::FunctionHandle,
         mut call_args: Vec<Value>,
-    ) -> Result<(u32, Vec<Value>), RunError> {
+    ) -> Result<(zun_core::FunctionHandle, Vec<Value>), RunError> {
         while handle.is_bound() {
             let record = unsafe {
                 zun_gc::Obj::from_addr(handle.environment().ok_or(RunError::BadToken)? as *mut u64)
@@ -348,6 +366,15 @@ impl<'a> Interp<'a> {
             call_args = combined;
             handle = target;
         }
+        Ok((handle, call_args))
+    }
+
+    /// The method and final argument list for a non-bound call target: a
+    /// closure receives its environment as the leading argument.
+    pub(crate) fn finish_call_target(
+        handle: zun_core::FunctionHandle,
+        call_args: Vec<Value>,
+    ) -> (u32, Vec<Value>) {
         let final_args = if let Some(address) = handle.environment() {
             let environment = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
             let mut args = Vec::with_capacity(call_args.len() + 1);
@@ -357,6 +384,6 @@ impl<'a> Interp<'a> {
         } else {
             call_args
         };
-        Ok((handle.method_rid(), final_args))
+        (handle.method_rid(), final_args)
     }
 }

@@ -1077,7 +1077,10 @@ impl<'a> Interp<'a> {
                 Value::Float(1.0, zun_il::NumKind::F64)
             });
         }
-        if handle.is_bound() || handle.generator_method().is_some() {
+        if handle.is_bound() {
+            return self.bound_function_meta(handle, name);
+        }
+        if handle.generator_method().is_some() {
             return None;
         }
         let rid = handle.method_rid();
@@ -1108,13 +1111,19 @@ impl<'a> Interp<'a> {
             }
             let body = read_body(&self.module.code, method.body_offset).ok()?;
             let mut receiver = usize::from(method_name.contains("@this"));
-            if !method.is_static && !method_name.starts_with('<') {
+            // Only a method a class owns takes the instance as its receiver; a
+            // free function's parameters are all its own.
+            if self.method_rid_is_instance_method(rid) && !method_name.starts_with('<') {
                 receiver = 1;
             }
-            if method_name.ends_with("@rest>") {
+            // The rest parameter is not counted: closures mark it in their name,
+            // declared functions in their signature blob.
+            if method_name.ends_with("@rest>")
+                || (method.signature.0 != 0 && self.module.blobs.get(method.signature) == b"R")
+            {
                 receiver += 1;
             }
-            let length = (body.param_count as usize).saturating_sub(receiver);
+            let length = (body.param_count as usize).saturating_sub(receiver + usize::from(handle.environment().is_some()));
             return Some(Value::Float(length as f64, zun_il::NumKind::F64));
         }
         if name == "name" {
@@ -1128,8 +1137,47 @@ impl<'a> Interp<'a> {
         }
         let body = read_body(&self.module.code, method.body_offset).ok()?;
         let receiver = usize::from(method_name.contains("@this"));
-        let length = (body.param_count as usize).saturating_sub(receiver);
+        let length = (body.param_count as usize).saturating_sub(receiver + usize::from(handle.environment().is_some()));
         Some(Value::Float(length as f64, zun_il::NumKind::F64))
+    }
+
+    /// `name` / `length` of a `bind`-produced function: `"bound " + target.name`
+    /// and the target's length minus the bound arguments (floored at zero).
+    /// The first prepended value is `thisArg`, not a bound argument.
+    fn bound_function_meta(
+        &self,
+        handle: zun_core::FunctionHandle,
+        name: &str,
+    ) -> Option<Value> {
+        let record = unsafe { zun_gc::Obj::from_addr(handle.environment()? as *mut u64) };
+        let (target, prepended) = zun_gc::with_current_heap(|heap| {
+            let target = heap.dynamic_get_function(record, "__target")?;
+            let array = heap.dynamic_get(record, "__args")?.as_object()?;
+            let array = unsafe { zun_gc::Obj::from_addr(array as *mut u64) };
+            Some((target, heap.array_len(array)?))
+        })?;
+        // The target's own (script-defined) property shadows its metadata.
+        let target_meta = |key: &str| -> Option<Value> {
+            let bag = crate::function_expando_bag(target);
+            zun_gc::with_current_heap(|heap| {
+                heap.dynamic_get(bag, key).and_then(|own| Value::unbox_any(own, heap))
+            })
+            .or_else(|| self.function_meta(target, key))
+        };
+        if name == "name" {
+            let base = match target_meta("name") {
+                Some(Value::Str(text)) => text.to_string(),
+                _ => String::new(),
+            };
+            return Some(Value::Str(format!("bound {base}").into()));
+        }
+        let length = match target_meta("length") {
+            Some(Value::Float(n, _)) => n,
+            Some(Value::Int(n, _)) => n as f64,
+            _ => 0.0,
+        };
+        let bound = prepended.saturating_sub(1) as f64;
+        Some(Value::Float((length - bound).max(0.0), zun_il::NumKind::F64))
     }
 
     pub(crate) fn with_this_arg(
@@ -1204,7 +1252,13 @@ impl<'a> Interp<'a> {
         if let Some((promise, mode)) = self.settler_of(handle) {
             return self.invoke_promise_settler(promise, mode, call_args);
         }
-        let (method_rid, final_args) = self.resolve_call_target(handle, call_args)?;
+        let (target, call_args) = self.unwrap_bound_chain(handle, call_args)?;
+        if target != handle && (target.builtin_method().is_some() || target.generator_method().is_some())
+        {
+            // A bound built-in method value (`Function.prototype.bind.bind(f)`).
+            return self.invoke_function_value(target, call_args);
+        }
+        let (method_rid, final_args) = Self::finish_call_target(target, call_args);
         // A declared function ending in a rest parameter receives its trailing
         // arguments packed into the array it expects.
         let final_args = self.pack_rest_call_args(method_rid, final_args);
