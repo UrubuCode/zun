@@ -476,6 +476,12 @@ pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
         "nodeBufferAllocFillString",
         "nodeBufferFillString",
         "nodeBufferFromAny",
+        "nodeBufferIsEncoding",
+        "nodeBufferCompare",
+        "nodeBufferCompareRange",
+        "nodeBufferToJSON",
+        "nodeBufferCtor",
+        "nodeBufferCopyBytesFrom",
     ]
     .into_iter()
     .find(|&name| {

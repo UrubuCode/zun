@@ -111,7 +111,7 @@ impl Checker<'_> {
         // 3-arg typed-array `fill` still falls through).
         if receiver.ty == Ty::BufferView(hir::BufferViewKind::U8) {
             let intercept = match mname {
-                "toString" | "write" | "slice" | "equals" | "copy" => true,
+                "toString" | "write" | "slice" | "equals" | "copy" | "compare" | "toJSON" => true,
                 // Node Buffer search accepts number / string / Buffer
                 // needles (richer than the numeric typed-array form).
                 "indexOf" | "includes" | "lastIndexOf" => true,
@@ -271,6 +271,8 @@ impl Checker<'_> {
                             | "write"
                             | "equals"
                             | "copy"
+                            | "compare"
+                            | "toJSON"
                             | "lastIndexOf"
                             | "swap16"
                             | "swap32"

@@ -678,6 +678,36 @@ impl<'a> Interp<'a> {
                     };
                     return self.call_managed_collection(native, &[Value::Object(target), list]);
                 }
+                // A typed array / `ArrayBuffer` / `DataView` (a Node `Buffer`)
+                // resolves its methods by name through the view surface.
+                let is_view = zun_gc::with_current_heap(|heap| {
+                    heap.typed_array_element(target).is_some()
+                        || heap.buffer_len(target).is_some()
+                        || heap.data_view_buffer(target).is_some()
+                });
+                if is_view {
+                    let list_obj = object(&list).ok_or(RunError::BadToken)?;
+                    let call_values: Vec<Value> = zun_gc::with_current_heap(|heap| {
+                        let len = heap.array_len(list_obj).unwrap_or(0);
+                        (0..len)
+                            .map(|i| {
+                                heap.array_get(list_obj, i)
+                                    .and_then(|any| Value::unbox_any(any, heap))
+                                    .unwrap_or(Value::Void)
+                            })
+                            .collect()
+                    });
+                    return match self.typed_view_call(target, &method, &call_values)? {
+                        Some(result) => {
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::void);
+                            Ok(Value::Any(boxed))
+                        }
+                        None => Err(RunError::Native(format!(
+                            "TypeError: {method} is not a function"
+                        ))),
+                    };
+                }
                 let handle =
                     zun_gc::with_current_heap(|heap| heap.dynamic_get_function(target, &method));
                 let Some(handle) = handle else {

@@ -50,7 +50,7 @@ fn as_string(value: Option<&Value>) -> Option<zun_core::ZStr> {
 }
 
 /// Build a fresh Buffer (a `U8` view over a new buffer) holding `bytes`.
-fn buffer_from_bytes(bytes: &[u8]) -> Option<Value> {
+pub(crate) fn buffer_from_bytes(bytes: &[u8]) -> Option<Value> {
     zun_gc::with_current_heap_mut(|heap| {
         let buffer = heap.alloc_buffer(bytes.len());
         for (index, byte) in bytes.iter().enumerate() {
@@ -62,7 +62,7 @@ fn buffer_from_bytes(bytes: &[u8]) -> Option<Value> {
 }
 
 /// Read every byte of a `U8` view (offset-adjusted through the view).
-fn view_bytes(view: Obj) -> Option<Vec<u8>> {
+pub(crate) fn view_bytes(view: Obj) -> Option<Vec<u8>> {
     zun_gc::with_current_heap(|heap| {
         let len = heap.typed_array_len(view)?;
         let mut bytes = Vec::with_capacity(len);
@@ -73,14 +73,15 @@ fn view_bytes(view: Obj) -> Option<Vec<u8>> {
     })
 }
 
-fn view_len(view: Obj) -> Option<usize> {
+pub(crate) fn view_len(view: Obj) -> Option<usize> {
     zun_gc::with_current_heap(|heap| heap.typed_array_len(view))
 }
 
 /// Normalize an encoding name. Unknown names fall back to utf8 (lenient).
-fn normalize_encoding(name: &str) -> &'static str {
+pub(crate) fn normalize_encoding(name: &str) -> &'static str {
     match name.to_ascii_lowercase().as_str() {
         "hex" => "hex",
+        "ascii" => "ascii",
         "base64" => "base64",
         "base64url" => "base64url",
         "latin1" | "binary" => "latin1",
@@ -93,23 +94,26 @@ fn normalize_encoding(name: &str) -> &'static str {
 }
 
 /// Encode a string into bytes under an encoding.
-fn encode(text: &str, encoding: &str) -> Vec<u8> {
+pub(crate) fn encode(text: &str, encoding: &str) -> Vec<u8> {
     match normalize_encoding(encoding) {
         "hex" => decode_hex(text),
         "base64" | "base64url" => decode_base64(text),
-        "latin1" => text.chars().map(|c| (c as u32 & 0xff) as u8).collect(),
+        // `ascii` writes the low byte of each UTF-16 unit, exactly like latin1.
+        "latin1" | "ascii" => text.encode_utf16().map(|c| (c & 0xff) as u8).collect(),
         "utf16le" => encode_utf16le(text),
         _ => text.as_bytes().to_vec(),
     }
 }
 
 /// Decode bytes into a string under an encoding.
-fn decode(bytes: &[u8], encoding: &str) -> String {
+pub(crate) fn decode(bytes: &[u8], encoding: &str) -> String {
     match normalize_encoding(encoding) {
         "hex" => bytes.iter().map(|b| format!("{b:02x}")).collect(),
         "base64" => encode_base64(bytes),
         "base64url" => encode_base64url(bytes),
         "latin1" => bytes.iter().map(|&b| b as char).collect(),
+        // Node's `ascii` decoder masks the high bit.
+        "ascii" => bytes.iter().map(|&b| (b & 0x7f) as char).collect(),
         "utf16le" => decode_utf16le(bytes),
         _ => String::from_utf8_lossy(bytes).into_owned(),
     }
@@ -136,21 +140,26 @@ fn decode_utf16le(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// Node's hex decoder: whole pairs of hex digits, stopping at the first pair
+/// that is not (an odd trailing digit is dropped).
 fn decode_hex(text: &str) -> Vec<u8> {
-    let digits: Vec<u8> = text
-        .bytes()
-        .filter_map(|b| match b {
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
-        })
-        .collect();
-    digits
-        .chunks(2)
-        .filter(|c| c.len() == 2)
-        .map(|c| (c[0] << 4) | c[1])
-        .collect()
+    let digit = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    };
+    let mut out = Vec::new();
+    for pair in text.as_bytes().chunks(2) {
+        if pair.len() < 2 {
+            break;
+        }
+        match (digit(pair[0]), digit(pair[1])) {
+            (Some(high), Some(low)) => out.push((high << 4) | low),
+            _ => break,
+        }
+    }
+    out
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -224,7 +233,7 @@ fn decode_base64(text: &str) -> Vec<u8> {
 
 /// Read `width` bytes from `view` starting at `offset`, assembling a little- or
 /// big-endian unsigned integer. Returns `None` if the range is out of bounds.
-fn read_uint(view: Obj, offset: usize, width: usize, little_endian: bool) -> Option<u64> {
+pub(crate) fn read_uint(view: Obj, offset: usize, width: usize, little_endian: bool) -> Option<u64> {
     zun_gc::with_current_heap(|heap| {
         let mut value: u64 = 0;
         for i in 0..width {
@@ -242,7 +251,7 @@ fn read_uint(view: Obj, offset: usize, width: usize, little_endian: bool) -> Opt
 
 /// Write the low `width` bytes of `value` into `view` at `offset`. Returns the
 /// next offset (`offset + width`), as Node's `write*` do.
-fn write_uint(
+pub(crate) fn write_uint(
     view: Obj,
     offset: usize,
     value: u64,
@@ -302,7 +311,7 @@ fn accessor(name: &str) -> Option<Accessor> {
 /// Scan `haystack` for `needle`, honoring a possibly-negative `byte_offset`
 /// (negative counts from the end). `last` searches backward (for
 /// `lastIndexOf`). Returns the matching byte index, or `None`.
-fn buffer_search(haystack: &[u8], needle: &[u8], byte_offset: i64, last: bool) -> Option<usize> {
+pub(crate) fn buffer_search(haystack: &[u8], needle: &[u8], byte_offset: i64, last: bool) -> Option<usize> {
     let len = haystack.len();
     if needle.is_empty() {
         let off = if byte_offset < 0 {
@@ -344,7 +353,7 @@ fn buffer_search(haystack: &[u8], needle: &[u8], byte_offset: i64, last: bool) -
 }
 
 /// Sign-extend an unsigned value of `width` bytes.
-fn sign_extend(value: u64, width: usize) -> i64 {
+pub(crate) fn sign_extend(value: u64, width: usize) -> i64 {
     let bits = width * 8;
     if bits >= 64 {
         value as i64
@@ -356,7 +365,7 @@ fn sign_extend(value: u64, width: usize) -> i64 {
 
 /// `text` repeated and truncated to exactly `len` bytes (Node's string fill);
 /// an empty pattern fills with zeros.
-fn repeat_to(pattern: &[u8], len: usize) -> Vec<u8> {
+pub(crate) fn repeat_to(pattern: &[u8], len: usize) -> Vec<u8> {
     if pattern.is_empty() {
         return vec![0; len];
     }
@@ -787,4 +796,15 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             None
         }
     }
+}
+
+/// A Node `Buffer`'s string form (`String(buf)`, `"" + buf`): its utf8 text.
+pub(crate) fn buffer_text(object: Obj) -> Option<String> {
+    let is_u8 = zun_gc::with_current_heap(|heap| {
+        heap.typed_array_element(object) == Some(zun_core::TypedElement::U8)
+    });
+    if !is_u8 {
+        return None;
+    }
+    view_bytes(object).map(|bytes| decode(&bytes, "utf8"))
 }

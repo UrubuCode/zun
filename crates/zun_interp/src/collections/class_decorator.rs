@@ -273,6 +273,15 @@ impl<'a> Interp<'a> {
                 let operand = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let found = match operand {
                     Value::Function(_) => ctor == "Function" || ctor == "Object",
+                    // `Buffer` is the `Uint8Array` byte view here.
+                    Value::Object(obj)
+                        if ctor == "Buffer"
+                            && zun_gc::with_current_heap(|heap| {
+                                heap.typed_array_element(obj) == Some(zun_core::TypedElement::U8)
+                            }) =>
+                    {
+                        true
+                    }
                     Value::Object(obj) => {
                         let direct = zun_gc::with_current_heap(|heap| {
                             builtin_constructor_name(heap, obj).map(|name| name == ctor)

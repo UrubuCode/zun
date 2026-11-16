@@ -24,6 +24,8 @@ mod namespace;
 mod native;
 mod native_error;
 mod node_buffer;
+mod node_buffer_checked;
+mod node_buffer_ops;
 mod operands;
 mod output;
 mod property_ops;

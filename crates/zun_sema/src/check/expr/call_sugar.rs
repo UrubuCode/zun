@@ -47,6 +47,14 @@ impl Checker<'_> {
                 },
             ));
         }
+        // `Buffer(arg, ..)` behaves exactly like `new Buffer(arg, ..)`.
+        if name == "Buffer"
+            && !self.by_name.contains_key(name)
+            && !self.classes_by_name.contains_key(name)
+            && cx.lookup(name).is_none()
+        {
+            return Some(self.check_buffer_ctor(cx, args, span));
+        }
         // `Array(n)` behaves exactly like `new Array(n)`.
         if name == "Array" && !self.by_name.contains_key(name) && cx.lookup(name).is_none() {
             return Some(self.check_expr(
