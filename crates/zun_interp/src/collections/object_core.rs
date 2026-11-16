@@ -555,6 +555,14 @@ impl<'a> Interp<'a> {
                         Self::install_iterator_global(namespace);
                     }
                 }
+                // `Object.prototype.constructor` is the realm's `Object` (a class
+                // descriptor value): writable, configurable, not enumerable.
+                if name == "Object" && value.as_class_descriptor().is_some() {
+                    let proto = Self::object_prototype_singleton();
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_define_data(proto, "constructor", value, true, false, true);
+                    });
+                }
                 // `Math` and `Reflect` carry their members as function values.
                 if matches!(name.as_str(), "Math" | "Reflect") {
                     if let Some(address) = value.as_object() {
@@ -963,6 +971,45 @@ impl<'a> Interp<'a> {
             }
             "objectSetPrototypeOf" | "reflectSetPrototypeOf" => {
                 let reflect = name == "reflectSetPrototypeOf";
+                if !reflect {
+                    // `Object.setPrototypeOf(O, proto)`: a nullish `O` and a `proto`
+                    // that is neither an object nor null are TypeErrors; a primitive
+                    // `O` is returned unchanged (RequireObjectCoercible, then no-op).
+                    let target = unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                        .unwrap_or(Value::Void);
+                    let proto = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                        .unwrap_or(Value::Void);
+                    if matches!(target, Value::Void | Value::Null) {
+                        return Err(self.proto_type_error(
+                            "Object.setPrototypeOf called on null or undefined",
+                        ));
+                    }
+                    let valid_proto = match &proto {
+                        Value::Null | Value::Object(_) | Value::Function(_) => true,
+                        Value::Any(any) => {
+                            matches!(
+                                any.tag(),
+                                zun_core::AnyTag::Null | zun_core::AnyTag::Object
+                            ) || any.as_class_descriptor().is_some()
+                        }
+                        _ => false,
+                    };
+                    if !valid_proto {
+                        return Err(self.proto_type_error(
+                            "Object prototype may only be an Object or null",
+                        ));
+                    }
+                    let target_is_object = match &target {
+                        Value::Object(_) | Value::Function(_) => true,
+                        Value::Any(any) => {
+                            any.as_object().is_some() || any.as_class_descriptor().is_some()
+                        }
+                        _ => false,
+                    };
+                    if !target_is_object {
+                        return Ok(args[0].clone());
+                    }
+                }
                 // Re-parenting the static side of a user class to another class:
                 // recorded on the class's expando bag and consulted by static
                 // lookup.

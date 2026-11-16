@@ -139,6 +139,10 @@ pub(crate) const BUILTIN_TA_LENGTH: u32 = 103;
 pub(crate) const BUILTIN_TA_TAG: u32 = 104;
 /// `Function.prototype[Symbol.hasInstance]`: `OrdinaryHasInstance(this, value)`.
 pub(crate) const BUILTIN_FN_HAS_INSTANCE: u32 = 105;
+/// `get` / `set` of `Object.prototype.__proto__`: `Object.getPrototypeOf(this)` /
+/// `Object.setPrototypeOf(this, proto)` (a non-object proto is ignored).
+pub(crate) const BUILTIN_OBJ_PROTO_GET: u32 = 106;
+pub(crate) const BUILTIN_OBJ_PROTO_SET: u32 = 107;
 pub(crate) const BUILTIN_MAP_SIZE: u32 = 16;
 pub(crate) const BUILTIN_SET_SIZE: u32 = 17;
 pub(crate) const BUILTIN_ARRAY_ITER_NEXT: u32 = 18;
@@ -215,6 +219,15 @@ impl Interp<'_> {
             let root = heap.alloc_dynamic();
             let any = zun_core::Any::object(root.addr() as usize);
             heap.dynamic_define(global, OBJECT_PROTOTYPE_KEY, any, false);
+            crate::intrinsic_meta::install_prototype_methods(heap, root, "Object");
+            heap.dynamic_define_accessor(
+                root,
+                "__proto__".to_owned(),
+                Some(zun_core::FunctionHandle::new_builtin_method(BUILTIN_OBJ_PROTO_GET)),
+                Some(zun_core::FunctionHandle::new_builtin_method(BUILTIN_OBJ_PROTO_SET)),
+                false,
+                true,
+            );
             root
         })
     }
@@ -1011,6 +1024,27 @@ impl Interp<'_> {
                     .ok_or_else(|| self.incompatible_receiver("Generator.prototype method"))?;
                 self.call_generator_method(kind - BUILTIN_GEN_NEXT, generator, &_args)
             }
+            BUILTIN_OBJ_PROTO_GET => {
+                if matches!(unbox_arg(&this), Ok(Value::Void) | Ok(Value::Null)) {
+                    return Err(self.incompatible_receiver("get Object.prototype.__proto__"));
+                }
+                self.call_managed_collection("objectGetPrototypeOf", &[this])
+            }
+            BUILTIN_OBJ_PROTO_SET => {
+                let receiver = unbox_arg(&this).unwrap_or(Value::Void);
+                if matches!(receiver, Value::Void | Value::Null) {
+                    return Err(self.incompatible_receiver("set Object.prototype.__proto__"));
+                }
+                let proto = _args.first().and_then(|v| unbox_arg(v).ok()).unwrap_or(Value::Void);
+                // Only an object or null is a valid prototype; anything else, and a
+                // primitive receiver, is silently ignored.
+                let valid = matches!(proto, Value::Object(_) | Value::Null)
+                    || matches!(&proto, Value::Any(any) if any.as_object().is_some() || matches!(any.tag(), zun_core::AnyTag::Null));
+                if valid && matches!(receiver, Value::Object(_)) {
+                    self.call_managed_collection("objectSetPrototypeOf", &[this, proto])?;
+                }
+                Ok(Value::Void)
+            }
             BUILTIN_ITER_SELF | BUILTIN_SPECIES_GETTER => Ok(this),
             BUILTIN_FN_HAS_INSTANCE => {
                 // `OrdinaryHasInstance(C, O)`: a non-callable `this`, or a
@@ -1211,6 +1245,14 @@ impl Interp<'_> {
             BUILTIN_TA_BYTE_OFFSET => "get byteOffset",
             BUILTIN_TA_LENGTH => "get length",
             BUILTIN_TA_TAG => "get [Symbol.toStringTag]",
+            BUILTIN_OBJ_PROTO_GET => "get __proto__",
+            BUILTIN_OBJ_PROTO_SET => {
+                return Some(if name == "name" {
+                    Value::Str("set __proto__".into())
+                } else {
+                    Value::Float(1.0, zun_il::NumKind::F64)
+                });
+            }
             k if (BUILTIN_COLLECTION_BASE..BUILTIN_COLLECTION_BASE + COLLECTION_METHODS.len() as u32)
                 .contains(&k) =>
             {

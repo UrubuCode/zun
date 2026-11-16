@@ -122,6 +122,35 @@ impl<'a> Interp<'a> {
         })
     }
 
+    /// Call the typed class instance's own method `name` (virtual dispatch, the
+    /// instance as receiver) when `it` is a typed instance that declares it. A
+    /// typed instance carries its methods in the class vtable, not as dynamic
+    /// properties, so the dynamic member read used for plain objects cannot see
+    /// them. `None` means `it` is not a typed instance or has no such method.
+    pub(crate) fn typed_method_call(
+        &mut self,
+        it: zun_gc::Obj,
+        name: &str,
+    ) -> Result<Option<Value>, RunError> {
+        let typed = zun_gc::with_current_heap(|heap| {
+            !(heap.is_dynamic_object(it) && !heap.is_instance_bag(it))
+                && heap.array_len(it).is_none()
+        });
+        if !typed {
+            return Ok(None);
+        }
+        let Some(rid) = self.instance_method_rid(it, name) else {
+            return Ok(None);
+        };
+        let args = self.pack_rest_call_args(rid, vec![Value::Object(it)]);
+        let result = if self.method_contains_yield(rid) {
+            self.create_generator(rid, &args)?
+        } else {
+            self.call(rid, args, None)?
+        };
+        Ok(Some(result))
+    }
+
     /// Advance a resolved iterator object once, returning `(value, done)`. A
     /// built-in iterator advances through its native cursor; a user iterator has
     /// its `next()` method called and the `{ value, done }` result read back.
@@ -171,18 +200,23 @@ impl<'a> Interp<'a> {
         }
         // `iter_method` can run a getter and evacuate `it` before it is `this`.
         zun_gc::root!(it = it);
-        let mut next =
-            zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it.get(), "next"));
-        if next.is_none() {
-            next = self.iter_method(it.get(), "next")?;
-        }
-        let Some(next) = next else {
-            return Err(RunError::Native(
-                "TypeError: iterator has no next() method".into(),
-            ));
+        let result = match self.typed_method_call(it.get(), "next")? {
+            Some(result) => result,
+            None => {
+                let mut next =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(it.get(), "next"));
+                if next.is_none() {
+                    next = self.iter_method(it.get(), "next")?;
+                }
+                let Some(next) = next else {
+                    return Err(RunError::Native(
+                        "TypeError: iterator has no next() method".into(),
+                    ));
+                };
+                let next_args = self.with_this_arg(next, it.get(), Vec::new());
+                self.invoke_function_value(next, next_args)?
+            }
         };
-        let next_args = self.with_this_arg(next, it.get(), Vec::new());
-        let result = self.invoke_function_value(next, next_args)?;
         let Some(result_obj) = object(&result) else {
             return Err(RunError::Native(
                 "TypeError: iterator.next() did not return an object".into(),
@@ -645,7 +679,31 @@ impl<'a> Interp<'a> {
                         .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
                 })
             }) else {
-                return Ok(None);
+                // The chain ends without an explicit link: an ordinary object
+                // implicitly inherits `Object.prototype`, whose accessor (`__proto__`)
+                // runs with the original receiver. An explicit `null` prototype ends
+                // the chain for good.
+                let (explicit_null, unlinked) = zun_gc::with_current_heap(|heap| {
+                    match heap.dynamic_prototype(current) {
+                        Some(link) => (link.as_object().is_none(), false),
+                        None => (false, true),
+                    }
+                });
+                if explicit_null || !unlinked {
+                    return Ok(None);
+                }
+                let root = Self::object_prototype_singleton();
+                if current == root {
+                    return Ok(None);
+                }
+                let getter = zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(root, name));
+                return match getter {
+                    Some(getter) => {
+                        let args = self.with_this_arg(getter, receiver, Vec::new());
+                        self.invoke_function_value(getter, args).map(Some)
+                    }
+                    None => Ok(None),
+                };
             };
             current = next;
             let getter =

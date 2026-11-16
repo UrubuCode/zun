@@ -255,6 +255,8 @@ impl<'a> Interp<'a> {
                     zun_gc::with_current_heap(|heap| {
                         heap.dynamic_has(obj, &key)
                             || heap.dynamic_get_function(obj, &key).is_some()
+                            || heap.dynamic_accessor_getter(obj, &key).is_some()
+                            || heap.dynamic_accessor_setter(obj, &key).is_some()
                     })
                 } else if key == "length"
                     && zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some())

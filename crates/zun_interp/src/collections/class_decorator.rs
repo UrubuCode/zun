@@ -384,6 +384,26 @@ impl<'a> Interp<'a> {
                         "TypeError: Right-hand side of 'instanceof' is not callable".into(),
                     )
                 })?;
+                // The `Iterator` namespace (its `prototype` is `%Iterator.prototype%`):
+                // an object inheriting that prototype is an instance, and so is a
+                // subclass instance deriving from the `__BuiltinIterator` wrapper.
+                let iterator_proto = Self::iterator_prototype_object(0).addr() as usize;
+                let rhs_is_iterator = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get(rhs, "prototype")
+                        .and_then(|any| any.as_object())
+                        .is_some_and(|address| address as usize == iterator_proto)
+                });
+                if rhs_is_iterator {
+                    if let Value::Object(candidate) = &value {
+                        if self.iter_inherits_proto(*candidate) {
+                            return Ok(Value::Bool(true));
+                        }
+                    }
+                    return self.call_managed_collection(
+                        "instanceofBuiltin",
+                        &[value, Value::Str("Iterator".into())],
+                    );
+                }
                 // A constructor record (`Error`, `Array` ... read through `any`): the
                 // class it names decides membership.
                 let (record_desc, record_name) = zun_gc::with_current_heap(|heap| {

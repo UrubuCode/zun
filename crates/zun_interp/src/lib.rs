@@ -1951,13 +1951,17 @@ mod method_tests;
 /// receiver-bound stand-in encodes them (mode 100 upwards). One list, shared by
 /// the member read in `dyn_member` and the direct call in `dynamic_call`, so
 /// the two cannot drift apart.
-pub(crate) const OBJECT_PROTO_METHODS: [&str; 6] = [
+pub(crate) const OBJECT_PROTO_METHODS: [&str; 10] = [
     "toString",
     "toLocaleString",
     "valueOf",
     "hasOwnProperty",
     "isPrototypeOf",
     "propertyIsEnumerable",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
 ];
 
 /// The stand-in mode for an `Object.prototype` method name.

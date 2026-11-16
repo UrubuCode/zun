@@ -208,7 +208,7 @@ impl<'a> Interp<'a> {
     }
 
     /// Whether `obj` inherits `%Iterator.prototype%`.
-    fn iter_inherits_proto(&mut self, obj: zun_gc::Obj) -> bool {
+    pub(crate) fn iter_inherits_proto(&mut self, obj: zun_gc::Obj) -> bool {
         if is_builtin_iterator_object(obj) {
             return true;
         }
@@ -220,14 +220,16 @@ impl<'a> Interp<'a> {
                     .and_then(|any| any.as_object())
                     .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
             }) else {
-                return false;
+                break;
             };
             if next.addr() == target {
                 return true;
             }
             current = next;
         }
-        false
+        // A subclass of `Iterator` derives from the `__BuiltinIterator` wrapper class,
+        // not from the prototype object.
+        obj.type_rid() >= 1 && self.class_chain_has_name(obj.type_rid(), "__BuiltinIterator")
     }
 
     /// Read `name` off an iterator object as a callable, if it is one.
@@ -283,6 +285,9 @@ impl<'a> Interp<'a> {
     fn iter_raw_next(&mut self, it: zun_gc::Obj) -> Result<Value, RunError> {
         // `iter_method` can run a getter and evacuate `it` before it is `this`.
         zun_gc::root!(it = it);
+        if let Some(result) = self.typed_method_call(it.get(), "next")? {
+            return Ok(result);
+        }
         let Some(next) = self.iter_method(it.get(), "next")? else {
             return Err(self.iter_error("TypeError", "iterator.next is not a function"));
         };
@@ -322,11 +327,16 @@ impl<'a> Interp<'a> {
         }
         // `iter_method` can run a getter and evacuate `it` before it is `this`.
         zun_gc::root!(it = it);
-        let Some(method) = self.iter_method(it.get(), "return")? else {
-            return Ok(());
+        let typed = self.typed_method_call(it.get(), "return")?;
+        let result = if let Some(result) = typed {
+            result
+        } else {
+            let Some(method) = self.iter_method(it.get(), "return")? else {
+                return Ok(());
+            };
+            let call_args = self.with_this_arg(method, it.get(), Vec::new());
+            self.invoke_function_value(method, call_args)?
         };
-        let call_args = self.with_this_arg(method, it.get(), Vec::new());
-        let result = self.invoke_function_value(method, call_args)?;
         if value_object(&result).is_none() {
             return Err(self.iter_error("TypeError", "iterator.return() did not return an object"));
         }

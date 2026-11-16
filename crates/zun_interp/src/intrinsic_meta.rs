@@ -473,7 +473,8 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
         "Object",
         &[
             ("toString", 0), ("toLocaleString", 0), ("valueOf", 0), ("hasOwnProperty", 1),
-            ("isPrototypeOf", 1), ("propertyIsEnumerable", 1),
+            ("isPrototypeOf", 1), ("propertyIsEnumerable", 1), ("__defineGetter__", 2),
+            ("__defineSetter__", 2), ("__lookupGetter__", 1), ("__lookupSetter__", 1),
         ],
     ),
 ];

@@ -1226,6 +1226,57 @@ impl Interp<'_> {
                                             };
                                         }
                                     }
+                                    // A symbol-keyed data property (or accessor) on a
+                                    // prototype object of the dynamic chain
+                                    // (`Object.create(p)[sym]`, a helper's
+                                    // `@@toStringTag`).
+                                    if matches!(found, Value::Void) {
+                                        let mut current = zun_gc::with_current_heap(|heap| {
+                                            heap.dynamic_prototype(object)
+                                                .and_then(|any| any.as_object())
+                                        });
+                                        for _ in 0..256 {
+                                            let Some(address) = current else { break };
+                                            let holder = unsafe {
+                                                zun_gc::Obj::from_addr(address as *mut u64)
+                                            };
+                                            if let Some(getter) = zun_gc::with_current_heap(|heap| {
+                                                heap.dynamic_symbol_getter(holder, symbol)
+                                            }) {
+                                                let call_args =
+                                                    self.with_this_arg(getter, object, Vec::new());
+                                                match self.invoke_function_value(getter, call_args) {
+                                                    Ok(v) => {
+                                                        found = v;
+                                                        break;
+                                                    }
+                                                    Err(RunError::Thrown(exception)) => {
+                                                        if self.route_exception(
+                                                            body,
+                                                            stack,
+                                                            pc,
+                                                            next - size,
+                                                            &exception,
+                                                        ) {
+                                                            return Ok(ArmFlow::Continue);
+                                                        }
+                                                        return Err(RunError::Thrown(exception));
+                                                    }
+                                                    Err(error) => return Err(error),
+                                                }
+                                            }
+                                            if let Some(any) = zun_gc::with_current_heap(|heap| {
+                                                heap.dynamic_get_symbol(holder, symbol)
+                                            }) {
+                                                found = Value::Any(any);
+                                                break;
+                                            }
+                                            current = zun_gc::with_current_heap(|heap| {
+                                                heap.dynamic_prototype(holder)
+                                                    .and_then(|any| any.as_object())
+                                            });
+                                        }
+                                    }
                                     found
                                 }
                             }

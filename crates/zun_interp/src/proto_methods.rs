@@ -22,7 +22,7 @@ const ARRAY_READ_ONLY: &[&str] = &[
 ];
 
 impl Interp<'_> {
-    fn proto_type_error(&mut self, message: &str) -> RunError {
+    pub(crate) fn proto_type_error(&mut self, message: &str) -> RunError {
         match self.new_error_object("TypeError", message) {
             Some(object) => RunError::Thrown(Value::Object(object)),
             None => RunError::Native(format!("TypeError: {message}")),
@@ -532,7 +532,9 @@ impl Interp<'_> {
         args: Vec<Value>,
     ) -> Result<Value, RunError> {
         let recv = proto_concrete(recv);
-        let arg = args.into_iter().next().map(proto_concrete).unwrap_or(Value::Void);
+        let mut args = args.into_iter().map(proto_concrete);
+        let arg = args.next().unwrap_or(Value::Void);
+        let second = args.next().unwrap_or(Value::Void);
         let nullish = matches!(recv, Value::Void | Value::Null);
         // Every method but `toString` / `isPrototypeOf` coerces the receiver with
         // ToObject first, which rejects `undefined` and `null`.
@@ -594,6 +596,94 @@ impl Interp<'_> {
                     heap.dynamic_get(descriptor, "enumerable")
                         .is_some_and(|any| crate::collections::is_truthy(&Value::Any(any), heap))
                 })))
+            }
+            "__defineGetter__" | "__defineSetter__" => {
+                if nullish {
+                    return Err(reject_nullish(self));
+                }
+                let Value::Function(handle) = second else {
+                    return Err(self.proto_type_error(&format!(
+                        "Object.prototype.{name}: Expecting function"
+                    )));
+                };
+                let key = self.dyn_to_string(&arg)?;
+                // A primitive receiver is wrapped by ToObject; the definition lands
+                // on the temporary wrapper, so nothing observable remains.
+                let Value::Object(target) = recv else {
+                    return Ok(Value::Void);
+                };
+                let is_getter = name == "__defineGetter__";
+                let defined = zun_gc::with_current_heap_mut(|heap| {
+                    let getter = if is_getter {
+                        Some(handle)
+                    } else {
+                        heap.dynamic_accessor_getter(target, &key)
+                    };
+                    let setter = if is_getter {
+                        heap.dynamic_accessor_setter(target, &key)
+                    } else {
+                        Some(handle)
+                    };
+                    heap.dynamic_define_accessor(target, key.clone(), getter, setter, true, true)
+                });
+                if !defined {
+                    return Err(self.proto_type_error(&format!("Cannot redefine property: {key}")));
+                }
+                Ok(Value::Void)
+            }
+            "__lookupGetter__" | "__lookupSetter__" => {
+                if nullish {
+                    return Err(reject_nullish(self));
+                }
+                let key = self.dyn_to_string(&arg)?;
+                let want_getter = name == "__lookupGetter__";
+                let mut current = match recv {
+                    Value::Object(object) => Some(object),
+                    _ => None,
+                };
+                let root = Self::object_prototype_singleton();
+                for _ in 0..256 {
+                    let Some(holder) = current else { break };
+                    let step = zun_gc::with_current_heap(|heap| {
+                        let accessor = if want_getter {
+                            heap.dynamic_accessor_getter(holder, &key)
+                        } else {
+                            heap.dynamic_accessor_setter(holder, &key)
+                        };
+                        let is_accessor = heap.dynamic_accessor_getter(holder, &key).is_some()
+                            || heap.dynamic_accessor_setter(holder, &key).is_some();
+                        let shadowed = !is_accessor
+                            && (heap.dynamic_has(holder, &key)
+                                || heap.dynamic_get_function(holder, &key).is_some());
+                        let next = heap
+                            .dynamic_prototype(holder)
+                            .and_then(|any| any.as_object())
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                        let explicit_null = heap
+                            .dynamic_prototype(holder)
+                            .is_some_and(|any| any.as_object().is_none());
+                        (accessor, shadowed, next, explicit_null)
+                    });
+                    let (accessor, shadowed, next, explicit_null) = step;
+                    if let Some(found) = accessor {
+                        // A callable has no plain `Any` form; the function cell
+                        // stands for it on the dynamic lane.
+                        let cell = zun_gc::with_current_heap_mut(|heap| {
+                            Value::Function(found).box_any_cell(heap)
+                        });
+                        return Ok(cell.map(Value::Any).unwrap_or(Value::Void));
+                    }
+                    if shadowed {
+                        return Ok(Value::Void);
+                    }
+                    // No explicit link: an ordinary object inherits `Object.prototype`.
+                    current = match next {
+                        Some(next) => Some(next),
+                        None if explicit_null || holder == root => None,
+                        None => Some(root),
+                    };
+                }
+                Ok(Value::Void)
             }
             _ => Err(RunError::BadToken),
         }
