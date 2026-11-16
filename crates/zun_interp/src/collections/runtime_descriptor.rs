@@ -224,6 +224,10 @@ impl<'a> Interp<'a> {
                 out.push((name, value));
             }
         }
+        // An assigned `Error.name` is an own enumerable data property.
+        if let Some(value) = self.error_assigned_name(obj) {
+            out.push(("name".to_string(), value));
+        }
         // Expando properties of a typed instance follow its declared fields;
         // canonical integer keys sort first, as for any ordinary object.
         if zun_gc::with_current_heap(|heap| heap.is_instance_bag(obj)) {
@@ -287,7 +291,9 @@ impl<'a> Interp<'a> {
             names.extend(expandos);
             return Ok(names);
         }
-        if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) {
+        if zun_gc::with_current_heap(|heap| {
+            heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
+        }) {
             zun_gc::with_current_heap(|heap| heap.dynamic_keys(obj)).ok_or(RunError::BadToken)
         } else {
             let mut names: Vec<String> = self
@@ -295,8 +301,29 @@ impl<'a> Interp<'a> {
                 .into_iter()
                 .map(|(name, _)| name)
                 .collect();
+            // A typed instance that took an expando keeps its declared fields;
+            // the bag's non-enumerable keys follow them.
+            let bag_keys = zun_gc::with_current_heap(|heap| {
+                if heap.is_instance_bag(obj) {
+                    heap.dynamic_keys(obj).unwrap_or_default()
+                } else {
+                    Vec::new()
+                }
+            });
+            for key in bag_keys {
+                if !names.contains(&key) {
+                    names.push(key);
+                }
+            }
             for (name, _) in self.error_hidden_own(obj) {
                 if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            // `name` is assigned after construction, so it follows `message`.
+            if let Some(position) = names.iter().position(|n| n == "name") {
+                if self.error_assigned_name(obj).is_some() {
+                    let name = names.remove(position);
                     names.push(name);
                 }
             }
@@ -314,12 +341,57 @@ impl<'a> Interp<'a> {
         symbol: zun_core::SymbolId,
     ) -> Option<zun_gc::Obj> {
         zun_gc::with_current_heap_mut(|heap| {
-            if let Some(getter) = heap.dynamic_symbol_getter(obj, symbol) {
+            let getter = heap.dynamic_symbol_getter(obj, symbol);
+            let setter = heap.dynamic_symbol_setter(obj, symbol);
+            if getter.is_some() || setter.is_some() {
                 let out = heap.alloc_dynamic();
-                heap.dynamic_set_function(out, "get", getter);
-                heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
-                heap.dynamic_set(out, "enumerable".to_owned(), zun_core::Any::bool(false));
-                heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(true));
+                match getter {
+                    Some(getter) => {
+                        heap.dynamic_set_function(out, "get", getter);
+                    }
+                    None => {
+                        heap.dynamic_set(out, "get".to_owned(), zun_core::Any::void());
+                    }
+                };
+                match setter {
+                    Some(setter) => {
+                        heap.dynamic_set_function(out, "set", setter);
+                    }
+                    None => {
+                        heap.dynamic_set(out, "set".to_owned(), zun_core::Any::void());
+                    }
+                };
+                let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
+                let configurable = heap.dynamic_is_symbol_configurable(obj, symbol);
+                heap.dynamic_set(
+                    out,
+                    "enumerable".to_owned(),
+                    zun_core::Any::bool(enumerable),
+                );
+                heap.dynamic_set(
+                    out,
+                    "configurable".to_owned(),
+                    zun_core::Any::bool(configurable),
+                );
+                return Some(out);
+            }
+            if let Some(function) = heap.dynamic_get_symbol_function(obj, symbol) {
+                let out = heap.alloc_dynamic();
+                heap.dynamic_set_function(out, "value", function);
+                let writable = heap.dynamic_is_symbol_writable(obj, symbol);
+                let enumerable = heap.dynamic_is_symbol_enumerable(obj, symbol);
+                let configurable = heap.dynamic_is_symbol_configurable(obj, symbol);
+                heap.dynamic_set(out, "writable".to_owned(), zun_core::Any::bool(writable));
+                heap.dynamic_set(
+                    out,
+                    "enumerable".to_owned(),
+                    zun_core::Any::bool(enumerable),
+                );
+                heap.dynamic_set(
+                    out,
+                    "configurable".to_owned(),
+                    zun_core::Any::bool(configurable),
+                );
                 return Some(out);
             }
             let value = heap.dynamic_get_symbol(obj, symbol)?;
@@ -334,7 +406,12 @@ impl<'a> Interp<'a> {
                 "enumerable".to_owned(),
                 zun_core::Any::bool(enumerable),
             );
-            heap.dynamic_set(out, "configurable".to_owned(), zun_core::Any::bool(!frozen));
+            let configurable = !frozen && heap.dynamic_is_symbol_configurable(obj, symbol);
+            heap.dynamic_set(
+                out,
+                "configurable".to_owned(),
+                zun_core::Any::bool(configurable),
+            );
             Some(out)
         })
     }
@@ -389,7 +466,13 @@ impl<'a> Interp<'a> {
             }
         }
         let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
-        if is_dynamic || zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) {
+        // A typed instance with an expando bag is a dynamic object too, but a declared
+        // field lives in its fixed layout: only a key present in the bag is read there.
+        let in_dynamic_storage = (is_dynamic
+            || zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()))
+            && (!zun_gc::with_current_heap(|heap| heap.is_instance_bag(obj))
+                || zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key).is_some()));
+        if in_dynamic_storage {
             let Some(descriptor) =
                 zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, key))
             else {
@@ -450,6 +533,7 @@ impl<'a> Interp<'a> {
             // Typed object: a declared field is a writable, enumerable data
             // property (the fixed layout is non-configurable).
             let entries = self.object_own_entries(obj)?;
+            let assigned_name = key == "name" && self.error_assigned_name(obj).is_some();
             let (value, enumerable) = match entries.into_iter().find(|(name, _)| name == key) {
                 Some((_, value)) => (value, true),
                 None => match self
@@ -477,7 +561,7 @@ impl<'a> Interp<'a> {
                 heap.dynamic_set(
                     out,
                     "configurable".to_owned(),
-                    zun_core::Any::bool(!enumerable),
+                    zun_core::Any::bool(!enumerable || assigned_name),
                 );
             });
             Ok(Some(out))

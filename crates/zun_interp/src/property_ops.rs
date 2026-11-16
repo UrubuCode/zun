@@ -137,6 +137,12 @@ pub(crate) const BUILTIN_TA_BYTE_LENGTH: u32 = 101;
 pub(crate) const BUILTIN_TA_BYTE_OFFSET: u32 = 102;
 pub(crate) const BUILTIN_TA_LENGTH: u32 = 103;
 pub(crate) const BUILTIN_TA_TAG: u32 = 104;
+/// `Function.prototype[Symbol.hasInstance]`: `OrdinaryHasInstance(this, value)`.
+pub(crate) const BUILTIN_FN_HAS_INSTANCE: u32 = 105;
+/// `get` / `set` of `Object.prototype.__proto__`: `Object.getPrototypeOf(this)` /
+/// `Object.setPrototypeOf(this, proto)` (a non-object proto is ignored).
+pub(crate) const BUILTIN_OBJ_PROTO_GET: u32 = 106;
+pub(crate) const BUILTIN_OBJ_PROTO_SET: u32 = 107;
 pub(crate) const BUILTIN_MAP_SIZE: u32 = 16;
 pub(crate) const BUILTIN_SET_SIZE: u32 = 17;
 pub(crate) const BUILTIN_ARRAY_ITER_NEXT: u32 = 18;
@@ -213,6 +219,15 @@ impl Interp<'_> {
             let root = heap.alloc_dynamic();
             let any = zun_core::Any::object(root.addr() as usize);
             heap.dynamic_define(global, OBJECT_PROTOTYPE_KEY, any, false);
+            crate::intrinsic_meta::install_prototype_methods(heap, root, "Object");
+            heap.dynamic_define_accessor(
+                root,
+                "__proto__".to_owned(),
+                Some(zun_core::FunctionHandle::new_builtin_method(BUILTIN_OBJ_PROTO_GET)),
+                Some(zun_core::FunctionHandle::new_builtin_method(BUILTIN_OBJ_PROTO_SET)),
+                false,
+                true,
+            );
             root
         })
     }
@@ -315,7 +330,7 @@ impl Interp<'_> {
             .into_iter()
             .enumerate()
             {
-                heap.dynamic_set_symbol_function(
+                heap.dynamic_set_symbol_method(
                     proto,
                     symbol.id(),
                     zun_core::FunctionHandle::new_builtin_method(kind as u32),
@@ -344,7 +359,7 @@ impl Interp<'_> {
             heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(root.addr() as usize)));
             // `String.prototype` is itself a String object holding `""`.
             heap.dynamic_define_data(proto, "length", zun_core::Any::float(0.0), false, false, false);
-            heap.dynamic_set_symbol_function(
+            heap.dynamic_set_symbol_method(
                 proto,
                 zun_core::WellKnownSymbol::Iterator.id(),
                 zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
@@ -373,8 +388,92 @@ impl Interp<'_> {
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, "$Function.prototype", any, false);
             crate::intrinsic_meta::install_prototype_methods(heap, proto, "Function");
+            heap.dynamic_set_symbol_method(
+                proto,
+                zun_core::WellKnownSymbol::HasInstance.id(),
+                zun_core::FunctionHandle::new_builtin_method(BUILTIN_FN_HAS_INSTANCE),
+            );
+            // `Function.prototype[Symbol.hasInstance]` is the one well-known
+            // method that is non-writable, non-enumerable and non-configurable.
+            heap.dynamic_set_symbol_attributes(
+                proto,
+                zun_core::WellKnownSymbol::HasInstance.id(),
+                Some(false),
+                Some(false),
+            );
             proto
         })
+    }
+
+    /// Whether `target` appears on the prototype chain of `start` (excluding
+    /// `start` itself). Each step is `Object.getPrototypeOf`, so a typed
+    /// instance walks its class-prototype links and an array its
+    /// `Array.prototype`, exactly like a reflective read of the chain.
+    pub(crate) fn proto_chain_contains(
+        &mut self,
+        start: zun_gc::Obj,
+        target: zun_gc::Obj,
+    ) -> Result<bool, RunError> {
+        // `getPrototypeOf` can reach a proxy trap, i.e. managed code.
+        zun_gc::root!(target = target);
+        let mut current = start;
+        for _ in 0..1024 {
+            zun_gc::root!(held = current);
+            let next = self.call_managed_collection(
+                "objectGetPrototypeOf",
+                &[Value::Object(held.get())],
+            )?;
+            let next = match next {
+                Value::Any(any) => any.as_object(),
+                Value::Object(obj) => Some(obj.addr() as usize),
+                _ => None,
+            };
+            let Some(address) = next else {
+                return Ok(false);
+            };
+            if address == target.get().addr() as usize {
+                return Ok(true);
+            }
+            current = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+        }
+        Ok(false)
+    }
+
+    /// TypeDef rid of the prelude class behind the realm `Error`-family
+    /// constructor descriptor `token` (`Error`, `TypeError`, ...), if it is one.
+    pub(crate) fn error_family_rid(&self, token: u32) -> Option<u32> {
+        if token & zun_natives::USER_CLASS_FLAG != 0 {
+            return None;
+        }
+        zun_gc::with_current_heap_mut(|heap| {
+            crate::intrinsic_meta::builtin_class_name_in(heap, token)
+        })
+        .filter(|name| crate::intrinsic_meta::is_error_family(name))
+        .and_then(|name| self.type_rid_of(&name))
+    }
+
+    /// The class descriptor a program sees for the class with TypeDef `rid`:
+    /// the realm global's descriptor for a prelude `Error`-family class (so
+    /// `Object.getPrototypeOf(Sub) === Error` compares equal to the global),
+    /// else the user-class descriptor.
+    pub(crate) fn canonical_class_descriptor(&self, rid: u32) -> zun_core::Any {
+        let user = zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid);
+        let Some(name) = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .map(|def| self.module.strings.get(def.name).to_owned())
+            .filter(|name| crate::intrinsic_meta::is_error_family(name))
+        else {
+            return user;
+        };
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            heap.dynamic_get(global, &name)
+        })
+        .filter(|any| any.as_class_descriptor().is_some())
+        .unwrap_or(user)
     }
 
     /// The real `Class.prototype` object of the user class with TypeDef `rid`:
@@ -448,7 +547,7 @@ impl Interp<'_> {
                         .chars()
                         .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
                         && !name.is_empty();
-                    if ident && method.body_offset != u32::MAX {
+                    if ident && name != "constructor" && method.body_offset != u32::MAX {
                         plain_methods.push((
                             name.to_owned(),
                             zun_core::FunctionHandle::new(method_rid, None),
@@ -513,8 +612,24 @@ impl Interp<'_> {
                     Some(zun_core::Any::object(base.addr() as usize)),
                 );
             }
+            // `Class.prototype.constructor` is writable (ES2024 15.7.14 step 12
+            // defines it with `{ [[Writable]]: true, [[Enumerable]]: false,
+            // [[Configurable]]: true }`), so a program may replace it. Defining
+            // it read-only made `C.prototype.constructor = C` throw, which is
+            // the idiom `lib/events.js` and every library modelled on it uses
+            // to restore the entry after reassigning a prototype.
+            // A prelude `Error`-family class is reached through its realm
+            // global, so `Error.prototype.constructor === Error` keeps holding.
+            let ctor = error_class
+                .as_deref()
+                .and_then(|class| heap.dynamic_get(global, class))
+                .filter(|any| any.as_class_descriptor().is_some())
+                .unwrap_or_else(|| {
+                    zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid)
+                });
+            heap.dynamic_define_data(proto, "constructor", ctor, true, false, true);
             for (name, get, set) in accessors {
-                if error_class.is_some() && name == "name" {
+                if error_class.is_some() && matches!(name.as_str(), "name" | "errorName" | "stack") {
                     continue;
                 }
                 heap.dynamic_define_accessor(proto, name, get, set, false, true);
@@ -522,26 +637,15 @@ impl Interp<'_> {
             if let Some(class) = &error_class {
                 crate::intrinsic_meta::define_error_prototype_fields(heap, proto, class);
             }
-            // `Class.prototype.constructor` is writable (ES2024 15.7.14 step 12
-            // defines it with `{ [[Writable]]: true, [[Enumerable]]: false,
-            // [[Configurable]]: true }`), so a program may replace it. Defining
-            // it read-only made `C.prototype.constructor = C` throw, which is
-            // the idiom `lib/events.js` and every library modelled on it uses
-            // to restore the entry after reassigning a prototype.
-            heap.dynamic_define(
-                proto,
-                "constructor".to_owned(),
-                zun_core::Any::class_descriptor(zun_natives::USER_CLASS_FLAG | rid),
-                true,
-            );
+            // Class methods are non-enumerable (ECMAScript ClassDefinitionEvaluation).
             for (name, handle) in plain_methods {
-                heap.dynamic_set_function(proto, name, handle);
+                heap.dynamic_set_method(proto, name, handle);
             }
             if is_number_class {
                 crate::intrinsic_meta::install_prototype_methods(heap, proto, "Number");
             }
             if is_string_class {
-                heap.dynamic_set_symbol_function(
+                heap.dynamic_set_symbol_method(
                     proto,
                     zun_core::WellKnownSymbol::Iterator.id(),
                     zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
@@ -555,6 +659,12 @@ impl Interp<'_> {
     /// descriptor `token`: a plain dynamic object anchored (non-enumerable) on
     /// the realm global so it is rooted and identity-stable.
     pub(crate) fn builtin_prototype_object(&self, token: u32) -> zun_gc::Obj {
+        // The `Error` family is backed by prelude classes: `Error.prototype`
+        // IS the class prototype object, so instances, subclasses and the
+        // global constructor all share one link in the chain.
+        if let Some(rid) = self.error_family_rid(token) {
+            return self.class_prototype_object(rid);
+        }
         let key = format!("$builtinProto#{token}");
         zun_gc::with_current_heap_mut(|heap| {
             let global = heap.global_object();
@@ -601,7 +711,7 @@ impl Interp<'_> {
                 crate::intrinsic_meta::install_prototype_methods(heap, proto, &class);
             }
             if is_class(heap, "String") {
-                heap.dynamic_set_symbol_function(
+                heap.dynamic_set_symbol_method(
                     proto,
                     zun_core::WellKnownSymbol::Iterator.id(),
                     zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
@@ -635,7 +745,7 @@ impl Interp<'_> {
                 }
             }
             if let Some((kind, tag)) = size_kind {
-                heap.dynamic_set_symbol_function(
+                heap.dynamic_set_symbol_method(
                     proto,
                     zun_core::WellKnownSymbol::Iterator.id(),
                     zun_core::FunctionHandle::new_builtin_method(if kind == BUILTIN_MAP_SIZE {
@@ -688,7 +798,7 @@ impl Interp<'_> {
             heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(link.addr() as usize)));
             match kind {
                 0 => {
-                    heap.dynamic_set_symbol_function(
+                    heap.dynamic_set_symbol_method(
                         proto,
                         zun_core::WellKnownSymbol::Iterator.id(),
                         zun_core::FunctionHandle::new_builtin_method(BUILTIN_ITER_SELF),
@@ -914,7 +1024,37 @@ impl Interp<'_> {
                     .ok_or_else(|| self.incompatible_receiver("Generator.prototype method"))?;
                 self.call_generator_method(kind - BUILTIN_GEN_NEXT, generator, &_args)
             }
+            BUILTIN_OBJ_PROTO_GET => {
+                if matches!(unbox_arg(&this), Ok(Value::Void) | Ok(Value::Null)) {
+                    return Err(self.incompatible_receiver("get Object.prototype.__proto__"));
+                }
+                self.call_managed_collection("objectGetPrototypeOf", &[this])
+            }
+            BUILTIN_OBJ_PROTO_SET => {
+                let receiver = unbox_arg(&this).unwrap_or(Value::Void);
+                if matches!(receiver, Value::Void | Value::Null) {
+                    return Err(self.incompatible_receiver("set Object.prototype.__proto__"));
+                }
+                let proto = _args.first().and_then(|v| unbox_arg(v).ok()).unwrap_or(Value::Void);
+                // Only an object or null is a valid prototype; anything else, and a
+                // primitive receiver, is silently ignored.
+                let valid = matches!(proto, Value::Object(_) | Value::Null)
+                    || matches!(&proto, Value::Any(any) if any.as_object().is_some() || matches!(any.tag(), zun_core::AnyTag::Null));
+                if valid && matches!(receiver, Value::Object(_)) {
+                    self.call_managed_collection("objectSetPrototypeOf", &[this, proto])?;
+                }
+                Ok(Value::Void)
+            }
             BUILTIN_ITER_SELF | BUILTIN_SPECIES_GETTER => Ok(this),
+            BUILTIN_FN_HAS_INSTANCE => {
+                // `OrdinaryHasInstance(C, O)`: a non-callable `this`, or a
+                // non-object operand, answers false.
+                let Ok(Value::Function(target)) = unbox_arg(&this) else {
+                    return Ok(Value::Bool(false));
+                };
+                let operand = _args.first().cloned().unwrap_or(Value::Void);
+                Ok(Value::Bool(self.function_instanceof(&operand, target)?))
+            }
             k if (super::collections::iterator_helpers::BUILTIN_ITER_HELPER_BASE
                 ..=super::collections::iterator_helpers::BUILTIN_WRAP_RETURN)
                 .contains(&k) =>
@@ -1092,12 +1232,27 @@ impl Interp<'_> {
             BUILTIN_ITER_SELF => "[Symbol.iterator]",
             BUILTIN_PROXY_REVOKE => "",
             BUILTIN_STRING_ITERATOR => "[Symbol.iterator]",
+            BUILTIN_FN_HAS_INSTANCE => {
+                return Some(if name == "name" {
+                    Value::Str("[Symbol.hasInstance]".into())
+                } else {
+                    Value::Float(1.0, zun_il::NumKind::F64)
+                });
+            }
             BUILTIN_SPECIES_GETTER => "get [Symbol.species]",
             BUILTIN_TA_BUFFER => "get buffer",
             BUILTIN_TA_BYTE_LENGTH => "get byteLength",
             BUILTIN_TA_BYTE_OFFSET => "get byteOffset",
             BUILTIN_TA_LENGTH => "get length",
             BUILTIN_TA_TAG => "get [Symbol.toStringTag]",
+            BUILTIN_OBJ_PROTO_GET => "get __proto__",
+            BUILTIN_OBJ_PROTO_SET => {
+                return Some(if name == "name" {
+                    Value::Str("set __proto__".into())
+                } else {
+                    Value::Float(1.0, zun_il::NumKind::F64)
+                });
+            }
             k if (BUILTIN_COLLECTION_BASE..BUILTIN_COLLECTION_BASE + COLLECTION_METHODS.len() as u32)
                 .contains(&k) =>
             {
@@ -1171,6 +1326,39 @@ impl Interp<'_> {
                 Err(found) => return found,
                 Ok(Some(next)) => current = next,
                 Ok(None) => return None,
+            }
+        }
+        None
+    }
+
+    /// The setter of a symbol-keyed accessor reachable from `object`: its own
+    /// slot first, then the class prototype chain of a typed instance, then the
+    /// dynamic prototype chain.
+    pub(crate) fn symbol_setter_lookup(
+        &self,
+        object: zun_gc::Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_core::FunctionHandle> {
+        let mut current = Some(object);
+        let mut class_proto = self.instance_class_prototype(object);
+        for _ in 0..256 {
+            let at = current?;
+            let step = zun_gc::with_current_heap(|heap| {
+                if let Some(setter) = heap.dynamic_symbol_setter(at, symbol) {
+                    return Err(Some(setter));
+                }
+                if heap.dynamic_has_symbol_key(at, symbol) {
+                    // A data property or getter-only accessor shadows the chain.
+                    return Err(None);
+                }
+                Ok(heap
+                    .dynamic_prototype(at)
+                    .and_then(|any| any.as_object())
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }))
+            });
+            match step {
+                Err(found) => return found,
+                Ok(next) => current = class_proto.take().or(next),
             }
         }
         None
@@ -1344,6 +1532,69 @@ impl Interp<'_> {
         })
     }
 
+    /// The expando bag of a class value when one exists (never created here).
+    pub(crate) fn class_expando_peek(token: u32) -> Option<zun_gc::Obj> {
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            let address = heap
+                .dynamic_get(global, &format!("$classBag#{token}"))
+                .and_then(|a| a.as_object())?;
+            Some(unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+        })
+    }
+
+    /// Read a property a script defined on a class value (its expando bag)
+    /// under a string or symbol `key`: a function slot or a data value. A
+    /// class whose bag was never created has nothing to read, and the lookup
+    /// does not create it.
+    pub(crate) fn class_expando_read_own(token: u32, key: &Value) -> Option<Value> {
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            let address = heap
+                .dynamic_get(global, &format!("$classBag#{token}"))
+                .and_then(|a| a.as_object())?;
+            let bag = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            match key {
+                Value::Str(name) => heap
+                    .dynamic_get_function(bag, name)
+                    .map(Value::Function)
+                    .or_else(|| {
+                        heap.dynamic_get(bag, name)
+                            .and_then(|any| Value::unbox_any(any, heap))
+                    }),
+                Value::Any(any) => {
+                    let symbol = any.as_symbol()?;
+                    heap.dynamic_get_symbol_function(bag, symbol)
+                        .map(Value::Function)
+                        .or_else(|| {
+                            heap.dynamic_get_symbol(bag, symbol)
+                                .and_then(|any| Value::unbox_any(any, heap))
+                        })
+                }
+                _ => None,
+            }
+        })
+    }
+
+    /// [`Self::class_expando_read_own`] on the class, then on each base class
+    /// (a static member is inherited by the subclass constructor).
+    pub(crate) fn class_expando_read(&self, token: u32, key: &Value) -> Option<Value> {
+        let mut rid = self.user_class_rid(token);
+        let mut current = token;
+        for _ in 0..64 {
+            if let Some(found) = Self::class_expando_read_own(current, key) {
+                return Some(found);
+            }
+            let def = self.module.tables.type_defs.get((rid? as usize).wrapping_sub(1))?;
+            if def.base.table() != Some(zun_metadata::TableKind::TypeDef) || def.base.is_null() {
+                return None;
+            }
+            rid = Some(def.base.rid());
+            current = def.base.rid() | zun_natives::USER_CLASS_FLAG;
+        }
+        None
+    }
+
     /// `Object.hasOwn(Class, name)`: whether the class value itself (not its
     /// bases) owns the static field, static method or accessor `name`, or one
     /// of the intrinsic function properties.
@@ -1499,32 +1750,7 @@ impl Interp<'_> {
                 });
         }
         if name == "length" {
-            let declared = self
-                .module
-                .tables
-                .type_defs
-                .get((rid as usize).wrapping_sub(1))
-                .and_then(|def| crate::intrinsic_meta::intrinsic_ctor_length(self.module.strings.get(def.name)));
-            if let Some(count) = declared {
-                return Ok(Some(Value::Float(f64::from(count), zun_il::NumKind::F64)));
-            }
-        }
-        if name == "length" {
-            // A class's `length` is its constructor's declared parameter count
-            // (excluding the receiver); 0 without an explicit constructor.
-            let count = self
-                .class_constructor(rid)
-                .and_then(|mrid| {
-                    let method = self
-                        .module
-                        .tables
-                        .method_defs
-                        .get((mrid as usize).wrapping_sub(1))?;
-                    let body = zun_module::read_body(&self.module.code, method.body_offset).ok()?;
-                    Some((body.param_count as usize).saturating_sub(1))
-                })
-                .unwrap_or(0);
-            return Ok(Some(Value::Float(count as f64, zun_il::NumKind::F64)));
+            return Ok(Some(Value::Float(self.class_ctor_length(rid), zun_il::NumKind::F64)));
         }
         if name == "name" {
             let def = self
@@ -1537,6 +1763,28 @@ impl Interp<'_> {
             }
         }
         Ok(None)
+    }
+
+    /// The `length` of the class `rid` as a constructor: the specified value for
+    /// a built-in (prelude) constructor, else its constructor's declared
+    /// parameter count (excluding the receiver), 0 without an explicit one.
+    pub(crate) fn class_ctor_length(&self, rid: u32) -> f64 {
+        let declared = self
+            .module
+            .tables
+            .type_defs
+            .get((rid as usize).wrapping_sub(1))
+            .and_then(|def| crate::intrinsic_meta::intrinsic_ctor_length(self.module.strings.get(def.name)));
+        if let Some(count) = declared {
+            return f64::from(count);
+        }
+        self.class_constructor(rid)
+            .and_then(|mrid| {
+                let method = self.module.tables.method_defs.get((mrid as usize).wrapping_sub(1))?;
+                let body = zun_module::read_body(&self.module.code, method.body_offset).ok()?;
+                Some((body.param_count as usize).saturating_sub(1))
+            })
+            .unwrap_or(0) as f64
     }
 
     /// MethodDef rid of the instance `constructor` declared by `rid` or the
@@ -1632,7 +1880,18 @@ impl Interp<'_> {
         {
             return None;
         }
-        Some(self.class_prototype_object(rid))
+        // A relinked instance (`Object.setPrototypeOf(inst, p)`, or
+        // `Reflect.construct(.., newTarget)`) records its prototype in its
+        // expando bag; that link wins over the class prototype.
+        let relinked = zun_gc::with_current_heap(|heap| {
+            if !heap.is_instance_bag(object) {
+                return None;
+            }
+            heap.dynamic_prototype(object)
+                .and_then(|any| any.as_object())
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+        });
+        Some(relinked.unwrap_or_else(|| self.class_prototype_object(rid)))
     }
 
     /// Map a prototype argument to the stored link: an explicit `null` is kept
@@ -1687,8 +1946,55 @@ impl Interp<'_> {
                         heap.dynamic_is_symbol_enumerable(obj, *symbol)
                     })
                 });
+                // An array (or regexp) carries symbol-keyed expandos in a dynamic entry.
+                zun_gc::with_current_heap_mut(|heap| {
+                    if heap.array_len(obj).is_some() || heap.regex_source(obj).is_some() {
+                        heap.ensure_dynamic_entry(obj);
+                    }
+                });
+                let existing =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_has_symbol_key(obj, *symbol));
+                if existing {
+                    // ValidateAndApplyPropertyDescriptor: a non-configurable key
+                    // refuses a change of its configurable / enumerable
+                    // attributes, and (once non-writable) of its value.
+                    let (configurable, current_enumerable, writable, current_fn, accessor) =
+                        zun_gc::with_current_heap(|heap| {
+                            (
+                                heap.dynamic_is_symbol_configurable(obj, *symbol),
+                                heap.dynamic_is_symbol_enumerable(obj, *symbol),
+                                heap.dynamic_is_symbol_writable(obj, *symbol),
+                                heap.dynamic_get_symbol_function(obj, *symbol),
+                                heap.dynamic_symbol_getter(obj, *symbol).is_some(),
+                            )
+                        });
+                    if !configurable {
+                        let value_changes = desc.value_fn.is_some_and(|f| Some(f) != current_fn)
+                            || desc.value.is_some_and(|v| {
+                                current_fn.is_some()
+                                    || zun_gc::with_current_heap(|heap| {
+                                        heap.dynamic_get_symbol(obj, *symbol) != Some(v)
+                                    })
+                            });
+                        if desc.configurable == Some(true)
+                            || desc.enumerable.is_some_and(|e| e != current_enumerable)
+                            || (desc.is_accessor() != accessor
+                                && (desc.is_accessor() || desc.is_data()))
+                            || (!writable
+                                && !accessor
+                                && (desc.writable == Some(true) || value_changes))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                let flag_configurable = desc.configurable.or((!existing).then_some(false));
                 if desc.is_accessor() {
                     return zun_gc::with_current_heap_mut(|heap| {
+                        // A half-specified redefinition (`{ set }` over an existing
+                        // accessor) keeps the half it does not mention.
+                        let prior_get = if existing { heap.dynamic_symbol_getter(obj, *symbol) } else { None };
+                        let prior_set = if existing { heap.dynamic_symbol_setter(obj, *symbol) } else { None };
                         let ok = heap.dynamic_define_symbol(
                             obj,
                             *symbol,
@@ -1698,13 +2004,48 @@ impl Interp<'_> {
                         if let Some(getter) = desc.get {
                             heap.dynamic_set_symbol_getter(obj, *symbol, getter);
                         }
+                        if let Some(setter) = desc.set {
+                            heap.dynamic_set_symbol_setter(obj, *symbol, setter);
+                        }
+                        if !desc.has_get {
+                            if let Some(getter) = prior_get {
+                                heap.dynamic_set_symbol_getter(obj, *symbol, getter);
+                            }
+                        }
+                        if !desc.has_set {
+                            if let Some(setter) = prior_set {
+                                heap.dynamic_set_symbol_setter(obj, *symbol, setter);
+                            }
+                        }
+                        heap.dynamic_set_symbol_attributes(obj, *symbol, None, flag_configurable);
                         ok
                     });
                 }
+                // A descriptor naming no value on an existing key only updates
+                // its attributes (the value, function slot or getter stays).
+                let attributes_only =
+                    existing && desc.value.is_none() && desc.value_fn.is_none();
+                let flag_writable = desc.writable.or((!existing).then_some(false));
                 return zun_gc::with_current_heap_mut(|heap| {
-                    let ok = heap.dynamic_define_symbol(obj, *symbol, value, enumerable);
+                    let ok = if attributes_only {
+                        true
+                    } else {
+                        heap.dynamic_define_symbol(obj, *symbol, value, enumerable)
+                    };
+                    if ok && attributes_only {
+                        // Re-apply the enumerable flag without touching the value.
+                        heap.dynamic_set_symbol_enumerable(obj, *symbol, enumerable);
+                    }
                     if let (true, Some(function)) = (ok, desc.value_fn) {
                         heap.dynamic_set_symbol_function(obj, *symbol, function);
+                    }
+                    if ok {
+                        heap.dynamic_set_symbol_attributes(
+                            obj,
+                            *symbol,
+                            flag_writable,
+                            flag_configurable,
+                        );
                     }
                     ok
                 });
@@ -2042,6 +2383,37 @@ impl Interp<'_> {
                     )?;
                     return Ok(Value::Bool(true));
                 }
+                // An inherited read-only data property refuses the write. Only plain
+                // dynamic ancestors are inspected, so no proxy trap runs for a plain set.
+                let blocked = zun_gc::with_current_heap(|heap| {
+                    if heap.dynamic_has(target, &name) {
+                        return false;
+                    }
+                    let mut current = target;
+                    for _ in 0..4096 {
+                        let Some(next) = heap
+                            .dynamic_prototype(current)
+                            .and_then(|link| link.as_object())
+                        else {
+                            return false;
+                        };
+                        current = unsafe { zun_gc::Obj::from_addr(next as *mut u64) };
+                        if heap.proxy_target(current).is_some() || !heap.is_dynamic_object(current) {
+                            return false;
+                        }
+                        match heap.dynamic_descriptor(current, &name) {
+                            Some(zun_core::PropertyDescriptor::Data { writable, .. }) => {
+                                return !writable;
+                            }
+                            Some(_) => return false,
+                            None => {}
+                        }
+                    }
+                    false
+                });
+                if blocked {
+                    return Ok(Value::Bool(false));
+                }
                 if !zun_gc::with_current_heap(|heap| heap.dynamic_can_set(target, &name)) {
                     return Ok(Value::Bool(false));
                 }
@@ -2059,6 +2431,148 @@ impl Interp<'_> {
                 Ok(Value::Bool(true))
             }
         }
+    }
+
+    /// The descriptor of `key` on `start` or the nearest object of its prototype
+    /// chain that owns it, or `None` when no object on the chain does.
+    fn find_property_desc(
+        &mut self,
+        start: zun_gc::Obj,
+        key_value: &Value,
+    ) -> Result<Option<Desc>, RunError> {
+        let mut current = start;
+        for _ in 0..4096 {
+            let descriptor = self.call_managed_collection(
+                "objectGetOwnPropertyDescriptor",
+                &[Value::Object(current), key_value.clone()],
+            )?;
+            if let Some(desc_obj) = object(&descriptor) {
+                return Ok(Some(Desc::parse(desc_obj)));
+            }
+            let parent =
+                self.call_managed_collection("objectGetPrototypeOf", &[Value::Object(current)])?;
+            match object(&parent) {
+                Some(next) => current = next,
+                None => break,
+            }
+        }
+        Ok(None)
+    }
+
+    /// `Reflect.get(target, key, receiver)`: ECMAScript `OrdinaryGet`. The
+    /// property is found on the target's chain; an accessor's getter runs with
+    /// the receiver as `this`.
+    pub(crate) fn reflect_get_receiver(&mut self, args: &[Value]) -> Result<Value, RunError> {
+        let Some(target) = args.first().and_then(object) else {
+            return Ok(Value::Void);
+        };
+        let receiver_arg = args.get(2).ok_or(RunError::BadToken)?;
+        let receiver = unbox_arg(receiver_arg).unwrap_or_else(|_| receiver_arg.clone());
+        let is_proxy = zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some());
+        let key = args.get(1).and_then(prop_key);
+        if is_proxy || object(&receiver) == Some(target) {
+            return match key {
+                Some(PropKey::Str(name)) => self.dynamic_member_get(target, &name),
+                _ => Ok(Value::Void),
+            };
+        }
+        let Some(desc) = self.find_property_desc(target, args.get(1).ok_or(RunError::BadToken)?)?
+        else {
+            return Ok(Value::Void);
+        };
+        if desc.is_accessor() {
+            let Some(getter) = desc.get else {
+                return Ok(Value::Void);
+            };
+            return self.invoke_function_value(getter, self.with_this_value(getter, receiver, vec![]));
+        }
+        if let Some(handle) = desc.value_fn {
+            return Ok(Value::Function(handle));
+        }
+        Ok(match desc.value {
+            Some(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                .unwrap_or(Value::Any(any)),
+            None => Value::Void,
+        })
+    }
+
+    /// `Reflect.set(target, key, value, receiver)`: ECMAScript `OrdinarySet`. The
+    /// property is looked up on the target and its prototype chain, but a data
+    /// property is defined on the *receiver* and an accessor's setter runs with
+    /// the receiver as `this`. Without a receiver (or with the target as the
+    /// receiver) this is plain [`Self::reflect_set`].
+    pub(crate) fn reflect_set_receiver(&mut self, args: &[Value]) -> Result<Value, RunError> {
+        let Some(receiver_arg) = args.get(3) else {
+            return self.reflect_set(args);
+        };
+        let Some(target) = args.first().and_then(object) else {
+            return Ok(Value::Bool(false));
+        };
+        let receiver = unbox_arg(receiver_arg).unwrap_or_else(|_| receiver_arg.clone());
+        if object(&receiver) == Some(target) {
+            return self.reflect_set(&args[..3]);
+        }
+        let Some(_) = args.get(1).and_then(prop_key) else {
+            return Ok(Value::Bool(false));
+        };
+        let key_value = args[1].clone();
+        let value_arg = args.get(2).ok_or(RunError::BadToken)?;
+        let found = self.find_property_desc(target, &key_value)?;
+        if let Some(desc) = found.as_ref().filter(|desc| desc.is_accessor()) {
+            let Some(setter) = desc.set else {
+                return Ok(Value::Bool(false));
+            };
+            let any = zun_gc::with_current_heap_mut(|heap| value_arg.box_any(heap))
+                .unwrap_or_else(zun_core::Any::null);
+            let arg = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                .unwrap_or(Value::Any(any));
+            self.invoke_function_value(setter, self.with_this_value(setter, receiver, vec![arg]))?;
+            return Ok(Value::Bool(true));
+        }
+        if found
+            .as_ref()
+            .is_some_and(|desc| desc.writable == Some(false))
+        {
+            return Ok(Value::Bool(false));
+        }
+        // A data property: it lands on the receiver, which must be an object.
+        let Some(receiver) = object(&receiver) else {
+            return Ok(Value::Bool(false));
+        };
+        let existing = self.call_managed_collection(
+            "objectGetOwnPropertyDescriptor",
+            &[Value::Object(receiver), key_value.clone()],
+        )?;
+        let existing = object(&existing).map(Desc::parse);
+        if let Some(existing) = &existing {
+            if existing.is_accessor() || existing.writable == Some(false) {
+                return Ok(Value::Bool(false));
+            }
+        }
+        let desc_obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
+        zun_gc::root!(desc_obj = desc_obj);
+        zun_gc::with_current_heap_mut(|heap| {
+            match value_arg {
+                Value::Function(handle) => {
+                    heap.dynamic_set_function(desc_obj.get(), "value", *handle);
+                }
+                other => {
+                    let any = other.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                    heap.dynamic_set(desc_obj.get(), "value".to_owned(), any);
+                }
+            }
+            if existing.is_none() {
+                for flag in ["writable", "enumerable", "configurable"] {
+                    heap.dynamic_set(desc_obj.get(), flag.to_owned(), zun_core::Any::bool(true));
+                }
+            }
+        });
+        // Through `Reflect.defineProperty`, so a proxy receiver reaches its
+        // `defineProperty` trap and a typed receiver its expando bag.
+        self.call_managed_collection(
+            "reflectDefineProperty",
+            &[Value::Object(receiver), key_value, Value::Object(desc_obj.get())],
+        )
     }
 
     /// ToPropertyDescriptor: read a descriptor object's fields in spec order
@@ -2213,7 +2727,12 @@ impl Interp<'_> {
         let Some(target) = function_bag.or_else(|| args.first().and_then(object)) else {
             return Ok(Value::Bool(true));
         };
-        let key = args.get(1).and_then(prop_key);
+        let key = args.get(1).and_then(prop_key).or_else(|| {
+            // An `any` key that is not a string, number or symbol (a boolean,
+            // an object, ...) names the property its string form spells.
+            let raw = args.get(1)?;
+            self.dyn_to_string(raw).ok().map(PropKey::Str)
+        });
         if let Some(PropKey::Sym(symbol)) = key {
             let removed =
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_delete_symbol(target, symbol));
@@ -2244,6 +2763,9 @@ impl Interp<'_> {
                     });
                 }
             }
+            return Ok(Value::Bool(true));
+        }
+        if name == "name" && self.error_delete_assigned_name(target) {
             return Ok(Value::Bool(true));
         }
         let allowed = zun_gc::with_current_heap(|heap| heap.dynamic_can_delete(target, &name));
@@ -2426,10 +2948,19 @@ impl Interp<'_> {
                 out
             }));
         }
-        let (_, own) = self
-            .class_own_props(rid)
-            .into_iter()
-            .find(|(n, _)| n == key)?;
+        let Some((_, own)) = self.class_own_props(rid).into_iter().find(|(n, _)| n == key) else {
+            // `length` and `name` are the constructor's own read-only,
+            // configurable data properties unless a static member replaces them.
+            let value = match key {
+                "length" => Value::Float(self.class_ctor_length(rid), zun_il::NumKind::F64),
+                "name" => {
+                    let def = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1))?;
+                    Value::Str(self.module.strings.get(def.name).into())
+                }
+                _ => return None,
+            };
+            return Some(Self::data_descriptor_object(value, false, true));
+        };
         Some(zun_gc::with_current_heap_mut(|heap| {
             let out = heap.alloc_dynamic();
             let flag = |heap: &mut zun_gc::Heap, n: &str, f: bool| {

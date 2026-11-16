@@ -268,6 +268,29 @@ impl Checker<'_> {
         None
     }
 
+    /// A call of a generator method (`this` already first in `args`): mints a
+    /// fresh iterator over the method body instead of running it.
+    pub(in crate::check) fn generator_method_call(
+        &mut self,
+        func: u32,
+        args: Vec<hir::Expr>,
+        span: Span,
+    ) -> hir::Expr {
+        let Some((native_id, _)) = zun_natives::resolve("buffer", "generatorIteratorNewArgs") else {
+            self.error(span, "missing generator iterator intrinsic");
+            return self.poison(span);
+        };
+        hir::Expr {
+            kind: hir::ExprKind::GeneratorCall {
+                func,
+                args,
+                native_id,
+            },
+            ty: Ty::Any,
+            span,
+        }
+    }
+
     /// A call to a named generator function: packs any rest arguments and
     /// builds the `GeneratorCall` that mints a fresh iterator.
     pub(in crate::check) fn try_call_generator(

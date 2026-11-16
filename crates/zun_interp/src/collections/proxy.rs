@@ -69,6 +69,8 @@ impl<'a> Interp<'a> {
                     }
                     call_args.push(Value::Object(target));
                     call_args.push(Value::Str(key));
+                    // The trap's `receiver` is the proxy the read was made on.
+                    call_args.push(Value::Object(proxy));
                     self.call(callback.method_rid(), call_args, None)?
                 } else {
                     zun_gc::with_current_heap(|heap| {
@@ -106,6 +108,8 @@ impl<'a> Interp<'a> {
                     call_args.push(Value::Object(target));
                     call_args.push(Value::Str(key));
                     call_args.push(Value::Any(value));
+                    // The trap's `receiver` is the proxy the write was made on.
+                    call_args.push(Value::Object(proxy));
                     let result = self.call(callback.method_rid(), call_args, None)?;
                     return Ok(Value::Bool(matches!(result, Value::Bool(true))));
                 }
@@ -244,6 +248,13 @@ impl<'a> Interp<'a> {
                     let array = object(args.get(1).ok_or(RunError::BadToken)?)
                         .ok_or(RunError::BadToken)?;
                     let values = self.read_array_values(array)?;
+                    if self.coerce_ctor_name(handle).is_none()
+                        && !self.function_is_constructor(handle)
+                    {
+                        return Err(RunError::Native(
+                            "TypeError: value is not a constructor".into(),
+                        ));
+                    }
                     return self.construct_ordinary_function(handle, handle, values);
                 }
                 let proxy = args.first().and_then(object);

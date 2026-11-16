@@ -169,6 +169,11 @@ impl Checker<'_> {
         } else {
             first_return_ty(&body).unwrap_or(Ty::Void)
         };
+        // The implicit `arguments` object is built ahead of the default-value
+        // prologue, so a default initializer sees it.
+        if let Some(slot) = self.injected_arguments_slot(&body) {
+            inner.scopes[0].insert("arguments".to_string(), slot);
+        }
         let function_index = self.closures.len() as u32;
         let defaults = function
             .params
@@ -303,6 +308,11 @@ impl Checker<'_> {
             parameters.insert(name.to_string());
         }
         let mut uses = CaptureUse::default();
+        // A default-value initializer runs in the closure's own prologue, so the
+        // enclosing locals it reads are captures just like the body's.
+        for default in function.params.iter().filter_map(|param| param.default_value.as_deref()) {
+            self.collect_capture_expr(cx, &parameters, default, &mut uses);
+        }
         for statement in &function.body.statements {
             self.collect_capture_stmt(cx, &parameters, statement, &mut uses);
         }

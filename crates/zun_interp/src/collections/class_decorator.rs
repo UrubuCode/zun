@@ -146,7 +146,7 @@ impl<'a> Interp<'a> {
                 if instance_method && !function.is_bound() && function.builtin_method().is_none() {
                     let proto = self.class_prototype_object(class_rid);
                     zun_gc::with_current_heap_mut(|heap| {
-                        heap.dynamic_set_symbol_function(proto, symbol, function);
+                        heap.dynamic_set_symbol_method(proto, symbol, function);
                     });
                 }
                 // Subclasses inherit the symbol method unless they declare their own.
@@ -177,6 +177,31 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                Ok(Value::Void)
+            }
+            "classSetSymbolGetter" => {
+                // An instance `get [Symbol.x]()`: an own, non-enumerable accessor
+                // property of the class prototype object, so it is reported by
+                // `getOwnPropertyDescriptor` / `getOwnPropertySymbols` and found by
+                // a prototype-chain read (`Object.prototype.toString`, `obj[sym]`).
+                let class_rid = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let symbol = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
+                    _ => return Err(RunError::BadToken),
+                };
+                let function = match args.get(2).ok_or(RunError::BadToken)? {
+                    Value::Function(function) => *function,
+                    _ => return Err(RunError::BadToken),
+                };
+                let proto = self.class_prototype_object(class_rid);
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_define_symbol(proto, symbol, zun_core::Any::void(), false);
+                    heap.dynamic_set_symbol_getter(proto, symbol, function);
+                });
                 Ok(Value::Void)
             }
             "classSetMethod" => {
@@ -308,14 +333,14 @@ impl<'a> Interp<'a> {
                     // A realm base-type descriptor: resolve its global name, then the
                     // class of that name (or the built-in constructor check).
                     if let Some(token) = descriptor.as_class_descriptor() {
+                        if !self.builtin_ctor_has_prototype(token) {
+                            return Err(RunError::Native(
+                                "TypeError: Function has non-object prototype 'undefined' in instanceof check"
+                                    .into(),
+                            ));
+                        }
                         let class_name = zun_gc::with_current_heap_mut(|heap| {
-                            let global = heap.global_object();
-                            heap.dynamic_entries(global).and_then(|entries| {
-                                entries
-                                    .into_iter()
-                                    .find(|(_, any)| any.as_class_descriptor() == Some(token))
-                                    .map(|(name, _)| name)
-                            })
+                            crate::intrinsic_meta::builtin_class_name_in(heap, token)
                         });
                         if let Some(class_name) = class_name {
                             let rid = self.type_rid_of(&class_name);
@@ -346,18 +371,39 @@ impl<'a> Interp<'a> {
                         )
                     });
                     if let Some(hook) = hook {
-                        let result = self.invoke_function_value(hook, vec![value])?;
+                        let call_args = self.with_this_value(hook, Value::Function(handle), vec![value]);
+                        let result = self.invoke_function_value(hook, call_args)?;
                         return Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
                             is_truthy(&result, heap)
                         })));
                     }
-                    return Ok(Value::Bool(self.function_instanceof(&value, handle)));
+                    return Ok(Value::Bool(self.function_instanceof(&value, handle)?));
                 }
                 let rhs = object(args.get(1).ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native(
                         "TypeError: Right-hand side of 'instanceof' is not callable".into(),
                     )
                 })?;
+                // The `Iterator` namespace (its `prototype` is `%Iterator.prototype%`):
+                // an object inheriting that prototype is an instance, and so is a
+                // subclass instance deriving from the `__BuiltinIterator` wrapper.
+                let iterator_proto = Self::iterator_prototype_object(0).addr() as usize;
+                let rhs_is_iterator = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get(rhs, "prototype")
+                        .and_then(|any| any.as_object())
+                        .is_some_and(|address| address as usize == iterator_proto)
+                });
+                if rhs_is_iterator {
+                    if let Value::Object(candidate) = &value {
+                        if self.iter_inherits_proto(*candidate) {
+                            return Ok(Value::Bool(true));
+                        }
+                    }
+                    return self.call_managed_collection(
+                        "instanceofBuiltin",
+                        &[value, Value::Str("Iterator".into())],
+                    );
+                }
                 // A constructor record (`Error`, `Array` ... read through `any`): the
                 // class it names decides membership.
                 let (record_desc, record_name) = zun_gc::with_current_heap(|heap| {
@@ -398,18 +444,38 @@ impl<'a> Interp<'a> {
                         );
                     }
                 }
+                // The hook is an ordinary property read: an inherited one (a
+                // prototype of `rhs` carrying `[Symbol.hasInstance]`) counts too.
                 let handler = zun_gc::with_current_heap(|heap| {
-                    heap.dynamic_get_symbol_function(
-                        rhs,
-                        zun_core::WellKnownSymbol::HasInstance.id(),
-                    )
+                    let symbol = zun_core::WellKnownSymbol::HasInstance.id();
+                    let mut current = Some(rhs);
+                    let mut found = None;
+                    for _ in 0..256 {
+                        let Some(holder) = current else { break };
+                        if let Some(hook) = heap.dynamic_get_symbol_function(holder, symbol) {
+                            found = Some(hook);
+                            break;
+                        }
+                        current = heap
+                            .dynamic_prototype(holder)
+                            .and_then(|any| any.as_object())
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+                    }
+                    found
                 });
                 let found = match handler {
                     Some(handle) => {
-                        let result = self.invoke_function_value(handle, vec![value])?;
+                        let call_args = self.with_this_arg(handle, rhs, vec![value]);
+                        let result = self.invoke_function_value(handle, call_args)?;
                         zun_gc::with_current_heap(|heap| is_truthy(&result, heap))
                     }
-                    None => false,
+                    // No `[Symbol.hasInstance]` anywhere on the chain and the
+                    // dynamic object is not callable: `instanceof` refuses it.
+                    None => {
+                        return Err(RunError::Native(
+                            "TypeError: Right-hand side of 'instanceof' is not callable".into(),
+                        ))
+                    }
                 };
                 Ok(Value::Bool(found))
             }

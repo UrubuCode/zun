@@ -211,6 +211,11 @@ fn base_type_facets(name: &str) -> Option<(Ty, CtorLowering)> {
         "Boolean" => (Ty::Boolean, CtorLowering::FallThrough),
         "Object" => (Ty::DynamicObject, CtorLowering::FallThrough),
         "Symbol" => (Ty::Symbol, CtorLowering::FallThrough),
+        // The dynamic function type; the registry owns only the descriptor value.
+        "Function" => (
+            Ty::Function(hir::DYNAMIC_FUNCTION),
+            CtorLowering::FallThrough,
+        ),
         // `Buffer` is a nominal alias for the `Uint8Array` byte view (Node's
         // Buffer IS a Uint8Array). The annotation denotes a U8 view and the
         // descriptor value is what `globalThis.Buffer` resolves to;

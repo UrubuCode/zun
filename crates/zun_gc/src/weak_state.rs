@@ -1,6 +1,18 @@
 #[derive(Debug, Clone, Copy)]
 pub(super) struct WeakSlot {
     pub(super) target: Option<usize>,
+    /// Set when the referent is a function value, which has no heap object of its
+    /// own: the handle with its environment cleared. A function that carries a
+    /// managed environment is weakly held through `target` (the environment) and
+    /// rebuilt on dereference; one without an environment owns no managed storage
+    /// and is simply always live.
+    pub(super) callee: Option<zun_core::FunctionHandle>,
+    /// Whether that function was created with a managed environment, so a cleared
+    /// `target` means the closure was collected rather than never weak at all.
+    pub(super) env_bearing: bool,
+    /// Set when the referent is an unregistered symbol. A symbol owns no managed
+    /// storage and is never reclaimed, so the reference is always live.
+    pub(super) symbol: Option<zun_core::SymbolId>,
 }
 
 #[derive(Debug, Clone, Default)]

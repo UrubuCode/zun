@@ -50,6 +50,14 @@ impl Heap {
             .map(|(buffer, _)| *buffer)
     }
 
+    /// Whether a typed-array view is length-tracking (constructed over a buffer
+    /// with no explicit length); `None` if `object` is not a typed-array view.
+    pub fn typed_array_is_tracking(&self, object: Obj) -> Option<bool> {
+        self.typed_views
+            .get(&(object.addr() as usize))
+            .map(|(_, view)| view.is_tracking())
+    }
+
     /// The element kind of a typed-array view, or `None` if `object` is not a
     /// typed-array view. Backs Node's `Buffer.isBuffer`, which is true only for
     /// a `Uint8Array`-kind view.

@@ -138,10 +138,14 @@ impl Checker<'_> {
         body: &mut Vec<hir::Stmt>,
         span: Span,
     ) {
-        if self.class_symbol_methods.is_empty() {
+        if self.class_symbol_methods.is_empty() && self.class_symbol_getters.is_empty() {
             return;
         }
         let Some((set_id, _)) = zun_natives::resolve("collections", "classSetSymbolFunction")
+        else {
+            return;
+        };
+        let Some((set_getter_id, _)) = zun_natives::resolve("collections", "classSetSymbolGetter")
         else {
             return;
         };
@@ -149,7 +153,18 @@ impl Checker<'_> {
         else {
             return;
         };
-        for &(class_idx, symbol_id, func_index) in &self.class_symbol_methods {
+        // Methods register through `classSetSymbolFunction`; instance getters
+        // through `classSetSymbolGetter` (an accessor on the class prototype).
+        let registrations = self
+            .class_symbol_methods
+            .iter()
+            .map(|entry| (set_id, *entry))
+            .chain(
+                self.class_symbol_getters
+                    .iter()
+                    .map(|entry| (set_getter_id, *entry)),
+            );
+        for (set_id, (class_idx, symbol_id, func_index)) in registrations {
             let class_rid = hir::Expr {
                 kind: hir::ExprKind::Number((class_idx + 1) as f64),
                 ty: Ty::Int(IntKind::U32),

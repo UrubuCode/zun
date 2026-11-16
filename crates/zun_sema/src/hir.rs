@@ -891,6 +891,11 @@ pub enum ExprKind {
         func: FuncIndex,
         /// The constructor arguments (without the implicit receiver).
         args: Vec<Expr>,
+        /// Set when the constructor can `return <expr>` (its return type is
+        /// `any`): the scratch local holding the returned value. The
+        /// expression then evaluates, as `any`, to that value when it is not
+        /// nullish and to the new instance otherwise.
+        result_slot: Option<LocalSlot>,
     },
     /// Allocate a managed array with a numeric length.
     ArrayNew {

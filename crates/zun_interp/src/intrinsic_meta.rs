@@ -28,6 +28,7 @@ const INTRINSIC_CTOR_LENGTHS: &[(&str, u32)] = &[
     ("FinalizationRegistry", 1),
     ("Promise", 1),
     ("RegExp", 2),
+    ("Date", 7),
     ("ArrayBuffer", 1),
     ("SharedArrayBuffer", 1),
     ("DataView", 1),
@@ -41,6 +42,27 @@ const INTRINSIC_CTOR_LENGTHS: &[(&str, u32)] = &[
     ("URIError", 1),
     ("AggregateError", 2),
     ("Proxy", 2),
+    // Web-platform constructors: the specified (WebIDL) length is the count of
+    // required arguments, not the declared parameter count of the prelude class.
+    ("URL", 1),
+    ("URLSearchParams", 0),
+    ("TextEncoder", 0),
+    ("TextDecoder", 0),
+    ("Blob", 0),
+    ("File", 2),
+    ("Headers", 0),
+    ("Request", 1),
+    ("Response", 0),
+    ("FormData", 0),
+    ("AbortController", 0),
+    ("AbortSignal", 0),
+    ("DOMException", 0),
+    ("Event", 1),
+    ("CustomEvent", 1),
+    ("EventTarget", 0),
+    ("ReadableStream", 0),
+    ("WritableStream", 0),
+    ("TransformStream", 0),
     ("parseInt", 2),
     ("parseFloat", 1),
     ("isNaN", 1),
@@ -84,12 +106,22 @@ pub(crate) fn is_error_family(name: &str) -> bool {
 }
 
 /// The realm global key bound to the class descriptor `token`, found on an
-/// already-borrowed heap.
+/// already-borrowed heap. A realm builtin is defined read-only, so a read-only
+/// key wins over a writable one: a program's own `const C = Error` is stored on
+/// the same global under the same descriptor and must not rename it.
 pub(crate) fn builtin_class_name_in(heap: &mut zun_gc::Heap, token: u32) -> Option<String> {
     let global = heap.global_object();
-    heap.dynamic_keys(global)?.into_iter().find(|key| {
-        heap.dynamic_get(global, key).and_then(|any| any.as_class_descriptor()) == Some(token)
-    })
+    let keys: Vec<String> = heap
+        .dynamic_keys(global)?
+        .into_iter()
+        .filter(|key| {
+            heap.dynamic_get(global, key).and_then(|any| any.as_class_descriptor()) == Some(token)
+        })
+        .collect();
+    keys.iter()
+        .find(|key| !heap.dynamic_is_writable(global, key))
+        .or_else(|| keys.first())
+        .cloned()
 }
 
 /// Every realm global key bound to the class descriptor `token`. Several
@@ -105,6 +137,22 @@ fn builtin_class_names_in(heap: &mut zun_gc::Heap, token: u32) -> Vec<String> {
             heap.dynamic_get(global, key).and_then(|any| any.as_class_descriptor()) == Some(token)
         })
         .collect()
+}
+
+/// Built-in constructors the specification gives no `prototype` property
+/// (`Proxy` is a constructor only for `new`): reading it yields `undefined`, it
+/// is not an own key, and `instanceof` against it throws.
+const PROTOTYPELESS_CTORS: &[&str] = &["Proxy"];
+
+impl Interp<'_> {
+    /// Whether the built-in constructor `token` owns a `prototype` property.
+    pub(crate) fn builtin_ctor_has_prototype(&self, token: u32) -> bool {
+        if token & zun_natives::USER_CLASS_FLAG != 0 {
+            return true;
+        }
+        zun_gc::with_current_heap_mut(|heap| builtin_class_name_in(heap, token))
+            .map_or(true, |name| !PROTOTYPELESS_CTORS.contains(&name.as_str()))
+    }
 }
 
 impl Interp<'_> {
@@ -177,6 +225,9 @@ impl Interp<'_> {
         let (value, writable, configurable) = match key {
             // A constructor's `prototype` is non-writable, non-configurable.
             "prototype" => {
+                if !self.builtin_ctor_has_prototype(token) {
+                    return None;
+                }
                 let proto = self.builtin_prototype_object(token);
                 (Value::Any(zun_core::Any::object(proto.addr() as usize)), false, false)
             }
@@ -308,7 +359,7 @@ impl Interp<'_> {
         Self::data_descriptor_object(Value::Float(value, zun_il::NumKind::F64), false, false)
     }
 
-    fn data_descriptor_object(value: Value, writable: bool, configurable: bool) -> zun_gc::Obj {
+    pub(crate) fn data_descriptor_object(value: Value, writable: bool, configurable: bool) -> zun_gc::Obj {
         zun_gc::with_current_heap_mut(|heap| {
             let out = heap.alloc_dynamic();
             let any = value.box_any_cell(heap).unwrap_or_else(zun_core::Any::void);
@@ -402,7 +453,7 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
     ("WeakSet", &[("delete", 1), ("has", 1), ("add", 1)]),
     ("Promise", &[("then", 2), ("catch", 1), ("finally", 1)]),
     ("RegExp", &[("exec", 1), ("test", 1)]),
-    ("Function", &[("apply", 2), ("bind", 1), ("call", 1)]),
+    ("Function", &[("apply", 2), ("bind", 1), ("call", 1), ("toString", 0)]),
     (
         "TypedArray",
         &[
@@ -415,6 +466,17 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
         ],
     ),
     ("Boolean", &[("toString", 0), ("valueOf", 0)]),
+    // `Object.prototype`'s methods are not installed as own properties (the
+    // prototype object answers them through its member read); the table only
+    // gives the unbound method values their kind, name and length.
+    (
+        "Object",
+        &[
+            ("toString", 0), ("toLocaleString", 0), ("valueOf", 0), ("hasOwnProperty", 1),
+            ("isPrototypeOf", 1), ("propertyIsEnumerable", 1), ("__defineGetter__", 2),
+            ("__defineSetter__", 2), ("__lookupGetter__", 1), ("__lookupSetter__", 1),
+        ],
+    ),
 ];
 
 /// The methods the prototype of the built-in class `class` carries as
@@ -451,6 +513,16 @@ pub(crate) fn prototype_method_at(kind: u32) -> Option<(&'static str, &'static s
 pub(crate) fn install_prototype_methods(heap: &mut zun_gc::Heap, proto: zun_gc::Obj, class: &str) {
     for (kind, name) in prototype_methods_of(class) {
         heap.dynamic_set_method(proto, name, zun_core::FunctionHandle::new_builtin_method(kind));
+        // In the specification `Array.prototype[Symbol.iterator]` *is* the same
+        // function object as `Array.prototype.values`, so it is installed under
+        // both keys.
+        if class == "Array" && name == "values" {
+            heap.dynamic_set_symbol_method(
+                proto,
+                zun_core::WellKnownSymbol::Iterator.id(),
+                zun_core::FunctionHandle::new_builtin_method(kind),
+            );
+        }
     }
 }
 
@@ -665,3 +737,4 @@ mod tests {
         assert_eq!(prototype_method_at(BUILTIN_PROTO_BASE + seen.len() as u32), None);
     }
 }
+

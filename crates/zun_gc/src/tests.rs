@@ -206,6 +206,60 @@ fn weak_ref_object_clears_once_its_target_is_collected() {
 }
 
 #[test]
+fn weak_ref_to_a_closure_derefs_while_its_environment_is_live() {
+    // A function value has no heap object: the WeakRef holds it through its
+    // environment, so a live environment (and a collection) still derefs it,
+    // and a collected one clears it.
+    let mut heap = Heap::new();
+    let environment = heap.alloc(2, 0);
+    let function = zun_core::FunctionHandle::new(21, Some(environment.addr() as usize));
+    let weak_ref = heap.alloc_weak_ref_function(function);
+    assert!(heap.is_weak_ref_function(weak_ref));
+    assert_eq!(heap.weak_ref_get_object(weak_ref), None);
+    assert_eq!(heap.weak_ref_get_function(weak_ref), Some(function));
+    assert_eq!(
+        unsafe { heap.collect(&[weak_ref, environment], &|_| std::rc::Rc::from(Vec::new())) },
+        0
+    );
+    assert_eq!(heap.weak_ref_get_function(weak_ref), Some(function));
+    // Only the WeakRef stays rooted: the environment is reclaimed.
+    unsafe { heap.collect(&[weak_ref], &|_| std::rc::Rc::from(Vec::new())) };
+    assert_eq!(heap.weak_ref_get_function(weak_ref), None);
+}
+
+#[test]
+fn weak_ref_to_a_function_without_an_environment_never_clears() {
+    let mut heap = Heap::new();
+    let function = zun_core::FunctionHandle::new(22, None);
+    let weak_ref = heap.alloc_weak_ref_function(function);
+    unsafe { heap.collect(&[weak_ref], &|_| std::rc::Rc::from(Vec::new())) };
+    assert_eq!(heap.weak_ref_get_function(weak_ref), Some(function));
+}
+
+#[test]
+fn relocation_rewrites_a_function_weak_ref_environment() {
+    let mut heap = Heap::new();
+    let environment = heap.alloc(2, 0);
+    let function = zun_core::FunctionHandle::new(23, Some(environment.addr() as usize));
+    let weak_owner = heap.alloc_weak_ref_function(function);
+    let new_environment = unsafe { Obj::from_addr(0x8000 as *mut u64) };
+    let new_owner = unsafe { Obj::from_addr(0x9000 as *mut u64) };
+    let mut relocation = RelocationMap::new();
+    relocation.insert(environment, new_environment);
+    relocation.insert(weak_owner, new_owner);
+    heap.rewrite_weak_references(&relocation);
+    let id = heap
+        .weak_ref_objects
+        .get(&(new_owner.addr() as usize))
+        .copied()
+        .unwrap();
+    assert_eq!(
+        heap.weak_refs[id.0 as usize].target,
+        Some(new_environment.addr() as usize)
+    );
+}
+
+#[test]
 fn weak_reference_observes_a_live_root() {
     let mut heap = Heap::new();
     let target = heap.alloc(1, 0);

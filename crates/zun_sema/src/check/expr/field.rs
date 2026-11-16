@@ -23,25 +23,6 @@ impl Checker<'_> {
         fname: &str,
         span: Span,
     ) -> Option<hir::Expr> {
-        // `Function.prototype.<m>` has no first-class value here: it reads
-        // as `undefined`, so comparisons against it stay stable.
-        if let ast::Expr::Field {
-            object: inner,
-            field: proto,
-            ..
-        } = object
-        {
-            if self.text(proto) == "prototype"
-                && matches!(inner.as_ref(), ast::Expr::Ident(n) if self.text(n) == "Function")
-                && !self.classes_by_name.contains_key("Function")
-            {
-                return Some(hir::Expr {
-                    kind: hir::ExprKind::Null,
-                    ty: Ty::Void,
-                    span,
-                });
-            }
-        }
         // `[].indexOf.length`: a method read off an array literal.
         if fname == "length" {
             if let ast::Expr::Field {
@@ -985,6 +966,17 @@ impl Checker<'_> {
                     span,
                 }
             }
+            // A named read off a Map/Set that no typed path claimed (`map.entries`
+            // as a function value, an expando property) is a prototype lookup
+            // resolved by name at run time on the boxed collection.
+            Ty::Map | Ty::Set | Ty::WeakMap | Ty::WeakSet => hir::Expr {
+                kind: hir::ExprKind::DynamicGet {
+                    object: Box::new(Self::box_to_any(object)),
+                    name: fname,
+                },
+                ty: Ty::Any,
+                span,
+            },
             other => {
                 self.error(object.span, format!("type {other:?} has no fields"));
                 self.poison(span)

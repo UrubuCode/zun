@@ -15,7 +15,47 @@ impl Heap {
             .weak_ref_objects
             .get(&(object.addr() as usize))
             .copied()?;
+        // A function referent is read through `weak_ref_get_function`; its slot
+        // target is the closure environment, never the referent itself.
+        if self.weak_refs.get(id.0 as usize)?.callee.is_some() {
+            return None;
+        }
         self.weak_ref_get(id)
+    }
+
+    /// Dereference a managed WeakRef whose referent is a function value:
+    /// `Some(function)` while it is live, `None` once its environment has been
+    /// collected, and `None` when the referent is not a function at all.
+    pub fn weak_ref_get_function(&self, object: Obj) -> Option<zun_core::FunctionHandle> {
+        let id = self
+            .weak_ref_objects
+            .get(&(object.addr() as usize))
+            .copied()?;
+        let slot = self.weak_refs.get(id.0 as usize)?;
+        let callee = slot.callee?;
+        if !slot.env_bearing {
+            return Some(callee);
+        }
+        let address = slot.target?;
+        let index = *self.by_addr.get(&address)?;
+        Some(callee.relocate_environment(Some(self.records[index].addr as usize)))
+    }
+
+    /// The unregistered symbol a managed WeakRef refers to, if its referent is one.
+    pub fn weak_ref_get_symbol(&self, object: Obj) -> Option<zun_core::SymbolId> {
+        let id = self
+            .weak_ref_objects
+            .get(&(object.addr() as usize))
+            .copied()?;
+        self.weak_refs.get(id.0 as usize)?.symbol
+    }
+
+    /// Whether `object` is a managed WeakRef whose referent is a function value.
+    pub fn is_weak_ref_function(&self, object: Obj) -> bool {
+        self.weak_ref_objects
+            .get(&(object.addr() as usize))
+            .and_then(|id| self.weak_refs.get(id.0 as usize))
+            .is_some_and(|slot| slot.callee.is_some())
     }
 
     /// Whether `object` is a managed WeakRef.

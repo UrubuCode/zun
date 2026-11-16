@@ -28,6 +28,44 @@ impl<'a> Interp<'a> {
         false
     }
 
+    /// The value of an own enumerable `name` on an `Error` instance, present
+    /// only once `name` was assigned (`undefined` included).
+    pub(crate) fn error_assigned_name(&mut self, obj: zun_gc::Obj) -> Option<Value> {
+        let typed = zun_gc::with_current_heap(|heap| {
+            !heap.is_dynamic_object(obj) && heap.array_len(obj).is_none()
+        });
+        if !typed || obj.type_rid() == 0 || !self.is_error_instance(obj) {
+            return None;
+        }
+        if matches!(
+            self.instance_member_get(obj, "nameUndefined"),
+            Ok(Some(Value::Bool(true)))
+        ) {
+            return Some(Value::Void);
+        }
+        if matches!(
+            self.instance_member_get(obj, "hasName"),
+            Ok(Some(Value::Bool(true)))
+        ) {
+            if let Ok(Some(Value::Str(name))) = self.instance_member_get(obj, "nameOverride") {
+                return Some(Value::Str(name));
+            }
+        }
+        None
+    }
+
+    /// `delete err.name`: drop an assigned own `name` so the class-provided
+    /// default reads again. Returns whether an assigned name was removed.
+    pub(crate) fn error_delete_assigned_name(&mut self, obj: zun_gc::Obj) -> bool {
+        if self.error_assigned_name(obj).is_none() {
+            return false;
+        }
+        self.instance_member_set(obj, "hasName", &Value::Bool(false));
+        self.instance_member_set(obj, "nameUndefined", &Value::Bool(false));
+        self.instance_member_set(obj, "nameOverride", &Value::Str("".into()));
+        true
+    }
+
     /// Own non-enumerable data properties of an `Error` instance, in
     /// specification order (`message`, `cause`, `errors`).
     pub(crate) fn error_hidden_own(&mut self, obj: zun_gc::Obj) -> Vec<(String, Value)> {

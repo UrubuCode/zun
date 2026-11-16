@@ -1600,8 +1600,13 @@ impl Interp<'_> {
                     let obj = pop(stack)?.as_object();
                     // A dynamic object never carries a class's fixed fields
                     // (a private-brand mismatch): TypeError, not a bad read.
+                    // An *instance bag* is the exception: a typed instance that
+                    // gained an expando property still has every fixed field, so
+                    // reading one is valid. Without this, any typed class with a
+                    // getter stopped working the moment an instance took an
+                    // expando. `instance_class_prototype` draws the same line.
                     let loaded = zun_gc::with_current_heap(|h| {
-                        if h.is_dynamic_object(obj) {
+                        if h.is_dynamic_object(obj) && !h.is_instance_bag(obj) {
                             None
                         } else {
                             Some(value::load_field(kind, obj, slot, h))
@@ -1957,13 +1962,17 @@ mod method_tests;
 /// receiver-bound stand-in encodes them (mode 100 upwards). One list, shared by
 /// the member read in `dyn_member` and the direct call in `dynamic_call`, so
 /// the two cannot drift apart.
-pub(crate) const OBJECT_PROTO_METHODS: [&str; 6] = [
+pub(crate) const OBJECT_PROTO_METHODS: [&str; 10] = [
     "toString",
     "toLocaleString",
     "valueOf",
     "hasOwnProperty",
     "isPrototypeOf",
     "propertyIsEnumerable",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
 ];
 
 /// The stand-in mode for an `Object.prototype` method name.
@@ -2015,5 +2024,29 @@ pub(crate) fn expando_receiver(value: Value) -> Value {
     match value {
         Value::Function(handle) => Value::Object(function_expando_bag(handle)),
         other => other,
+    }
+}
+
+impl Interp<'_> {
+    /// The function value of the `Object.prototype` method `name` as read off
+    /// `object`. Read off `Object.prototype` itself it is the real, unbound
+    /// method (the receiver arrives with `call` / `apply` / `bind`); read off
+    /// any other object it is the stand-in bound to that object.
+    pub(crate) fn object_proto_method_value(
+        &mut self,
+        object: zun_gc::Obj,
+        name: &str,
+    ) -> Option<Value> {
+        let mode = object_proto_mode(name)?;
+        if object == Self::object_prototype_singleton() {
+            let kind = crate::intrinsic_meta::prototype_methods_of("Object")
+                .into_iter()
+                .find(|(_, method)| *method == name)
+                .map(|(kind, _)| kind)?;
+            return Some(Value::Function(
+                zun_core::FunctionHandle::new_builtin_method(kind),
+            ));
+        }
+        Some(Value::Function(self.make_promise_settler(object, mode)))
     }
 }

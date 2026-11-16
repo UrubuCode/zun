@@ -34,13 +34,14 @@ pub(super) fn lower_function<'a>(
         gen.emit(Instruction::simple(Opcode::AsyncStart));
     }
     let body_start = gen.emit_param_cells(&f.body, f.param_count);
+    let binding = gen.emit_arguments_binding(&f.body[body_start..]);
     gen.emit_defaults(
         &f.defaults,
         f.param_count - f.defaults.len() as u16,
         &f.locals,
         &f.body[..body_start],
     );
-    gen.stmts(&f.body[body_start..]);
+    gen.stmts(&f.body[body_start + binding..]);
     // Guarantee the body cannot run off its end: a void function gets an
     // implicit return. (Non-void paths are the verifier's job later.)
     if f.return_ty != Ty::Void && !matches!(f.body.last(), Some(Stmt::Return(_))) {
@@ -94,8 +95,9 @@ pub(super) fn lower_closure_function<'a>(
         gen.emit(Instruction::simple(Opcode::AsyncStart));
     }
     let body_start = gen.emit_param_cells(&f.body, f.param_count);
+    let binding = gen.emit_arguments_binding(&f.body[body_start..]);
     gen.emit_defaults(&f.defaults, 1, &f.locals, &f.body[..body_start]);
-    gen.stmts(&f.body[body_start..]);
+    gen.stmts(&f.body[body_start + binding..]);
     if f.return_ty != Ty::Void && !matches!(f.body.last(), Some(Stmt::Return(_))) {
         // Running off the end of a value-returning body yields `undefined`.
         match f.return_ty {

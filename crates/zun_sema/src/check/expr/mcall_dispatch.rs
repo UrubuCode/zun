@@ -231,6 +231,9 @@ impl Checker<'_> {
                 }
             }
         }
+        if rest_index.is_none() && sig.is_generator {
+            return self.generator_method_call(func, call_args, span);
+        }
         hir::Expr {
             kind: if rest_index.is_some() {
                 hir::ExprKind::MethodCallRest {

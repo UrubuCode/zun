@@ -411,6 +411,9 @@ impl Heap {
         let id = WeakRefId(self.weak_refs.len() as u32);
         self.weak_refs.push(WeakSlot {
             target: Some(target.addr() as usize),
+            callee: None,
+            env_bearing: false,
+            symbol: None,
         });
         id
     }
@@ -421,6 +424,38 @@ impl Heap {
     pub fn alloc_weak_ref(&mut self, target: Obj) -> Obj {
         let object = self.alloc(0, 0);
         let id = self.weak_ref_new(target);
+        self.weak_ref_objects.insert(object.addr() as usize, id);
+        object
+    }
+
+    /// Allocate a managed WeakRef object whose referent is a function value.
+    /// A function has no heap object of its own, so a closure is held weakly
+    /// through its captured environment (the object that dies with it) and
+    /// rebuilt by [`Heap::weak_ref_get_function`]; a function with no
+    /// environment owns no managed storage and never goes away.
+    pub fn alloc_weak_ref_function(&mut self, function: zun_core::FunctionHandle) -> Obj {
+        let object = self.alloc(0, 0);
+        let id = WeakRefId(self.weak_refs.len() as u32);
+        self.weak_refs.push(WeakSlot {
+            target: function.environment(),
+            callee: Some(function.relocate_environment(None)),
+            env_bearing: function.environment().is_some(),
+            symbol: None,
+        });
+        self.weak_ref_objects.insert(object.addr() as usize, id);
+        object
+    }
+
+    /// Allocate a managed WeakRef object whose referent is an unregistered symbol.
+    pub fn alloc_weak_ref_symbol(&mut self, symbol: zun_core::SymbolId) -> Obj {
+        let object = self.alloc(0, 0);
+        let id = WeakRefId(self.weak_refs.len() as u32);
+        self.weak_refs.push(WeakSlot {
+            target: None,
+            callee: None,
+            env_bearing: false,
+            symbol: Some(symbol),
+        });
         self.weak_ref_objects.insert(object.addr() as usize, id);
         object
     }

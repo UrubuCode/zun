@@ -31,6 +31,36 @@ impl Checker<'_> {
             return None;
         };
         let class_name = self.text(class).to_string();
+        // `Date.toString()`, `Object.toString()`, `Promise.valueOf()`: a
+        // constructor has no static member of these names, so the call reads
+        // the one it inherits from `Function.prototype` / `Object.prototype`.
+        // It resolves by name at run time on the constructor value, the same
+        // dispatch `Function.prototype.toString.call(Ctor)` reaches. A binding
+        // the program declares itself, or a user static of that name, wins.
+        if matches!(
+            self.text(method),
+            "toString" | "toLocaleString" | "valueOf"
+        ) && cx.lookup(&class_name).is_none()
+            && !cx.captures.contains_key(&class_name)
+            && !self.by_name.contains_key(&class_name)
+            && (self.classes_by_name.contains_key(&class_name)
+                || self.realm_globals.contains_key(&class_name))
+            && !self
+                .classes_by_name
+                .get(&class_name)
+                .and_then(|&class_index| self.method_of(class_index, self.text(method)))
+                .is_some_and(|func| self.signatures[func as usize].is_static)
+            && args.len() <= 6
+            && !args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
+        {
+            let value = self.check_expr(cx, receiver);
+            let method_text = self.text(method).to_string();
+            if let Ok(call) =
+                self.mcall_view_dynamic_forced(cx, value, &method_text, method, args, span)
+            {
+                return Some(call);
+            }
+        }
         if let Some(expr) = self.mcall_builtin_statics_1(cx, &class_name, method, args, span) {
             return Some(expr);
         }
@@ -589,6 +619,9 @@ impl Checker<'_> {
                     if hidden_class {
                         let token = zun_natives::USER_CLASS_FLAG | (class_index + 1);
                         checked.insert(0, self.realm_descriptor_expr(token, span));
+                    }
+                    if self.signatures[func as usize].is_generator {
+                        return Some(self.generator_method_call(func, checked, span));
                     }
                     return Some(hir::Expr {
                         kind: hir::ExprKind::StaticCall {

@@ -107,6 +107,8 @@ impl Interp<'_> {
             Value::Void,
             Value::Str("".into()),
             Value::Bool(false),
+            Value::Bool(false),
+            Value::Bool(false),
         ];
         if field_count != values.len() {
             return None;
@@ -243,6 +245,9 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "collectionHas",
         "reflectDelete",
         "reflectSet",
+        "reflectSetReceiver",
+        "reflectRequireObject",
+        "reflectGetReceiver",
         "reflectDefineProperty",
         "deleteStrict",
         "objectPrototype",
@@ -386,6 +391,7 @@ pub(crate) fn managed_collection_builtin(id: u32) -> Option<&'static str> {
         "mathApply",
         "bigIntUshr",
         "proxyRevocable",
+        "classSetSymbolGetter",
     ]
     .into_iter()
     .find(|&name| {
@@ -540,6 +546,7 @@ pub(crate) fn managed_array_ext_builtin(id: u32) -> Option<&'static str> {
         "arrayLikeReverse",
         "arrayLikePop",
         "arrayFromArrayLike",
+        "arrayFromArgumentList",
         "destructOpen",
         "destructStep",
         "destructRest",

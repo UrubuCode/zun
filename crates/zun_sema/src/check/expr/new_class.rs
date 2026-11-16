@@ -258,6 +258,22 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        // A realm built-in with no static constructor lowering (`Object`,
+        // `Symbol`) constructs through its descriptor at run time, the same
+        // path `Reflect.construct(Object, [...])` takes: it is a defined
+        // global, so reading it back as the "constructed" value would be wrong.
+        if self.realm_globals.contains_key(name)
+            && cx.lookup(name).is_none()
+            && !self.by_name.contains_key(name)
+            && !self.module_globals.contains(name)
+        {
+            let callee = self.check_expr(cx, &ast::Expr::Ident(*class));
+            if !callee.ty.is_error() {
+                if let Some(expr) = self.lower_reflect_construct(cx, callee, args, span) {
+                    return expr;
+                }
+            }
+        }
         // An undeclared constructor name is a run-time ReferenceError
         // (it may sit in dead code), like an undeclared identifier read.
         if cx.lookup(name).is_none()

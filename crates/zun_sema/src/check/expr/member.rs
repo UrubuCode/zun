@@ -381,6 +381,21 @@ impl Checker<'_> {
             return self.poison(span);
         }
         let mut index = self.check_expr(cx, index);
+        // `map[Symbol.iterator]` / `set["size"]`: a Map or Set is an object, so
+        // a non-integer key is an ordinary property read, resolved by name at
+        // run time (the entry accessors, the iterator symbol, own properties).
+        if matches!(object.ty, Ty::Map | Ty::Set | Ty::WeakMap | Ty::WeakSet)
+            && matches!(index.ty, Ty::Symbol | Ty::Any | Ty::String)
+        {
+            return hir::Expr {
+                kind: hir::ExprKind::DynamicGetValue {
+                    object: Box::new(Self::box_to_any(object)),
+                    key: Box::new(Self::box_to_any(index)),
+                },
+                ty: Ty::Any,
+                span,
+            };
+        }
         coerce_numeric_literal(&mut index, Ty::INT);
         if object.ty == Ty::Array && matches!(index.ty, Ty::Any | Ty::DynamicObject) {
             return hir::Expr {

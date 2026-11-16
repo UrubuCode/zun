@@ -141,6 +141,30 @@ impl<'a> Interp<'a> {
             .copied()
     }
 
+    /// Whether `method_rid` is an *instance* method owned by some class, as
+    /// opposed to a free function, a closure or a class static.
+    ///
+    /// A class instance method takes its receiver as a hidden first argument, so
+    /// `Class.prototype.m.call(obj, x)` has to pass `obj` along. A free function
+    /// does not, and handing it the receiver shifts every real argument one
+    /// place — which is what a `virtual_slot` test did here, because a free
+    /// function can own a virtual slot too.
+    pub(crate) fn method_rid_is_instance_method(&self, method_rid: u32) -> bool {
+        let owned_by_a_class = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .any(|def| (def.method_start..def.method_end).contains(&method_rid));
+        owned_by_a_class
+            && self
+                .module
+                .tables
+                .method_defs
+                .get((method_rid as usize).wrapping_sub(1))
+                .is_some_and(|method| !method.is_static)
+    }
+
     /// The method RID implementing `name` on a typed instance (most-derived
     /// override), or `None` when the object is not a typed instance or has no
     /// such method.
@@ -328,6 +352,19 @@ impl Interp<'_> {
                     }
                     other => other.clone(),
                 };
+                // A string-typed slot cannot hold another value: coerce with
+                // ECMAScript ToString (`undefined` becomes the empty string).
+                let value = if kind == crate::value::FIELD_STRING && !matches!(value, Value::Str(_)) {
+                    match value {
+                        Value::Void => Value::Str("".into()),
+                        other => match self.dyn_to_string(&other) {
+                            Ok(text) => Value::Str(text.as_str().into()),
+                            Err(_) => Value::Str("".into()),
+                        },
+                    }
+                } else {
+                    value
+                };
                 zun_gc::with_current_heap_mut(|heap| {
                     crate::value::store_field(kind, object, slot, &value, heap);
                 });
@@ -339,5 +376,29 @@ impl Interp<'_> {
             current = base.rid();
         }
         false
+    }
+}
+
+impl Interp<'_> {
+    /// Run the `set <name>` accessor a typed class instance declares (searching
+    /// base classes too) with `value`, the way a dynamic write must: a declared
+    /// accessor takes the assignment, never an expando shadowing it. `Ok(false)`
+    /// when the instance declares no such setter.
+    pub(crate) fn instance_member_setter_call(
+        &mut self,
+        object: zun_gc::Obj,
+        name: &str,
+        value: &Value,
+    ) -> Result<bool, RunError> {
+        let Some(rid) = self.instance_method_rid(object, &format!("set_{name}")) else {
+            return Ok(false);
+        };
+        let value = match value {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                .unwrap_or(Value::Void),
+            other => other.clone(),
+        };
+        self.call(rid, vec![Value::Object(object), value], None)?;
+        Ok(true)
     }
 }

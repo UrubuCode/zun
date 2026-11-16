@@ -9,6 +9,10 @@ impl Checker<'_> {
         new: hir::Expr,
         span: Span,
     ) -> hir::Expr {
+        // A constructor that may return another object already yields `any`.
+        if new.ty == Ty::Any {
+            return new;
+        }
         if self.hooked_classes.contains(&class_idx) {
             if let Some((init_id, _)) = zun_natives::resolve("collections", "classInstanceInit") {
                 let boxed = hir::Expr {
@@ -365,6 +369,16 @@ impl Checker<'_> {
             defaults.push(value);
         }
 
+        // A constructor that can `return <expr>` hands back a possibly different
+        // object, so the `new` expression is dynamic (`any`) and carries a scratch
+        // local for the swap.
+        let result_slot = (self.signatures[ctor as usize].return_ty == Ty::Any)
+            .then(|| self.synthetic_local(cx, Ty::Any).0);
+        let new_ty = if result_slot.is_some() {
+            Ty::Any
+        } else {
+            Ty::Instance(class_idx)
+        };
         let (param_tys, optional_count, rest_param, sig_name) = {
             let sig = &self.signatures[ctor as usize];
             (
@@ -426,8 +440,9 @@ impl Checker<'_> {
                     defaults,
                     func: ctor,
                     args: call_args,
+                    result_slot,
                 },
-                ty: Ty::Instance(class_idx),
+                ty: new_ty,
                 span,
             };
         }
@@ -499,8 +514,9 @@ impl Checker<'_> {
                 defaults,
                 func: ctor,
                 args: call_args,
+                result_slot,
             },
-            ty: Ty::Instance(class_idx),
+            ty: new_ty,
             span,
         };
         for extra in extra_args {
@@ -549,6 +565,20 @@ impl Checker<'_> {
                 span,
             },
         };
+        // A message whose static type is not `string` follows JS `ToString` (`undefined`
+        // means no message) instead of an unchecked unbox to `string`.
+        if message.ty != Ty::String && !message.ty.is_error() {
+            if let Some(func) = self.by_name.get("__zunErrorMessage").copied() {
+                message = hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        func,
+                        args: vec![Self::box_to_any(message)],
+                    },
+                    ty: Ty::String,
+                    span,
+                };
+            }
+        }
         coerce_numeric_literal(&mut message, Ty::String);
         if !message.ty.is_error() && !self.is_assignable(message.ty, Ty::String) {
             self.error(message.span, format!("`{name}` message must be a string"));

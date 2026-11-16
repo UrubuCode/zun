@@ -288,6 +288,12 @@ impl Checker<'_> {
             body
         };
         let hidden_receiver = u16::from(this_class.is_some() || self.receiver_funcs.contains(&(index as u32)));
+        // The implicit `arguments` object is built ahead of the default-value
+        // prologue (see `emit_arguments_binding` in `zun_ilgen`), so a default
+        // initializer sees it: re-expose the body-scope binding to them.
+        if let Some(slot) = self.injected_arguments_slot(&body) {
+            cx.scopes[0].insert("arguments".to_string(), slot);
+        }
         let defaults = f
             .params
             .iter()
@@ -342,6 +348,21 @@ impl Checker<'_> {
             }),
             body,
         }
+    }
+
+    /// The local slot of the implicit `arguments` binding at the head of a
+    /// checked body (the `argumentsObject` call the adapter's injected `let`
+    /// lowers to), if the function has one.
+    pub(crate) fn injected_arguments_slot(&self, body: &[hir::Stmt]) -> Option<hir::LocalSlot> {
+        let (arguments_id, _) = zun_natives::resolve("collections", "argumentsObject")?;
+        body.iter().find_map(|statement| match statement {
+            hir::Stmt::Let { slot, init } | hir::Stmt::BoxedLet { slot, init }
+                if matches!(&init.kind, hir::ExprKind::CallBuiltin { id, .. } if *id == arguments_id) =>
+            {
+                Some(*slot)
+            }
+            _ => None,
+        })
     }
 
     /// A collision-free hidden local name (contains a space, which no source

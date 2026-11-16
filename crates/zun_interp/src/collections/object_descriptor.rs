@@ -6,6 +6,22 @@
 use super::*;
 
 impl<'a> Interp<'a> {
+    /// Whether a realm class descriptor stands for an ECMAScript namespace object
+    /// (`JSON`, `Atomics`) that the prelude models as a class of statics.
+    fn descriptor_is_namespace(&self, token: u32) -> bool {
+        if token & zun_natives::USER_CLASS_FLAG == 0 {
+            return false;
+        }
+        let rid = (token & !zun_natives::USER_CLASS_FLAG) as usize;
+        self.module
+            .tables
+            .type_defs
+            .get(rid.wrapping_sub(1))
+            .is_some_and(|def| {
+                zun_natives::NAMESPACE_CLASSES.contains(&self.module.strings.get(def.name))
+            })
+    }
+
     #[allow(clippy::redundant_guards)] // guard reads clearer than the equivalent pattern
     pub(super) fn col_object_descriptor(
         &mut self,
@@ -228,6 +244,7 @@ impl<'a> Interp<'a> {
                             heap.dynamic_get_symbol(obj, symbol).is_some()
                                 || heap.dynamic_get_symbol_function(obj, symbol).is_some()
                                 || heap.dynamic_symbol_getter(obj, symbol).is_some()
+                    || heap.dynamic_symbol_setter(obj, symbol).is_some()
                         });
                         return Ok(Value::Bool(has));
                     }
@@ -238,6 +255,8 @@ impl<'a> Interp<'a> {
                     zun_gc::with_current_heap(|heap| {
                         heap.dynamic_has(obj, &key)
                             || heap.dynamic_get_function(obj, &key).is_some()
+                            || heap.dynamic_accessor_getter(obj, &key).is_some()
+                            || heap.dynamic_accessor_setter(obj, &key).is_some()
                     })
                 } else if key == "length"
                     && zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some())
@@ -257,24 +276,7 @@ impl<'a> Interp<'a> {
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let target =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let prototype_addr = prototype.addr() as usize;
-                let mut current = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(target));
-                let mut found = false;
-                while let Some(link) = current {
-                    match link.as_object() {
-                        Some(addr) if addr == prototype_addr => {
-                            found = true;
-                            break;
-                        }
-                        Some(addr) => {
-                            let next = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
-                            current =
-                                zun_gc::with_current_heap(|heap| heap.dynamic_prototype(next));
-                        }
-                        None => break,
-                    }
-                }
-                Ok(Value::Bool(found))
+                Ok(Value::Bool(self.proto_chain_contains(target, prototype)?))
             }
             "objectDefineProperty" | "reflectDefineProperty" => {
                 let strict = name == "objectDefineProperty";
@@ -540,6 +542,10 @@ impl<'a> Interp<'a> {
                         if let Some(d) = self.builtin_ctor_own_descriptor(token, &key) {
                             return Ok(Value::Object(d));
                         }
+                        // A built-in constructor has no other own string-keyed property.
+                        if token & zun_natives::USER_CLASS_FLAG == 0 {
+                            return Ok(Value::Void);
+                        }
                     }
                 }
                 // A built-in constructor owns an accessor `[Symbol.species]`
@@ -728,7 +734,19 @@ impl<'a> Interp<'a> {
             "objectGetOwnPropertyNames" => {
                 if let Some(Value::Any(any)) = args.first().and_then(|a| unbox_arg(a).ok()) {
                     if let Some(rid) = any.as_class_descriptor().and_then(|t| self.user_class_rid(t)) {
-                        let names = self.class_own_names(rid);
+                        let mut names = self.class_own_names(rid);
+                        if let Some(bag) = any
+                            .as_class_descriptor()
+                            .and_then(Self::class_expando_peek)
+                        {
+                            for key in zun_gc::with_current_heap(|heap| heap.dynamic_keys(bag))
+                                .unwrap_or_default()
+                            {
+                                if !names.contains(&key) {
+                                    names.push(key);
+                                }
+                            }
+                        }
                         let array = zun_gc::with_current_heap_mut(|heap| {
                             let array = heap.alloc_array(names.len());
                             for (index, name) in names.iter().enumerate() {
@@ -749,7 +767,10 @@ impl<'a> Interp<'a> {
                         let mut statics = self.builtin_static_names(token);
                         statics.extend(self.builtin_constant_names(token));
                         if !statics.is_empty() {
-                            let mut names = vec!["length", "name", "prototype"];
+                            let mut names = vec!["length", "name"];
+                            if self.builtin_ctor_has_prototype(token) {
+                                names.push("prototype");
+                            }
                             names.extend(statics);
                             let array = zun_gc::with_current_heap_mut(|heap| {
                                 let array = heap.alloc_array(names.len());
@@ -872,6 +893,24 @@ impl<'a> Interp<'a> {
                 // `Object.getOwnPropertySymbols(obj)` — an array of the object's
                 // own symbol keys (as `Any` symbol values), in insertion-stable
                 // id order. A non-dynamic/typed object has no symbol keys.
+                // A class constructor value is not a heap object: its symbol
+                // statics are not modelled as own properties, so it reports none.
+                if let Ok(Value::Any(any)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                    if let Some(token) = any.as_class_descriptor() {
+                        // Only symbols a script defined on the class value are modelled.
+                        let symbols = Self::class_expando_peek(token)
+                            .map(|bag| zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(bag)))
+                            .unwrap_or_default();
+                        let array = zun_gc::with_current_heap_mut(|heap| {
+                            let array = heap.alloc_array(symbols.len());
+                            for (index, symbol) in symbols.iter().enumerate() {
+                                let _ = heap.array_set(array, index, zun_core::Any::symbol(*symbol));
+                            }
+                            array
+                        });
+                        return Ok(Value::Object(array));
+                    }
+                }
                 let obj =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(obj));
@@ -1048,7 +1087,16 @@ impl<'a> Interp<'a> {
                         zun_core::AnyTag::String => "string",
                         zun_core::AnyTag::Symbol => "symbol",
                         // A realm class descriptor is a constructor value.
-                        zun_core::AnyTag::ClassDescriptor => "function",
+                        // (except an ECMAScript namespace the prelude models as a
+                        // class: `JSON`, `Atomics` are plain objects).
+                        zun_core::AnyTag::ClassDescriptor => {
+                            if self.descriptor_is_namespace(any.as_class_descriptor().unwrap_or(0))
+                            {
+                                "object"
+                            } else {
+                                "function"
+                            }
+                        }
                         zun_core::AnyTag::Void => "undefined",
                         zun_core::AnyTag::Null => "object",
                         zun_core::AnyTag::Object => match any.as_object() {
@@ -1074,19 +1122,11 @@ impl<'a> Interp<'a> {
                     Value::Function(_) => "Function".into(),
                     Value::Any(a) if a.as_symbol().is_some() => "Symbol".into(),
                     Value::Object(obj) => {
-                        let obj = *obj;
-                        let custom = zun_gc::with_current_heap(|heap| {
-                            heap.dynamic_get_symbol(
-                                obj,
-                                zun_core::WellKnownSymbol::ToStringTag.id(),
-                            )
-                            .and_then(|any| {
-                                match Value::unbox_any(any, heap) {
-                                    Some(Value::Str(text)) => Some(text.to_string()),
-                                    _ => None,
-                                }
-                            })
-                        });
+                        // The tag read can run a user getter, which can move the
+                        // object: read its address back afterwards.
+                        zun_gc::root!(held = *obj);
+                        let custom = self.string_tag_of(held.get())?;
+                        let obj = held.get();
                         let class_tag = self
                             .module
                             .tables
@@ -1096,10 +1136,21 @@ impl<'a> Interp<'a> {
                             .filter(|name| *name == "__AsyncGenerator")
                             .map(|_| "AsyncGenerator".to_string())
                             .or_else(|| {
-                                (!zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                (!zun_gc::with_current_heap(|heap| {
+                                    heap.is_dynamic_object(obj)
+                                        || heap.promise_state(obj).is_some()
+                                        || heap.bigint_value(obj).is_some()
+                                })
                                     && obj.type_rid() != 0
                                     && self.is_error_instance(obj))
                                 .then(|| "Error".to_string())
+                            })
+                            // A `Date` instance (a prelude class) carries the Date brand.
+                            .or_else(|| {
+                                (!zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                    && obj.type_rid() != 0
+                                    && self.class_chain_has_name(obj.type_rid(), "Date"))
+                                .then(|| "Date".to_string())
                             })
                             // A Boolean/Number/String object, or the constructor's own
                             // `prototype` (itself such an object), carries that brand.
@@ -1183,7 +1234,24 @@ impl<'a> Interp<'a> {
                     {
                         false
                     }
-                    Some(obj) => self.types.is_assignable(obj.type_rid(), class_rid),
+                    // A typed instance answers through its prototype chain, so a
+                    // relinked class prototype (`Object.setPrototypeOf(C.prototype, ..)`)
+                    // changes the answer; typed code that statically knows the
+                    // class still folds at compile time.
+                    Some(obj) if self.instance_class_prototype(obj).is_some() => {
+                        let target = self.class_prototype_object(class_rid);
+                        self.proto_chain_contains(obj, target)?
+                    }
+                    // A dynamic object (`Object.create(C.prototype)`) is an instance when the
+                    // class prototype is on its chain.
+                    Some(obj) => {
+                        self.types.is_assignable(obj.type_rid(), class_rid)
+                            || zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                && {
+                                    let target = self.class_prototype_object(class_rid);
+                                    self.proto_chain_contains(obj, target)?
+                                }
+                    }
                     None => false,
                 };
                 Ok(Value::Bool(found))

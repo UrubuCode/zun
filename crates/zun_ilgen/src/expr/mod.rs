@@ -146,7 +146,8 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
                 defaults,
                 func,
                 args,
-            } => self.lower_new_with_constructor(class, defaults, func, args),
+                result_slot,
+            } => self.lower_new_with_constructor(class, defaults, func, args, *result_slot),
             ExprKind::ArrayNew { length } => {
                 self.expr(length);
                 self.emit(Instruction::simple(Opcode::NewArray));

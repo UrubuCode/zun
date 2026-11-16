@@ -309,6 +309,29 @@ impl Heap {
             .get(&(object.addr() as usize))
             .and_then(|properties| properties.get_symbol_getter(symbol))
     }
+    pub fn dynamic_symbol_setter(
+        &self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Option<zun_core::FunctionHandle> {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .and_then(|properties| properties.get_symbol_setter(symbol))
+    }
+    pub fn dynamic_set_symbol_setter(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        function: zun_core::FunctionHandle,
+    ) {
+        self.ensure_dynamic_entry(object);
+        if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            properties.set_symbol_setter(symbol, function);
+        }
+        if let Some(environment) = function.environment() {
+            self.write_barrier(object, environment as u64);
+        }
+    }
     pub fn dynamic_set_symbol_getter(
         &mut self,
         object: Obj,
@@ -376,6 +399,65 @@ impl Heap {
             self.write_barrier(object, environment as u64);
         }
         result
+    }
+    /// Install a built-in or class method under a symbol key: writable and
+    /// configurable, not enumerable (`Array.prototype[Symbol.iterator]`,
+    /// `class C { [Symbol.iterator]() {} }`).
+    pub fn dynamic_set_symbol_method(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        function: zun_core::FunctionHandle,
+    ) -> Option<zun_core::FunctionHandle> {
+        let result = self
+            .dynamic_objects
+            .get_mut(&(object.addr() as usize))?
+            .set_symbol_method(symbol, function);
+        if let Some(environment) = function.environment() {
+            self.write_barrier(object, environment as u64);
+        }
+        result
+    }
+    /// Set the writable / configurable attributes of an existing own symbol key.
+    pub fn dynamic_set_symbol_attributes(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        writable: Option<bool>,
+        configurable: Option<bool>,
+    ) {
+        if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            if let Some(writable) = writable {
+                properties.set_symbol_writable(symbol, writable);
+            }
+            if let Some(configurable) = configurable {
+                properties.set_symbol_configurable(symbol, configurable);
+            }
+        }
+    }
+    /// Set the enumerable attribute of an existing own symbol key.
+    pub fn dynamic_set_symbol_enumerable(
+        &mut self,
+        object: Obj,
+        symbol: zun_core::SymbolId,
+        enumerable: bool,
+    ) {
+        if let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) {
+            properties.set_symbol_enumerable(symbol, enumerable);
+        }
+    }
+    /// Whether an own symbol key is configurable.
+    pub fn dynamic_is_symbol_configurable(&self, object: Obj, symbol: zun_core::SymbolId) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_none_or(|p| p.is_symbol_configurable(symbol))
+    }
+    /// Whether `symbol` names an own property of any kind (value, function slot
+    /// or accessor).
+    pub fn dynamic_has_symbol_key(&self, object: Obj, symbol: zun_core::SymbolId) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|p| p.has_symbol_key(symbol))
     }
     pub fn dynamic_set_function(
         &mut self,

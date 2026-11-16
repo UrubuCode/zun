@@ -311,6 +311,21 @@ impl<'a> Interp<'a> {
                 });
                 Ok(value)
             }
+            "arrayFromArgumentList" => {
+                // An argument list must be an object: a string is array-like for
+                // the callers of `arrayFromArrayLike`, but not here.
+                let primitive = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other.clone(),
+                };
+                if !matches!(primitive, Value::Object(_)) {
+                    return Err(RunError::Native(
+                        "TypeError: CreateListFromArrayLike called on non-object".into(),
+                    ));
+                }
+                self.col_array_construct("arrayFromArrayLike", args)
+            }
             "arrayFromArrayLike" => {
                 // CreateListFromArrayLike: `length` then index reads, never iteration.
                 let concrete = match args.first().ok_or(RunError::BadToken)? {

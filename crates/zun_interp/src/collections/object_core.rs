@@ -326,7 +326,10 @@ impl<'a> Interp<'a> {
                                 heap.dynamic_set_function(target, name, handle);
                             }
                             for (symbol, handle) in symbolic {
-                                heap.dynamic_set_symbol_function(target, symbol, handle);
+                                // Only an enumerable own symbol key is copied.
+                                if heap.dynamic_is_symbol_enumerable(source, symbol) {
+                                    heap.dynamic_set_symbol_function(target, symbol, handle);
+                                }
                             }
                         });
                     }
@@ -473,7 +476,30 @@ impl<'a> Interp<'a> {
                 let readonly = matches!(args.get(2), Some(Value::Bool(true)));
                 zun_gc::with_current_heap_mut(|heap| {
                     let global = heap.global_object();
-                    heap.dynamic_define(global, name.clone(), value, !readonly);
+                    // Storing to a binding the realm already holds (a built-in
+                    // global the program mirrors, such as a prelude function
+                    // it reassigns) is an assignment: the property keeps its
+                    // enumerable and configurable attributes rather than being
+                    // redefined as an ordinary enumerable one.
+                    match heap.dynamic_descriptor(global, &name) {
+                        Some(zun_core::PropertyDescriptor::Data {
+                            enumerable,
+                            configurable,
+                            ..
+                        }) => {
+                            heap.dynamic_define_data(
+                                global,
+                                name.clone(),
+                                value,
+                                !readonly,
+                                enumerable,
+                                configurable,
+                            );
+                        }
+                        _ => {
+                            heap.dynamic_define(global, name.clone(), value, !readonly);
+                        }
+                    }
                 });
                 if name == "Iterator" {
                     if let Some(address) = value.as_object() {
@@ -485,16 +511,33 @@ impl<'a> Interp<'a> {
                 Ok(Value::Any(value))
             }
             "globalDefineBuiltin" => {
-                // A built-in global property: non-enumerable, and either an
-                // ordinary writable/configurable binding or (`constant`) a
-                // frozen value property such as `undefined`.
+                // A built-in global property: non-enumerable unless the fourth
+                // argument says otherwise, and either an ordinary
+                // writable/configurable binding or (`constant`) a frozen value
+                // property such as `undefined`.
                 let name = match args.first().ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
+                let constant = matches!(args.get(2), Some(Value::Bool(true)));
+                let enumerable = matches!(args.get(3), Some(Value::Bool(true)));
+                // A function value rides the global object's function slot (as
+                // in `globalSet`); it is writable and configurable like any
+                // other built-in global, and enumerable only where Node says so.
+                if let Some(Value::Function(handle)) = args.get(1) {
+                    let handle = *handle;
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let global = heap.global_object();
+                        if enumerable {
+                            heap.dynamic_set_function(global, name, handle);
+                        } else {
+                            heap.dynamic_set_method(global, name, handle);
+                        }
+                    });
+                    return Ok(Value::Void);
+                }
                 let value =
                     any(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let constant = matches!(args.get(2), Some(Value::Bool(true)));
                 zun_gc::with_current_heap_mut(|heap| {
                     let global = heap.global_object();
                     heap.dynamic_define_data(
@@ -502,7 +545,7 @@ impl<'a> Interp<'a> {
                         name.clone(),
                         value,
                         !constant,
-                        false,
+                        enumerable,
                         !constant,
                     );
                 });
@@ -511,6 +554,14 @@ impl<'a> Interp<'a> {
                         let namespace = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
                         Self::install_iterator_global(namespace);
                     }
+                }
+                // `Object.prototype.constructor` is the realm's `Object` (a class
+                // descriptor value): writable, configurable, not enumerable.
+                if name == "Object" && value.as_class_descriptor().is_some() {
+                    let proto = Self::object_prototype_singleton();
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_define_data(proto, "constructor", value, true, false, true);
+                    });
                 }
                 // `Math` and `Reflect` carry their members as function values.
                 if matches!(name.as_str(), "Math" | "Reflect") {
@@ -707,9 +758,7 @@ impl<'a> Interp<'a> {
                             });
                         if let Some(base) = base {
                             if self.user_class_rid(zun_natives::USER_CLASS_FLAG | base).is_some() {
-                                return Ok(Value::Any(zun_core::Any::class_descriptor(
-                                    zun_natives::USER_CLASS_FLAG | base,
-                                )));
+                                return Ok(Value::Any(self.canonical_class_descriptor(base)));
                             }
                         }
                         // A base-less class constructor inherits `Function.prototype`.
@@ -729,6 +778,21 @@ impl<'a> Interp<'a> {
                             {
                                 let ctor = Self::typed_array_intrinsic_singleton();
                                 return Ok(Value::Any(zun_core::Any::object(ctor.addr() as usize)));
+                            }
+                        }
+                    }
+                    // A built-in `Error` subclass constructor inherits `Error`.
+                    if let Value::Any(any) = &first {
+                        if let Some(token) = any.as_class_descriptor() {
+                            let error_sub = zun_gc::with_current_heap_mut(|heap| {
+                                crate::intrinsic_meta::builtin_class_name_in(heap, token)
+                            })
+                            .filter(|name| {
+                                name != "Error" && crate::intrinsic_meta::is_error_family(name)
+                            })
+                            .and_then(|_| self.type_rid_of("Error"));
+                            if let Some(error_rid) = error_sub {
+                                return Ok(Value::Any(self.canonical_class_descriptor(error_rid)));
                             }
                         }
                     }
@@ -907,6 +971,45 @@ impl<'a> Interp<'a> {
             }
             "objectSetPrototypeOf" | "reflectSetPrototypeOf" => {
                 let reflect = name == "reflectSetPrototypeOf";
+                if !reflect {
+                    // `Object.setPrototypeOf(O, proto)`: a nullish `O` and a `proto`
+                    // that is neither an object nor null are TypeErrors; a primitive
+                    // `O` is returned unchanged (RequireObjectCoercible, then no-op).
+                    let target = unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                        .unwrap_or(Value::Void);
+                    let proto = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                        .unwrap_or(Value::Void);
+                    if matches!(target, Value::Void | Value::Null) {
+                        return Err(self.proto_type_error(
+                            "Object.setPrototypeOf called on null or undefined",
+                        ));
+                    }
+                    let valid_proto = match &proto {
+                        Value::Null | Value::Object(_) | Value::Function(_) => true,
+                        Value::Any(any) => {
+                            matches!(
+                                any.tag(),
+                                zun_core::AnyTag::Null | zun_core::AnyTag::Object
+                            ) || any.as_class_descriptor().is_some()
+                        }
+                        _ => false,
+                    };
+                    if !valid_proto {
+                        return Err(self.proto_type_error(
+                            "Object prototype may only be an Object or null",
+                        ));
+                    }
+                    let target_is_object = match &target {
+                        Value::Object(_) | Value::Function(_) => true,
+                        Value::Any(any) => {
+                            any.as_object().is_some() || any.as_class_descriptor().is_some()
+                        }
+                        _ => false,
+                    };
+                    if !target_is_object {
+                        return Ok(args[0].clone());
+                    }
+                }
                 // Re-parenting the static side of a user class to another class:
                 // recorded on the class's expando bag and consulted by static
                 // lookup.
@@ -949,10 +1052,62 @@ impl<'a> Interp<'a> {
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
                 };
+                // A typed instance keeps its relinked prototype in its expando
+                // bag; an explicit `Object.prototype` link must stay explicit
+                // there, because the default link would fall back to the class
+                // prototype.
+                if self.instance_class_prototype(obj).is_some() {
+                    if let Some(link) = prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?)
+                    {
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.ensure_instance_bag(obj);
+                            heap.dynamic_set_prototype(obj, Some(link));
+                        });
+                        return Ok(if reflect {
+                            Value::Bool(true)
+                        } else {
+                            Value::Object(obj)
+                        });
+                    }
+                }
                 let prototype = Self::normalize_prototype(
                     prototype_from_arg(args.get(1).ok_or(RunError::BadToken)?),
                     args.get(1).ok_or(RunError::BadToken)?,
                 );
+                // OrdinarySetPrototypeOf: an unchanged link always succeeds; a
+                // changed one is refused on a non-extensible object or when it
+                // would close a prototype cycle.
+                let root = Self::object_prototype_singleton();
+                let refusal = zun_gc::with_current_heap(|heap| {
+                    if !heap.is_dynamic_object(obj) {
+                        return None;
+                    }
+                    let current = heap
+                        .dynamic_prototype(obj)
+                        .filter(|link| link.as_object() != Some(root.addr() as usize));
+                    if current == prototype {
+                        return None;
+                    }
+                    if !heap.dynamic_is_extensible(obj) {
+                        return Some("#<Object> is not extensible");
+                    }
+                    let mut next = prototype.and_then(|link| link.as_object());
+                    for _ in 0..100_000 {
+                        let Some(address) = next else { break };
+                        if address == obj.addr() as usize {
+                            return Some("Cyclic __proto__ value");
+                        }
+                        let step = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                        next = heap.dynamic_prototype(step).and_then(|link| link.as_object());
+                    }
+                    None
+                });
+                if let Some(message) = refusal {
+                    if reflect {
+                        return Ok(Value::Bool(false));
+                    }
+                    return Err(RunError::Native(format!("TypeError: {message}")));
+                }
                 zun_gc::with_current_heap_mut(|heap| heap.dynamic_set_prototype(obj, prototype));
                 if reflect {
                     return Ok(Value::Bool(true));

@@ -303,7 +303,8 @@ impl Checker<'_> {
         // `+` with an object/any operand: ECMAScript ToPrimitive(default)
         // on both sides, then string concat or numeric add, at run time.
         if let ast::BinaryOp::Add = op {
-            let objectish = |t: Ty| matches!(t, Ty::Any | Ty::DynamicObject | Ty::Instance(_));
+            let objectish =
+                |t: Ty| matches!(t, Ty::Any | Ty::DynamicObject | Ty::Instance(_) | Ty::Proxy);
             let operable = |t: Ty| {
                 objectish(t)
                     || t == Ty::String

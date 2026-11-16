@@ -101,7 +101,32 @@ macro_rules! int_from_numeric {
     };
 }
 
-int_from_numeric!(i8, i16, i32, i64, u8, u16, u32, u64);
+int_from_numeric!(i8, i16, i32, u8, u16, u32);
+
+/// The 64-bit kinds also take a BigInt (a `BigInt64Array`/`BigUint64Array` source
+/// element), wrapped modulo 2^64 as `BigInt.asUintN(64, v)` does.
+macro_rules! wide_from_numeric {
+    ($($repr:ty),+ $(,)?) => {
+        $(
+            impl FromNumeric for $repr {
+                fn from_numeric(value: &Value) -> Option<Self> {
+                    match value {
+                        Value::Int(value, _) => Some(*value as $repr),
+                        Value::Float(value, _) => Some(*value as $repr),
+                        Value::Object(object) => zun_gc::with_current_heap(|heap| {
+                            heap.bigint_value(*object)
+                                .and_then(|big| big.as_uint_n(64).to_u64())
+                        })
+                        .map(|bits| bits as $repr),
+                        _ => None,
+                    }
+                }
+            }
+        )+
+    };
+}
+
+wide_from_numeric!(i64, u64);
 
 impl FromNumeric for f32 {
     fn from_numeric(value: &Value) -> Option<Self> {

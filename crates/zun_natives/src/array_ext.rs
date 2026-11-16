@@ -353,5 +353,14 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Array,
             imp: unavailable,
         },
+        // `CreateListFromArrayLike` for an argument list (`Reflect.apply`,
+        // `Reflect.construct`, `Function.prototype.apply`): like
+        // `arrayFromArrayLike`, but a primitive (a string included) is a TypeError.
+        NativeFn {
+            name: "arrayFromArgumentList",
+            params: &[Opaque],
+            ret: Array,
+            imp: unavailable,
+        },
     ],
 };

@@ -522,6 +522,9 @@ impl<'a> Interp<'a> {
         {
             return Ok(Some(Value::Str(text.into())));
         }
+        if zun_gc::with_current_heap(|heap| heap.proxy_target(obj).is_some()) {
+            return self.proxy_ordinary_to_primitive(obj, hint);
+        }
         let tp = zun_core::WellKnownSymbol::ToPrimitive.id();
         let handle = zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(obj, tp))
             .or_else(|| {
@@ -597,5 +600,124 @@ impl<'a> Interp<'a> {
             ));
         }
         Ok(None)
+    }
+
+    /// ToPrimitive over a Proxy: `[Symbol.toPrimitive]`, then `valueOf` /
+    /// `toString`, are each read through the handler's `get` trap (symbol keys
+    /// reach the trap as symbol values), and the chosen method is called with
+    /// the proxy as `this`. A trap that throws propagates.
+    fn proxy_ordinary_to_primitive(
+        &mut self,
+        proxy: zun_gc::Obj,
+        hint: &str,
+    ) -> Result<Option<Value>, RunError> {
+        // Every step below runs user code that can relocate the proxy.
+        zun_gc::root!(proxy = proxy);
+        let tp = zun_core::WellKnownSymbol::ToPrimitive.id();
+        let method = self.proxy_get_symbol(proxy.get(), tp)?;
+        match method {
+            Value::Void | Value::Null => {}
+            Value::Function(handle) => {
+                let hint_value = zun_gc::with_current_heap_mut(|heap| {
+                    Value::Any(zun_core::Any::string(heap.intern_string(hint)))
+                });
+                let call_args = self.with_this_arg(handle, proxy.get(), vec![hint_value]);
+                let result = self.invoke_function_value(handle, call_args)?;
+                let result = unbox_arg(&result)?;
+                if matches!(result, Value::Object(_) | Value::Function(_)) {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot convert object to primitive value".into(),
+                    ));
+                }
+                return Ok(Some(result));
+            }
+            _ => {
+                return Err(RunError::Native(
+                    "TypeError: Symbol(Symbol.toPrimitive) is not a function".into(),
+                ));
+            }
+        }
+        let order: [&str; 2] = if hint == "string" {
+            ["toString", "valueOf"]
+        } else {
+            ["valueOf", "toString"]
+        };
+        let mut rejected = false;
+        for name in order {
+            let method = self.proxy_dynamic_get(proxy.get(), name)?;
+            if let Value::Function(handle) = unbox_arg(&method)? {
+                let call_args = self.with_this_arg(handle, proxy.get(), Vec::new());
+                let result = self.invoke_function_value(handle, call_args)?;
+                let result = unbox_arg(&result)?;
+                if !matches!(result, Value::Object(_) | Value::Function(_)) {
+                    return Ok(Some(result));
+                }
+                rejected = true;
+            } else if name == "toString" {
+                // No own or target `toString`: the inherited one decides. An array
+                // target joins its elements (`Array.prototype.toString`); anything
+                // else is `Object.prototype.toString`, which always yields a
+                // primitive and so ends the search (it never falls to `valueOf`).
+                let mut base = proxy.get();
+                while let Some(inner) = zun_gc::with_current_heap(|heap| heap.proxy_target(base)) {
+                    base = inner;
+                }
+                if let Some(text) = self.array_join_dyn(base, ",")? {
+                    return Ok(Some(Value::Str(text.into())));
+                }
+                return Ok(None);
+            }
+        }
+        if rejected {
+            return Err(RunError::Native(
+                "TypeError: Cannot convert object to primitive value".into(),
+            ));
+        }
+        Ok(None)
+    }
+
+    /// `proxy[symbol]`: the handler's `get` trap called as `(target, symbol,
+    /// receiver)`, or the target's own symbol-keyed slot when there is no trap.
+    /// Answers the unboxed value (`Void` when absent).
+    fn proxy_get_symbol(
+        &mut self,
+        proxy: zun_gc::Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Result<Value, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+            return Err(self.revoked_proxy_error("get"));
+        }
+        let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+            return Err(RunError::BadToken);
+        };
+        if let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "get")) {
+            let handler =
+                zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
+            let args = vec![
+                Value::Object(target),
+                Value::Any(zun_core::Any::symbol(symbol)),
+                Value::Object(proxy),
+            ];
+            let result =
+                self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?;
+            return unbox_arg(&result);
+        }
+        if zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some()) {
+            return self.proxy_get_symbol(target, symbol);
+        }
+        if let Some(handle) =
+            zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(target, symbol))
+                .or_else(|| {
+                    self.class_symbol_methods
+                        .get(&(target.type_rid(), symbol.get()))
+                        .copied()
+                })
+        {
+            return Ok(Value::Function(handle));
+        }
+        match zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol(target, symbol)) {
+            Some(any) => unbox_arg(&Value::Any(any)),
+            None => Ok(Value::Void),
+        }
     }
 }

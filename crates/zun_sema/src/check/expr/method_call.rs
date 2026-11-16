@@ -107,6 +107,18 @@ impl Checker<'_> {
                 Err(_) => self.poison(span),
             };
         }
+        // A Symbol primitive has no class: its methods resolve by name through
+        // the same dynamic dispatch an `any` receiver reaches, which lands on
+        // the `Symbol.prototype` built-ins (`toString`, `valueOf`, ...).
+        if receiver.ty == Ty::Symbol {
+            return match self.mcall_view_dynamic_forced(cx, receiver, &mname, method, args, span) {
+                Ok(e) => e,
+                Err(receiver) => {
+                    self.error(receiver.span, "too many arguments in a Symbol method call");
+                    self.poison(span)
+                }
+            };
+        }
         self.check_method_call_tail(cx, receiver, mname, method, args, span)
     }
 

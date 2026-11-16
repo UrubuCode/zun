@@ -18,6 +18,10 @@ pub(super) fn convert_statement_list(
         prev_start = statements.len();
         match statement {
             Statement::EmptyStatement(_) | Statement::DebuggerStatement(_) => {}
+            // `declare var x: T;` is ambient: it types a name the host provides
+            // and creates no binding of its own, so reads fall through to the
+            // global object.
+            Statement::VariableDeclaration(declaration) if declaration.declare => {}
             Statement::VariableDeclaration(declaration) if declares_hoisted_var(declaration) => {
                 convert_hoisted_var_declaration(source, declaration, &mut statements)?;
             }

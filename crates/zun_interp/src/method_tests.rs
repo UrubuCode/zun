@@ -208,14 +208,19 @@ fn instanceof_dispatches_to_symbol_has_instance_on_dynamic_object() {
              }";
     assert!(!bool_of(selective));
 
-    // Without a `[Symbol.hasInstance]` method a dynamic object has no class
-    // identity, so the operand is never an instance.
+    // Without a `[Symbol.hasInstance]` method a dynamic object is not callable,
+    // so `instanceof` refuses it with a `TypeError` (as in ECMAScript).
     let bare = "function main(): boolean {\n\
                let c = dynamic_new();\n\
                let x: any = box_any(5);\n\
                return x instanceof c;\n\
              }";
-    assert!(!bool_of(bare));
+    let module = zun_compiler::compile(bare).expect("compile instanceof program");
+    let mut output = CaptureOutput::default();
+    assert!(matches!(
+        run(&module, &mut output),
+        Err(RunError::Thrown(_))
+    ));
 }
 
 #[test]
@@ -4461,4 +4466,65 @@ console.log(k.m.length, (K as any).s.length);
     let mut output = CaptureOutput::default();
     run(&module, &mut output).expect("run length workload");
     assert_eq!(output.lines, ["0 2 1", "1 2 1 1 0", "2 1"]);
+}
+
+/// `structuredClone` reads an accessor property by running its getter, which is
+/// user code. Here each getter allocates enough to trigger collections in the
+/// middle of the walk, while the walk holds a shared object it has already
+/// emitted, a cyclic reference, and a container it is still filling. If the
+/// walk kept raw addresses across the call, the identity checks below would
+/// fail (stale memo keys) or the heap would be corrupted.
+#[test]
+fn structured_clone_survives_collections_inside_getters() {
+    let program = r#"
+function churn(n: number): number {
+  const keep: any[] = [];
+  for (let i = 0; i < n; i++) {
+    keep.push({ i: i, a: [i, i + 1], s: "x" + i });
+  }
+  return keep.length;
+}
+function main(): string {
+  const shared: any = { tag: "shared" };
+  const o: any = {
+    first: shared,
+    get g() { churn(3000); return { deep: [1, 2, shared] }; },
+    last: shared,
+    arr: [shared, { get h() { churn(3000); return 5; } }, [shared]],
+  };
+  o.self = o;
+  const c: any = structuredClone(o);
+  return "" + (c.first === c.last) + "," + (c.g.deep[2] === c.first) + "," + c.g.deep.length
+    + "," + (c.arr[0] === c.first) + "," + c.arr[1].h + "," + (c.arr[2][0] === c.first)
+    + "," + (c.self === c) + "," + (c !== o) + "," + c.first.tag;
+}
+"#;
+    assert_eq!(
+        typeof_of(program),
+        "true,true,3,true,5,true,true,true,shared"
+    );
+}
+
+#[test]
+fn call_and_apply_do_not_shift_a_free_function_s_arguments() {
+    // A class instance method reached as `Class.prototype.m` takes its receiver
+    // as a hidden first argument, but a *free* function must not get one:
+    // handing it the receiver shifted every real argument one place, so
+    // `f.call(undefined, 1, 2)` arrived as `f(undefined, 1)`. A free function
+    // can own a virtual slot too, so the test for "takes a receiver" has to be
+    // ownership by a class, not slot presence. The class-method half of the
+    // behaviour is covered by the conformance suite.
+    let module = zun_compiler::compile(
+        "function main(): void {
+             const free: any = function (a: any, b: any) { console.log(a + \"|\" + b); };
+             free.call(undefined, 1, 2);
+             free.apply({ t: 1 }, [1, 2]);
+             const one: any = function (a: any) { console.log(a); };
+             one.call(undefined, 9);
+         }",
+    )
+    .expect("compile call/apply receiver workload");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run call/apply receiver workload");
+    assert_eq!(output.lines, vec!["1|2", "1|2", "9"]);
 }

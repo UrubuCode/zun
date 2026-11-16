@@ -194,6 +194,29 @@ pub(super) fn convert_call(
         Expression::StaticMemberExpression(member) => {
             convert_static_member_call(source, call, member, args)
         }
+        // `super[key](args)` calls the base class's member with the current
+        // `this`: `Object.getPrototypeOf(C.prototype)[key].call(this, args)`.
+        Expression::ComputedMemberExpression(member)
+            if !member.optional && matches!(member.object, Expression::Super(_)) =>
+        {
+            match super::super::class::super_home_object(span(member.span)) {
+                Some(home) => {
+                    let mut call_args = vec![Expr::Ident(crate::ast::synthetic_ident("this"))];
+                    call_args.extend(args);
+                    Ok(Expr::MethodCall {
+                        receiver: Box::new(Expr::Index {
+                            object: Box::new(home),
+                            index: Box::new(convert_expression(source, &member.expression)?),
+                            span: span(member.span),
+                        }),
+                        method: crate::ast::synthetic_ident("call"),
+                        args: call_args,
+                        span: span(call.span),
+                    })
+                }
+                None => Err("`super[key]` is only valid inside a method of a named class".into()),
+            }
+        }
         // `obj['name'](args)` with a plain identifier-shaped literal key is
         // the method call `obj.name(args)` (the name span skips the quotes).
         Expression::ComputedMemberExpression(member)

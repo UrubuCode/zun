@@ -26,6 +26,8 @@ mod function;
 mod promise;
 mod proxy;
 mod reflect;
+mod reflect_builtin;
+mod to_string_tag;
 mod regexp;
 mod string_num;
 
@@ -91,6 +93,12 @@ pub(super) fn weak_key(value: &Value) -> Option<zun_gc::Obj> {
         Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| {
             heap.function_cell(*handle)
         })),
+        // A class value is a legal weak key. It has no heap object of its own;
+        // its expando bag (anchored on the realm global, one per class) stands
+        // for it, so the key outlives every collection like the class does.
+        Value::Any(any) if any.as_class_descriptor().is_some() => {
+            any.as_class_descriptor().map(Interp::class_expando_bag)
+        }
         // An unregistered symbol (user-created or well-known) is a legal weak key.
         Value::Any(any) if any.as_symbol().is_some() => {
             let id = any.as_symbol()?;
@@ -231,6 +239,7 @@ impl<'a> Interp<'a> {
         if matches!(
             name,
             "reflectSet"
+                | "reflectSetReceiver"
                 | "reflectHas"
                 | "reflectDelete"
                 | "reflectOwnKeys"
@@ -427,7 +436,9 @@ impl<'a> Interp<'a> {
             "arrayHas" => self.col_misc(name, args),
             "reflectDelete" => self.col_reflect(name, args),
             "deleteStrict" => self.col_reflect(name, args),
-            "reflectSet" => self.col_reflect(name, args),
+            "reflectSet" | "reflectSetReceiver" | "reflectRequireObject" | "reflectGetReceiver" => {
+                self.col_reflect(name, args)
+            }
             "proxyNew" => self.col_proxy(name, args),
             "proxyGet" => self.col_proxy(name, args),
             "proxySet" => self.col_proxy(name, args),
@@ -446,7 +457,9 @@ impl<'a> Interp<'a> {
             "reflectConstruct" | "reflectConstructNew" => self.col_reflect(name, args),
             "proxyConstruct" => self.col_proxy(name, args),
             "applyDecorator" => self.col_class_decorator(name, args),
-            "classSetSymbolFunction" => self.col_class_decorator(name, args),
+            "classSetSymbolFunction" | "classSetSymbolGetter" => {
+                self.col_class_decorator(name, args)
+            }
             "classSetMethod" => self.col_class_decorator(name, args),
             "classSetFieldDefault" => self.col_class_decorator(name, args),
             "dynamicSetSymbolFunction" => self.col_class_decorator(name, args),
@@ -517,9 +530,11 @@ impl<'a> Interp<'a> {
                             if let Some(text) = self.array_join_dyn(obj, ",")? {
                                 Value::Str(text.into())
                             } else {
+                                // The fallback below reads the object again after managed code ran.
+                                zun_gc::root!(held = obj);
                                 match self.ordinary_to_primitive(obj, "default")? {
                                     Some(prim) => prim,
-                                    None => Value::Str("[object Object]".into()),
+                                    None => Value::Str(self.default_object_string(held.get())?.into()),
                                 }
                             }
                         }
@@ -590,7 +605,7 @@ impl<'a> Interp<'a> {
             "arrayLikeFill" => self.col_array_construct(name, args),
             "arrayLikeReverse" => self.col_array_construct(name, args),
             "arrayLikePush" | "arrayLikePop" => self.col_array_construct(name, args),
-            "arrayFromArrayLike" => self.col_array_construct(name, args),
+            "arrayFromArrayLike" | "arrayFromArgumentList" => self.col_array_construct(name, args),
             "destructOpen" => self.col_array_construct(name, args),
             "destructStep" => self.col_array_construct(name, args),
             "destructRest" => self.col_array_construct(name, args),
@@ -1014,6 +1029,12 @@ pub(crate) fn builtin_constructor_name(
         Some("RegExp")
     } else if heap.date_millis(obj).is_some() {
         Some("Date")
+    } else if let Some(kind) = heap.typed_array_element(obj) {
+        Some(kind.js_name())
+    } else if heap.buffer_len(obj).is_some() {
+        Some("ArrayBuffer")
+    } else if heap.data_view_buffer(obj).is_some() {
+        Some("DataView")
     } else if heap.is_dynamic_object(obj)
         && !heap.is_instance_bag(obj)
         && heap.dynamic_get(obj, "constructor").is_none()

@@ -667,3 +667,64 @@ class __BuiltinFinalizationRegistry {
         return this.inner.unregister(token);
     }
 }
+
+// `class X extends Iterator`: `Iterator` is a runtime object, not a constructor,
+// so a subclass derives from this wrapper. It owns no native value; `next()`
+// comes from the subclass, and every helper runs the built-in `Iterator.prototype`
+// implementation with the subclass instance as its receiver (the helpers are
+// generic over `next`). `new Iterator()` itself stays abstract.
+class __BuiltinIterator {
+    constructor() {}
+
+    map(mapper: any): any {
+        return (Iterator as any).prototype.map.call(this, mapper);
+    }
+
+    filter(predicate: any): any {
+        return (Iterator as any).prototype.filter.call(this, predicate);
+    }
+
+    take(limit: any): any {
+        return (Iterator as any).prototype.take.call(this, limit);
+    }
+
+    drop(limit: any): any {
+        return (Iterator as any).prototype.drop.call(this, limit);
+    }
+
+    flatMap(mapper: any): any {
+        return (Iterator as any).prototype.flatMap.call(this, mapper);
+    }
+
+    reduce(...args: any[]): any {
+        const proto: any = (Iterator as any).prototype;
+        if (args.length >= 2) {
+            return proto.reduce.call(this, args[0], args[1]);
+        }
+        return proto.reduce.call(this, args[0]);
+    }
+
+    toArray(): any {
+        return (Iterator as any).prototype.toArray.call(this);
+    }
+
+    forEach(callback: any): any {
+        return (Iterator as any).prototype.forEach.call(this, callback);
+    }
+
+    some(predicate: any): any {
+        return (Iterator as any).prototype.some.call(this, predicate);
+    }
+
+    every(predicate: any): any {
+        return (Iterator as any).prototype.every.call(this, predicate);
+    }
+
+    find(predicate: any): any {
+        return (Iterator as any).prototype.find.call(this, predicate);
+    }
+
+    [Symbol.iterator](): any {
+        return this;
+    }
+}

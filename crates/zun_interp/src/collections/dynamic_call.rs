@@ -349,6 +349,31 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // A function a script defined on the class value itself
+                // (`Object.defineProperty(Cls, "m", { value: fn })`, a computed
+                // static method): called with the class as `this`.
+                if let Value::Any(desc) = &receiver_concrete {
+                    if let Some(Value::Function(handle)) = desc.as_class_descriptor().and_then(|token| {
+                        self.class_expando_read(token, &Value::Str(member.as_ref().into()))
+                    }) {
+                        let call_values = args[2..]
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Any(any) => zun_gc::with_current_heap(|heap| {
+                                    Value::unbox_any(*any, heap)
+                                })
+                                .ok_or(RunError::BadToken),
+                                other => Ok(other.clone()),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let call_args =
+                            self.with_this_value(handle, receiver_concrete.clone(), call_values);
+                        let result = self.invoke_function_value(handle, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // A static method called through a built-in constructor value
                 // (`const O: any = Object; O.keys(x)`).
                 if let Value::Any(desc) = &receiver_concrete {
@@ -362,6 +387,43 @@ impl<'a> Interp<'a> {
                         let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                             .unwrap_or_else(zun_core::Any::void);
                         return Ok(Value::Any(boxed));
+                    }
+                }
+                // A built-in constructor value inherits `Function.prototype`
+                // (`Object.toString()`): the member
+                // resolves there and runs with the constructor as `this`.
+                let inherits_function_proto = member.as_ref() == "toString"
+                    && match &receiver_concrete {
+                    Value::Any(desc) => desc.as_class_descriptor().is_some(),
+                    Value::Function(ctor) => {
+                        self.coerce_ctor_name(*ctor).is_some()
+                            && self.coerce_ctor_static_kind(*ctor, &member).is_none()
+                    }
+                    _ => false,
+                };
+                {
+                    if inherits_function_proto {
+                        let method = Some(Self::function_prototype_singleton()).and_then(|proto| {
+                            zun_gc::with_current_heap(|heap| heap.dynamic_get_function(proto, &member))
+                        });
+                        if let Some(handle) = method {
+                            let call_values = args[2..]
+                                .iter()
+                                .map(|arg| match arg {
+                                    Value::Any(any) => {
+                                        zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                            .ok_or(RunError::BadToken)
+                                    }
+                                    other => Ok(other.clone()),
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let call_args =
+                                self.with_this_value(handle, receiver_concrete.clone(), call_values);
+                            let result = self.invoke_function_value(handle, call_args)?;
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                .unwrap_or_else(zun_core::Any::void);
+                            return Ok(Value::Any(boxed));
+                        }
                     }
                 }
                 // The same for `Number`, which reads as its coercion function
@@ -448,9 +510,14 @@ impl<'a> Interp<'a> {
                                 })
                                 .unwrap_or(false);
                         // A class instance method (`Class.prototype.m`) takes its
-                        // receiver as the implicit first argument.
+                        // receiver as the implicit first argument. This must test
+                        // for a method *owned by a class*: a free function can own
+                        // a virtual slot as well, and giving one the receiver
+                        // shifts every real argument one place, so
+                        // `f.call(undefined, 1, 2)` arrived as `f(undefined, 1)`.
                         let takes_this = takes_this
-                            || (!handle.is_bound() && self.is_class_instance_method(handle.method_rid()))
+                            || (!handle.is_bound()
+                                && self.method_rid_is_instance_method(handle.method_rid()))
                             || handle.builtin_method().is_some_and(|kind| kind >= 16);
                         if takes_this {
                             rest.insert(0, this_arg);
@@ -881,7 +948,12 @@ impl<'a> Interp<'a> {
                         method_args.push(Value::Object(namespace));
                         method_args.extend(call_args.iter().cloned());
                         let method_args = self.pack_rest_call_args(rid, method_args);
-                        let result = self.call(rid, method_args, None)?;
+                        // A generator method mints its iterator instead of running.
+                        let result = if self.method_contains_yield(rid) {
+                            self.create_generator(rid, &method_args)?
+                        } else {
+                            self.call(rid, method_args, None)?
+                        };
                         let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                             .unwrap_or_else(zun_core::Any::void);
                         return Ok(Value::Any(boxed));
@@ -889,10 +961,10 @@ impl<'a> Interp<'a> {
                     // A function stored on `Class.prototype` (or a base class's)
                     // at run time (`C.prototype[key] = fn`) is found by walking
                     // the class prototype chain; it runs with the instance as `this`.
-                    if self.instance_class_prototype(namespace).is_some() {
-                        let mut rid = namespace.type_rid();
-                        while rid >= 1 {
-                            let proto = self.class_prototype_object(rid);
+                    if let Some(first) = self.instance_class_prototype(namespace) {
+                        let mut current = Some(first);
+                        for _ in 0..256 {
+                            let Some(proto) = current else { break };
                             if let Some(handle) = zun_gc::with_current_heap(|heap| {
                                 heap.dynamic_get_function(proto, &member)
                             }) {
@@ -905,16 +977,13 @@ impl<'a> Interp<'a> {
                                         .unwrap_or_else(zun_core::Any::void);
                                 return Ok(Value::Any(boxed));
                             }
-                            rid = match self.module.tables.type_defs.get(rid as usize - 1) {
-                                Some(def)
-                                    if def.base.table()
-                                        == Some(zun_metadata::TableKind::TypeDef)
-                                        && !def.base.is_null() =>
-                                {
-                                    def.base.rid()
-                                }
-                                _ => 0,
-                            };
+                            current = zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_prototype(proto)
+                                    .and_then(|any| any.as_object())
+                                    .map(|address| unsafe {
+                                        zun_gc::Obj::from_addr(address as *mut u64)
+                                    })
+                            });
                         }
                     }
                 }
@@ -995,9 +1064,14 @@ impl<'a> Interp<'a> {
                     // directly reaches here instead, so it builds the same
                     // stand-in rather than a second implementation.
                     if let Some(mode) = crate::object_proto_mode(&member) {
-                        if zun_gc::with_current_heap(|heap| {
-                            heap.is_dynamic_object(namespace) && heap.array_len(namespace).is_none()
-                        }) {
+                        // A typed instance inherits them from `Object.prototype` too.
+                        let typed_instance = self.instance_class_prototype(namespace).is_some();
+                        if typed_instance
+                            || zun_gc::with_current_heap(|heap| {
+                                heap.is_dynamic_object(namespace)
+                                    && heap.array_len(namespace).is_none()
+                            })
+                        {
                             let handle = self.make_promise_settler(namespace, mode);
                             let result = self.invoke_function_value(handle, call_args)?;
                             let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))

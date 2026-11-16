@@ -28,6 +28,30 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
         consumed
     }
 
+    /// Emit the implicit `arguments` binding the checker leaves at the head of
+    /// the post-cell body, ahead of the default-value prologue. The object
+    /// holds the arguments the caller passed, so it must be built before any
+    /// default runs: a default may read `arguments`, and a call inside a default
+    /// would otherwise clobber the announced call-site argument count the
+    /// binding trims to. Returns how many body statements were consumed.
+    pub(super) fn emit_arguments_binding(&mut self, body: &'a [Stmt]) -> usize {
+        let Some((arguments_id, _)) = zun_natives::resolve("collections", "argumentsObject") else {
+            return 0;
+        };
+        let is_binding = |init: &hir::Expr| {
+            matches!(&init.kind, ExprKind::CallBuiltin { id, .. } if *id == arguments_id)
+        };
+        match body.first() {
+            Some(statement @ (Stmt::Let { init, .. } | Stmt::BoxedLet { init, .. }))
+                if is_binding(init) =>
+            {
+                self.stmt(statement);
+                1
+            }
+            _ => 0,
+        }
+    }
+
     pub(super) fn emit_defaults(
         &mut self,
         defaults: &[Option<hir::Expr>],

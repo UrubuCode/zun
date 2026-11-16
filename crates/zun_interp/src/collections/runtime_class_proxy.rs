@@ -24,6 +24,11 @@ impl<'a> Interp<'a> {
         token: u32,
         mut values: Vec<Value>,
     ) -> Result<Value, RunError> {
+        // A realm `Error`-family constructor is backed by its prelude class.
+        let token = match self.error_family_rid(token) {
+            Some(rid) => zun_natives::USER_CLASS_FLAG | rid,
+            None => token,
+        };
         if token & zun_natives::USER_CLASS_FLAG == 0 {
             return Err(RunError::Native("TypeError: value is not a constructor".into()));
         }
@@ -78,7 +83,15 @@ impl<'a> Interp<'a> {
             while call_args.len() < declared {
                 call_args.push(Value::Null);
             }
-            self.call(ctor, call_args, None)?;
+            let returned = self.call(ctor, call_args, None)?;
+            // A constructor that returns another object replaces the instance.
+            if let Some(other) = object(&returned) {
+                if other.addr() != obj.get().addr() {
+                    let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(other).box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    return Ok(Value::Any(boxed));
+                }
+            }
             let obj = self.run_instance_hooks(obj.get())?;
             let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(obj).box_any(heap))
                 .unwrap_or_else(zun_core::Any::null);
@@ -207,11 +220,9 @@ impl<'a> Interp<'a> {
         if mode >= 100.0 {
             // An `Object.prototype` method value: `valueOf` answers the receiver
             // object, the predicates answer false, the string forms the tag.
-            return Ok(match mode as u32 - 100 {
-                2 => Value::Object(promise),
-                3..=5 => Value::Bool(false),
-                _ => Value::Str("[object Object]".into()),
-            });
+            let index = mode as usize - 100;
+            let name = crate::OBJECT_PROTO_METHODS.get(index).copied().ok_or(RunError::BadToken)?;
+            return self.call_object_prototype_method(name, Value::Object(promise), args);
         }
         let value = if args.is_empty() {
             Value::Void

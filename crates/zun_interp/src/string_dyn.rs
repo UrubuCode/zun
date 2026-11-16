@@ -88,9 +88,10 @@ impl<'a> Interp<'a> {
                     }
                     return Ok(parts.join(","));
                 }
+                zun_gc::root!(held = obj);
                 match self.ordinary_to_primitive(obj, "string")? {
                     Some(primitive) => primitive.display(),
-                    None => "[object Object]".to_string(),
+                    None => self.default_object_string(held.get())?,
                 }
             }
             other => other.display(),

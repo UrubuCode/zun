@@ -9,7 +9,8 @@ use super::value::{self, Value};
 use super::Interp;
 
 /// Prelude error classes a native may raise.
-const ERROR_CLASSES: [&str; 5] = [
+const ERROR_CLASSES: [&str; 6] = [
+    "DOMException",
     "TypeError",
     "RangeError",
     "SyntaxError",
@@ -34,6 +35,12 @@ pub(super) fn split_native_error(message: &str) -> Option<(&'static str, &str)> 
 impl<'a> Interp<'a> {
     /// Allocate an instance of prelude error class `class` carrying `message`.
     pub(super) fn make_error_value(&self, class: &str, message: &str) -> Option<Value> {
+        // A `DOMException` failure reads `<name>: <message>`; the name is stored
+        // in the record's `nameOverride` slot (see `builtin/error.zun`).
+        let (name, message) = match class {
+            "DOMException" => message.split_once(": ").unwrap_or(("Error", message)),
+            _ => ("", message),
+        };
         let rid = self.type_rid_of(class)?;
         let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid);
         let (field_start, field_count) = self.type_field_range(token).ok()?;
@@ -41,14 +48,16 @@ impl<'a> Interp<'a> {
             .map(|i| self.field_kind_at(field_start + i))
             .collect::<Result<_, _>>()
             .ok()?;
-        // Field order of `Error`: message, stackFrames, cause, nameOverride and
-        // the trailing flag; every slot must be initialised (see
+        // Field order of `Error`: message, stackFrames, cause, nameOverride, hasCause and
+        // the trailing `hasName` flag; every slot must be initialised (see
         // `new_error_object`), or `name` reads an unset string slot.
         let values = [
             Value::Str(message.into()),
             Value::Str("".into()),
             Value::Void,
-            Value::Str("".into()),
+            Value::Str(name.into()),
+            Value::Bool(false),
+            Value::Bool(false),
             Value::Bool(false),
         ];
         let object = zun_gc::with_current_heap_mut(|heap| {

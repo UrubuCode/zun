@@ -318,6 +318,10 @@ impl Interp<'_> {
                     "unicodeSets" => flag_of('v'),
                     "sticky" => flag_of('y'),
                     "hasIndices" => flag_of('d'),
+                    "lastIndex" => zun_gc::with_current_heap(|heap| {
+                        heap.regex_last_index_any(*regex)
+                            .and_then(|any| Value::unbox_any(any, heap))
+                    }),
                     _ => None,
                 };
                 if let Some(answer) = answer {
@@ -353,6 +357,14 @@ impl Interp<'_> {
                         Err(error) => return Err(error),
                     }
                 }
+                if name != "prototype" {
+                    if let Some(value) =
+                        self.class_expando_read(token, &Value::Str(name.as_str().into()))
+                    {
+                        stack.push(value);
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 if name == "BYTES_PER_ELEMENT" && !user_class {
                     if let Some(kind) = self.typed_ctor_kind(token) {
                         stack.push(Value::Float(kind.size() as f64, zun_il::NumKind::F64));
@@ -378,6 +390,8 @@ impl Interp<'_> {
                 stack.push(if name == "prototype" && user_class {
                     let proto = self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))
+                } else if name == "prototype" && !self.builtin_ctor_has_prototype(token) {
+                    Value::Void
                 } else if name == "prototype" {
                     let proto = self.builtin_prototype_object(token);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))
@@ -486,8 +500,8 @@ impl Interp<'_> {
                     && heap.array_len(object).is_none()
                     && !matches!(heap.dynamic_prototype(object), Some(p) if p.tag() == zun_core::AnyTag::Null)
             }) {
-            let mode = proto_mode.unwrap_or(100.0);
-            Value::Function(self.make_promise_settler(object, mode))
+            self.object_proto_method_value(object, name.as_str())
+                .unwrap_or(Value::Void)
         } else {
             value
         };
@@ -716,11 +730,27 @@ impl Interp<'_> {
                 // A typed class instance: a declared field takes the
                 // value in place; any other name becomes an expando.
                 let typed_instance = zun_gc::with_current_heap(|heap| {
-                    !heap.is_dynamic_object(object)
+                    (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
                         && heap.array_len(object).is_none()
                         && object.type_rid() >= 1
                 });
                 let handled = typed_instance && self.instance_member_set(object, &name, &value);
+                // A declared `set <name>` accessor takes the write, as the read
+                // path resolves `get <name>`; it must never be shadowed by an expando.
+                let handled = if typed_instance && !handled {
+                    match self.instance_member_setter_call(object, &name, &value) {
+                        Ok(ran) => ran,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
+                                return Ok(ArmFlow::Continue);
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                } else {
+                    handled
+                };
                 // An accessor defined on the class prototype chain
                 // (`Object.defineProperty(C.prototype, ...)`) takes the write.
                 let proto_accessor = if typed_instance && !handled {
@@ -979,6 +1009,10 @@ impl Interp<'_> {
                         Err(error) => return Err(error),
                     }
                 }
+                if let Some(value) = self.class_expando_read(token, &key) {
+                    stack.push(value);
+                    return Ok(ArmFlow::Continue);
+                }
                 let kind = match &key {
                     Value::Str(name) => self.builtin_static_kind(token, name),
                     _ => None,
@@ -1119,6 +1153,34 @@ impl Interp<'_> {
                                         let mut rid = object.type_rid();
                                         while rid >= 1 {
                                             let proto = self.class_prototype_object(rid);
+                                            // An instance `get [Symbol.x]()` is an accessor
+                                            // on the class prototype: run it with the
+                                            // instance as receiver.
+                                            if let Some(getter) = zun_gc::with_current_heap(|heap| {
+                                                heap.dynamic_symbol_getter(proto, symbol)
+                                            }) {
+                                                let call_args =
+                                                    self.with_this_arg(getter, object, Vec::new());
+                                                match self.invoke_function_value(getter, call_args) {
+                                                    Ok(v) => {
+                                                        found = v;
+                                                        break;
+                                                    }
+                                                    Err(RunError::Thrown(exception)) => {
+                                                        if self.route_exception(
+                                                            body,
+                                                            stack,
+                                                            pc,
+                                                            next - size,
+                                                            &exception,
+                                                        ) {
+                                                            return Ok(ArmFlow::Continue);
+                                                        }
+                                                        return Err(RunError::Thrown(exception));
+                                                    }
+                                                    Err(error) => return Err(error),
+                                                }
+                                            }
                                             let hit = zun_gc::with_current_heap(|heap| {
                                                 heap.dynamic_get_symbol_function(proto, symbol)
                                                     .map(Value::Function)
@@ -1162,6 +1224,57 @@ impl Interp<'_> {
                                                 }
                                                 _ => 0,
                                             };
+                                        }
+                                    }
+                                    // A symbol-keyed data property (or accessor) on a
+                                    // prototype object of the dynamic chain
+                                    // (`Object.create(p)[sym]`, a helper's
+                                    // `@@toStringTag`).
+                                    if matches!(found, Value::Void) {
+                                        let mut current = zun_gc::with_current_heap(|heap| {
+                                            heap.dynamic_prototype(object)
+                                                .and_then(|any| any.as_object())
+                                        });
+                                        for _ in 0..256 {
+                                            let Some(address) = current else { break };
+                                            let holder = unsafe {
+                                                zun_gc::Obj::from_addr(address as *mut u64)
+                                            };
+                                            if let Some(getter) = zun_gc::with_current_heap(|heap| {
+                                                heap.dynamic_symbol_getter(holder, symbol)
+                                            }) {
+                                                let call_args =
+                                                    self.with_this_arg(getter, object, Vec::new());
+                                                match self.invoke_function_value(getter, call_args) {
+                                                    Ok(v) => {
+                                                        found = v;
+                                                        break;
+                                                    }
+                                                    Err(RunError::Thrown(exception)) => {
+                                                        if self.route_exception(
+                                                            body,
+                                                            stack,
+                                                            pc,
+                                                            next - size,
+                                                            &exception,
+                                                        ) {
+                                                            return Ok(ArmFlow::Continue);
+                                                        }
+                                                        return Err(RunError::Thrown(exception));
+                                                    }
+                                                    Err(error) => return Err(error),
+                                                }
+                                            }
+                                            if let Some(any) = zun_gc::with_current_heap(|heap| {
+                                                heap.dynamic_get_symbol(holder, symbol)
+                                            }) {
+                                                found = Value::Any(any);
+                                                break;
+                                            }
+                                            current = zun_gc::with_current_heap(|heap| {
+                                                heap.dynamic_prototype(holder)
+                                                    .and_then(|any| any.as_object())
+                                            });
                                         }
                                     }
                                     found
@@ -1214,19 +1327,8 @@ impl Interp<'_> {
                             && heap.array_len(object).is_none()
                     }) =>
                 {
-                    let mode = 100.0
-                        + [
-                            "toString",
-                            "toLocaleString",
-                            "valueOf",
-                            "hasOwnProperty",
-                            "isPrototypeOf",
-                            "propertyIsEnumerable",
-                        ]
-                        .iter()
-                        .position(|n| *n == &**key)
-                        .unwrap_or(0) as f64;
-                    Value::Function(self.make_promise_settler(object, mode))
+                    self.object_proto_method_value(object, key)
+                        .unwrap_or(Value::Void)
                 }
                 Ok(v) => v,
                 Err(RunError::Thrown(exception)) => {
@@ -1360,6 +1462,22 @@ impl Interp<'_> {
                     }
                     return None;
                 }
+                if let Value::Any(key_any) = &key {
+                    // A symbol key: an own non-writable data property or
+                    // function slot refuses the write.
+                    let symbol = key_any.as_symbol()?;
+                    if heap.is_dynamic_object(object)
+                        && heap.dynamic_has_symbol_key(object, symbol)
+                        && heap.dynamic_symbol_getter(object, symbol).is_none()
+                        && !heap.dynamic_is_symbol_writable(object, symbol)
+                    {
+                        let label = heap.symbol_description(symbol).unwrap_or("");
+                        return Some(format!(
+                            "TypeError: Cannot assign to read only property 'Symbol({label})' of object '#<Object>'"
+                        ));
+                    }
+                    return None;
+                }
                 let name = key_name.as_deref()?;
                 if heap.dynamic_is_accessor(object, name) {
                     if heap.dynamic_accessor_setter(object, name).is_none() {
@@ -1381,6 +1499,28 @@ impl Interp<'_> {
             });
             if let Some(message) = refusal {
                 throw_native_arm!(self, body, stack, pc, next - size, message);
+            }
+        }
+        // A symbol-keyed accessor with a setter runs it instead of storing.
+        if let Value::Any(key_any) = &key {
+            if let Some(setter) = key_any
+                .as_symbol()
+                .and_then(|symbol| self.symbol_setter_lookup(object, symbol))
+            {
+                let call_args = self.with_this_arg(setter, object, vec![value.clone()]);
+                match self.invoke_function_value(setter, call_args) {
+                    Ok(_) => {
+                        stack.push(value);
+                        return Ok(ArmFlow::Next);
+                    }
+                    Err(RunError::Thrown(exception)) => {
+                        if self.route_exception(body, stack, pc, next - size, &exception) {
+                            return Ok(ArmFlow::Continue);
+                        }
+                        return Err(RunError::Thrown(exception));
+                    }
+                    Err(error) => return Err(error),
+                }
             }
         }
         match &key {
@@ -1413,14 +1553,30 @@ impl Interp<'_> {
             }
             Value::Str(key)
                 if zun_gc::with_current_heap(|heap| {
-                    !heap.is_dynamic_object(object)
+                    // An instance that already took an expando is dynamic too,
+                    // but its declared fields still live in the fixed layout.
+                    (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
                         && heap.array_len(object).is_none()
                         && object.type_rid() >= 1
                 }) =>
             {
                 // A typed class instance: a declared field takes the
                 // value in place; any other name becomes an expando.
-                if !self.instance_member_set(object, key, &value) {
+                let setter_ran = if self.instance_member_set(object, key, &value) {
+                    true
+                } else {
+                    match self.instance_member_setter_call(object, key, &value) {
+                        Ok(ran) => ran,
+                        Err(RunError::Thrown(exception)) => {
+                            if self.route_exception(body, stack, pc, next - size, &exception) {
+                                return Ok(ArmFlow::Continue);
+                            }
+                            return Err(RunError::Thrown(exception));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                };
+                if !setter_ran {
                     zun_gc::with_current_heap_mut(|heap| {
                         heap.ensure_instance_bag(object);
                         heap.dynamic_set(object, key.as_ref().to_owned(), any);

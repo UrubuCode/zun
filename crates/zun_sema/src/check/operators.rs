@@ -53,7 +53,7 @@ impl Checker<'_> {
         let object = self.check_expr(cx, object);
         // A non-string key (e.g. an array index) is converted with ToString,
         // matching ECMAScript property-key coercion.
-        let dynamic_receiver = matches!(object.ty, Ty::DynamicObject | Ty::Any);
+        let dynamic_receiver = matches!(object.ty, Ty::DynamicObject | Ty::Any | Ty::Instance(_));
         if key.ty == Ty::Symbol && dynamic_receiver {
             // A Symbol key is looked up by identity, never stringified.
             if let Some((id, _)) = zun_natives::resolve("collections", "symbolHas") {
@@ -303,7 +303,9 @@ impl Checker<'_> {
             }
             ast::Expr::Index { object, index, .. } => {
                 let key = self.check_expr(cx, index);
-                let key = if matches!(key.ty, Ty::Any | Ty::F64) || key.ty.is_int() {
+                // An `any` key stays boxed: it may be a Symbol, which `deleteStrict`
+                // resolves at run time (other `any` keys are stringified there).
+                let key = if matches!(key.ty, Ty::F64) || key.ty.is_int() {
                     self.to_string_for_parse(key)
                 } else {
                     key

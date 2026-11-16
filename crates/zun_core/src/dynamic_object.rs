@@ -75,9 +75,18 @@ pub struct DynamicObject {
     /// `getOwnPropertyDescriptor`; e.g. a built-in prototype's
     /// `Symbol.toStringTag`).
     non_writable_symbols: HashSet<SymbolId>,
+    /// Symbol keys whose **configurable** attribute is cleared (re-definition
+    /// and `delete` are refused; e.g. `Function.prototype[Symbol.hasInstance]`).
+    non_configurable_symbols: HashSet<SymbolId>,
+    /// Symbol-keyed function slots. Their writable / enumerable / configurable
+    /// attributes live in the three symbol attribute sets above, like the
+    /// symbol data properties; a slot absent from them is writable, enumerable
+    /// and configurable (a plain `o[sym] = fn`).
     symbol_functions: BTreeMap<SymbolId, FunctionHandle>,
     /// Getter functions of symbol-keyed accessor properties.
     symbol_getters: BTreeMap<SymbolId, FunctionHandle>,
+    /// Setter functions of symbol-keyed accessor properties.
+    symbol_setters: BTreeMap<SymbolId, FunctionHandle>,
     string_functions: BTreeMap<String, FunctionHandle>,
     module_functions: BTreeMap<String, ModuleBoundFunction>,
     module_classes: BTreeMap<String, ModuleBoundClass>,
@@ -98,8 +107,10 @@ impl PartialEq for DynamicObject {
             && self.symbol_properties == other.symbol_properties
             && self.non_enumerable_symbols == other.non_enumerable_symbols
             && self.non_writable_symbols == other.non_writable_symbols
+            && self.non_configurable_symbols == other.non_configurable_symbols
             && self.symbol_functions == other.symbol_functions
             && self.symbol_getters == other.symbol_getters
+            && self.symbol_setters == other.symbol_setters
             && self.string_functions == other.string_functions
             && self.module_functions == other.module_functions
             && self.module_classes == other.module_classes
@@ -507,19 +518,36 @@ impl DynamicObject {
         self.symbol_order
             .iter()
             .copied()
-            .filter(|symbol| self.symbol_properties.contains_key(symbol))
+            .filter(|symbol| self.has_symbol_key(*symbol))
+    }
+    /// Whether `symbol` names an own property of any kind: a data value, a
+    /// function slot or an accessor.
+    pub fn has_symbol_key(&self, symbol: SymbolId) -> bool {
+        self.symbol_properties.contains_key(&symbol)
+            || self.symbol_functions.contains_key(&symbol)
+            || self.symbol_getters.contains_key(&symbol)
+            || self.symbol_setters.contains_key(&symbol)
+    }
+    /// Record a symbol key in first-insertion order (idempotent).
+    fn note_symbol_key(&mut self, symbol: SymbolId) {
+        if !self.has_symbol_key(symbol) {
+            self.symbol_order.push(symbol);
+        }
     }
     /// Define a symbol-keyed data property with an explicit enumerable flag
     /// (`Object.defineProperty(o, sym, ...)`). Rejected on a non-extensible
     /// object when the key is new.
     pub fn define_symbol(&mut self, symbol: SymbolId, value: Any, enumerable: bool) -> bool {
-        if !self.symbol_properties.contains_key(&symbol) && (self.non_extensible || self.frozen) {
+        if !self.has_symbol_key(symbol) && (self.non_extensible || self.frozen) {
             return false;
         }
-        if !self.symbol_properties.contains_key(&symbol) {
-            self.symbol_order.push(symbol);
-        }
+        self.note_symbol_key(symbol);
         self.symbol_properties.insert(symbol, value);
+        // A (re)definition as a data or accessor property supersedes any
+        // function slot or getter held under the key.
+        self.symbol_functions.remove(&symbol);
+        self.symbol_getters.remove(&symbol);
+        self.symbol_setters.remove(&symbol);
         if enumerable {
             self.non_enumerable_symbols.remove(&symbol);
         } else {
@@ -527,11 +555,47 @@ impl DynamicObject {
         }
         true
     }
-    /// Clear the **writable** attribute of an existing own symbol data property.
+    /// Clear the **writable** attribute of an existing own symbol data property
+    /// or function slot.
     pub fn mark_symbol_readonly(&mut self, symbol: SymbolId) {
-        if self.symbol_properties.contains_key(&symbol) {
+        if self.has_symbol_key(symbol) {
             self.non_writable_symbols.insert(symbol);
         }
+    }
+    /// Set the **enumerable** attribute of an existing own symbol key.
+    pub fn set_symbol_enumerable(&mut self, symbol: SymbolId, enumerable: bool) {
+        if !self.has_symbol_key(symbol) {
+            return;
+        }
+        if enumerable {
+            self.non_enumerable_symbols.remove(&symbol);
+        } else {
+            self.non_enumerable_symbols.insert(symbol);
+        }
+    }
+    /// Set the **writable** attribute of an existing own symbol key.
+    pub fn set_symbol_writable(&mut self, symbol: SymbolId, writable: bool) {
+        if writable {
+            self.non_writable_symbols.remove(&symbol);
+        } else {
+            self.mark_symbol_readonly(symbol);
+        }
+    }
+    /// Set the **configurable** attribute of an existing own symbol key.
+    pub fn set_symbol_configurable(&mut self, symbol: SymbolId, configurable: bool) {
+        if !self.has_symbol_key(symbol) {
+            return;
+        }
+        if configurable {
+            self.non_configurable_symbols.remove(&symbol);
+        } else {
+            self.non_configurable_symbols.insert(symbol);
+        }
+    }
+    /// Whether an own symbol key is configurable (a frozen or sealed
+    /// object's are not).
+    pub fn is_symbol_configurable(&self, symbol: SymbolId) -> bool {
+        !self.frozen && !self.non_configurable_symbols.contains(&symbol)
     }
     /// Whether an own symbol data property is writable (a frozen object's are not).
     pub fn is_symbol_writable(&self, symbol: SymbolId) -> bool {
@@ -539,8 +603,7 @@ impl DynamicObject {
     }
     /// Whether the symbol key is an own enumerable property.
     pub fn is_symbol_enumerable(&self, symbol: SymbolId) -> bool {
-        self.symbol_properties.contains_key(&symbol)
-            && !self.non_enumerable_symbols.contains(&symbol)
+        self.has_symbol_key(symbol) && !self.non_enumerable_symbols.contains(&symbol)
     }
     /// Whether a plain assignment `obj.name = v` would be accepted by the data
     /// path (strict-mode callers throw when this is `false`). An accessor key
@@ -559,27 +622,26 @@ impl DynamicObject {
     /// `delete obj[symbol]`: removes the own symbol property. Absent keys succeed;
     /// a frozen object refuses (returns `false`).
     pub fn remove_symbol(&mut self, symbol: SymbolId) -> bool {
-        if !self.symbol_properties.contains_key(&symbol)
-            && !self.symbol_functions.contains_key(&symbol)
-            && !self.symbol_getters.contains_key(&symbol)
-        {
+        if !self.has_symbol_key(symbol) {
             return true;
         }
-        if self.frozen {
+        if !self.is_symbol_configurable(symbol) {
             return false;
         }
         self.symbol_properties.remove(&symbol);
         self.symbol_functions.remove(&symbol);
         self.symbol_getters.remove(&symbol);
+        self.symbol_setters.remove(&symbol);
         self.non_enumerable_symbols.remove(&symbol);
         self.non_writable_symbols.remove(&symbol);
+        self.non_configurable_symbols.remove(&symbol);
         self.symbol_order.retain(|s| *s != symbol);
         true
     }
     pub fn set_symbol(&mut self, symbol: SymbolId, value: Any) -> Option<Any> {
-        if !self.symbol_properties.contains_key(&symbol) {
-            self.symbol_order.push(symbol);
-        }
+        self.note_symbol_key(symbol);
+        // A data write replaces a function value held in the function slot.
+        self.symbol_functions.remove(&symbol);
         self.symbol_properties.insert(symbol, value)
     }
     pub fn get_symbol_getter(&self, symbol: SymbolId) -> Option<FunctionHandle> {
@@ -590,7 +652,19 @@ impl DynamicObject {
         symbol: SymbolId,
         function: FunctionHandle,
     ) -> Option<FunctionHandle> {
+        self.note_symbol_key(symbol);
         self.symbol_getters.insert(symbol, function)
+    }
+    pub fn get_symbol_setter(&self, symbol: SymbolId) -> Option<FunctionHandle> {
+        self.symbol_setters.get(&symbol).copied()
+    }
+    pub fn set_symbol_setter(
+        &mut self,
+        symbol: SymbolId,
+        function: FunctionHandle,
+    ) -> Option<FunctionHandle> {
+        self.note_symbol_key(symbol);
+        self.symbol_setters.insert(symbol, function)
     }
     pub fn get_symbol_function(&self, symbol: SymbolId) -> Option<FunctionHandle> {
         self.symbol_functions.get(&symbol).copied()
@@ -637,12 +711,29 @@ impl DynamicObject {
         self.non_enumerable.insert(name.clone());
         self.set_function(name, function)
     }
+    /// Store a function under a symbol key. A new key is writable, enumerable
+    /// and configurable (a plain `o[sym] = fn`); an existing key keeps its
+    /// attributes. Its slot in the data table, if any, is superseded.
     pub fn set_symbol_function(
         &mut self,
         symbol: SymbolId,
         function: FunctionHandle,
     ) -> Option<FunctionHandle> {
+        self.note_symbol_key(symbol);
+        self.symbol_properties.remove(&symbol);
         self.symbol_functions.insert(symbol, function)
+    }
+    /// Install a built-in or class method value under a symbol key: writable
+    /// and configurable but not enumerable (ECMAScript 18: built-in function
+    /// properties; ClassDefinitionEvaluation methods).
+    pub fn set_symbol_method(
+        &mut self,
+        symbol: SymbolId,
+        function: FunctionHandle,
+    ) -> Option<FunctionHandle> {
+        let previous = self.set_symbol_function(symbol, function);
+        self.non_enumerable_symbols.insert(symbol);
+        previous
     }
     pub fn get_module_function(&self, name: &str) -> Option<&ModuleBoundFunction> {
         self.module_functions.get(name)
@@ -725,6 +816,7 @@ impl DynamicObject {
         self.symbol_functions
             .values()
             .chain(self.symbol_getters.values())
+            .chain(self.symbol_setters.values())
             .chain(self.string_functions.values())
             .chain(self.accessor_get.values())
             .chain(self.accessor_set.values())
@@ -735,6 +827,7 @@ impl DynamicObject {
         self.symbol_functions
             .values_mut()
             .chain(self.symbol_getters.values_mut())
+            .chain(self.symbol_setters.values_mut())
             .chain(self.string_functions.values_mut())
             .chain(self.accessor_get.values_mut())
             .chain(self.accessor_set.values_mut())
