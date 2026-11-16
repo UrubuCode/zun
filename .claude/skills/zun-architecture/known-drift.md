@@ -575,17 +575,33 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
 - `Object.setPrototypeOf(7, Number.prototype)`.
 
 ### Still open, with reproducers
-- **OPEN - output that varies with the GC budget.**
-  `streams/web-streams-core` prints 13 lines normally, 11 under
-  `ZUN_GC_STRESS=1` and `=4`, and 13 again at `=16`;
-  `events-async/microtask-macrotask-ordering` prints 12 and 6. A line count
-  that tracks the collection budget is a rooting bug around promise
-  reactions, not a logic difference. Both fixtures still exit 0, which is why
-  it went unseen. Highest-value GC lead remaining.
-- **OPEN - an `async function*` silently stops under stress.** Given an object
-  argument after an awaiting `for await` loop, it exits 0 with output
-  missing. Reproducers `rt_ag21.ts` (free function) and `rt_ag11.ts` (method).
-  Reproduced on a baseline binary, so it predates this run.
+- **CLOSED in `6b08da32` - output that varies with the GC budget**, and with
+  it the `async function*` that silently stopped under stress. Two separate
+  bugs, both worth remembering as shapes. (a) The `method_contains_yield`
+  branch of the CallIndirect arm built no `RootLink` and published no native
+  link, so the caller's frame was neither rooted nor rewritten across
+  `create_generator` -> the prelude's `__zunMakeAsyncGen`, which can collect.
+  A caller local went stale and the next `arraypush` raised `BadToken`, which
+  surfaced as *missing output* rather than as an error. (b) `pid_by_obj`, the
+  promise-to-scheduler bridge, is keyed by heap address with nothing rooting
+  its keys: a dead entry let a later promise at the reused address inherit an
+  already-settled scheduler id, and the moving-collection rewrite re-inserted
+  in hash order, so a dead unmoved key could overwrite a live promise that had
+  just moved onto that address. The value now carries an identity hash that
+  every lookup validates. **The collector was discarding correct output, not
+  producing wrong answers:** the three affected fixtures went from 28, 9 and 2
+  symmetric mismatches against node to **zero**. 167 of 168 fixtures are now
+  byte-identical at budgets 0, 1, 4 and 16. Caveat recorded: the two fixes
+  were not attributed individually to the `rt_ag*` reproducers.
+- **OPEN - `WeakMap` entries keyed by unregistered Symbols are lost while the
+  keys are still live.** The one fixture still varying with the collection
+  budget: `collections/weak-collections-and-brand-metadata` line 34 reads
+  `dup_symbols=first:second` normally, `undefined:undefined` at
+  `ZUN_GC_STRESS=1` and `undefined:second` at `=16`, from
+  `new WeakMap([[dupA,"first"],[dupB,"second"]])`. `crates/zun_gc/src/weak.rs`
+  keys weak tables by object address, which a Symbol key does not fit. Exits 0
+  and still passes, so only the budget sweep catches it. Highest-value GC lead
+  remaining.
 - **OPEN - `.call`/`.apply` had shifted a free function's arguments since
   `5b75749a` (2026-11-11), fixed in `4ae8a539`.** Worth remembering as a
   method lesson rather than a live bug: it was reported as a regression from
@@ -610,3 +626,17 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
 - **OPEN - `structuredClone` keeps a class instance typed** where node gives a
   plain object (`serialize`/`deserialize` keep types deliberately, so this
   needs a flatten mode), and array expandos are not cloned.
+- **OPEN - an own method installed on a dynamic object or array is ignored,
+  and `delete` does not remove it.** The widest-reaching gap found in the
+  135 -> 138 step, and a textbook "lists but does not behave": for
+  `const b: any = [1,2]; b.join = () => "OWNJOIN"`, `hasOwnProperty("join")`
+  answers `true` while `b.join()` still runs the built-in and answers
+  `"1,2"`; after `delete b.join`, `hasOwnProperty` *stays* `true`. The same
+  holds for `toString` on an array and, more surprisingly, for a plain
+  object over a prototype: `p = Object.create(o); p.m = () => "own"` calls
+  `o.m` instead. Only members whose dispatch explicitly consults
+  `dynamic_get_function` first (today `toLocaleString`) honour the override,
+  which is why `toLocaleString` behaves and then resists `delete`. The three
+  lines above are the whole reproducer. Identical on `2e976e59`, so it is not a regression
+  from that step; it blocks own-override lines in `array-join-tostring-and-
+  generic` and most of `obfuscated/*`.
