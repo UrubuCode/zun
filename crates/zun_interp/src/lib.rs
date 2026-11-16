@@ -1951,7 +1951,11 @@ impl Interp<'_> {
         } else {
             self.minor_collections = self.minor_collections.saturating_add(1);
         }
-        self.gc_interval = next_gc_interval(self.gc_interval, reclaimed, young_before);
+        let live_objects = zun_gc::with_current_heap(|heap| {
+            let (young, old) = heap.generation_counts();
+            young + old
+        });
+        self.gc_interval = next_gc_interval(self.gc_interval, reclaimed, young_before, live_objects);
     }
 }
 

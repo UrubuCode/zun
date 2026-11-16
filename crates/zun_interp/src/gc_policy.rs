@@ -2,6 +2,8 @@ use std::sync::OnceLock;
 
 const GC_INTERVAL: u32 = 256;
 const MAX_GC_INTERVAL: u32 = 16 * 1024;
+/// The allocation budget never drops below `live objects / LIVE_BUDGET_DIVISOR`.
+const LIVE_BUDGET_DIVISOR: usize = 2;
 
 /// Parses `ZUN_GC_STRESS`. Anything that is not a positive integer means "not
 /// set": a typo must not turn into a budget of 0, which would collect on every
@@ -20,8 +22,13 @@ pub(super) fn initial_gc_interval() -> u32 {
     initial_interval_with(stress())
 }
 
-pub(super) fn next_gc_interval(current: u32, reclaimed: usize, young_before: usize) -> u32 {
-    next_interval_with(stress(), current, reclaimed, young_before)
+pub(super) fn next_gc_interval(
+    current: u32,
+    reclaimed: usize,
+    young_before: usize,
+    live_objects: usize,
+) -> u32 {
+    next_interval_with(stress(), current, reclaimed, young_before, live_objects)
 }
 
 fn initial_interval_with(stress: Option<u32>) -> u32 {
@@ -33,6 +40,7 @@ fn next_interval_with(
     current: u32,
     reclaimed: usize,
     young_before: usize,
+    live_objects: usize,
 ) -> u32 {
     // A pinned budget must survive every collection: without this, one
     // unproductive collection doubles it and the mode stops stressing.
@@ -44,11 +52,19 @@ fn next_interval_with(
     // whose survivors dominate should be given more allocation budget before
     // the next minor collection.
     let high_survival = young_before > 0 && reclaimed.saturating_mul(4) < young_before;
-    if reclaimed == 0 || high_survival {
+    let base = if reclaimed == 0 || high_survival {
         current.saturating_mul(2).min(MAX_GC_INTERVAL)
     } else {
         GC_INTERVAL
-    }
+    };
+    // A collection marks the whole live heap, so its cost grows with the live
+    // object count. Collecting every 256 allocations while tens of thousands of
+    // objects are live made a program that merely holds data and allocates
+    // temporaries spend nearly all its time in the collector. Scale the budget
+    // with the live heap so the collector's work stays proportional to the
+    // allocation it is paying for (the usual heap-growth factor).
+    let live_budget = u32::try_from(live_objects / LIVE_BUDGET_DIVISOR).unwrap_or(u32::MAX);
+    base.max(live_budget)
 }
 
 #[cfg(test)]
@@ -57,34 +73,34 @@ mod tests {
 
     #[test]
     fn increases_budget_when_the_nursery_has_high_survival() {
-        assert_eq!(next_gc_interval(256, 1, 16), 512);
-        assert_eq!(next_gc_interval(16 * 1024, 1, 16), 16 * 1024);
+        assert_eq!(next_gc_interval(256, 1, 16, 0), 512);
+        assert_eq!(next_gc_interval(16 * 1024, 1, 16, 0), 16 * 1024);
     }
 
     #[test]
     fn resets_budget_when_collection_is_productive() {
-        assert_eq!(next_gc_interval(2048, 8, 16), 256);
+        assert_eq!(next_gc_interval(2048, 8, 16, 0), 256);
     }
 
     #[test]
     fn stress_budget_does_not_grow_or_reset() {
         // Unproductive, high-survival and productive collections alike.
-        assert_eq!(next_interval_with(Some(4), 4, 0, 16), 4);
-        assert_eq!(next_interval_with(Some(4), 4, 1, 16), 4);
-        assert_eq!(next_interval_with(Some(4), 4, 8, 16), 4);
-        assert_eq!(next_interval_with(Some(1), 1, 0, 0), 1);
+        assert_eq!(next_interval_with(Some(4), 4, 0, 16, 1_000_000), 4);
+        assert_eq!(next_interval_with(Some(4), 4, 1, 16, 1_000_000), 4);
+        assert_eq!(next_interval_with(Some(4), 4, 8, 16, 1_000_000), 4);
+        assert_eq!(next_interval_with(Some(1), 1, 0, 0, 0), 1);
         let mut budget = 1;
         for _ in 0..32 {
-            budget = next_interval_with(Some(1), budget, 0, 16);
+            budget = next_interval_with(Some(1), budget, 0, 16, 0);
         }
         assert_eq!(budget, 1);
     }
 
     #[test]
     fn unset_stress_keeps_the_adaptive_policy() {
-        assert_eq!(next_interval_with(None, 256, 1, 16), 512);
-        assert_eq!(next_interval_with(None, 16 * 1024, 1, 16), 16 * 1024);
-        assert_eq!(next_interval_with(None, 2048, 8, 16), 256);
+        assert_eq!(next_interval_with(None, 256, 1, 16, 0), 512);
+        assert_eq!(next_interval_with(None, 16 * 1024, 1, 16, 0), 16 * 1024);
+        assert_eq!(next_interval_with(None, 2048, 8, 16, 0), 256);
     }
 
     #[test]

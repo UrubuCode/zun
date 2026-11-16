@@ -16,6 +16,7 @@ impl Checker<'_> {
         let self_name = self.closure_self_name.take();
         let captures = self.analyze_closure_captures(outer, function, self_name.as_deref());
         let takes_this = std::mem::take(&mut self.closure_takes_this);
+        let is_method = std::mem::take(&mut self.closure_is_method);
         let mut saw_default = false;
         for parameter in &function.params {
             if parameter.is_rest {
@@ -207,6 +208,9 @@ impl Checker<'_> {
                 // constructible; the runtime reads that off the `@arrow`
                 // marker (it never combines with `@this`).
                 let arrow = if function.is_arrow { "@arrow" } else { "" };
+                // A method shorthand owns no `prototype` either; its marker
+                // sits before `@this` so the `@this>` suffix stays intact.
+                let method = if is_method { "@method" } else { "" };
                 let rest_suffix = if function.params.iter().any(|p| p.is_rest) {
                     format!("{arrow}@rest")
                 } else {
@@ -231,9 +235,9 @@ impl Checker<'_> {
                     format!("#{copies}")
                 };
                 if takes_this {
-                    format!("<closure@{}{unique}@this{rest_suffix}>", span.start)
+                    format!("<closure@{}{unique}{method}@this{rest_suffix}>", span.start)
                 } else {
-                    format!("<closure@{}{unique}{rest_suffix}>", span.start)
+                    format!("<closure@{}{unique}{method}{rest_suffix}>", span.start)
                 }
             },
             param_count: function.params.len() as u16 + u16::from(takes_this),

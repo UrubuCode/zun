@@ -1645,6 +1645,18 @@ impl Interp<'_> {
                 .is_some_and(|method| self.module.strings.get(method.name).contains("@arrow"))
     }
 
+    /// Whether `handle` is an object-literal method shorthand closure (`@method`).
+    pub(crate) fn is_method_closure(&self, handle: zun_core::FunctionHandle) -> bool {
+        !handle.is_bound()
+            && handle.builtin_method().is_none()
+            && self
+                .module
+                .tables
+                .method_defs
+                .get((handle.method_rid() as usize).wrapping_sub(1))
+                .is_some_and(|method| self.module.strings.get(method.name).contains("@method"))
+    }
+
     /// An ordinary function owns a `prototype` object (with a non-enumerable
     /// back-reference `constructor`) from the moment it is created. Functions
     /// here materialise it lazily, on the first read of `fn.prototype`, unless
@@ -1655,7 +1667,7 @@ impl Interp<'_> {
         }
         // An arrow function owns no `prototype` (and is not constructible); its
         // closure name carries the `@arrow` marker.
-        if self.is_arrow_closure(handle) {
+        if self.is_arrow_closure(handle) || self.is_method_closure(handle) {
             return;
         }
         let bag = crate::function_expando_bag(handle);
