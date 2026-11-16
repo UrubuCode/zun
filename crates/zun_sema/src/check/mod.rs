@@ -246,6 +246,7 @@ fn check_impl(
         classes_with_iterator: HashSet::new(),
         closure_param_hint: None,
         closure_takes_this: false,
+        closure_is_method: false,
         symbol_call_guard: false,
         static_this: HashMap::new(),
         receiver_funcs: HashSet::new(),
@@ -549,6 +550,10 @@ struct Checker<'a> {
     /// (named `this`) and is marked by an `@this` name suffix, which the
     /// interpreter reads to pass the receiver on a dynamic member call.
     closure_takes_this: bool,
+    /// Set for the NEXT closure literal: an object-literal method shorthand
+    /// (`{ m() {} }`). A method owns no `prototype` and is not constructible,
+    /// so its closure name carries an `@method` marker.
+    closure_is_method: bool,
     /// Set while lowering the string-key arm of a `recv[key](...)` call whose
     /// key may be a Symbol, so the arm is not split again.
     symbol_call_guard: bool,

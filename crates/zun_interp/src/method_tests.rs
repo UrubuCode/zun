@@ -4528,3 +4528,19 @@ fn call_and_apply_do_not_shift_a_free_function_s_arguments() {
     run(&module, &mut output).expect("run call/apply receiver workload");
     assert_eq!(output.lines, vec!["1|2", "1|2", "9"]);
 }
+
+/// An object-literal method owns no `prototype` and is not constructible, even
+/// when the object is a module-level `any` read from inside a closure.
+#[test]
+fn object_literal_methods_have_no_prototype_and_are_not_constructible() {
+    let source = r#"
+const proc: any = { m(): void { console.log("called"); }, n: function (): void {} };
+console.log(typeof proc.m.prototype, typeof proc.n.prototype);
+function attempt(f: any) { try { f(); console.log("no throw"); } catch (e: any) { console.log(e instanceof TypeError); } }
+attempt(() => new proc.m());
+"#;
+    let module = zun_compiler::compile(source).expect("compile method workload");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run method workload");
+    assert_eq!(output.lines, ["undefined object", "true"]);
+}
