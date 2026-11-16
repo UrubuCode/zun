@@ -661,3 +661,37 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
     escape boundary before writing any rendering code.
   - Rendering must not call a `get_name` accessor: it runs while an exception
     is already unwinding and managed code could throw again.
+
+### After the 138-mark cluster work (`c07a0cea`)
+- **OPEN - an unbound class method used as a callback shifts its arguments.**
+  `class R { describe(x) { return "d:" + x } }` then
+  `["-3"].map(inst.describe)` answers `d:0` where node answers `d:-3`: the
+  element is consumed as the receiver and the *index* arrives as `x`. This is
+  the receiver-insertion shape of `4ae8a539` and `c07a0cea` a third time, now
+  on the array-callback path rather than `call`/`apply`/`bind`. A subagent
+  reported this as a panic at `value.rs:226`; the panic did not reproduce, the
+  wrong answer did, which is the worse of the two. **Whenever a receiver gate
+  is touched, probe the callback paths too** -- `map`, `filter`, `forEach`,
+  `sort` -- not only the explicit `call`/`apply` forms.
+- **OPEN - own function properties are dropped by the object statics.**
+  `Object.values`, `entries`, `assign` and object spread lose a function-valued
+  own property on a plain object; on an array, `assign` and spread also lose
+  the indices. `c07a0cea` fixed the *dispatch* side of own methods
+  (`arr.join = f` is now called, listed by `Object.keys`/`for...in`/`in`, and
+  deletable), so this is the remaining half of that family.
+- **OPEN - a few own-method sites still bypass the override:** `hasOwnProperty`
+  assigned on an object (sema lowers the call to an intrinsic), and a `Map` or
+  `Set` with an own method override.
+- **OPEN - descriptor and integrity-level gaps:**
+  `Object.defineProperty(arr, "x", { enumerable: false })` throws "Cannot
+  redefine property", and a frozen or sealed array or object still accepts new
+  own properties.
+- **OPEN - `.name` of an object-literal method and of a function expression**
+  answers `""` where node derives it from the binding (`cA.bump.name` should be
+  `bump`). `fn-name-length-metadata` is at 86 symmetric mismatches, down from
+  136, and most of what is left is this.
+- **OPEN - `Array.prototype.slice.call(5)`** on a primitive throws; it is the
+  next death point of `array-join-tostring-and-generic` at 43 of 53 lines.
+  Also there: `class L extends Array { join() {...} }` with `sub.toString()`
+  answers the element count, and `Symbol.toPrimitive` on an array is ignored by
+  `Number()`.
