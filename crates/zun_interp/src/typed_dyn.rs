@@ -184,7 +184,7 @@ impl Interp<'_> {
         Ok(())
     }
 
-    fn view_collect(&mut self, view: zun_gc::Obj) -> Vec<Value> {
+    pub(crate) fn view_collect(&mut self, view: zun_gc::Obj) -> Vec<Value> {
         let len = crate::typed_arrays::element_len(view).unwrap_or(0);
         (0..len).map(|i| self.view_read(view, i)).collect()
     }
@@ -484,13 +484,26 @@ impl Interp<'_> {
         use zun_natives::{NativeTy, ViewArg};
         let buffer_member = matches!(
             member,
-            "toString" | "write" | "equals" | "copy" | "swap16" | "swap32" | "swap64"
-        ) || member.starts_with("read")
+            "toString"
+                | "write"
+                | "equals"
+                | "copy"
+                | "swap16"
+                | "swap32"
+                | "swap64"
+                | "compare"
+                | "toJSON"
+                | "slice"
+                | "indexOf"
+                | "lastIndexOf"
+                | "includes"
+        ) || (member == "fill" && (args.len() == 1 || matches!(args.first(), Some(Value::Str(_)))))
+            || member.starts_with("read")
             || (member.starts_with("write") && member.len() > "write".len());
         if !buffer_member {
             return Ok(None);
         }
-        let Some(spec) = zun_natives::view_member(member, true, args.len()) else {
+        let Some(spec) = zun_natives::view_member(member, true, if member == "fill" { 1 } else { args.len() }) else {
             return Ok(None);
         };
         if spec.module != "nodeBuffer" {
@@ -500,12 +513,13 @@ impl Interp<'_> {
         let mut slots = Vec::with_capacity(spec.args.len());
         for (slot, kind) in spec.args.iter().enumerate() {
             let value = match (present(slot), kind) {
-                (Some(value), ViewArg::RequiredAny) => {
+                (Some(value), ViewArg::RequiredAny | ViewArg::Raw) => {
                     let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                         .unwrap_or_else(zun_core::Any::void);
                     Value::Any(boxed)
                 }
                 (Some(value), _) => value.clone(),
+                (None, ViewArg::Raw) => Value::Any(zun_core::Any::void()),
                 (None, ViewArg::U64(default)) => Value::Int(*default as i64, NumKind::U64),
                 (None, ViewArg::I64(default)) => Value::Int(*default, NumKind::I64),
                 (None, ViewArg::Str(default)) => Value::Str((*default).into()),

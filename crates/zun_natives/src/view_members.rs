@@ -24,6 +24,9 @@ pub enum ViewArg {
     Required,
     /// Must be supplied and is passed boxed as `any` (search needles, seeds).
     RequiredAny,
+    /// Passed boxed as `any`, `undefined` when omitted: the native validates the
+    /// raw JavaScript value (offsets, sizes, values) as Node does.
+    Raw,
     /// Unsigned integer default.
     U64(u64),
     /// Signed integer default.
@@ -73,36 +76,38 @@ pub fn view_member(member: &str, is_u8: bool, argc: usize) -> Option<ViewMember>
     use ViewArg::*;
     if is_u8 {
         let buffer = match member {
-            "toString" => node("nodeBufferToString".into(), vec![Str("utf8"), U64(0), U64(u64::MAX)], false),
-            "write" => node("nodeBufferWrite".into(), vec![Required, U64(0), Str("utf8")], false),
-            "slice" => node("nodeBufferSlice".into(), vec![I64(0), I64(LENGTH_SENTINEL)], false),
-            "fill" if argc == 1 => node("nodeBufferFill".into(), vec![Required], false),
-            "equals" => node("nodeBufferEquals".into(), vec![Required], false),
+            "toString" => node("nodeBufferToString".into(), vec![Raw, Raw, Raw], false),
+            "write" => node("nodeBufferWrite".into(), vec![Raw, Raw, Raw, Raw], false),
+            "slice" => node("nodeBufferSlice".into(), vec![Raw, Raw], false),
+            "fill" if argc == 1 => node("nodeBufferFill".into(), vec![Raw, Raw, Raw, Raw], false),
+            "equals" => node("nodeBufferEquals".into(), vec![Raw], false),
             "copy" => node(
                 "nodeBufferCopy".into(),
-                vec![Required, I64(0), I64(0), I64(LENGTH_SENTINEL)],
+                vec![Raw, Raw, Raw, Raw],
                 false,
             ),
+            "compare" => node("nodeBufferCompareRange".into(), vec![Raw, Raw, Raw, Raw, Raw], false),
+            "toJSON" => node("nodeBufferToJSON".into(), vec![], false),
             "swap16" | "swap32" | "swap64" => node(node_buffer_accessor_native(member), vec![], false),
             "indexOf" | "includes" => node(
                 node_buffer_accessor_native(member),
-                vec![RequiredAny, I64(0), Str("utf8")],
+                vec![Raw, Raw, Raw],
                 false,
             ),
             "lastIndexOf" => node(
                 node_buffer_accessor_native(member),
-                vec![RequiredAny, I64(LENGTH_SENTINEL), Str("utf8")],
+                vec![Raw, Raw, Raw],
                 false,
             ),
             "readUIntLE" | "readUIntBE" | "readIntLE" | "readIntBE" => {
-                node(node_buffer_accessor_native(member), vec![U64(0), U64(1)], false)
+                node(node_buffer_accessor_native(member), vec![Raw, Raw], false)
             }
             "writeUIntLE" | "writeUIntBE" | "writeIntLE" | "writeIntBE" => {
-                node(node_buffer_accessor_native(member), vec![Required, U64(0), U64(1)], true)
+                node(node_buffer_accessor_native(member), vec![Raw, Raw, Raw], true)
             }
-            m if m.starts_with("read") => node(node_buffer_accessor_native(m), vec![U64(0)], false),
+            m if m.starts_with("read") => node(node_buffer_accessor_native(m), vec![Raw], false),
             m if m.starts_with("write") => {
-                node(node_buffer_accessor_native(m), vec![Required, U64(0)], true)
+                node(node_buffer_accessor_native(m), vec![Raw, Raw], true)
             }
             _ => None,
         };

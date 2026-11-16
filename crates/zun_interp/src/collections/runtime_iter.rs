@@ -63,6 +63,20 @@ impl<'a> Interp<'a> {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_map_iterator(source))
                 .ok_or(RunError::BadToken);
         }
+        // A typed array (a Node `Buffer`) iterates a snapshot of its elements.
+        if zun_gc::with_current_heap(|heap| heap.typed_array_element(source).is_some()) {
+            let values = self.view_collect(source);
+            let snapshot = zun_gc::with_current_heap_mut(|heap| {
+                let array = heap.alloc_array(0);
+                for value in &values {
+                    let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                    heap.array_push(array, boxed);
+                }
+                array
+            });
+            return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(snapshot))
+                .ok_or(RunError::BadToken);
+        }
         // A `new String("..")` wrapper iterates its primitive by code point.
         if self.json_class_name(source) == "StringObject" {
             if let Some(Value::Str(text)) = self

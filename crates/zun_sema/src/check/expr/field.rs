@@ -501,6 +501,17 @@ impl Checker<'_> {
                 });
             }
         }
+        // `Buffer.poolSize` (Node's pre-allocated pool size, a plain number).
+        if self.text(class_name) == "Buffer"
+            && fname == "poolSize"
+            && !self.classes_by_name.contains_key("Buffer")
+        {
+            return Some(hir::Expr {
+                kind: hir::ExprKind::Number(8192.0),
+                ty: Ty::F64,
+                span,
+            });
+        }
         // Well-known symbols as first-class values (`Symbol.iterator`,
         // `Symbol.asyncIterator`, `Symbol.hasInstance`,
         // `Symbol.toPrimitive`, `Symbol.toStringTag`). Their identities

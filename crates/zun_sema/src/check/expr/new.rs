@@ -131,6 +131,10 @@ impl Checker<'_> {
             unreachable!()
         };
         let name = self.text(class).to_string();
+        // The deprecated `new Buffer(arg, encodingOrOffset, length)`.
+        if name == "Buffer" && !self.classes_by_name.contains_key("Buffer") {
+            return self.check_buffer_ctor(cx, args, span);
+        }
         // Forms that must be caught before the realm/built-in paths
         // (collection-argument sugar, `new Function`, cross-module and
         // proxy-local construction).
