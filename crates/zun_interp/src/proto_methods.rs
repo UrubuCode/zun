@@ -54,7 +54,7 @@ impl Interp<'_> {
     }
 
     /// Dispatch `recv.name(...args)` through the dynamic member-call path.
-    fn proto_dynamic_call(
+    pub(crate) fn proto_dynamic_call(
         &mut self,
         recv: Value,
         name: &str,
@@ -306,9 +306,8 @@ impl Interp<'_> {
         args: Vec<Value>,
     ) -> Result<Value, RunError> {
         if matches!(recv, Value::Void | Value::Null) {
-            return Err(self.proto_type_error(&format!(
-                "Array.prototype.{name} called on null or undefined"
-            )));
+            let message = zun_natives::array_null_receiver_message(name);
+            return Err(self.proto_type_error(&message));
         }
         let is_array = matches!(&recv, Value::Object(o)
             if zun_gc::with_current_heap(|heap| heap.array_len(*o).is_some()));
@@ -316,6 +315,13 @@ impl Interp<'_> {
         if name == "flat" && matches!(args.first(), None | Some(Value::Void)) {
             // `flat` defaults its depth to 1.
             args = vec![Value::Float(1.0, zun_il::NumKind::F64)];
+        }
+        // A typed array is an array-like whose writes must land in its own
+        // elements, never in a temporary copy.
+        if let Value::Object(view) = &recv {
+            if crate::typed_arrays::element_len(*view).is_some() && name != "concat" {
+                return self.array_method_on_typed_array(name, *view, args);
+            }
         }
         if is_array {
             crate::collections::request_builtin_member_only();

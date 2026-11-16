@@ -585,7 +585,7 @@ impl<'a> Interp<'a> {
     /// Whether `handle` can be the target of `new`. A class member (method,
     /// accessor, static method) and a generator are not constructors; a plain
     /// function, which owns no class membership, is.
-    pub(super) fn function_is_constructor(&self, handle: zun_core::FunctionHandle) -> bool {
+    pub(crate) fn function_is_constructor(&self, handle: zun_core::FunctionHandle) -> bool {
         if handle.builtin_method().is_some() || handle.generator_method().is_some() {
             return false;
         }

@@ -577,6 +577,25 @@ function __zunApplyList(list: any): any {
     return list;
 }
 
+// The receiver of a borrowed `Array.prototype.<method>.call(receiver, ...)`:
+// `null` and `undefined` cannot be converted to an object. The message is
+// chosen by the compiler, since it depends on the method.
+function __zunArrayThis(value: any, message: string): any {
+    if (value === undefined || value === null) {
+        throw new TypeError(message);
+    }
+    return value;
+}
+
+// The receiver of a borrowed `Array.prototype.concat.call(receiver, ...)`:
+// an array is spread, anything else is the single leading element.
+function __zunConcatThis(value: any): any[] {
+    if (Array.isArray(value)) {
+        return value;
+    }
+    return [value];
+}
+
 // `Array.prototype.join` separator: ToString of the argument, a comma when it
 // is omitted or `undefined`.
 function __zunJoinSeparator(separator: any): string {

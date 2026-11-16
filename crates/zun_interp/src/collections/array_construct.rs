@@ -84,7 +84,7 @@ impl<'a> Interp<'a> {
                 // takes the typed path; an array-like uses the generic algorithm.
                 let target = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native(
-                        "TypeError: Array.prototype.fill called on null or undefined".into(),
+                        "TypeError: Cannot convert undefined or null to object".into(),
                     )
                 })?;
                 let list =
@@ -102,6 +102,10 @@ impl<'a> Interp<'a> {
                     let mut forwarded = vec![Value::Object(target)];
                     forwarded.extend(params);
                     return self.call_managed_collection("arrayFill", &forwarded);
+                }
+                // A typed array is filled in place, through its own elements.
+                if crate::typed_arrays::element_len(target).is_some() {
+                    return self.array_method_on_typed_array("fill", target, params);
                 }
                 let length_value = zun_gc::with_current_heap(|heap| {
                     heap.dynamic_get(target, "length")
@@ -154,11 +158,15 @@ impl<'a> Interp<'a> {
                 }
                 let target = object(&first).ok_or_else(|| {
                     RunError::Native(
-                        "TypeError: Array.prototype.reverse called on null or undefined".into(),
+                        "TypeError: Cannot convert undefined or null to object".into(),
                     )
                 })?;
                 if zun_gc::with_current_heap(|heap| heap.array_len(target)).is_some() {
                     return self.call_managed_collection("arrayReverse", &[Value::Object(target)]);
+                }
+                // A typed array is reversed in place, through its own elements.
+                if crate::typed_arrays::element_len(target).is_some() {
+                    return self.array_method_on_typed_array("reverse", target, Vec::new());
                 }
                 let length_value = zun_gc::with_current_heap(|heap| {
                     heap.dynamic_get(target, "length")
@@ -211,10 +219,20 @@ impl<'a> Interp<'a> {
                 // `length`, index keys, `length` written back).
                 let target = object(args.first().ok_or(RunError::BadToken)?).ok_or_else(|| {
                     RunError::Native(
-                        "TypeError: Array.prototype method called on null or undefined".into(),
+                        "TypeError: Cannot convert undefined or null to object".into(),
                     )
                 })?;
                 let is_push = name == "arrayLikePush";
+                // A typed array cannot change its length: the generic algorithm
+                // throws at the step that would.
+                if crate::typed_arrays::element_len(target).is_some() {
+                    let method = if is_push { "push" } else { "pop" };
+                    let items = match (is_push, args.get(1).and_then(object)) {
+                        (true, Some(list)) => self.read_array_values(list)?,
+                        _ => Vec::new(),
+                    };
+                    return self.array_method_on_typed_array(method, target, items);
+                }
                 let items: Vec<zun_core::Any> = if is_push {
                     let list =
                         object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
@@ -367,12 +385,31 @@ impl<'a> Interp<'a> {
                     Value::Object(_) => object(&concrete),
                     _ => None,
                 }) else {
+                    // The receiver of a borrowed `Array.prototype` method goes
+                    // through ToObject: `null` and `undefined` cannot convert,
+                    // and any other primitive is a wrapper with no indexed
+                    // properties. An argument list never reaches this arm
+                    // with a primitive (`arrayFromArgumentList` rejects one).
+                    if name == "arrayFromArrayLike" {
+                        if matches!(concrete, Value::Void | Value::Null) {
+                            return Err(RunError::Native(
+                                "TypeError: Cannot convert undefined or null to object".into(),
+                            ));
+                        }
+                        return Ok(Value::Object(zun_gc::with_current_heap_mut(|heap| {
+                            heap.alloc_array(0)
+                        })));
+                    }
                     return Err(RunError::Native(
                         "TypeError: CreateListFromArrayLike called on non-object".into(),
                     ));
                 };
                 if zun_gc::with_current_heap(|heap| heap.array_len(source)).is_some() {
                     return Ok(Value::Object(source));
+                }
+                // A typed array is an array-like over its elements.
+                if crate::typed_arrays::element_len(source).is_some() {
+                    return Ok(Value::Object(self.typed_array_snapshot(source)));
                 }
                 let length_value = self.dynamic_member_get(source, "length")?;
                 let length_value = match length_value {

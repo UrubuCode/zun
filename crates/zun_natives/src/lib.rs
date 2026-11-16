@@ -36,6 +36,7 @@ macro_rules! unavailable_stub {
 }
 
 mod array_ext;
+pub use array_ext::array_null_receiver_message;
 mod array_methods;
 pub use array_methods::{array_method, ArrayHandling, ArrayMethod};
 mod boolean;

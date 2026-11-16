@@ -364,3 +364,20 @@ pub const MODULE: crate::Module = crate::Module {
         },
     ],
 };
+
+/// The `TypeError` message `Array.prototype.<method>` raises on a `null` or
+/// `undefined` receiver. The callback and search methods name themselves; every
+/// other method fails in `ToObject` with the generic wording. Mirrors V8, and
+/// is the single source for both the typed `.call` lowering and the runtime's
+/// borrowed-method path.
+pub fn array_null_receiver_message(method: &str) -> String {
+    const NAMED: &[&str] = &[
+        "concat", "every", "filter", "find", "findIndex", "findLast", "findLastIndex",
+        "forEach", "indexOf", "map", "reduce", "reduceRight", "some",
+    ];
+    if NAMED.contains(&method) {
+        format!("Array.prototype.{method} called on null or undefined")
+    } else {
+        "Cannot convert undefined or null to object".to_owned()
+    }
+}

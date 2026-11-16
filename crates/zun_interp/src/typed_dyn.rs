@@ -88,7 +88,7 @@ impl Interp<'_> {
     }
 
     /// One element of `view` as the JavaScript value it denotes.
-    fn view_read(&mut self, view: zun_gc::Obj, index: usize) -> Value {
+    pub(crate) fn view_read(&mut self, view: zun_gc::Obj, index: usize) -> Value {
         let kind = crate::typed_arrays::element_of(view);
         match crate::typed_arrays::read_element(view, index) {
             Some(Value::Int(n, k)) => match kind {
@@ -110,7 +110,7 @@ impl Interp<'_> {
 
     /// Stores a JavaScript value into `view[index]`, converting it to the
     /// element type. An out-of-range index is ignored (as JS does).
-    fn view_write(
+    pub(crate) fn view_write(
         &mut self,
         view: zun_gc::Obj,
         index: usize,

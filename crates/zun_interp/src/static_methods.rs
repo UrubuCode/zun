@@ -105,6 +105,9 @@ impl Interp<'_> {
             let result = zun_natives::apply_math(name, &numbers).unwrap_or(f64::NAN);
             return Ok(Value::Float(result, zun_il::NumKind::F64));
         }
+        if class == "Array" {
+            return self.call_array_static(name, _this, count, &arg);
+        }
         if class == "Number" {
             return self.call_number_static(name, count, &arg);
         }
@@ -276,5 +279,153 @@ impl Interp<'_> {
             }
             _ => Ok(Value::Void),
         }
+    }
+}
+
+impl Interp<'_> {
+    /// `Array.isArray` / `Array.of` / `Array.from` as function values. `of` and
+    /// `from` are generic over `this`: a constructor other than `Array` itself
+    /// builds the result (`Array.of.call(Box, "x")`), anything else gets a
+    /// plain array.
+    fn call_array_static(
+        &mut self,
+        name: &str,
+        this: Value,
+        count: usize,
+        arg: &dyn Fn(usize) -> Value,
+    ) -> Result<Value, RunError> {
+        match name {
+            "isArray" => {
+                let value = self.proto_box(arg(0));
+                self.call_managed_collection("arrayIsArray", &[value])
+            }
+            "of" => {
+                let list = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(count));
+                zun_gc::root!(list = list);
+                for index in 0..count {
+                    if let Value::Any(any) = arg(index) {
+                        zun_gc::with_current_heap_mut(|heap| heap.array_set(list.get(), index, any));
+                    }
+                }
+                self.array_static_result(this, list.get(), Some(count))
+            }
+            "from" => {
+                // The mapper is validated before the source is touched.
+                let mapper = proto_concrete(arg(1));
+                let source = proto_concrete(arg(0));
+                let usable_mapper = matches!(mapper, Value::Void | Value::Function(_));
+                let empty = || Value::Object(zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0)));
+                let list = match (&mapper, &source) {
+                    (_, Value::Void | Value::Null) if usable_mapper => {
+                        let shown = if matches!(source, Value::Void) { "undefined" } else { "object null" };
+                        return Err(self.static_type_error(&format!(
+                            "{shown} is not iterable (cannot read property Symbol(Symbol.iterator))"
+                        )));
+                    }
+                    // A number or boolean is neither iterable nor array-like.
+                    (_, Value::Float(..) | Value::Int(..) | Value::Bool(_)) if usable_mapper => empty(),
+                    (Value::Void, _) => self.call_managed_collection("arrayFrom", &[arg(0)])?,
+                    (Value::Function(handle), _) => {
+                        let mut callback = Value::Function(*handle);
+                        if count >= 3 && !matches!(proto_concrete(arg(2)), Value::Void) {
+                            let bound = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(1));
+                            if let Value::Any(any) = arg(2) {
+                                zun_gc::with_current_heap_mut(|heap| heap.array_set(bound, 0, any));
+                            }
+                            callback = self
+                                .call_managed_collection("functionBind", &[callback, Value::Object(bound)])?;
+                        }
+                        self.call_managed_collection("arrayFromMapped", &[arg(0), callback])?
+                    }
+                    // Not callable: the native raises the TypeError.
+                    _ => self.call_managed_collection("arrayFromMapped", &[arg(0), arg(1)])?,
+                };
+                let Value::Object(list) = list else {
+                    return Ok(list);
+                };
+                // An iterable source constructs with no argument, an array-like
+                // with its length.
+                let iterable = match proto_concrete(arg(0)) {
+                    Value::Str(_) => true,
+                    Value::Object(object) => zun_gc::with_current_heap(|heap| {
+                        heap.array_len(object).is_some()
+                            || heap.typed_array_len(object).is_some()
+                            || heap.map_len(object).is_some()
+                            || heap.set_len(object).is_some()
+                            || heap.generator_state(object).is_some()
+                            || heap
+                                .dynamic_get_symbol_function(
+                                    object,
+                                    zun_core::WellKnownSymbol::Iterator.id(),
+                                )
+                                .is_some()
+                    }),
+                    _ => false,
+                };
+                let length = zun_gc::with_current_heap(|heap| heap.array_len(list)).unwrap_or(0);
+                self.array_static_result(this, list, (!iterable).then_some(length))
+            }
+            _ => Err(RunError::BadToken),
+        }
+    }
+
+    /// The result of `Array.of` / `Array.from` for the receiver `this`: `list`
+    /// itself, or — when `this` is a constructor other than `Array` — a
+    /// `new this(length?)` given the elements of `list` and its `length`.
+    fn array_static_result(
+        &mut self,
+        this: Value,
+        list: zun_gc::Obj,
+        construct_length: Option<usize>,
+    ) -> Result<Value, RunError> {
+        let is_constructor = match proto_concrete(this.clone()) {
+            Value::Function(handle) => {
+                self.coerce_ctor_name(handle).is_none() && self.function_is_constructor(handle)
+            }
+            _ => Self::class_token_of(&this).is_some_and(|token| {
+                token & zun_natives::USER_CLASS_FLAG != 0
+                    || zun_gc::with_current_heap_mut(|heap| {
+                        crate::intrinsic_meta::builtin_class_name_in(heap, token)
+                    })
+                    .as_deref()
+                        != Some("Array")
+            }),
+        };
+        if !is_constructor {
+            return Ok(Value::Object(list));
+        }
+        zun_gc::root!(list = list);
+        let ctor_args = zun_gc::with_current_heap_mut(|heap| {
+            let args = heap.alloc_array(0);
+            if let Some(length) = construct_length {
+                heap.array_push(args, zun_core::Any::float(length as f64));
+            }
+            args
+        });
+        // A function has no `any` form; a class value travels boxed.
+        let target = match proto_concrete(this.clone()) {
+            Value::Function(handle) => Value::Function(handle),
+            _ => self.proto_box(this),
+        };
+        let made = self.call_managed_collection("reflectConstruct", &[target, Value::Object(ctor_args)])?;
+        let Some(made) = crate::collections::object(&made) else {
+            return Ok(made);
+        };
+        zun_gc::root!(made = made);
+        let length = zun_gc::with_current_heap(|heap| heap.array_len(list.get())).unwrap_or(0);
+        for index in 0..=length {
+            let (key, value) = if index == length {
+                ("length".to_owned(), zun_core::Any::float(length as f64))
+            } else {
+                let element = zun_gc::with_current_heap(|heap| heap.array_get(list.get(), index))
+                    .filter(|any| !any.is_hole())
+                    .unwrap_or_else(zun_core::Any::void);
+                (index.to_string(), element)
+            };
+            let key = self.proto_box(Value::Str(key.into()));
+            let call = [Value::Object(made.get()), key, Value::Any(value)];
+            self.reflect_set(&call)?;
+        }
+        Ok(Value::Object(made.get()))
     }
 }

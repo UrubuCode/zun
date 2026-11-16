@@ -276,6 +276,52 @@ impl Checker<'_> {
                     if let Some((from_id, _)) = zun_natives::resolve("array", "arrayFromArrayLike")
                     {
                         let source = self.check_expr(cx, &args[0]);
+                        // A `null`/`undefined` receiver is a TypeError whose
+                        // wording depends on the method; a statically known
+                        // array or string can be neither.
+                        let source = match self.by_name.get("__zunArrayThis") {
+                            Some(&guard) if !matches!(source.ty, Ty::Array | Ty::String) => {
+                                let message = hir::Expr {
+                                    kind: hir::ExprKind::String(
+                                        zun_natives::array_null_receiver_message(&name),
+                                    ),
+                                    ty: Ty::String,
+                                    span,
+                                };
+                                hir::Expr {
+                                    kind: hir::ExprKind::Call {
+                                        func: guard,
+                                        args: vec![Self::box_to_any(source), message],
+                                    },
+                                    ty: Ty::Any,
+                                    span,
+                                }
+                            }
+                            _ => source,
+                        };
+                        // `concat` does not read its receiver as an array-like:
+                        // anything but an array is a single leading element.
+                        let concat_this = (name == "concat" && source.ty != Ty::Array)
+                            .then(|| self.by_name.get("__zunConcatThis").copied())
+                            .flatten();
+                        let receiver_array = match concat_this {
+                            Some(helper) => hir::Expr {
+                                kind: hir::ExprKind::Call {
+                                    func: helper,
+                                    args: vec![Self::box_to_any(source)],
+                                },
+                                ty: Ty::Array,
+                                span,
+                            },
+                            None => hir::Expr {
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id: from_id,
+                                    args: vec![Self::box_to_any(source)],
+                                },
+                                ty: Ty::Array,
+                                span,
+                            },
+                        };
                         let (slot, tmp) = self.synthetic_local(cx, Ty::Array);
                         let call = ast::Expr::MethodCall {
                             receiver: Box::new(ast::Expr::Ident(tmp)),
@@ -290,14 +336,7 @@ impl Checker<'_> {
                                 effect: Box::new(hir::Expr {
                                     kind: hir::ExprKind::Assign {
                                         slot,
-                                        value: Box::new(hir::Expr {
-                                            kind: hir::ExprKind::CallBuiltin {
-                                                id: from_id,
-                                                args: vec![Self::box_to_any(source)],
-                                            },
-                                            ty: Ty::Array,
-                                            span,
-                                        }),
+                                        value: Box::new(receiver_array),
                                     },
                                     ty: Ty::Array,
                                     span,

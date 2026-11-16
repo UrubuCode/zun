@@ -38,6 +38,7 @@ mod state;
 mod string_dyn;
 mod typed_arrays;
 mod typed_dyn;
+mod typed_generic;
 mod unwind;
 pub mod value;
 

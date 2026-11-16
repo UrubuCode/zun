@@ -636,6 +636,10 @@ const STATIC_METHODS: &[(&str, &[(&str, u32, &str)])] = &[
             ("isSafeInteger", 1, ""), ("parseFloat", 1, ""), ("parseInt", 2, ""),
         ],
     ),
+    // `Array`'s statics. `of` and `from` are generic over `this`, so
+    // `static_methods.rs` adapts them by name. `fromAsync` is absent on purpose:
+    // it has no value form yet, and a listed function must also behave.
+    ("Array", &[("from", 1, ""), ("isArray", 1, ""), ("of", 0, "")]),
 ];
 
 /// The static methods of the built-in `class` as `(kind, name)` pairs.
