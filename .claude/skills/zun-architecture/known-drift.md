@@ -695,3 +695,50 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   Also there: `class L extends Array { join() {...} }` with `sub.toString()`
   answers the element count, and `Symbol.toPrimitive` on an array is ignored by
   `Number()`.
+
+### Found while making native subclassing work (`efbce851`)
+- **OPEN, memory safety - `Reflect.construct(<native>, args, K)` where `K` has
+  typed fields does raw field access on the native's slots.** Not a wrong
+  answer but an out-of-contract memory access:
+  ```ts
+  class K { tag: string = "k"; n: number = 1; describe() { return this.tag + ":" + this.n } }
+  const a: any = Reflect.construct(Array, [1, 2, 3], K as any);
+  a.describe();        // zun: "Math:9.4e-323"   node: "undefined:undefined"
+  a.tag = "z";         // writes through a slot the native array does not have
+  ```
+  `LoadField`/`StoreField` run against the native array's words, so the read
+  surfaces a leaked interned string (`"Math"` -- the same signature as the old
+  `new Error(0 as any).message` bug) and a denormal float. Native-backed
+  classes (`efbce851`) escape this because their `this` is `any`; the
+  `Reflect.construct` path does not. **A typed field access must be refused
+  when the receiver is a native value rather than an instance of the TypeDef.**
+- **OPEN, engine panic - a static field initializer never runs in the project's
+  own canonical program shape.** A `function main()` entry point with **no
+  top-level statements** -- the form every `zun_vm` test uses -- leaves a
+  `static` field as `Void`, and the engine panics instead of reporting
+  anything:
+  ```ts
+  class T { static seen: string[] = []; static add(s: string) { T.seen.push(s) } }
+  function main() { T.add("a"); console.log(T.seen.join(",")); }
+  // panics: value.rs:228 "expected object, found Void"
+  ```
+  Adding a single top-level statement (`main();`) makes it work, which is why
+  the fixtures never caught it: they all have top-level code.
+- **OPEN - a declared field on a typed-array subclass lists but is skipped by
+  the enumerating operations.** `class U extends Uint8Array { tag = "u" }`:
+  the field reads, deletes, and answers `hasOwnProperty`,
+  `getOwnPropertyNames` and its descriptor, but `Object.keys`, `for...in`,
+  `JSON.stringify` and `in` omit it. Same bug as an expando on a plain typed
+  array. Array and `ArrayBuffer` subclasses are correct, so this is specific
+  to the typed-array carriers.
+- **OPEN - smaller gaps in the new carrier:** a RegExp subclass ignores
+  `Symbol.species` in `split`; typed-array `map` with a BigInt species throws
+  `slice`'s message instead of node's "Cannot convert 1 to a BigInt";
+  typed-array subclasses have no `from`/`of` statics; `new this(...parts)`
+  (spread into a dynamic `new`) is still unlowered; and a field declared
+  without an initializer is adopted as `0` rather than `undefined`.
+- **OPEN - `SharedArrayBuffer` is indistinguishable from `ArrayBuffer` in the
+  heap**, so `Object.prototype.toString.call` answers `[object ArrayBuffer]`
+  where node answers `[object SharedArrayBuffer]`. It answered
+  `[object Object]` before `efbce851`; both are wrong, and telling them apart
+  needs a heap-level distinction.
