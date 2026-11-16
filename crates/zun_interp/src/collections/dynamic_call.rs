@@ -199,6 +199,43 @@ impl<'a> Interp<'a> {
                         }
                     }
                 }
+                // `toLocaleString()` on a string, number or boolean reached through
+                // `any`: a string answers itself, a boolean its text, a number the
+                // root-locale formatting typed code uses.
+                if member.as_ref() == "toLocaleString" {
+                    let text = match &receiver_concrete {
+                        Value::Str(text) => Some(text.to_string()),
+                        Value::Bool(flag) => Some(flag.to_string()),
+                        Value::Float(..) | Value::Int(..) => {
+                            let x = match &receiver_concrete {
+                                Value::Float(number, _) => *number,
+                                Value::Int(number, _) => *number as f64,
+                                _ => unreachable!(),
+                            };
+                            match zun_natives::resolve("number", "numberToLocaleString") {
+                                Some((id, _)) => {
+                                    match zun_natives::dispatch(
+                                        id,
+                                        &[zun_natives::NativeArg::Float(x)],
+                                        self.output,
+                                    ) {
+                                        Ok(zun_natives::NativeValue::Str(text)) => Some(text),
+                                        _ => None,
+                                    }
+                                }
+                                None => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(text) = text {
+                        let boxed = zun_gc::with_current_heap_mut(|heap| {
+                            Value::Str(text.into()).box_any(heap)
+                        })
+                        .unwrap_or_else(zun_core::Any::null);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 // A number reached through `any` carries the Number.prototype
                 // formatters (`x.toString(2)`, `x.toFixed(2)`, ...).
                 if let Value::Float(_, _) | Value::Int(_, _) = &receiver_concrete {
@@ -489,9 +526,20 @@ impl<'a> Interp<'a> {
                         let mut it = unboxed.into_iter();
                         let this_arg = it.next().unwrap_or(Value::Void);
                         let mut rest: Vec<Value> = if member.as_ref() == "apply" {
+                            // CreateListFromArrayLike: an omitted, `null` or `undefined`
+                            // list applies no arguments; an array-like object is read
+                            // by `length` and index; any other primitive is a TypeError.
                             match it.next() {
-                                Some(Value::Object(array)) => self.read_array_values(array)?,
-                                _ => Vec::new(),
+                                None | Some(Value::Void) | Some(Value::Null) => Vec::new(),
+                                Some(list) => {
+                                    let boxed = self.proto_box(list);
+                                    let array =
+                                        self.call_managed_collection("arrayFromArgumentList", &[boxed])?;
+                                    match object(&array) {
+                                        Some(array) => self.read_array_values(array)?,
+                                        None => Vec::new(),
+                                    }
+                                }
                             }
                         } else {
                             it.collect()
@@ -747,6 +795,17 @@ impl<'a> Interp<'a> {
                     });
                     return Ok(Value::Any(removed.unwrap_or_else(zun_core::Any::void)));
                 }
+                if is_array
+                    && member.as_ref() == "toLocaleString"
+                    && zun_gc::with_current_heap(|heap| heap.dynamic_get_function(namespace, "toLocaleString")).is_none()
+                {
+                    if let Some(rid) = self.free_function_rid("__zunArrayToLocaleString") {
+                        let result = self.call(rid, vec![Value::Object(namespace)], None)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
                 if is_array {
                     use zun_natives::ArrayHandling;
                     // The base native name comes from the shared table; a member
@@ -798,10 +857,15 @@ impl<'a> Interp<'a> {
                             }
                         }
                         Some(ArrayHandling::JoinDefault) => {
-                            if !matches!(native_args.get(1), Some(Value::Str(_))) {
-                                native_args.truncate(1);
-                                native_args.push(Value::Str(",".into()));
-                            }
+                            // A non-string separator runs ToString; an omitted or
+                            // `undefined` one means a comma.
+                            let separator = match native_args.get(1).cloned() {
+                                Some(Value::Str(text)) => text,
+                                None | Some(Value::Void) => ",".into(),
+                                Some(other) => self.dyn_to_string(&other)?.into(),
+                            };
+                            native_args.truncate(1);
+                            native_args.push(Value::Str(separator));
                         }
                         Some(ArrayHandling::ToStringJoin) => {
                             native_args.truncate(1);

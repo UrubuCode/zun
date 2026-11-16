@@ -389,6 +389,7 @@ impl Checker<'_> {
                 Ty::String => "stringIteratorNew",
                 Ty::Error => "arrayIteratorNew",
                 Ty::Any | Ty::DynamicObject => "symbolIteratorCall",
+                Ty::Instance(idx) if self.class_has_iterator(idx) => "symbolIteratorCall",
                 Ty::BufferView(kind) => match crate::typed_arrays::iterator_new(kind) {
                     Some(new_name) => new_name,
                     None => {
@@ -606,6 +607,7 @@ impl Checker<'_> {
                     recv_hir.ty,
                     Ty::Any
                         | Ty::DynamicObject
+                        | Ty::Instance(_)
                         | Ty::Array
                         | Ty::Map
                         | Ty::Set
@@ -625,7 +627,7 @@ impl Checker<'_> {
                     if array_ok
                         && !self.symbol_call_guard
                         && matches!(key_hir.ty, Ty::Any | Ty::Symbol)
-                        && matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject)
+                        && matches!(recv_hir.ty, Ty::Any | Ty::DynamicObject | Ty::Instance(_))
                     {
                         let (recv_slot, recv_tmp) = self.synthetic_local(cx, Ty::Any);
                         let (key_slot, key_tmp) = self.synthetic_local(cx, Ty::Any);
@@ -812,7 +814,7 @@ impl Checker<'_> {
                     signature.params[hidden..].to_vec(),
                     signature.optional_count,
                     signature.rest_param.map(|index| index - hidden),
-                    signature.return_ty,
+                    if signature.is_generator { Ty::Any } else { signature.return_ty },
                     signature.name.clone(),
                 )
             };

@@ -1489,16 +1489,22 @@ impl Interp<'_> {
                     };
                     // Calling a generator function through a function value creates
                     // the generator object instead of running the body.
-                    if self.method_contains_yield(handle.method_rid()) {
-                        let generator = self.create_generator(handle.method_rid(), &call_args)?;
-                        stack.push(generator);
-                        continue;
-                    }
                     let link = RootLink {
                         stack: std::ptr::from_mut(stack.as_mut_slice()),
                         locals: std::ptr::from_mut(locals.as_mut_slice()),
                         parent,
                     };
+                    if self.method_contains_yield(handle.method_rid()) {
+                        // An `async function*` hands its coroutine to the prelude's
+                        // `__zunMakeAsyncGen`, a managed call that can collect. It has
+                        // no link of its own, so publish this activation or the
+                        // caller's locals (an array built before the call) go
+                        // unrooted and are left stale when the heap moves.
+                        let _native_link = self.publish_native_link(&link);
+                        let generator = self.create_generator(handle.method_rid(), &call_args)?;
+                        stack.push(generator);
+                        continue;
+                    }
                     let result =
                         match self.dispatch_outcome(handle.method_rid(), call_args, Some(&link)) {
                             ExecutionOutcome::Complete(value) => value,

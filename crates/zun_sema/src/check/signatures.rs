@@ -1,8 +1,23 @@
 use crate::check::*;
 
 impl Checker<'_> {
-    /// Whether a function declaration's parameter list opens with `this`.
+    /// Whether a function declaration receives a hidden `this`: it opens its
+    /// parameter list with `this`, or its body mentions `this` (the
+    /// constructor-function and borrowed-method idiom, `function F() { this.x
+    /// = 1 }`), so `new F()` and `F.call(obj)` have a receiver to bind.
     fn declaration_takes_this(&self, f: &ast::Function) -> bool {
+        self.declaration_opens_with_this(f)
+            || self
+                .source
+                .get(f.body.span.start as usize..f.body.span.end as usize)
+                .is_some_and(|text| {
+                    text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                        .any(|word| word == "this")
+                })
+    }
+
+    /// Whether a function declaration's parameter list opens with `this`.
+    fn declaration_opens_with_this(&self, f: &ast::Function) -> bool {
         let Some(text) = self
             .source
             .get(f.name.span.end as usize..f.body.span.start as usize)

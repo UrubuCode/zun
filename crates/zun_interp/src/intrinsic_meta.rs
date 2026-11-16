@@ -426,7 +426,7 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
             ("join", 1), ("keys", 0), ("entries", 0), ("values", 0), ("forEach", 1),
             ("filter", 1), ("flat", 0), ("flatMap", 1), ("map", 1), ("every", 1),
             ("some", 1), ("reduce", 1), ("reduceRight", 1), ("toReversed", 0),
-            ("toSorted", 1), ("toSpliced", 2), ("with", 2), ("toString", 0),
+            ("toSorted", 1), ("toSpliced", 2), ("with", 2), ("toString", 0), ("toLocaleString", 0),
         ],
     ),
     (
@@ -444,7 +444,7 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
     ),
     (
         "Number",
-        &[("toExponential", 1), ("toFixed", 1), ("toPrecision", 1), ("toString", 1), ("valueOf", 0)],
+        &[("toExponential", 1), ("toFixed", 1), ("toPrecision", 1), ("toString", 1), ("valueOf", 0), ("toLocaleString", 0)],
     ),
     ("BigInt", &[("toString", 0), ("valueOf", 0)]),
     ("Symbol", &[("toString", 0), ("valueOf", 0)]),

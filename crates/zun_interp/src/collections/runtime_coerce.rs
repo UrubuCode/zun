@@ -374,12 +374,46 @@ impl<'a> Interp<'a> {
         obj: zun_gc::Obj,
         separator: &str,
     ) -> Result<Option<String>, RunError> {
+        // The arrays being joined, outermost first: an array reachable from
+        // itself contributes an empty string instead of recursing forever. The
+        // registry owns the slots so a collection inside an element's `toString`
+        // keeps them current.
+        let stack = zun_gc::RootArray::new(0);
+        self.array_join_guarded(obj, separator, &stack, 0)
+    }
+
+    fn array_join_guarded(
+        &mut self,
+        obj: zun_gc::Obj,
+        separator: &str,
+        stack: &zun_gc::RootArray,
+        depth: usize,
+    ) -> Result<Option<String>, RunError> {
         if zun_gc::with_current_heap(|heap| heap.array_len(obj)).is_none() {
             return Ok(None);
         }
+        // A cycle, or nesting too deep to be anything else, joins as empty.
+        if depth > 256 || (0..depth).any(|level| stack.get(level) == Some(obj)) {
+            return Ok(Some(String::new()));
+        }
+        stack.set(depth, obj);
+        let joined = self.array_join_elements(obj, separator, stack, depth);
+        stack.clear(depth);
+        joined.map(Some)
+    }
+
+    fn array_join_elements(
+        &mut self,
+        obj: zun_gc::Obj,
+        separator: &str,
+        stack: &zun_gc::RootArray,
+        depth: usize,
+    ) -> Result<String, RunError> {
         let mut parts: Vec<String> = Vec::new();
         let mut index = 0usize;
         loop {
+            // An element's `toString` can run managed code that moves the array.
+            let obj = stack.get(depth).unwrap_or(obj);
             let length = zun_gc::with_current_heap(|heap| heap.array_len(obj)).unwrap_or(0);
             if index >= length {
                 break;
@@ -390,11 +424,10 @@ impl<'a> Interp<'a> {
             let concrete = zun_gc::with_current_heap(|heap| Value::unbox_any(element, heap));
             let text = match concrete {
                 Some(Value::Object(inner))
-                    if inner != obj
-                        && zun_gc::with_current_heap(|heap| heap.bigint_value(inner).is_none()) =>
+                    if zun_gc::with_current_heap(|heap| heap.bigint_value(inner).is_none()) =>
                 {
                     if zun_gc::with_current_heap(|heap| heap.array_len(inner).is_some()) {
-                        self.array_join_dyn(inner, ",")?.unwrap_or_default()
+                        self.array_join_guarded(inner, ",", stack, depth + 1)?.unwrap_or_default()
                     } else {
                         match self
                             .call_managed_collection("stringCoerce", &[Value::Object(inner)])?
@@ -409,7 +442,7 @@ impl<'a> Interp<'a> {
             };
             parts.push(text);
         }
-        Ok(Some(parts.join(separator)))
+        Ok(parts.join(separator))
     }
 
     #[allow(clippy::ptr_arg)] // operates on the interpreter operand-stack buffer

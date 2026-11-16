@@ -18,7 +18,7 @@ const ARRAY_READ_ONLY: &[&str] = &[
     "at", "concat", "entries", "every", "filter", "find", "findIndex", "findLast",
     "findLastIndex", "flat", "flatMap", "forEach", "includes", "indexOf", "join", "keys",
     "lastIndexOf", "map", "reduce", "reduceRight", "slice", "some", "toReversed", "toSorted",
-    "toSpliced", "values", "with",
+    "toSpliced", "values", "with", "toLocaleString",
 ];
 
 impl Interp<'_> {

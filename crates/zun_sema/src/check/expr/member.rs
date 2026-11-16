@@ -329,6 +329,19 @@ impl Checker<'_> {
                 span,
             };
         }
+        // `fn[key]`: a function is an object, so a computed key is an ordinary
+        // property read, resolved by name at run time.
+        if matches!(object.ty, Ty::Function(_)) {
+            let key = self.check_expr(cx, index);
+            return hir::Expr {
+                kind: hir::ExprKind::DynamicGetValue {
+                    object: Box::new(object),
+                    key: Box::new(Self::box_to_any(key)),
+                },
+                ty: Ty::Any,
+                span,
+            };
+        }
         if object.ty == Ty::Proxy {
             let key = self.check_expr(cx, index);
             return self.proxy_get(object, key, span);

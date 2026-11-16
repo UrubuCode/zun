@@ -398,6 +398,26 @@ impl Checker<'_> {
             {
                 value = self.to_string_for_parse(value);
             }
+            // `join(separator)`: a non-string separator runs ToString, and an
+            // omitted or `undefined` one means a comma.
+            if callback_receiver
+                && mname == "join"
+                && expected_ty == Ty::String
+                && value.ty != Ty::String
+                && !value.ty.is_error()
+            {
+                if let Some(&helper) = self.by_name.get("__zunJoinSeparator") {
+                    let span = value.span;
+                    value = hir::Expr {
+                        kind: hir::ExprKind::Call {
+                            func: helper,
+                            args: vec![Self::box_to_any(value)],
+                        },
+                        ty: Ty::String,
+                        span,
+                    };
+                }
+            }
             coerce_numeric_literal(&mut value, expected_ty);
             if !value.ty.is_error() && !self.is_assignable(value.ty, expected_ty) {
                 self.error(

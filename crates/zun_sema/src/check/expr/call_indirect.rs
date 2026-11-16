@@ -190,7 +190,7 @@ impl Checker<'_> {
                 let sig = &self.signatures[func as usize];
                 (
                     sig.params[hidden..].to_vec(),
-                    sig.return_ty,
+                    if sig.is_generator { Ty::Any } else { sig.return_ty },
                     sig.optional_count,
                     sig.name.clone(),
                 )

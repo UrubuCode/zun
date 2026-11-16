@@ -888,7 +888,7 @@ impl Interp<'_> {
                 .async_state
                 .pid_by_obj
                 .iter()
-                .find_map(|(&addr, &bridged)| (bridged == pid).then_some(addr));
+                .find_map(|(&addr, &(bridged, _))| (bridged == pid).then_some(addr));
             let message = match addr {
                 Some(addr) => {
                     let promise = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
