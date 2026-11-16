@@ -1131,3 +1131,51 @@ fn closure_nested_in_a_callback_captures_the_callbacks_const() {
         .any(|closure| closure.captures.iter().any(|capture| capture.name == "r"));
     assert!(captured, "the inner closure must capture `r`");
 }
+
+fn has_cell_capture(hir: &hir::Program, name: &str) -> bool {
+    hir.closures.iter().any(|closure| {
+        closure
+            .captures
+            .iter()
+            .any(|capture| capture.name == name && capture.mode == hir::CaptureMode::ByCell)
+    })
+}
+
+#[test]
+fn name_only_in_a_string_comment_or_property_does_not_take_the_cell_path() {
+    let hir = check_ok(
+        "function get(cb: any): any { return cb; } \
+         function f(): void { \
+           const req: any = get(() => { /* req */ print(\"req\"); const o: any = {}; print(o.req); }); \
+         }",
+    );
+    assert!(!has_cell_capture(&hir, "req"), "no closure may capture `req`");
+}
+
+#[test]
+fn shadowing_parameter_does_not_take_the_cell_path() {
+    let hir = check_ok(
+        "function get(cb: any): any { return cb; } \
+         function f(): void { const req: any = get((req: any) => { print(req); }); }",
+    );
+    assert!(!has_cell_capture(&hir, "req"), "a shadowing parameter must not capture");
+}
+
+#[test]
+fn annotated_class_instance_keeps_its_type_on_the_cell_path() {
+    let hir = check_ok(
+        "class Server { id: number = 1; } \
+         function make(cb: any): Server { return new Server(); } \
+         function f(): void { const s: Server = make(() => { print(s.id); }); print(s.id); }",
+    );
+    assert!(has_cell_capture(&hir, "s"));
+    let closure = hir
+        .closures
+        .iter()
+        .find(|c| c.captures.iter().any(|capture| capture.name == "s"))
+        .unwrap();
+    assert!(matches!(
+        closure.captures.iter().find(|c| c.name == "s").unwrap().ty,
+        Ty::Instance(_)
+    ));
+}

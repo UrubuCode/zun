@@ -26,8 +26,8 @@ impl Checker<'_> {
         if matches!(init, ast::Expr::Function(_)) && !cx.mutated_names.contains(self.text(name)) {
             self.closure_self_name = Some(self.text(name).to_string());
         }
-        if self.initializer_closure_mentions(cx, init, name) {
-            return self.check_self_referencing_let(cx, name, init);
+        if self.initializer_references_name(cx, &self.text(name).to_string(), init) {
+            return self.check_self_referencing_let(cx, name, ty.as_ref(), init);
         }
         // The adapter's injected `arguments = [p1, ..., ...rest]` (name and
         // literal share one span): trimmed to the real call-site count.
@@ -122,70 +122,78 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the initializer is not itself a function expression but contains a
-    /// closure that mentions the variable being declared
-    /// (`const r = get(url, () => { ... r ... })`). JS binds the name before the
-    /// initializer runs, so the closure must capture that binding.
-    fn initializer_closure_mentions(
-        &self,
-        cx: &FunctionCx,
-        init: &ast::Expr,
-        name: &ast::Name,
-    ) -> bool {
-        if cx.is_module_scope || matches!(init, ast::Expr::Function(_)) {
-            return false;
-        }
-        let text = self.text(name);
-        let span = init.span();
-        let Some(source) = self.source.get(span.start as usize..span.end as usize) else {
-            return false;
-        };
-        let Some(closure_start) = [source.find("=>"), source.find("function")]
-            .into_iter()
-            .flatten()
-            .min()
-        else {
-            return false;
-        };
-        let tail = &source[closure_start..];
-        let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
-        tail.match_indices(text).any(|(at, _)| {
-            let before = tail[..at].chars().next_back();
-            let after = tail[at + text.len()..].chars().next();
-            !before.is_some_and(is_word) && !after.is_some_and(is_word) && before != Some('.')
-        })
-    }
-
-    /// `const r = f(() => r)`: declare `r` as a dynamic cell-backed local before
-    /// checking the initializer, so closures created inside it capture the cell
-    /// and observe the value once the initializer completes.
+    /// `const r = f(() => r)`: declare `r` as a cell-backed local before checking
+    /// the initializer, so closures created inside it capture the cell and
+    /// observe the value once the initializer completes.
+    ///
+    /// A reference-typed annotation (class instance, array, map, ...) is kept: the
+    /// cell starts as `null` of that type. Value-typed annotations (number,
+    /// string, boolean, bigint, ...) have no null placeholder, so the variable is
+    /// dynamic (`any`) instead.
     fn check_self_referencing_let(
         &mut self,
         cx: &mut FunctionCx,
         name: &ast::Name,
+        annotation: Option<&ast::TypeAnnotation>,
         init: &ast::Expr,
     ) -> hir::Stmt {
         let span = init.span();
         let name_text = self.text(name).to_string();
-        let slot = cx.declare(&name_text, Ty::Any);
+        let declared = annotation.map(|t| self.resolve_annotation(t));
+        let var_ty = match declared {
+            Some(
+                ty @ (Ty::Array
+                | Ty::Map
+                | Ty::Set
+                | Ty::WeakMap
+                | Ty::WeakSet
+                | Ty::WeakRef
+                | Ty::RegExp
+                | Ty::Promise
+                | Ty::DynamicObject
+                | Ty::Instance(_)),
+            ) => ty,
+            _ => Ty::Any,
+        };
+        let slot = cx.declare(&name_text, var_ty);
         cx.boxed.insert(slot);
         cx.mutated.insert(slot);
-        let undefined = self.check_expr(
-            cx,
-            &ast::Expr::Unary {
-                op: ast::UnaryOp::Void,
-                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+        let placeholder = if var_ty == Ty::Any {
+            let undefined = self.check_expr(
+                cx,
+                &ast::Expr::Unary {
+                    op: ast::UnaryOp::Void,
+                    operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                    span,
+                },
+            );
+            Self::box_to_any(undefined)
+        } else {
+            hir::Expr {
+                kind: hir::ExprKind::Null,
+                ty: var_ty,
                 span,
-            },
-        );
-        let value = Self::box_to_any(self.check_expr(cx, init));
+            }
+        };
+        let mut value = self.check_expr(cx, init);
+        if var_ty == Ty::Any {
+            value = Self::box_to_any(value);
+        } else if !value.ty.is_error() && !self.is_assignable(value.ty, var_ty) {
+            self.error(
+                value.span,
+                format!(
+                    "initializer type {:?} does not match declared type {var_ty:?}",
+                    value.ty
+                ),
+            );
+        }
         hir::Stmt::Group(vec![
             hir::Stmt::BoxedLet {
                 slot,
-                init: Self::box_to_any(undefined),
+                init: placeholder,
             },
             hir::Stmt::Expr(hir::Expr {
-                ty: Ty::Any,
+                ty: var_ty,
                 kind: hir::ExprKind::CellStore {
                     slot,
                     value: Box::new(value),

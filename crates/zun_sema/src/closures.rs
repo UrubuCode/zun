@@ -712,3 +712,31 @@ fn first_return_ty(statements: &[hir::Stmt]) -> Option<Ty> {
         _ => None,
     })
 }
+
+impl Checker<'_> {
+    /// Whether a closure inside `init` (not itself a function expression) refers
+    /// to `name`, the variable being declared (`const req = get(url, () => req.id)`).
+    /// Walks the AST with the closure-capture collector, so nested parameters
+    /// shadow the name and property names, strings and comments never match.
+    /// Over-approximates (an inner declaration of the same name still counts);
+    /// a false positive only costs static typing of the variable.
+    pub(crate) fn initializer_references_name(
+        &self,
+        cx: &mut FunctionCx,
+        name: &str,
+        init: &ast::Expr,
+    ) -> bool {
+        if cx.is_module_scope || matches!(init, ast::Expr::Function(_)) {
+            return false;
+        }
+        // Probe with a throwaway binding so the collector resolves the name.
+        let locals_len = cx.locals.len();
+        cx.scopes.push(Scope::new());
+        cx.declare(name, Ty::Any);
+        let mut uses = CaptureUse::default();
+        self.collect_capture_expr(cx, &HashSet::new(), init, &mut uses);
+        cx.scopes.pop();
+        cx.locals.truncate(locals_len);
+        uses.slot_set.contains(&(locals_len as hir::LocalSlot))
+    }
+}
