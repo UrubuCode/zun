@@ -630,8 +630,8 @@ impl<'a> Interp<'a> {
                                     let wrapper =
                                         object(&wrapper_value).ok_or(RunError::BadToken)?;
                                     let callback = match args.get(1).ok_or(RunError::BadToken)? {
-                                        Value::Function(handle) => *handle,
-                                        _ => return Err(RunError::BadToken),
+                                        other => super::callback_handle(other)
+                                            .ok_or(RunError::BadToken)?,
                                     };
                                     let result =
                                         zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
@@ -784,8 +784,7 @@ impl<'a> Interp<'a> {
                 }
                 // Mapped form: invoke the callback `(value, index)` per element.
                 let callback = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Function(handle) => *handle,
-                    _ => return Err(RunError::BadToken),
+                    other => super::callback_handle(other).ok_or(RunError::BadToken)?,
                 };
                 let length = zun_gc::with_current_heap(|heap| heap.array_len(base))
                     .ok_or(RunError::BadToken)?;

@@ -252,8 +252,7 @@ impl<'a> Interp<'a> {
             _ => return Err(RunError::BadToken),
         };
         let callback = match args.get(1).ok_or(RunError::BadToken)? {
-            Value::Function(handle) => *handle,
-            _ => return Err(RunError::BadToken),
+            other => super::callback_handle(other).ok_or(RunError::BadToken)?,
         };
         let element = crate::typed_arrays::element_of(view).ok_or(RunError::BadToken)?;
         let length = crate::typed_arrays::element_len(view).ok_or(RunError::BadToken)?;
@@ -357,8 +356,7 @@ impl<'a> Interp<'a> {
             _ => return Err(RunError::BadToken),
         };
         let callback = match args.get(1).ok_or(RunError::BadToken)? {
-            Value::Function(handle) => *handle,
-            _ => return Err(RunError::BadToken),
+            other => super::callback_handle(other).ok_or(RunError::BadToken)?,
         };
         let length = crate::typed_arrays::element_len(view).ok_or(RunError::BadToken)?;
         // Index of the step `step` visits (0..length iterations), walking from
@@ -428,8 +426,7 @@ impl<'a> Interp<'a> {
             _ => return Err(RunError::BadToken),
         };
         let callback = match args.get(1).ok_or(RunError::BadToken)? {
-            Value::Function(handle) => *handle,
-            _ => return Err(RunError::BadToken),
+            other => super::callback_handle(other).ok_or(RunError::BadToken)?,
         };
         let kind = kind_arg(args.get(2))?;
         // Read the source eagerly into plain values (GC-safe across callbacks),
@@ -520,6 +517,15 @@ impl<'a> Interp<'a> {
             return self.invoke_builtin_with_this(handle, Value::Void, call_args);
         }
         let (method_rid, mut final_args) = self.resolve_call_target(handle, call_args)?;
+        // A class instance method used as a callback (`xs.map(inst.describe)`)
+        // runs with the callback's `thisArg`, which is `undefined` here -- not
+        // with the first real argument in the receiver slot. Without this the
+        // element was consumed as the receiver and the *index* arrived as the
+        // first parameter, so `["-3"].map(inst.describe)` answered `d:0`.
+        // A bound handle already carries its receiver from the bound record.
+        if !handle.is_bound() && self.method_rid_is_instance_method(method_rid) {
+            final_args.insert(0, Value::Void);
+        }
         let target = self
             .module
             .tables

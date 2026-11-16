@@ -4463,3 +4463,37 @@ fn a_bound_free_function_with_a_rest_parameter_keeps_its_arguments() {
     run(&module, &mut output).expect("run bound rest workload");
     assert_eq!(output.lines, vec!["1|2,3", "1|2,3", "1|2,3"]);
 }
+
+#[test]
+fn an_array_callback_keeps_its_element_and_accepts_a_bound_function() {
+    // Two defects on the callback path, neither covered by a fixture.
+    //
+    // A class instance method used as a callback must run with the callback's
+    // `thisArg` -- `undefined` here -- in its receiver slot. It was invoked
+    // with the callback arguments alone, so the *element* became the receiver
+    // and the *index* arrived as the first parameter: `["-3"].map(m)` answered
+    // `d:0`. This is the receiver-insertion mistake of `4ae8a539` and
+    // `c07a0cea` on a third path.
+    //
+    // And a bound function was rejected outright: the built-ins matched only
+    // `Value::Function`, while a bound callable travels an `Any` lane as a
+    // `functionBox` object, so every `xs.map(f.bind(..))` raised
+    // `TypeError: invalid argument to built-in function`.
+    let module = zun_compiler::compile(
+        "class R { describe(x: any): string { return \"d:\" + x; } }
+         function free(x: any): string { return \"f:\" + x; }
+         function main(): void {
+             const inst = new R();
+             const detached: any = (inst as any).describe;
+             console.log([\"-3\", \"7\"].map(detached).join(\"|\"));
+             const boundMethod: any = (detached as any).bind(inst);
+             console.log([\"q\"].map(boundMethod).join(\"|\"));
+             const boundFree: any = (free as any).bind(null);
+             console.log([\"a\"].map(boundFree).join(\"|\"));
+         }",
+    )
+    .expect("compile array callback workload");
+    let mut output = CaptureOutput::default();
+    run(&module, &mut output).expect("run array callback workload");
+    assert_eq!(output.lines, vec!["d:-3|d:7", "d:q", "f:a"]);
+}

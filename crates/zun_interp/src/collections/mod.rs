@@ -1109,3 +1109,28 @@ pub(crate) fn describe_received(value: &Value) -> String {
         _ => "an instance of Object".to_string(),
     }
 }
+
+/// The callable behind a value handed to a built-in that takes a callback.
+///
+/// A plain function arrives as `Value::Function`, but a **bound** function
+/// travels through an `Any` lane as a `functionBox` object (see
+/// [`unbox_function_box`]), so matching only on `Value::Function` rejected
+/// every bound callback: `xs.map(f.bind(null))` answered
+/// `TypeError: invalid argument to built-in function` for `map`, `filter`,
+/// `forEach` and the rest, where node runs it.
+pub(crate) fn callback_handle(value: &Value) -> Option<zun_core::FunctionHandle> {
+    match value {
+        Value::Function(handle) => Some(*handle),
+        Value::Object(object) => {
+            zun_gc::with_current_heap(|heap| heap.dynamic_get_function(*object, "__boxedFn"))
+        }
+        Value::Any(any) => {
+            let inner = zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))?;
+            match inner {
+                Value::Any(_) => None,
+                other => callback_handle(&other),
+            }
+        }
+        _ => None,
+    }
+}

@@ -384,8 +384,7 @@ impl<'a> Interp<'a> {
                 let source =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let callback = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Function(handle) => *handle,
-                    _ => return Err(RunError::BadToken),
+                    other => super::callback_handle(other).ok_or(RunError::BadToken)?,
                 };
                 let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
                     .ok_or(RunError::BadToken)?;

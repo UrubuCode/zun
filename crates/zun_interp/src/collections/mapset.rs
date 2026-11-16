@@ -365,8 +365,7 @@ impl<'a> Interp<'a> {
                 let map_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let callback = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Function(handle) => *handle,
-                    _ => return Err(RunError::BadToken),
+                    other => super::callback_handle(other).ok_or(RunError::BadToken)?,
                 };
                 self.collection_for_each(map_object, callback, false)
             }
@@ -814,8 +813,7 @@ impl<'a> Interp<'a> {
                 let set_object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let callback = match args.get(1).ok_or(RunError::BadToken)? {
-                    Value::Function(handle) => *handle,
-                    _ => return Err(RunError::BadToken),
+                    other => super::callback_handle(other).ok_or(RunError::BadToken)?,
                 };
                 self.collection_for_each(set_object, callback, true)
             }
