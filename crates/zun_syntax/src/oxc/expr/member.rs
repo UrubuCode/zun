@@ -155,8 +155,13 @@ pub(super) fn convert_computed_member(
     member: &oxc_ast::ast::ComputedMemberExpression<'_>,
 ) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    // `super['name']` with an identifier-shaped literal is `super.name`.
+    let plain_literal_key = matches!(&member.expression, Expression::StringLiteral(text)
+        if text.value.as_str().is_some_and(is_plain_identifier)
+            && (text.span.end - text.span.start) as usize
+                == text.value.as_str().map_or(0, str::len) + 2);
     // `super[key]` reads the base class's member: a lookup on the home object.
-    if matches!(member.object, Expression::Super(_)) && !member.optional {
+    if matches!(member.object, Expression::Super(_)) && !member.optional && !plain_literal_key {
         if let Some(home) = super::super::class::super_home_object(span(member.span)) {
             return Ok(Expr::Index {
                 object: Box::new(home),

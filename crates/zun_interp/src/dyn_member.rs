@@ -843,6 +843,38 @@ impl Interp<'_> {
                     stack.push(member);
                     return Ok(ArmFlow::Continue);
                 }
+                // `fn["prototype"]` reads the same lazily created prototype
+                // object `fn.prototype` does.
+                if &**name == "prototype" {
+                    Self::ensure_function_prototype(handle);
+                }
+            }
+        }
+        // `Class["prototype"]` on a class descriptor answers the class's
+        // prototype object, the same value `Class.prototype` reads.
+        if let Value::Str(name) = &key {
+            if &**name == "prototype" {
+                let descriptor = match &receiver {
+                    Value::Any(any) => any.as_class_descriptor(),
+                    _ => None,
+                };
+                if let Some(token) = descriptor {
+                    let user_class = token & zun_natives::USER_CLASS_FLAG != 0
+                        && ((token & !zun_natives::USER_CLASS_FLAG) as usize) >= 1
+                        && ((token & !zun_natives::USER_CLASS_FLAG) as usize)
+                            <= self.module.tables.type_defs.len();
+                    if user_class {
+                        let proto =
+                            self.class_prototype_object(token & !zun_natives::USER_CLASS_FLAG);
+                        stack.push(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                        return Ok(ArmFlow::Continue);
+                    }
+                    if self.builtin_ctor_has_prototype(token) {
+                        let proto = self.builtin_prototype_object(token);
+                        stack.push(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
             }
         }
         let object_raw = expando_receiver(receiver);

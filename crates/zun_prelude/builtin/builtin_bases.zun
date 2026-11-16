@@ -552,6 +552,40 @@ function __zunSetOpBool(o: Set<any>, op: string, other: any): boolean {
     return result;
 }
 
+// `Array.prototype.toLocaleString`: each element's own `toLocaleString` result,
+// joined with commas; `null` and `undefined` elements (and holes) contribute "".
+function __zunArrayToLocaleString(a: any[]): string {
+    let out = "";
+    for (let i = 0; i < a.length; i++) {
+        if (i > 0) {
+            out += ",";
+        }
+        const e: any = a[i];
+        if (e !== undefined && e !== null) {
+            out += e.toLocaleString();
+        }
+    }
+    return out;
+}
+
+// `Function.prototype.apply`: an omitted, `null` or `undefined` argument list
+// applies no arguments (unlike `Reflect.apply`, which throws on one).
+function __zunApplyList(list: any): any {
+    if (list === undefined || list === null) {
+        return [];
+    }
+    return list;
+}
+
+// `Array.prototype.join` separator: ToString of the argument, a comma when it
+// is omitted or `undefined`.
+function __zunJoinSeparator(separator: any): string {
+    if (separator === undefined) {
+        return ",";
+    }
+    return String(separator);
+}
+
 // `class X extends Array`: the subclass instance owns a native array and
 // forwards the common surface; `from`/`of` build plain native arrays.
 class __BuiltinArray {

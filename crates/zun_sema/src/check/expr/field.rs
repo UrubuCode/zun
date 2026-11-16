@@ -219,6 +219,80 @@ impl Checker<'_> {
                 }
             }
         }
+        // `super.member` in an instance method: a field of the base class reads
+        // off `this`, and a base getter is called directly (not virtually) with
+        // `this`, so an overriding getter can build on the one it replaces.
+        if self.text(class_name) == "super" {
+            if let (Some(class), Some(this_slot)) = (cx.this_class, cx.lookup("this")) {
+                if let Some(base) = self.classes[class as usize].base {
+                    let this_expr = hir::Expr {
+                        ty: cx.locals[this_slot as usize],
+                        kind: hir::ExprKind::Local(this_slot),
+                        span,
+                    };
+                    if let Some((field_slot, ty)) = self.field_of(base, fname) {
+                        return Some(hir::Expr {
+                            kind: hir::ExprKind::FieldGet {
+                                object: Box::new(this_expr),
+                                class: base,
+                                field_slot,
+                            },
+                            ty,
+                            span,
+                        });
+                    }
+                    if let Some(func) = self.method_of(base, &format!("get_{fname}")) {
+                        let sig = &self.signatures[func as usize];
+                        if !sig.is_static && sig.params.len() == 1 {
+                            return Some(hir::Expr {
+                                ty: sig.return_ty,
+                                kind: hir::ExprKind::StaticCall {
+                                    func,
+                                    args: vec![this_expr],
+                                },
+                                span,
+                            });
+                        }
+                    }
+                    // A member the base class does not declare statically (one
+                    // installed under a run-time key): read it off the base
+                    // prototype with `this` as the receiver, `Reflect.get`-style.
+                    if let Some(class_name) = self
+                        .classes_by_name
+                        .iter()
+                        .find(|(_, &index)| index == class)
+                        .map(|(name, _)| name.clone())
+                    {
+                        let home = ast::Expr::MethodCall {
+                            receiver: Box::new(ast::Expr::Ident(ast::synthetic_ident("Object"))),
+                            method: ast::synthetic_ident("getPrototypeOf"),
+                            args: vec![ast::Expr::Field {
+                                object: Box::new(ast::Expr::Ident(ast::synthetic_ident(
+                                    &class_name,
+                                ))),
+                                field: ast::synthetic_ident("prototype"),
+                                span,
+                            }],
+                            span,
+                        };
+                        let read = ast::Expr::MethodCall {
+                            receiver: Box::new(ast::Expr::Ident(ast::synthetic_ident("Reflect"))),
+                            method: ast::synthetic_ident("get"),
+                            args: vec![
+                                home,
+                                ast::Expr::String {
+                                    value: fname.to_string(),
+                                    span,
+                                },
+                                ast::Expr::Ident(ast::synthetic_ident("this")),
+                            ],
+                            span,
+                        };
+                        return Some(self.check_expr(cx, &read));
+                    }
+                }
+            }
+        }
         if let Some(expr) = self.field_class_singletons(cx, class_name, fname, field, span) {
             return Some(expr);
         }
@@ -809,6 +883,23 @@ impl Checker<'_> {
                             return hir::Expr {
                                 kind: hir::ExprKind::FunctionRef { func: method },
                                 ty: Ty::Function(method),
+                                span,
+                            };
+                        }
+                        // `this['k']` on a key the class does not declare is an
+                        // ordinary dynamic property read, like a computed key.
+                        if self.name_is_bracket_literal(field) {
+                            let key = hir::Expr {
+                                kind: hir::ExprKind::String(fname.clone()),
+                                ty: Ty::String,
+                                span: field.span,
+                            };
+                            return hir::Expr {
+                                kind: hir::ExprKind::DynamicGetValue {
+                                    object: Box::new(object),
+                                    key: Box::new(key),
+                                },
+                                ty: Ty::Any,
                                 span,
                             };
                         }

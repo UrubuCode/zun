@@ -34,8 +34,15 @@ class Event {
     currentTarget: any = null;
     isTrusted: boolean = false;
 
-    constructor(type: string, init: any = null) {
-        this.type = type;
+    // `type` is read as `any` so that `new Event()` (an omitted argument, only
+    // reachable through a dynamic constructor) reaches this body and throws the
+    // specified TypeError instead of failing to compile; a given value is
+    // converted with ToString like any DOMString argument.
+    constructor(type: any, init: any = null) {
+        if (type === undefined) {
+            throw new TypeError("The \"type\" argument must be specified");
+        }
+        this.type = String(type);
         this.init = init;
     }
 
@@ -85,10 +92,19 @@ class Event {
         this.propagationStopped = true;
         this.immediatePropagationStopped = true;
     }
+
+    // The propagation path: just the target being dispatched to (this runtime
+    // has no capture/bubble tree), and empty outside a dispatch.
+    composedPath(): any[] {
+        if (this.currentTarget == null) {
+            return [];
+        }
+        return [this.currentTarget];
+    }
 }
 
 class CustomEvent extends Event {
-    constructor(type: string, init: any = null) {
+    constructor(type: any, init: any = null) {
         super(type, init);
     }
 }

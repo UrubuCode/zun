@@ -53,6 +53,21 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether `name` was written as a string-literal key (`obj['key']`) rather
+    /// than an identifier (`obj.key`). The syntax adapter folds both into a field
+    /// access whose span covers the key text, so the quote just before it tells
+    /// them apart. TypeScript lets bracket access reach a member the class does
+    /// not declare; dot access stays a type error.
+    pub(crate) fn name_is_bracket_literal(&self, name: &ast::Name) -> bool {
+        if ast::synthetic_ident_text(*name).is_some() || name.span.start >= SYNTHETIC_NAME_BASE {
+            return false;
+        }
+        let start = name.span.start as usize;
+        start > 0
+            && matches!(self.source.as_bytes().get(start - 1), Some(b'\'' | b'"'))
+            && matches!(self.source.as_bytes().get(name.span.end as usize), Some(b'\'' | b'"'))
+    }
+
     pub(crate) fn error(&mut self, span: Span, message: impl Into<String>) {
         self.diagnostics.push(
             Diagnostic::error(message)

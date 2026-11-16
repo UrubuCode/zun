@@ -219,6 +219,21 @@ impl Checker<'_> {
                 span,
             };
         }
+        // `fn[key] = v`: a function is an object, so a computed key store is an
+        // ordinary dynamic property store.
+        if matches!(object.ty, Ty::Function(_)) {
+            let key = self.check_expr(cx, index);
+            let value = self.check_expr(cx, value);
+            return hir::Expr {
+                kind: hir::ExprKind::DynamicSetValue {
+                    object: Box::new(object),
+                    key: Box::new(Self::box_to_any(key)),
+                    value: Box::new(Self::box_to_any(value)),
+                },
+                ty: Ty::Any,
+                span,
+            };
+        }
         if object.ty == Ty::Proxy {
             let key = self.check_expr(cx, index);
             let value = self.check_expr(cx, value);
@@ -519,6 +534,27 @@ impl Checker<'_> {
                 }
                 None => {
                     let setter = format!("set_{fname}");
+                    // `this['k'] = v` on a key the class does not declare is an
+                    // ordinary dynamic property store, like a computed key.
+                    if self.method_of(class, &setter).is_none()
+                        && self.name_is_bracket_literal(field)
+                    {
+                        let key = hir::Expr {
+                            kind: hir::ExprKind::String(fname.clone()),
+                            ty: Ty::String,
+                            span: field.span,
+                        };
+                        let boxed = Self::box_to_any(value);
+                        return hir::Expr {
+                            kind: hir::ExprKind::DynamicSetValue {
+                                object: Box::new(object),
+                                key: Box::new(key),
+                                value: Box::new(boxed),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
                     let Some(func) = self.method_of(class, &setter) else {
                         self.error(
                             field.span,

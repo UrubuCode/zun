@@ -245,6 +245,20 @@ impl Checker<'_> {
                 span,
             });
         }
+        // `toLocaleString()` lowers to the prelude helper, which invokes each
+        // element's own `toLocaleString`.
+        if receiver.ty == Ty::Array && mname == "toLocaleString" && args.is_empty() {
+            if let Some(&func) = self.by_name.get("__zunArrayToLocaleString") {
+                return Ok(hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        func,
+                        args: vec![receiver],
+                    },
+                    ty: Ty::String,
+                    span,
+                });
+            }
+        }
         // `join()` defaults the separator to a comma; `toString()` is `join()`.
         if receiver.ty == Ty::Array && matches!(mname, "join" | "toString") && args.is_empty() {
             let Some((id, _)) = zun_natives::resolve("collections", "arrayJoin") else {

@@ -23,7 +23,15 @@ impl Checker<'_> {
             }
             ast::Pattern::Array { elements, rest, .. } => {
                 // A string destructures by code point.
-                let value = if value.ty == Ty::String {
+                // A Map, Set, typed array, dynamic object or iterable class instance
+                // goes through the runtime iteration protocol the same way.
+                let iterable = match value.ty {
+                    Ty::String | Ty::Map | Ty::Set | Ty::DynamicObject => true,
+                    Ty::Instance(idx) => self.class_has_iterator(idx),
+                    Ty::BufferView(kind) => crate::typed_arrays::iterator_new(kind).is_some(),
+                    _ => false,
+                };
+                let value = if iterable {
                     self.spread_source_to_array(value)
                 } else {
                     value

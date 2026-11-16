@@ -319,14 +319,21 @@ impl<'a> Interp<'a> {
                         .unwrap_or(Value::Void),
                     other => other.clone(),
                 };
-                if !matches!(primitive, Value::Object(_)) {
+                // A BigInt is a heap object here but a primitive in JS.
+                let is_object = match &primitive {
+                    Value::Object(o) => {
+                        zun_gc::with_current_heap(|heap| heap.bigint_value(*o).is_none())
+                    }
+                    _ => false,
+                };
+                if !is_object {
                     return Err(RunError::Native(
                         "TypeError: CreateListFromArrayLike called on non-object".into(),
                     ));
                 }
-                self.col_array_construct("arrayFromArrayLike", args)
+                self.col_array_construct("arrayFromArrayLikeArgs", args)
             }
-            "arrayFromArrayLike" => {
+            "arrayFromArrayLike" | "arrayFromArrayLikeArgs" => {
                 // CreateListFromArrayLike: `length` then index reads, never iteration.
                 let concrete = match args.first().ok_or(RunError::BadToken)? {
                     Value::Any(any) => {
@@ -376,10 +383,23 @@ impl<'a> Interp<'a> {
                     other => other,
                 };
                 let raw = self.to_number_value(length_value)?;
+                // An argument list is bounded by the engine's stack, an ordinary
+                // array-like by the array length limit; both are a RangeError
+                // rather than an attempt to build the list.
+                let (limit, limit_message) = if name == "arrayFromArrayLikeArgs" {
+                    (1_048_576.0, "Maximum call stack size exceeded")
+                } else {
+                    (4294967295.0, "Invalid array length")
+                };
                 let length = if raw.is_nan() || raw <= 0.0 {
                     0usize
+                } else if raw.trunc() > limit {
+                    return Err(match self.new_error_object("RangeError", limit_message) {
+                        Some(object) => RunError::Thrown(Value::Object(object)),
+                        None => RunError::Native(format!("RangeError: {limit_message}")),
+                    });
                 } else {
-                    raw.trunc().min(4294967295.0) as usize
+                    raw.trunc() as usize
                 };
                 let target = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
                 // `dynamic_member_get` and `proxy_key_op` run user getters and proxy traps, which
