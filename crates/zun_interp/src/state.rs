@@ -104,7 +104,12 @@ pub(super) struct AsyncState {
     /// Heap promise address → its scheduler `PromiseId`. Keys are rewritten on a
     /// moving collection so a promise relocated while a frame is parked keeps
     /// its identity.
-    pub(super) pid_by_obj: HashMap<usize, PromiseId>,
+    ///
+    /// The value carries the promise's identity hash next to the id. Nothing roots
+    /// a key, so a bridged promise that dies leaves its entry behind and a later
+    /// allocation can reuse the address; the hash (unique per object, kept across
+    /// a move) tells that new promise apart from the dead one.
+    pub(super) pid_by_obj: HashMap<usize, (PromiseId, u64)>,
     /// Parked frames (the control/value state + GC roots), keyed by the id the
     /// scheduler holds. This table is the root owner for a parked `await`.
     pub(super) parked: HashMap<ContinuationId, ParkedFrame>,
@@ -337,12 +342,21 @@ impl AsyncState {
         }
         // Keys in the promise→id bridge are heap addresses, which move with the
         // objects they name.
+        //
+        // An entry whose key is not in the relocation map either did not move or
+        // names a promise that died. A dead key can equal the address a live
+        // promise moved to, so moved entries go in first and an unmoved entry
+        // never displaces one.
         if !self.pid_by_obj.is_empty() {
-            let old: Vec<(usize, PromiseId)> = self.pid_by_obj.drain().collect();
-            for (addr, pid) in old {
-                let obj = unsafe { Obj::from_addr(addr as *mut u64) };
-                let relocated = relocation.relocate(obj).addr() as usize;
-                self.pid_by_obj.insert(relocated, pid);
+            let old: Vec<(usize, (PromiseId, u64))> = self.pid_by_obj.drain().collect();
+            let (moved, unmoved): (Vec<_>, Vec<_>) = old
+                .into_iter()
+                .partition(|(addr, _)| relocation.relocate_address(*addr) != *addr);
+            for (addr, entry) in moved {
+                self.pid_by_obj.insert(relocation.relocate_address(addr), entry);
+            }
+            for (addr, entry) in unmoved {
+                self.pid_by_obj.entry(addr).or_insert(entry);
             }
         }
         rewritten
@@ -440,6 +454,16 @@ impl<'a> Interp<'a> {
         Ok(cid)
     }
 
+    /// The scheduler id bridged to `promise`, if this very promise (not a dead
+    /// one that once lived at its address) was bridged.
+    fn bridged_pid(&self, promise: Obj) -> Option<PromiseId> {
+        self.async_state
+            .pid_by_obj
+            .get(&(promise.addr() as usize))
+            .filter(|(_, hash)| *hash == promise.identity_hash())
+            .map(|(pid, _)| *pid)
+    }
+
     /// The scheduler [`PromiseId`] bridged to a managed promise `Obj`, created
     /// on first use. Crucially, a newly created bridge is *reconciled* against
     /// the heap immediately: if the heap promise has already settled, the
@@ -449,13 +473,14 @@ impl<'a> Interp<'a> {
     /// half of keeping the heap cell and the scheduler in step; the settle
     /// paths ([`Interp::settle_promise_resolve`]/`settle_promise_reject`) are
     /// the settle-after-attach half.
+
     pub(super) fn bridge_pid(&mut self, promise: Obj) -> PromiseId {
         let addr = promise.addr() as usize;
-        if let Some(pid) = self.async_state.pid_by_obj.get(&addr) {
-            return *pid;
+        if let Some(pid) = self.bridged_pid(promise) {
+            return pid;
         }
         let pid = self.async_state.promises.create();
-        self.async_state.pid_by_obj.insert(addr, pid);
+        self.async_state.pid_by_obj.insert(addr, (pid, promise.identity_hash()));
         let settlement = zun_gc::with_current_heap(|heap| heap.promise_state(promise));
         let settlement = match settlement {
             Some(zun_core::ManagedPromiseState::Resolved) => Some(Settlement::Fulfilled),
@@ -483,8 +508,7 @@ impl<'a> Interp<'a> {
     }
 
     pub(super) fn wake_scheduler(&mut self, promise: Obj, settlement: Settlement) {
-        let addr = promise.addr() as usize;
-        if let Some(pid) = self.async_state.pid_by_obj.get(&addr).copied() {
+        if let Some(pid) = self.bridged_pid(promise) {
             let state = &mut self.async_state;
             state.scheduler.settle(&mut state.promises, pid, settlement);
         }
@@ -501,12 +525,17 @@ impl<'a> Interp<'a> {
     /// settlement, and double-settle is a no-op, so running it is always safe.
     pub(super) fn reconcile_settlements(&mut self) {
         let mut to_settle: Vec<(PromiseId, Settlement)> = Vec::new();
-        for (&addr, &pid) in &self.async_state.pid_by_obj {
+        for (&addr, &(pid, hash)) in &self.async_state.pid_by_obj {
             if self.async_state.promises.state(pid) != zun_sched::PromiseState::Pending {
                 continue;
             }
             let promise = unsafe { Obj::from_addr(addr as *mut u64) };
-            match zun_gc::with_current_heap(|heap| heap.promise_state(promise)) {
+            // A promise that settled at this address is only the bridged one when
+            // its identity matches; otherwise the entry is a dead key.
+            let state = zun_gc::with_current_heap(|heap| {
+                heap.promise_state(promise).filter(|_| promise.identity_hash() == hash)
+            });
+            match state {
                 Some(zun_core::ManagedPromiseState::Resolved) => {
                     to_settle.push((pid, Settlement::Fulfilled))
                 }
@@ -974,5 +1003,29 @@ mod tests {
             );
         }
         assert_eq!(slot, None, "nothing stays published after the last scope");
+    }
+}
+
+#[cfg(test)]
+mod bridge_tests {
+    use super::AsyncState;
+
+    #[test]
+    fn a_dead_bridge_key_never_displaces_a_promise_that_moved_onto_its_address() {
+        // Nothing roots a bridge key, so a bridged promise that dies leaves its
+        // entry at an address that is never relocated. A live promise can then
+        // move onto exactly that address.
+        let mut state = AsyncState::default();
+        let dead = state.promises.create();
+        let live = state.promises.create();
+        state.pid_by_obj.insert(0x2000, (dead, 11));
+        state.pid_by_obj.insert(0x1000, (live, 22));
+
+        let mut relocation = zun_gc::RelocationMap::new();
+        relocation.insert_addresses(0x1000, 0x2000);
+        state.rewrite_after_move(&relocation);
+
+        assert_eq!(state.pid_by_obj.get(&0x2000), Some(&(live, 22)));
+        assert_eq!(state.pid_by_obj.get(&0x1000), None);
     }
 }
