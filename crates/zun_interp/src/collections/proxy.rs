@@ -241,6 +241,10 @@ impl<'a> Interp<'a> {
                             return Ok(Value::Any(boxed));
                         }
                     }
+                    // Any other class value held in a dynamic local (`const C: any
+                    // = SomeClass; new C()`) constructs exactly as
+                    // `Reflect.construct(C, args)` does.
+                    return self.col_reflect("reflectConstruct", args);
                 }
                 // An ordinary function value: `[[Construct]]` through its
                 // `prototype` (same path as `Reflect.construct(fn, args)`).

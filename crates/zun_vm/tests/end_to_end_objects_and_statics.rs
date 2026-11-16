@@ -752,11 +752,21 @@ fn object_define_property_accessor_getter_is_invoked_on_read() {
 
 #[test]
 fn function_call_threads_this_as_the_leading_argument() {
-    // `f.call(thisArg, x)` invokes `f` with `thisArg` bound to its first
-    // parameter and `x` to the second.
+    // `f.call(thisArg, a, b)` discards `thisArg` for a *free* function and
+    // passes `a` and `b` as its parameters; only a class instance method
+    // receives the receiver as a hidden leading argument.
+    //
+    // This test used to assert the opposite -- that `greet.call(10.0, 5.0)`
+    // bound `10.0` to the first parameter -- which was the argument-shifting
+    // bug fixed in `4ae8a539`. Both forms below agree with node.
     let out = run_source(
         "function greet(base: number, x: number): number { return base + x; }\n\
-         function main() { print(greet.call(10.0, 5.0)); }",
+         function main() { print(greet.call(0.0, 10.0, 5.0)); }",
+    );
+    assert_eq!(out, ["15"]);
+    let out = run_source(
+        "class G { add(a: number, b: number): number { return a + b; } }\n\
+         function main() { const g = new G(); print(G.prototype.add.call(g, 10.0, 5.0)); }",
     );
     assert_eq!(out, ["15"]);
 }

@@ -50,6 +50,29 @@ mod managed_methods;
 pub use managed_methods::{managed_method, ManagedMethod, ManagedTy};
 mod node_buffer;
 pub use collections::USER_CLASS_FLAG;
+
+/// Built-ins whose subclasses are *native-backed*: `class X extends <Name>`
+/// derives from the prelude carrier root `__Builtin<Name>`, and an instance of
+/// `X` is the native value itself (a real array, buffer, typed array or RegExp)
+/// carrying `X.prototype`, not a forwarding wrapper. One list, shared by the
+/// checker (which makes `this` dynamic in such a class) and the interpreter
+/// (which must not treat these roots as wrappers).
+pub const NATIVE_CARRIER_BASES: &[&str] = &[
+    "Array",
+    "ArrayBuffer",
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+    "RegExp",
+];
 mod date;
 mod date_f64;
 mod error;

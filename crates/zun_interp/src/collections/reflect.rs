@@ -202,8 +202,18 @@ impl<'a> Interp<'a> {
                             || heap.dynamic_get_function(object, name).is_some()
                     });
                     if matches!(in_array, Value::Bool(true)) || !own_named {
+                        // A native-backed subclass instance also answers for
+                        // the members its class prototype chain supplies.
+                        if matches!(in_array, Value::Bool(false))
+                            && Self::native_chain_has(object, name)
+                        {
+                            return Ok(Value::Bool(true));
+                        }
                         return Ok(in_array);
                     }
+                    return Ok(Value::Bool(true));
+                }
+                if Self::native_chain_has(object, name) {
                     return Ok(Value::Bool(true));
                 }
                 // A dynamic object answers for its whole prototype chain.
@@ -458,7 +468,12 @@ impl<'a> Interp<'a> {
                         .and_then(Self::class_token_of)
                         .and_then(|t| self.user_class_rid(t))
                     {
-                        if let Some(wanted) = Self::builtin_ctor_global_name(token) {
+                        // A native-backed base (`Array`, a buffer) is the
+                        // opposite case: the native value *is* the instance, so
+                        // it falls through to the prototype swap below.
+                        if let Some(wanted) = Self::builtin_ctor_global_name(token)
+                            .filter(|name| !zun_natives::NATIVE_CARRIER_BASES.contains(name))
+                        {
                             let base_name = format!("__Builtin{wanted}");
                             if self.class_chain_has_name(sub, &base_name) {
                                 return self.construct_class_from_descriptor(
@@ -524,11 +539,9 @@ impl<'a> Interp<'a> {
                     }
                     return self.construct_ordinary_function(handle, handle, values);
                 }
-                let token = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Any(any) if any.as_class_descriptor().is_some() => {
-                        any.as_class_descriptor().ok_or(RunError::BadToken)?
-                    }
-                    _ => {
+                let token = match args.first().and_then(Self::class_token_of) {
+                    Some(token) => token,
+                    None => {
                         return match self
                             .new_error_object("TypeError", "value is not a constructor")
                         {

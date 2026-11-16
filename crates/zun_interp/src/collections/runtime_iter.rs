@@ -44,6 +44,12 @@ impl<'a> Interp<'a> {
                 return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(snapshot))
                     .ok_or(RunError::BadToken);
             }
+            // `%TypedArray%.prototype[Symbol.iterator]` requires a real typed
+            // array receiver: called on the proxy it throws, it does not
+            // unwrap the target.
+            if zun_gc::with_current_heap(|heap| heap.typed_array_element(inner).is_some()) {
+                return Err(RunError::Native("TypeError: this is not a typed array.".into()));
+            }
             return self.resolve_iterator(target);
         }
         if zun_gc::with_current_heap(|heap| {
@@ -54,6 +60,32 @@ impl<'a> Interp<'a> {
         }) {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(source))
                 .ok_or(RunError::BadToken);
+        }
+        // A typed array reached through `any` (`for (const v of this)` in a
+        // native-backed subclass, a spread of a dynamic value) iterates its
+        // elements. The iterator walks a snapshot taken here, so a write made
+        // during the loop is not observed, unlike the live built-in iterator.
+        if zun_gc::with_current_heap(|heap| {
+            heap.typed_array_element(source).is_some()
+                && heap
+                    .dynamic_get_symbol_function(source, iterator_id)
+                    .is_none()
+        }) {
+            let length = crate::typed_arrays::element_len(source).unwrap_or(0);
+            let elements: Vec<Value> = (0..length)
+                .map(|index| {
+                    crate::typed_arrays::read_element(source, index).unwrap_or(Value::Void)
+                })
+                .collect();
+            return zun_gc::with_current_heap_mut(|heap| {
+                let snapshot = heap.alloc_array(0);
+                for element in &elements {
+                    let boxed = element.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                    heap.array_push(snapshot, boxed);
+                }
+                heap.alloc_array_iterator(snapshot)
+            })
+            .ok_or(RunError::BadToken);
         }
         if zun_gc::with_current_heap(|heap| heap.set_values(source)).is_some() {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_set_iterator(source))
@@ -791,6 +823,9 @@ impl<'a> Interp<'a> {
             return self.proxy_dynamic_get(object, name);
         }
         if name == "constructor" {
+            if let Some(found) = Self::native_chain_constructor(object) {
+                return Ok(Value::Any(found));
+            }
             if let Some(record) = self.constructor_record(object) {
                 return Ok(Value::Object(record));
             }

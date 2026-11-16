@@ -775,6 +775,26 @@ impl<'a> Interp<'a> {
                                 .then(|| def.base.rid())
                             });
                         if let Some(base) = base {
+                            // A class extending a built-in derives from the
+                            // prelude `__Builtin<Name>` root, which stands for
+                            // the built-in constructor itself.
+                            let builtin = self
+                                .module
+                                .tables
+                                .type_defs
+                                .get(base as usize - 1)
+                                .and_then(|def| {
+                                    self.module.strings.get(def.name).strip_prefix("__Builtin")
+                                })
+                                .and_then(|name| {
+                                    zun_gc::with_current_heap_mut(|heap| {
+                                        let global = heap.global_object();
+                                        heap.dynamic_get(global, name)
+                                    })
+                                });
+                            if let Some(descriptor) = builtin {
+                                return Ok(Value::Any(descriptor));
+                            }
                             if self.user_class_rid(zun_natives::USER_CLASS_FLAG | base).is_some() {
                                 return Ok(Value::Any(self.canonical_class_descriptor(base)));
                             }
@@ -926,12 +946,15 @@ impl<'a> Interp<'a> {
                             continue;
                         };
                         if self.class_prototype_object(rid).addr() as usize == proto_addr {
-                            let descriptor = zun_gc::with_current_heap_mut(|heap| {
-                                let global = heap.global_object();
-                                heap.dynamic_get(global, &builtin)
-                            });
-                            if let Some(descriptor) = descriptor {
-                                return Ok(Value::Any(descriptor));
+                            // `RegExp.prototype` is its own singleton object.
+                            if builtin == "RegExp" {
+                                let root = Self::regexp_prototype_singleton();
+                                return Ok(Value::Any(zun_core::Any::object(root.addr() as usize)));
+                            }
+                            if let Some(proto) = self.builtin_prototype_by_name(&builtin) {
+                                return Ok(Value::Any(zun_core::Any::object(
+                                    proto.addr() as usize,
+                                )));
                             }
                         }
                     }

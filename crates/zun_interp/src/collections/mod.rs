@@ -16,6 +16,7 @@ mod dynamic_call;
 mod iterators;
 pub(crate) mod iterator_helpers;
 mod mapset;
+pub(crate) mod native_subclass;
 mod misc_ops;
 
 mod object_core;
@@ -1055,6 +1056,32 @@ thread_local! {
     /// Set while a `recv.m?.(..)` probe call runs: a missing member answers
     /// `BadToken` (-> `undefined`) instead of throwing `TypeError`.
     static OPTIONAL_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+thread_local! {
+    /// Set for exactly one dynamic member call: the call is a *borrowed built-in*
+    /// (`Array.prototype.push.call(x, ...)`, and `super.push(...)` in a class
+    /// extending `Array`), so a same-named method the receiver inherits from a
+    /// class prototype must not be selected, or an override that delegates to
+    /// the built-in would call itself forever.
+    static BUILTIN_MEMBER_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Mark the next dynamic member call as a borrowed built-in.
+///
+/// **Invariant:** the call to this function must sit immediately before the
+/// dynamic member call it describes, with nothing fallible in between. The
+/// mark is consumed by the first `take_builtin_member_only` that runs, so a
+/// request whose call never happens -- because a step between them returned
+/// `Err` -- would hand the mark to the next, unrelated dynamic call and make
+/// it select a built-in over an inherited override.
+pub(crate) fn request_builtin_member_only() {
+    BUILTIN_MEMBER_ONLY.with(|flag| flag.set(true));
+}
+
+/// Consume the borrowed-built-in mark (see [`request_builtin_member_only`]).
+pub(crate) fn take_builtin_member_only() -> bool {
+    BUILTIN_MEMBER_ONLY.with(|flag| flag.replace(false))
 }
 
 /// How Node words the offending value in an `ERR_INVALID_ARG_TYPE` message

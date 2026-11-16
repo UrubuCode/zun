@@ -189,6 +189,14 @@ impl Checker<'_> {
         }
         if let Some(ctor) = own_ctor {
             let new = self.check_new_with_constructor(cx, class_idx, name, ctor, args, span);
+            // A native-backed class: the typed object is only the construction
+            // shell, and the value of `new` is the native behind it.
+            if self.native_base_of(class_idx).is_some() && !new.ty.is_error() {
+                if let Some(native) = self.native_adopt_expr(new, span) {
+                    return native;
+                }
+                return self.poison(span);
+            }
             return self.wrap_hooked_new(class_idx, new, span);
         }
         let field_tys: Vec<Ty> = self

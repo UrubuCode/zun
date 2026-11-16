@@ -463,6 +463,13 @@ struct Signature {
     is_static: bool,
 }
 
+/// Scope name of the typed construction shell inside the constructor of a
+/// native-backed class (a class extending `Array`, `ArrayBuffer` or a typed
+/// array). The shell is the fixed-layout object `new` allocates; `this` in that
+/// constructor is a separate dynamic local that `super(...)` rebinds to the
+/// native value. The leading space keeps the name out of reach of user code.
+const NATIVE_SHELL_LOCAL: &str = " native#shell";
+
 /// A collected class: its base and its own (not inherited) fields.
 struct ClassInfo {
     /// Byte offset where the class declaration starts.
@@ -475,6 +482,13 @@ struct ClassInfo {
     /// The `extends` value is a runtime value rather than a known class, so the
     /// class is compiled base-less and `super(...)` is a no-op.
     dynamic_base: bool,
+    /// The native built-in this class derives from (`Array`, `ArrayBuffer`, a
+    /// typed array, `RegExp`: `zun_natives::NATIVE_CARRIER_BASES`), when its
+    /// chain ends at a `__Builtin<Name>` carrier root.
+    /// An instance of such a class is the *native value itself* with the class
+    /// prototype installed, so `this` is dynamic (`any`) in its methods. `None`
+    /// for ordinary classes and for the carrier root.
+    native_base: Option<&'static str>,
     own_fields: Vec<(String, Ty, bool, bool)>,
     own_initializers: Vec<Option<Box<ast::Expr>>>,
 }

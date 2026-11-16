@@ -573,17 +573,24 @@ impl Checker<'_> {
         // String methods taking a RegExp: match/search.
         if receiver.ty == Ty::String && matches!(mname, "match" | "search") {
             let expected_args = 1;
-            if args.len() == expected_args {
-                let first = self.check_expr(cx, &args[0]);
-                if matches!(first.ty, Ty::Any | Ty::DynamicObject) {
+            if args.len() <= expected_args {
+                // An omitted argument is `undefined`, as in JS.
+                let undefined = ast::Expr::Unary {
+                    op: ast::UnaryOp::Void,
+                    operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                    span,
+                };
+                let first = self.check_expr(cx, args.first().unwrap_or(&undefined));
+                // Anything that is not statically a RegExp (a dynamic value, a
+                // string pattern, `undefined`) takes the run-time protocol:
+                // the `Symbol.match` / `Symbol.search` hook when present, else
+                // a RegExp built from the argument.
+                if first.ty != Ty::RegExp && !first.ty.is_error() {
                     let kind = if mname == "match" { 0.0 } else { 2.0 };
+                    let first = Self::box_to_any(first);
                     return Ok(self.string_symbol_dispatch(span, kind, receiver, first, None));
                 }
                 {
-                    if first.ty != Ty::RegExp && !first.ty.is_error() {
-                        self.error(first.span, format!("`{mname}` expects a RegExp argument"));
-                        return Ok(self.poison(span));
-                    }
                     let (native_name, return_ty) = match mname {
                         "match" => ("regexpMatch", Ty::Array),
                         _ => ("regexpSearch", Ty::Int(IntKind::I32)),

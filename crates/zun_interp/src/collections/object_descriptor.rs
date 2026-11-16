@@ -1185,6 +1185,10 @@ impl<'a> Interp<'a> {
                                     "Set"
                                 } else if let Some(kind) = heap.typed_array_element(obj) {
                                     kind.js_name()
+                                } else if heap.data_view_buffer(obj).is_some() {
+                                    "DataView"
+                                } else if heap.buffer_len(obj).is_some() {
+                                    "ArrayBuffer"
                                 } else {
                                     "Object"
                                 }

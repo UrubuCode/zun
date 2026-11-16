@@ -192,6 +192,16 @@ impl Interp<'_> {
                 return Ok(ArmFlow::Continue);
             }
         }
+        // A native-backed subclass instance (or a native with its own
+        // `constructor`) answers from the value and its prototype chain.
+        if name == "constructor" {
+            if let Value::Object(obj) = &concrete {
+                if let Some(found) = Self::native_chain_constructor(*obj) {
+                    stack.push(Value::Any(found));
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         // `view.constructor` of a typed array / ArrayBuffer / DataView.
         if name == "constructor" {
             if let Value::Object(obj) = &concrete {
@@ -641,6 +651,20 @@ impl Interp<'_> {
             let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .ok_or(RunError::BadToken)?;
             let object = expando_receiver(pop(stack)?).as_object();
+            // `re.lastIndex = n` on a RegExp reached through `any` writes the
+            // real match cursor (the one `test` / `exec` advance and the dynamic
+            // read answers from), never an expando of the same name.
+            if name == "lastIndex"
+                && zun_gc::with_current_heap(|heap| heap.regex_source(object).is_some())
+            {
+                if let Err(error) = zun_gc::with_current_heap_mut(|heap| {
+                    heap.regex_assign_last_index(object, any)
+                }) {
+                    throw_native_arm!(self, body, stack, pc, next - size, error.to_string());
+                }
+                stack.push(value);
+                return Ok(ArmFlow::Continue);
+            }
             // `arr.length = n` on an array reached through `any`.
             if name == "length" {
                 let level_len = zun_gc::with_current_heap(|heap| {
@@ -765,6 +789,10 @@ impl Interp<'_> {
                 // (`Object.defineProperty(C.prototype, ...)`) takes the write.
                 let proto_accessor = if typed_instance && !handled {
                     self.proto_chain_accessor_setter(object, &name)
+                } else if !handled {
+                    // A native-backed subclass instance inherits the setters
+                    // its class declares.
+                    Self::native_chain_accessor_setter(object, &name)
                 } else {
                     None
                 };

@@ -170,6 +170,11 @@ impl<'a> Checker<'a> {
                     return Ty::Function(func);
                 }
                 if let Some(&index) = self.classes_by_name.get(other) {
+                    // An instance of a native-backed class is the native value
+                    // itself, so the annotation is dynamic.
+                    if self.native_base_of(index).is_some() {
+                        return Ty::Any;
+                    }
                     return Ty::Instance(index);
                 }
                 // Final fallback: an erased generic type parameter (`T`) has no

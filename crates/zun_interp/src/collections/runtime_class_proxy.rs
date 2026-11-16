@@ -92,6 +92,11 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Any(boxed));
                 }
             }
+            // A native-backed class: the typed object is only the construction
+            // shell, and the instance is the native value behind it.
+            if let Some(native) = self.adopt_native_shell(obj.get())? {
+                return Ok(native);
+            }
             let obj = self.run_instance_hooks(obj.get())?;
             let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(obj).box_any(heap))
                 .unwrap_or_else(zun_core::Any::null);

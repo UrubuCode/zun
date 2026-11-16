@@ -4,6 +4,11 @@ use std::collections::HashMap;
 use zun_common::Span;
 use zun_syntax::ast;
 
+/// Built-ins whose subclasses are native-backed: `class X extends <Name>` derives
+/// from the prelude's `__Builtin<Name>` carrier root, and an instance is the
+/// native value itself carrying `X.prototype` (see `ClassInfo::native_base`).
+use zun_natives::NATIVE_CARRIER_BASES as NATIVE_CARRIERS;
+
 impl<'a> Checker<'a> {
     /// Whether `name` denotes a run-time value (a builtin global constructor or
     /// a binding declared in the source) rather than a misspelled class.
@@ -62,6 +67,7 @@ impl<'a> Checker<'a> {
                 base: None,
                 base_name,
                 dynamic_base: false,
+                native_base: None,
                 own_fields: Vec::new(),
                 own_initializers: Vec::new(),
             });
@@ -102,6 +108,43 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // A class whose chain ends at a native carrier root (`__BuiltinArray`,
+        // `__BuiltinArrayBuffer`, a typed array root) is native-backed.
+        for (i, c) in program.classes.iter().enumerate() {
+            let mut walk = self.classes[i].base;
+            let mut hops = 0;
+            while let Some(current) = walk {
+                let ancestor = self.text(&program.classes[current as usize].name);
+                if let Some(native) = ancestor
+                    .strip_prefix("__Builtin")
+                    .and_then(|name| NATIVE_CARRIERS.iter().copied().find(|carrier| *carrier == name))
+                {
+                    self.classes[i].native_base = Some(native);
+                    break;
+                }
+                hops += 1;
+                if hops > program.classes.len() {
+                    break;
+                }
+                walk = self.classes[current as usize].base;
+            }
+            if self.classes[i].native_base.is_some()
+                && (c.fields.iter().any(|field| field.is_private && !field.is_static)
+                    || c.methods.iter().any(|method| {
+                        !method.is_static && self.text(&method.name).starts_with('#')
+                    }))
+            {
+                self.error(
+                    c.name.span,
+                    "private instance members are not supported in a class extending a native built-in",
+                );
+            }
+        }
+    }
+
+    /// The native built-in a class is backed by, if it derives from a carrier root.
+    pub(super) fn native_base_of(&self, class: u32) -> Option<&'static str> {
+        self.classes.get(class as usize).and_then(|info| info.native_base)
     }
 
     /// Second pass: resolve each class's own field types, then build the HIR

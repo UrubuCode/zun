@@ -1508,11 +1508,26 @@ impl Interp<'_> {
                 }
                 match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
                     Some(Value::Any(inner)) => inner.as_class_descriptor(),
+                    Some(Value::Object(record)) => Self::constructor_record_token(record),
                     _ => None,
                 }
             }
+            Value::Object(record) => Self::constructor_record_token(*record),
             _ => None,
         }
+    }
+
+    /// The class a constructor record names. `instance.constructor` of a typed
+    /// instance is a record object (`{ name, __classDesc }`), not the class
+    /// descriptor itself, so a caller holding one still resolves the class.
+    fn constructor_record_token(record: zun_gc::Obj) -> Option<u32> {
+        zun_gc::with_current_heap(|heap| {
+            if !heap.is_dynamic_object(record) {
+                return None;
+            }
+            heap.dynamic_get(record, "__classDesc")
+                .and_then(|descriptor| descriptor.as_class_descriptor())
+        })
     }
 
     /// The expando bag of a class value: a plain dynamic object, anchored on the

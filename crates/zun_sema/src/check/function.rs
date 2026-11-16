@@ -81,6 +81,17 @@ impl Checker<'_> {
         self.collect_mutated_names(&f.body.statements, &mut cx.mutated_names);
         // A closure created in a default expression captures the parameter scope.
         cx.param_slot_count = cx.locals.len();
+        // The constructor of a native-backed class receives the typed
+        // construction shell as its receiver. `this` is a dynamic local that
+        // starts as the shell and becomes the native value once `super(...)`
+        // returns (see `finish_native_super`).
+        let native_ctor_this = (cx.is_constructor
+            && this_class.is_some_and(|class| self.native_base_of(class).is_some()))
+        .then(|| {
+            let shell = cx.lookup("this").expect("a constructor has a receiver");
+            cx.scopes[0].insert(NATIVE_SHELL_LOCAL.to_string(), shell);
+            (shell, cx.declare("this", Ty::Any))
+        });
         let mut default_names: HashSet<String> = HashSet::new();
         for parameter in &f.params {
             if let Some(default_value) = parameter.default_value.as_deref() {
@@ -243,6 +254,20 @@ impl Checker<'_> {
             }))]
         } else {
             let mut body = self.check_block(&mut cx, &f.body);
+            if let Some((shell, this_slot)) = native_ctor_this {
+                let shell_ty = cx.locals[shell as usize];
+                body.insert(
+                    0,
+                    hir::Stmt::Let {
+                        slot: this_slot,
+                        init: Self::box_to_any(hir::Expr {
+                            kind: hir::ExprKind::Local(shell),
+                            ty: shell_ty,
+                            span: f.name.span,
+                        }),
+                    },
+                );
+            }
             self.rewrite_boxed_lets(&mut body, &cx.boxed);
             boxed_locals::box_parameters(&mut body, &cx.boxed, &cx.locals, param_tys.len());
             // A derived constructor that touches `this` in a top-level

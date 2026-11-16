@@ -15,6 +15,9 @@ impl<'a> Interp<'a> {
         match name {
             "dynamicCall0" | "dynamicCall1" | "dynamicCall2" | "dynamicCall3" | "dynamicCall4"
             | "dynamicCall5" | "dynamicCall6" => {
+                // Consumed here, before anything can re-enter, so the mark
+                // covers this call only.
+                let builtin_member_only = super::take_builtin_member_only();
                 // Tier 0 type feedback: this is the dynamic `any` miss path, so
                 // recording the observed receiver/argument tags here is free for
                 // typed code (which resolves to typed natives and never arrives).
@@ -717,7 +720,34 @@ impl<'a> Interp<'a> {
                     };
                 }
                 // A typed array / ArrayBuffer / DataView reached through `any`.
+                // A RegExp reached through `any` (a native-backed `RegExp`
+                // subclass instance always is) answers `test` and `exec` with
+                // the natives the typed forms use; the argument runs ToString.
+                if matches!(member.as_ref(), "test" | "exec")
+                    && zun_gc::with_current_heap(|heap| heap.regex_source(namespace).is_some())
+                {
+                    let input = match call_args.first() {
+                        Some(argument) => self.dyn_to_string(&unbox_arg(argument)?)?,
+                        None => "undefined".to_string(),
+                    };
+                    let native = if member.as_ref() == "test" {
+                        "regexpTest"
+                    } else {
+                        "regexpExec"
+                    };
+                    let result = self.call_managed_collection(
+                        native,
+                        &[Value::Object(namespace), Value::Str(input.into())],
+                    )?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    return Ok(Value::Any(boxed));
+                }
+                // The receiver is rooted across the native call: a callback can
+                // collect, and the species step reads the receiver afterwards.
+                zun_gc::root!(species_receiver = namespace);
                 if let Some(result) = self.typed_view_call(namespace, &member, &call_args)? {
+                    let result = self.apply_species(species_receiver.get(), &member, result)?;
                     let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                         .unwrap_or_else(zun_core::Any::void);
                     return Ok(Value::Any(boxed));
@@ -751,7 +781,8 @@ impl<'a> Interp<'a> {
                 }
                 // A method inherited through the object's dynamic prototype chain
                 // (e.g. a built-in collection built with a `newTarget.prototype`).
-                {
+                // A borrowed built-in call skips it: the built-in itself is wanted.
+                if !builtin_member_only {
                     let mut cursor = zun_gc::with_current_heap(|heap| {
                         heap.dynamic_prototype(namespace)
                             .and_then(|any| any.as_object())
@@ -907,6 +938,16 @@ impl<'a> Interp<'a> {
                             }
                         }
                     };
+                    // `reduce` / `reduceRight` without an initial value seed
+                    // from the first present element: a separate native, as in
+                    // the typed form (an explicit `undefined` seed is a seed).
+                    if call_args.len() == 1 {
+                        match member.as_ref() {
+                            "reduce" => native_name = "arrayReduceNoInit".to_string(),
+                            "reduceRight" => native_name = "arrayReduceRightNoInit".to_string(),
+                            _ => {}
+                        }
+                    }
                     let mut native_args = Vec::with_capacity(call_args.len() + 1);
                     native_args.push(Value::Object(namespace));
                     native_args.extend(call_args.iter().cloned());
@@ -983,6 +1024,8 @@ impl<'a> Interp<'a> {
                     }
                     match self.call_managed_collection(&native_name, &native_args) {
                         Ok(result) => {
+                            let result =
+                                self.apply_species(species_receiver.get(), &member, result)?;
                             let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                                 .unwrap_or_else(zun_core::Any::null);
                             return Ok(Value::Any(boxed));

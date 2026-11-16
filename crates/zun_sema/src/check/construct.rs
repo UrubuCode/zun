@@ -70,16 +70,24 @@ impl Checker<'_> {
         };
         let Some(base) = self.classes[this_class as usize].base else {
             if self.classes[this_class as usize].dynamic_base {
-                // The runtime base is not modelled: evaluate the arguments for
-                // their effects and treat the call as a no-op.
+                // A base that is only a value at run time (a mixin result) is
+                // not modelled: the class is compiled base-less, so there is
+                // nothing for `super` to reach. This used to evaluate the
+                // arguments and return `Null`, which made the constructor
+                // silently skip the base -- a mixin answered `M<null>` with
+                // `instanceof` false and the base's fields undefined instead
+                // of failing. Say so at compile time rather than lie at run
+                // time. A class over a run-time base that never names `super`
+                // still compiles.
                 for argument in args {
                     self.check_expr(cx, argument);
                 }
-                return hir::Expr {
-                    kind: hir::ExprKind::Null,
-                    ty: Ty::Void,
+                self.error(
                     span,
-                };
+                    "`super` is not supported in a class whose base class is a run-time value \
+                     (a mixin); the base is not modelled, so the call cannot reach it",
+                );
+                return self.poison(span);
             }
             self.error(
                 span,
@@ -91,7 +99,14 @@ impl Checker<'_> {
             self.error(span, "`super(...)` is only valid inside a constructor");
             return self.poison(span);
         }
-        let Some(this_slot) = cx.lookup("this") else {
+        // A native-backed constructor chains on its typed construction shell;
+        // everything else (and every `super.m(...)`) uses `this`.
+        let native_shell = if method.is_none() {
+            cx.lookup(NATIVE_SHELL_LOCAL)
+        } else {
+            None
+        };
+        let Some(this_slot) = native_shell.or_else(|| cx.lookup("this")) else {
             self.error(span, "`super` is not supported inside a closure");
             return self.poison(span);
         };
@@ -105,6 +120,40 @@ impl Checker<'_> {
             None => ("constructor".to_string(), span),
         };
         let Some(func) = self.method_of(base, &mname) else {
+            // `super.m(...)` in a native-backed class reaches the prototype
+            // method of the built-in itself, called on the native `this`.
+            if let (Some(_), Some(native)) = (method, self.native_base_of(this_class)) {
+                // `apply` with one argument array, so spread arguments flatten.
+                let elements = args
+                    .iter()
+                    .map(|arg| match arg {
+                        ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                        other => ast::ArrayElement::Expr(other.clone()),
+                    })
+                    .collect();
+                let call_args = vec![
+                    ast::Expr::Ident(ast::synthetic_ident("this")),
+                    ast::Expr::ArrayLiteral { elements, span },
+                ];
+                let builtin_method = ast::Expr::Field {
+                    object: Box::new(ast::Expr::Field {
+                        object: Box::new(ast::Expr::Ident(ast::synthetic_ident(native))),
+                        field: ast::synthetic_ident("prototype"),
+                        span,
+                    }),
+                    field: ast::synthetic_ident(&mname),
+                    span,
+                };
+                return self.check_expr(
+                    cx,
+                    &ast::Expr::MethodCall {
+                        receiver: Box::new(builtin_method),
+                        method: ast::synthetic_ident("apply"),
+                        args: call_args,
+                        span,
+                    },
+                );
+            }
             if method.is_none() {
                 if !args.is_empty() {
                     self.error(
@@ -129,12 +178,71 @@ impl Checker<'_> {
             );
             return self.poison(span);
         }
-        if self.signatures[func as usize].rest_param.is_some()
-            || args.iter().any(|a| matches!(a, ast::Expr::Spread { .. }))
-        {
+        if let Some(rest_slot) = self.signatures[func as usize].rest_param {
+            // The arguments from the rest position on are gathered (spreads
+            // flattened) into one array passed as the last argument, exactly as
+            // `new C(...)` does for a rest-parameter constructor.
+            let (param_tys, return_ty, optional_count) = {
+                let sig = &self.signatures[func as usize];
+                (sig.params.clone(), sig.return_ty, sig.optional_count)
+            };
+            let fixed = rest_slot - 1;
+            if args.len() < fixed.saturating_sub(optional_count)
+                || args[..args.len().min(fixed)]
+                    .iter()
+                    .any(|a| matches!(a, ast::Expr::Spread { .. }))
+            {
+                self.error(
+                    span,
+                    format!("`{mname}` expects at least {fixed} fixed argument(s) before its rest parameter"),
+                );
+                return self.poison(span);
+            }
+            let mut call_args = vec![this_expr];
+            for arg in args.iter().take(fixed) {
+                call_args.push(self.check_expr(cx, arg));
+            }
+            while call_args.len() < fixed + 1 {
+                let expected = param_tys[call_args.len()];
+                call_args.push(default_args::missing_arg(expected, span));
+            }
+            let elements = args
+                .iter()
+                .skip(fixed)
+                .map(|arg| match arg {
+                    ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                    other => ast::ArrayElement::Expr(other.clone()),
+                })
+                .collect();
+            let mut rest_array = self.check_expr(cx, &ast::Expr::ArrayLiteral { elements, span });
+            self.box_function_array_elements(&mut rest_array);
+            call_args.push(rest_array);
+            for (arg, &expected) in call_args.iter_mut().zip(&param_tys).skip(1).take(fixed) {
+                coerce_numeric_literal(arg, expected);
+                if !expected.is_error()
+                    && !arg.ty.is_error()
+                    && !self.is_assignable(arg.ty, expected)
+                {
+                    self.error(
+                        arg.span,
+                        format!("argument type {:?} does not match {expected:?}", arg.ty),
+                    );
+                }
+            }
+            let call = hir::Expr {
+                kind: hir::ExprKind::StaticCall {
+                    func,
+                    args: call_args,
+                },
+                ty: return_ty,
+                span,
+            };
+            return self.finish_native_super(cx, call, native_shell, span);
+        }
+        if args.iter().any(|a| matches!(a, ast::Expr::Spread { .. })) {
             self.error(
                 span,
-                "`super` calls do not support rest/spread parameters yet",
+                "`super` calls do not support a spread argument unless the base takes a rest parameter",
             );
             return self.poison(span);
         }
@@ -184,14 +292,78 @@ impl Checker<'_> {
                 );
             }
         }
-        hir::Expr {
+        let call = hir::Expr {
             kind: hir::ExprKind::StaticCall {
                 func,
                 args: call_args,
             },
             ty: return_ty,
             span,
+        };
+        self.finish_native_super(cx, call, native_shell, span)
+    }
+
+    /// After `super(...)` returns in a native-backed constructor, `this` becomes
+    /// the native value the carrier root created (it carries the class
+    /// prototype), and the declared field values of the shell move onto it as
+    /// own properties. `shell` is `None` everywhere else, and the call is
+    /// returned unchanged.
+    fn finish_native_super(
+        &mut self,
+        cx: &mut FunctionCx,
+        call: hir::Expr,
+        shell: Option<hir::LocalSlot>,
+        span: Span,
+    ) -> hir::Expr {
+        let (Some(shell), Some(this_slot)) = (shell, cx.lookup("this")) else {
+            return call;
+        };
+        let Some(adopted) = self.native_adopt_expr(
+            hir::Expr {
+                ty: cx.locals[shell as usize],
+                kind: hir::ExprKind::Local(shell),
+                span,
+            },
+            span,
+        ) else {
+            return call;
+        };
+        hir::Expr {
+            kind: hir::ExprKind::Sequence {
+                effect: Box::new(call),
+                value: Box::new(hir::Expr {
+                    kind: hir::ExprKind::Assign {
+                        slot: this_slot,
+                        value: Box::new(adopted),
+                    },
+                    ty: Ty::Any,
+                    span,
+                }),
+            },
+            ty: Ty::Any,
+            span,
         }
+    }
+
+    /// `__zunNativeAdopt(shell)`: the native value behind a construction shell,
+    /// with the declared fields of the shell installed on it.
+    pub(in crate::check) fn native_adopt_expr(
+        &mut self,
+        shell: hir::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let Some(&func) = self.by_name.get("__zunNativeAdopt") else {
+            self.error(span, "the prelude helper `__zunNativeAdopt` is missing");
+            return None;
+        };
+        Some(hir::Expr {
+            kind: hir::ExprKind::Call {
+                func,
+                args: vec![Self::box_to_any(shell)],
+            },
+            ty: Ty::Any,
+            span,
+        })
     }
 
     /// `super.m(args)` inside a static method of `class`: a direct call of the

@@ -281,6 +281,7 @@ impl Interp<'_> {
                 if !ok {
                     return Err(self.proto_incompatible("TypedArray", name, &recv));
                 }
+                crate::collections::request_builtin_member_only();
                 self.proto_dynamic_call(recv, name, args)
             }
             "Array" => self.call_array_prototype_method(name, recv, args),
@@ -317,6 +318,7 @@ impl Interp<'_> {
             args = vec![Value::Float(1.0, zun_il::NumKind::F64)];
         }
         if is_array {
+            crate::collections::request_builtin_member_only();
             return self.proto_dynamic_call(recv, name, args);
         }
         if name == "toString" {

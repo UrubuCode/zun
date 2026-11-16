@@ -151,6 +151,14 @@ impl Checker<'_> {
                     "RegExp" => Ty::RegExp,
                     "BigInt" => Ty::BigInt,
                     "FinalizationRegistry" => Ty::FinalizationRegistry,
+                    // A native-backed class: the receiver is the native value
+                    // (an array, a buffer), never a fixed-layout instance. Its
+                    // constructor still runs on the typed construction shell.
+                    _ if self.native_base_of(class_idx as u32).is_some()
+                        && self.text(&m.name) != "constructor" =>
+                    {
+                        Ty::Any
+                    }
                     _ => Ty::Instance(class_idx as u32),
                 };
                 // A static method that mentions `this`/`super` receives the
@@ -190,9 +198,9 @@ impl Checker<'_> {
                 let return_ty = match &m.return_type {
                     Some(t) => self.resolve_annotation(t),
                     None => {
-                        if fluent {
+                        if fluent && self.native_base_of(class_idx as u32).is_none() {
                             Ty::Instance(class_idx as u32)
-                        } else if block_returns_value(&m.body) {
+                        } else if fluent || block_returns_value(&m.body) {
                             Ty::Any
                         } else {
                             Ty::Void
@@ -244,7 +252,11 @@ impl Checker<'_> {
                 // interpreter's `with_this_arg` keys on); a static one has none.
                 let takes_this = !sm.function.is_static;
                 let mut params = if takes_this {
-                    vec![Ty::Instance(class_idx as u32)]
+                    if self.native_base_of(class_idx as u32).is_some() {
+                        vec![Ty::Any]
+                    } else {
+                        vec![Ty::Instance(class_idx as u32)]
+                    }
                 } else {
                     Vec::new()
                 };

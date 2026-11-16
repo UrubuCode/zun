@@ -169,6 +169,29 @@ impl Checker<'_> {
             let sig = &self.signatures[func as usize];
             (sig.params.clone(), sig.return_ty, sig.optional_count)
         };
+        // A rest-parameter static without a hidden class parameter.
+        if let Some(rest_slot) = self.signatures[func as usize].rest_param {
+            if !self.static_this.contains_key(&func) {
+                // `Signature::rest_param` counts one leading receiver slot even
+                // for a static, which has none.
+                if let Some(checked) = self.gather_rest_call_args(
+                    cx,
+                    args,
+                    &param_tys,
+                    rest_slot.saturating_sub(1),
+                    span,
+                ) {
+                    return hir::Expr {
+                        kind: hir::ExprKind::StaticCall {
+                            func,
+                            args: checked,
+                        },
+                        ty: return_ty,
+                        span,
+                    };
+                }
+            }
+        }
         let required = param_tys.len().saturating_sub(optional_count);
         if args.len() > param_tys.len() || args.len() < required {
             self.error(

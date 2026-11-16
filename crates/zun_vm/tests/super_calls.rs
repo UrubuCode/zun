@@ -133,3 +133,39 @@ fn super_with_no_base_constructor_and_no_args_is_a_noop() {
         function main() { print(new B().x); }"#);
     assert_eq!(out, ["4"]);
 }
+
+#[test]
+fn super_constructor_forwards_rest_and_spread_arguments() {
+    let out = run(r#"class A {
+            first: any;
+            items: any[];
+            constructor(first: any, ...rest: any[]) { this.first = first; this.items = rest; }
+            show(): string { return this.first + "[" + this.items.join(",") + "]"; }
+        }
+        class B extends A { constructor(...xs: any[]) { super("b", ...xs); } }
+        class C extends A { constructor(a: any, b: any) { super(a, b, b + 1, ...[7, 8]); } }
+        class D extends A { constructor() { super("only"); } }
+        class E extends B { constructor(x: any, ...more: any[]) { super(x, ...more, "end"); } }
+        function main() {
+            print(new B(1, 2, 3).show());
+            print(new B().show());
+            print(new C("c", 4).show());
+            print(new D().show());
+            print(new E(1, 2).show());
+        }"#);
+    assert_eq!(out, ["b[1,2,3]", "b[]", "c[4,5,7,8]", "only[]", "b[1,2,end]"]);
+}
+
+#[test]
+fn static_method_with_a_rest_parameter_gathers_its_arguments() {
+    let out = run(r#"class S {
+            static sum(...ns: number[]): number { let s = 0; for (const n of ns) s += n; return s; }
+            static tagged(tag: string, ...rest: any[]): string { return tag + rest.length; }
+        }
+        class S2 extends S {}
+        function main() {
+            print(String(S.sum() + ":" + S.sum(1) + ":" + S.sum(1, 2, 3) + ":" + S.sum(...[4, 5], 6)));
+            print(S.tagged("t") + ":" + S.tagged("t", 1, 2) + ":" + S2.tagged("u", ...[1]));
+        }"#);
+    assert_eq!(out, ["0:1:6:15", "t0:t2:u1"]);
+}

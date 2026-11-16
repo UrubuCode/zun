@@ -586,55 +586,284 @@ function __zunJoinSeparator(separator: any): string {
     return String(separator);
 }
 
-// `class X extends Array`: the subclass instance owns a native array and
-// forwards the common surface; `from`/`of` build plain native arrays.
+// Native carrier roots: `class X extends Array` (and `ArrayBuffer`, and every
+// typed array) is NOT a forwarding wrapper. An instance of `X` is the native
+// value itself, carrying `X.prototype`, so indexing, `length`, `Array.isArray`,
+// `JSON.stringify` and every built-in method see a real array or buffer.
+//
+// The typed object `new X(...)` allocates is only a construction shell. The
+// carrier root constructor creates the native with the most-derived class as
+// `newTarget` (which installs its prototype) and parks it in `__native`; the
+// checker rebinds `this` to it when `super(...)` returns and uses it as the
+// value of the `new` expression (`__zunNativeAdopt`). The checker treats `this`
+// as `any` in every method of such a class.
+function __zunNativeAdopt(shell: any): any {
+    const native: any = shell.__native;
+    // Declared instance fields were initialised on the shell; they become own
+    // properties of the native value. A key the constructor already wrote
+    // stays as written, because the adoption runs once per constructor level.
+    // (Keep the receiver keyword out of the body: a free function mentioning
+    // it is compiled with a hidden receiver parameter.)
+    const names: any = Object.keys(shell);
+    for (let i = 0; i < names.length; i++) {
+        const key: string = names[i];
+        if (key !== "__native" && !Object.prototype.hasOwnProperty.call(native, key)) {
+            native[key] = shell[key];
+        }
+    }
+    return native;
+}
+
+// Species. The interpreter computes the plain native result of a
+// species-sensitive method first and calls one of these helpers only when the
+// receiver owns or inherits a `constructor` (a subclass instance, or a native
+// with an assigned `constructor`); a plain native never reaches them.
+//
+// `ArraySpeciesCreate` (ECMAScript 23.1.3.x): `map` asks for the receiver
+// length, `slice` / `splice` for the element count, every other method for 0.
+function __zunArraySpeciesResult(receiver: any, method: string, plain: any): any {
+    let __zunCtor: any = receiver.constructor;
+    if (__zunCtor === Array) {
+        return plain;
+    }
+    if (__zunCtor !== null && (typeof __zunCtor === "object" || typeof __zunCtor === "function")) {
+        __zunCtor = __zunCtor[Symbol.species];
+        if (__zunCtor === null) {
+            __zunCtor = undefined;
+        }
+    }
+    if (__zunCtor === undefined || __zunCtor === Array) {
+        return plain;
+    }
+    if (typeof __zunCtor !== "function") {
+        throw new TypeError("object.constructor[Symbol.species] is not a constructor");
+    }
+    const count: number = plain.length;
+    let requested: number = 0;
+    if (method === "map") {
+        requested = receiver.length;
+    } else if (method === "slice" || method === "splice") {
+        requested = count;
+    }
+    const out: any = new __zunCtor(requested);
+    for (let i = 0; i < count; i++) {
+        if (i in plain) {
+            out[i] = plain[i];
+        }
+    }
+    if (method === "slice" || method === "splice" || method === "concat") {
+        out.length = count;
+    }
+    return out;
+}
+
+// `SpeciesConstructor(O, default)` for typed arrays and buffers: `undefined`
+// means "keep the plain result".
+function __zunSpeciesConstructor(receiver: any, plain: any): any {
+    const __zunCtor: any = receiver.constructor;
+    if (__zunCtor === undefined) {
+        return undefined;
+    }
+    if (__zunCtor === null || (typeof __zunCtor !== "object" && typeof __zunCtor !== "function")) {
+        throw new TypeError("object.constructor is not an object");
+    }
+    const __zunSpecies: any = __zunCtor[Symbol.species];
+    if (__zunSpecies === undefined || __zunSpecies === null || __zunSpecies === plain.constructor) {
+        return undefined;
+    }
+    if (typeof __zunSpecies !== "function") {
+        throw new TypeError("object.constructor[Symbol.species] is not a constructor");
+    }
+    return __zunSpecies;
+}
+
+function __zunTypedSpeciesResult(receiver: any, method: string, plain: any): any {
+    const __zunSpecies: any = __zunSpeciesConstructor(receiver, plain);
+    if (__zunSpecies === undefined) {
+        return plain;
+    }
+    const count: number = plain.length;
+    const out: any = method === "subarray" ? new __zunSpecies(plain.buffer, plain.byteOffset, count) : new __zunSpecies(count);
+    if (!ArrayBuffer.isView(out) || out instanceof DataView) {
+        throw new TypeError("species constructor did not return a TypedArray");
+    }
+    const wantsBigInt: boolean = plain instanceof BigInt64Array || plain instanceof BigUint64Array;
+    const hasBigInt: boolean = out instanceof BigInt64Array || out instanceof BigUint64Array;
+    if (wantsBigInt !== hasBigInt) {
+        throw new TypeError("Cannot mix BigInt and other types, use explicit conversions");
+    }
+    if (method === "subarray") {
+        return out;
+    }
+    if (out.length < count) {
+        throw new TypeError("species constructor returned a TypedArray that is too short");
+    }
+    for (let i = 0; i < count; i++) {
+        out[i] = plain[i];
+    }
+    return out;
+}
+
+function __zunBufferSpeciesResult(receiver: any, method: string, plain: any): any {
+    const __zunSpecies: any = __zunSpeciesConstructor(receiver, plain);
+    if (__zunSpecies === undefined) {
+        return plain;
+    }
+    const count: number = plain.byteLength;
+    const out: any = new __zunSpecies(count);
+    if (!(out instanceof ArrayBuffer)) {
+        throw new TypeError("Method ArrayBuffer.prototype.slice called on incompatible receiver " + Object.prototype.toString.call(out));
+    }
+    if (out === receiver) {
+        throw new TypeError("ArrayBuffer subclass returned the same buffer from its species constructor");
+    }
+    if (out.byteLength < count) {
+        throw new TypeError("species constructor returned a buffer that is too small");
+    }
+    const target: any = new Uint8Array(out);
+    const source: any = new Uint8Array(plain);
+    for (let i = 0; i < count; i++) {
+        target[i] = source[i];
+    }
+    return out;
+}
+
 class __BuiltinArray {
-    inner: any[] = [];
+    __native: any;
 
     constructor(...items: any[]) {
-        if (items.length === 1 && typeof items[0] === "number") {
-            this.inner = new Array(items[0]);
-        } else {
-            this.inner = items;
-        }
+        this.__native = Reflect.construct(Array, items, (this as any).constructor);
     }
 
-    get length(): number {
-        return this.inner.length;
-    }
-
-    push(...items: any[]): number {
-        for (const v of items) {
-            this.inner.push(v);
-        }
-        return this.inner.length;
-    }
-
-    pop(): any {
-        return this.inner.pop();
-    }
-
-    join(sep?: any): string {
-        return this.inner.join(sep);
-    }
-
-    toString(): string {
-        return this.inner.join(",");
-    }
-
+    // `Sub.from` / `Sub.of` construct through the receiving class, so the
+    // result is a `Sub`.
     static from(items: any, mapFn?: any): any {
-        if (mapFn === undefined) {
-            return Array.from(items);
+        const __zunCtor: any = this;
+        const source: any[] = mapFn === undefined ? Array.from(items) : Array.from(items, mapFn);
+        const out: any = new __zunCtor();
+        for (let i = 0; i < source.length; i++) {
+            out[i] = source[i];
         }
-        return Array.from(items, mapFn);
+        out.length = source.length;
+        return out;
     }
 
     static of(...items: any[]): any {
-        return items;
+        const __zunCtor: any = this;
+        const out: any = new __zunCtor(items.length);
+        for (let i = 0; i < items.length; i++) {
+            out[i] = items[i];
+        }
+        out.length = items.length;
+        return out;
     }
 
     static isArray(v: any): boolean {
         return Array.isArray(v);
+    }
+}
+
+class __BuiltinRegExp {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(RegExp, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinArrayBuffer {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(ArrayBuffer, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinInt8Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Int8Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinUint8Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Uint8Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinUint8ClampedArray {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Uint8ClampedArray, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinInt16Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Int16Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinUint16Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Uint16Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinInt32Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Int32Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinUint32Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Uint32Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinFloat32Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Float32Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinFloat64Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(Float64Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinBigInt64Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(BigInt64Array, args, (this as any).constructor);
+    }
+}
+
+class __BuiltinBigUint64Array {
+    __native: any;
+
+    constructor(...args: any[]) {
+        this.__native = Reflect.construct(BigUint64Array, args, (this as any).constructor);
     }
 }
 

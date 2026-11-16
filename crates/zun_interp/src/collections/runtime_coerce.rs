@@ -388,6 +388,19 @@ impl<'a> Interp<'a> {
             let shadowed = zun_gc::with_current_heap(|heap| {
                 heap.dynamic_has(held.get(), "join") && !heap.dynamic_is_accessor(held.get(), "join")
             });
+            // A `join` the array inherits from a class prototype (an `Array`
+            // subclass overriding it) is the one `Array.prototype.toString`
+            // calls; the ordinary member call resolves and invokes it.
+            if !shadowed && Self::native_chain_has(held.get(), "join") {
+                let result = self.call_managed_collection(
+                    "dynamicCall0",
+                    &[Value::Object(held.get()), Value::Str("join".into())],
+                )?;
+                let result = unbox_arg(&result)?;
+                return Ok(
+                    (!matches!(result, Value::Object(_) | Value::Function(_))).then_some(result)
+                );
+            }
             return Ok(shadowed.then(|| Value::Str("[object Array]".into())));
         };
         let call_args = self.with_this_arg(join, held.get(), Vec::new());

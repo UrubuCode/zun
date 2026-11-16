@@ -358,18 +358,21 @@ impl Checker<'_> {
             && self.text(method) == "isView"
             && !self.classes_by_name.contains_key("ArrayBuffer")
         {
-            if args.len() != 1 {
-                self.error(
-                    span,
-                    "`ArrayBuffer.isView` expects one argument".to_string(),
-                );
-                return Some(self.poison(span));
-            }
             let Some((id, _)) = zun_natives::resolve("buffer", "isView") else {
                 self.error(span, "missing `isView` intrinsic".to_string());
                 return Some(self.poison(span));
             };
-            let mut arg = self.check_expr(cx, &args[0]);
+            // As in JS, an omitted argument is `undefined` (so the answer is
+            // `false`) and surplus arguments are evaluated and ignored.
+            let undefined = ast::Expr::Unary {
+                op: ast::UnaryOp::Void,
+                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                span,
+            };
+            for extra in args.iter().skip(1) {
+                let _ = self.check_expr(cx, extra);
+            }
+            let mut arg = self.check_expr(cx, args.first().unwrap_or(&undefined));
             if arg.ty != Ty::Any && !arg.ty.is_error() {
                 arg = hir::Expr {
                     span: arg.span,
@@ -558,6 +561,57 @@ impl Checker<'_> {
         None
     }
 
+    /// The argument list for a call of a rest-parameter callee: the first
+    /// `fixed` arguments are checked against `param_tys` (missing ones take the
+    /// omitted-argument sentinel), and everything from the rest position on is
+    /// gathered, spreads flattened, into the one array passed last. `None` when
+    /// a spread sits among the fixed arguments, which no static shape covers.
+    pub(in crate::check) fn gather_rest_call_args(
+        &mut self,
+        cx: &mut FunctionCx,
+        args: &[ast::Expr],
+        param_tys: &[Ty],
+        fixed: usize,
+        span: Span,
+    ) -> Option<Vec<hir::Expr>> {
+        if args[..args.len().min(fixed)]
+            .iter()
+            .any(|a| matches!(a, ast::Expr::Spread { .. }))
+        {
+            return None;
+        }
+        let mut checked = Vec::with_capacity(fixed + 2);
+        for (arg, &expected) in args.iter().zip(param_tys).take(fixed) {
+            let mut value = self.check_expr(cx, arg);
+            coerce_numeric_literal(&mut value, expected);
+            if !expected.is_error()
+                && !value.ty.is_error()
+                && !self.is_assignable(value.ty, expected)
+            {
+                self.error(
+                    value.span,
+                    format!("argument type {:?} does not match {expected:?}", value.ty),
+                );
+            }
+            checked.push(value);
+        }
+        while checked.len() < fixed {
+            checked.push(default_args::missing_arg(param_tys[checked.len()], span));
+        }
+        let elements = args
+            .iter()
+            .skip(fixed)
+            .map(|arg| match arg {
+                ast::Expr::Spread { expr, .. } => ast::ArrayElement::Spread((**expr).clone()),
+                other => ast::ArrayElement::Expr(other.clone()),
+            })
+            .collect();
+        let mut rest_array = self.check_expr(cx, &ast::Expr::ArrayLiteral { elements, span });
+        self.box_function_array_elements(&mut rest_array);
+        checked.push(rest_array);
+        Some(checked)
+    }
+
     /// A static method called through its declaring class name
     /// (`Class.staticMethod(...)`), including the hidden-class-first form.
     fn mcall_user_static(
@@ -587,6 +641,28 @@ impl Checker<'_> {
                     return Some(self.poison(span));
                 }
                 let optional_count = self.signatures[func as usize].optional_count;
+                // A rest-parameter static (`static of(...items)`): the arguments
+                // from the rest position on are gathered, spreads flattened,
+                // into the one array the callee receives last.
+                if let Some(rest_slot) = self.signatures[func as usize].rest_param {
+                    // `Signature::rest_param` counts one leading receiver slot
+                    // for every method, static or not, with or without the
+                    // hidden class parameter; `param_tys` here has neither.
+                    let fixed = rest_slot.saturating_sub(1);
+                    let mut checked = self.gather_rest_call_args(cx, args, &param_tys, fixed, span)?;
+                    if hidden_class {
+                        let token = zun_natives::USER_CLASS_FLAG | (class_index + 1);
+                        checked.insert(0, self.realm_descriptor_expr(token, span));
+                    }
+                    return Some(hir::Expr {
+                        kind: hir::ExprKind::StaticCall {
+                            func,
+                            args: checked,
+                        },
+                        ty: return_ty,
+                        span,
+                    });
+                }
                 // JS ignores surplus arguments: they are type-checked and dropped.
                 if args.len() >= param_tys.len().saturating_sub(optional_count) {
                     let mut checked = Vec::with_capacity(param_tys.len());
