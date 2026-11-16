@@ -742,3 +742,31 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   where node answers `[object SharedArrayBuffer]`. It answered
   `[object Object]` before `efbce851`; both are wrong, and telling them apart
   needs a heap-level distinction.
+
+### At the 140 mark (`3fa7a60b`)
+- **OPEN, the root cause behind several symptoms - a property store of an
+  unknown key on a typed class instance is silently dropped, and on a built-in
+  class value it panics.** `Reflect.set(boxInstance, "length", 2)` reports
+  success and changes nothing, which is why `Array.of.call(Box, "x", "y")`
+  constructs the right `Box` but leaves `length` unset (node answers 2). On a
+  *built-in* class value reached through `any` the same store is worse:
+  `const O: any = Map; O.zzz = 5` **panics the engine** at `value.rs:226`.
+  This is the remaining half of the own-property family whose dispatch side was
+  fixed in `c07a0cea`, and it is the widest open item: it also explains
+  `Object.values`/`entries`/`assign`/spread dropping function-valued own
+  properties, an assigned `hasOwnProperty` being ignored, and a frozen or
+  sealed object still accepting new properties.
+- **OPEN - `Array.of.length` reads 1 where node says 0.** The arity in
+  `STATIC_METHODS` is already 0, so the wrong number comes from the function
+  *value's* own length, not the table.
+- **OPEN - an array callback's third argument is the temporary, not the
+  receiver**, so `r === u` is false inside
+  `Array.prototype.forEach.call(u8, (x, i, r) => ...)`. A plain array-like
+  behaved this way before `3fa7a60b` too, so the generic path inherited it
+  rather than introduced it.
+- **OPEN - `typedarray-methods-views-and-iteration` passes while 28 of its 100
+  lines still differ from node.** Exit 0 is the suite's bar, not correctness:
+  this fixture is a reminder that the pass set and node-agreement are different
+  measurements. Remaining there: a number written into a `BigInt64Array` is
+  accepted where node throws, and `toSpliced` through a dynamic call is "not a
+  function" even on a plain array.
