@@ -26,6 +26,9 @@ impl Checker<'_> {
         if matches!(init, ast::Expr::Function(_)) && !cx.mutated_names.contains(self.text(name)) {
             self.closure_self_name = Some(self.text(name).to_string());
         }
+        if self.initializer_references_name(cx, &self.text(name).to_string(), init) {
+            return self.check_self_referencing_let(cx, name, ty.as_ref(), init);
+        }
         // The adapter's injected `arguments = [p1, ..., ...rest]` (name and
         // literal share one span): trimmed to the real call-site count.
         let injected_arguments = self.text(name) == "arguments"
@@ -117,5 +120,86 @@ impl Checker<'_> {
         } else {
             hir::Stmt::Let { slot, init }
         }
+    }
+
+    /// `const r = f(() => r)`: declare `r` as a cell-backed local before checking
+    /// the initializer, so closures created inside it capture the cell and
+    /// observe the value once the initializer completes.
+    ///
+    /// A reference-typed annotation (class instance, array, map, ...) is kept: the
+    /// cell starts as `null` of that type. Value-typed annotations (number,
+    /// string, boolean, bigint, ...) have no null placeholder, so the variable is
+    /// dynamic (`any`) instead.
+    fn check_self_referencing_let(
+        &mut self,
+        cx: &mut FunctionCx,
+        name: &ast::Name,
+        annotation: Option<&ast::TypeAnnotation>,
+        init: &ast::Expr,
+    ) -> hir::Stmt {
+        let span = init.span();
+        let name_text = self.text(name).to_string();
+        let declared = annotation.map(|t| self.resolve_annotation(t));
+        let var_ty = match declared {
+            Some(
+                ty @ (Ty::Array
+                | Ty::Map
+                | Ty::Set
+                | Ty::WeakMap
+                | Ty::WeakSet
+                | Ty::WeakRef
+                | Ty::RegExp
+                | Ty::Promise
+                | Ty::DynamicObject
+                | Ty::Instance(_)),
+            ) => ty,
+            _ => Ty::Any,
+        };
+        let slot = cx.declare(&name_text, var_ty);
+        cx.boxed.insert(slot);
+        cx.mutated.insert(slot);
+        let placeholder = if var_ty == Ty::Any {
+            let undefined = self.check_expr(
+                cx,
+                &ast::Expr::Unary {
+                    op: ast::UnaryOp::Void,
+                    operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                    span,
+                },
+            );
+            Self::box_to_any(undefined)
+        } else {
+            hir::Expr {
+                kind: hir::ExprKind::Null,
+                ty: var_ty,
+                span,
+            }
+        };
+        let mut value = self.check_expr(cx, init);
+        if var_ty == Ty::Any {
+            value = Self::box_to_any(value);
+        } else if !value.ty.is_error() && !self.is_assignable(value.ty, var_ty) {
+            self.error(
+                value.span,
+                format!(
+                    "initializer type {:?} does not match declared type {var_ty:?}",
+                    value.ty
+                ),
+            );
+        }
+        hir::Stmt::Group(vec![
+            hir::Stmt::BoxedLet {
+                slot,
+                init: placeholder,
+            },
+            hir::Stmt::Expr(hir::Expr {
+                ty: var_ty,
+                kind: hir::ExprKind::CellStore {
+                    slot,
+                    value: Box::new(value),
+                },
+                span,
+            }),
+        ])
     }
 }
