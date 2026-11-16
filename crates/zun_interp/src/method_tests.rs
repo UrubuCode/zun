@@ -4527,6 +4527,8 @@ fn call_and_apply_do_not_shift_a_free_function_s_arguments() {
     let mut output = CaptureOutput::default();
     run(&module, &mut output).expect("run call/apply receiver workload");
     assert_eq!(output.lines, vec!["1|2", "1|2", "9"]);
+}
+
 /// An object-literal method owns no `prototype` and is not constructible, even
 /// when the object is a module-level `any` read from inside a closure.
 #[test]
