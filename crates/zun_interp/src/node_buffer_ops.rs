@@ -769,8 +769,39 @@ impl Interp<'_> {
         self.nb_new_buffer(&bytes)
     }
 
+    /// `swap16` / `swap32` / `swap64`: in place, on a multiple of the width.
+    fn nb_swap(&mut self, tail: &str, view: Obj) -> Result<Value, RunError> {
+        let width = match tail {
+            "Swap16" => 2usize,
+            "Swap32" => 4,
+            _ => 8,
+        };
+        let len = view_len(view).unwrap_or(0);
+        if len % width != 0 {
+            return Err(self.nb_error(
+                "RangeError",
+                "ERR_INVALID_BUFFER_SIZE",
+                format!("Buffer size must be a multiple of {}-bits", width * 8),
+            ));
+        }
+        zun_gc::with_current_heap_mut(|heap| {
+            let mut base = 0;
+            while base < len {
+                for i in 0..width / 2 {
+                    let a = heap.u8_array_get(view, base + i)?;
+                    let b = heap.u8_array_get(view, base + width - 1 - i)?;
+                    heap.u8_array_set(view, base + i, b)?;
+                    heap.u8_array_set(view, base + width - 1 - i, a)?;
+                }
+                base += width;
+            }
+            Some(())
+        });
+        Ok(Value::Object(view))
+    }
+
     /// `buf.toJSON()` -> `{ type: 'Buffer', data: [..bytes] }`.
-    fn nb_to_json(&mut self, view: Obj, _args: &[Value]) -> Result<Value, RunError> {
+    pub(crate) fn nb_to_json(&mut self, view: Obj, _args: &[Value]) -> Result<Value, RunError> {
         let bytes = view_bytes(view).ok_or(RunError::BadToken)?;
         let object = zun_gc::with_current_heap_mut(|heap| {
             let data = heap.alloc_array(0);
@@ -873,6 +904,10 @@ impl Interp<'_> {
                 self.nb_new_buffer(&vec![0u8; size])
             })(),
             "FromAny" => self.nb_from(args),
+            "Swap16" | "Swap32" | "Swap64" => match view() {
+                Some(v) => self.nb_swap(tail, v),
+                None => Err(RunError::BadToken),
+            },
             "CopyBytesFrom" => self.nb_copy_bytes_from(args),
             "Ctor" => (|| {
                 let arg = raw(args, 0);

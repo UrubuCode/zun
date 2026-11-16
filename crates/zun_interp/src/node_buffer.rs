@@ -140,21 +140,26 @@ fn decode_utf16le(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// Node's hex decoder: whole pairs of hex digits, stopping at the first pair
+/// that is not (an odd trailing digit is dropped).
 fn decode_hex(text: &str) -> Vec<u8> {
-    let digits: Vec<u8> = text
-        .bytes()
-        .filter_map(|b| match b {
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
-        })
-        .collect();
-    digits
-        .chunks(2)
-        .filter(|c| c.len() == 2)
-        .map(|c| (c[0] << 4) | c[1])
-        .collect()
+    let digit = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    };
+    let mut out = Vec::new();
+    for pair in text.as_bytes().chunks(2) {
+        if pair.len() < 2 {
+            break;
+        }
+        match (digit(pair[0]), digit(pair[1])) {
+            (Some(high), Some(low)) => out.push((high << 4) | low),
+            _ => break,
+        }
+    }
+    out
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -791,4 +796,15 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             None
         }
     }
+}
+
+/// A Node `Buffer`'s string form (`String(buf)`, `"" + buf`): its utf8 text.
+pub(crate) fn buffer_text(object: Obj) -> Option<String> {
+    let is_u8 = zun_gc::with_current_heap(|heap| {
+        heap.typed_array_element(object) == Some(zun_core::TypedElement::U8)
+    });
+    if !is_u8 {
+        return None;
+    }
+    view_bytes(object).map(|bytes| decode(&bytes, "utf8"))
 }

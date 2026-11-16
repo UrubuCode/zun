@@ -62,7 +62,16 @@ impl Interp<'_> {
         }
         let n = integer_of(self.dyn_to_number(&value)?);
         if n < 0.0 || n > 9007199254740991.0 {
-            return Err(self.view_error("RangeError", &format!("Invalid {what}")));
+            // V8 names the offending length for a typed array.
+            let shown = if what == "typed array length" {
+                format!(
+                    ": {}",
+                    zun_natives::js_to_radix_string(n, None).unwrap_or_default()
+                )
+            } else {
+                String::new()
+            };
+            return Err(self.view_error("RangeError", &format!("Invalid {what}{shown}")));
         }
         Ok(n as usize)
     }
@@ -338,10 +347,14 @@ impl Interp<'_> {
             // A length (ToIndex of any primitive).
             let length = self.view_to_index(Some(&first), "typed array length")?;
             if length.saturating_mul(size) > (1usize << 32) {
-                return Err(self.view_error("RangeError", "Invalid typed array length"));
+                return Err(self.view_error(
+                    "RangeError",
+                    &format!("Invalid typed array length: {length}"),
+                ));
             }
-            let view = crate::typed_arrays::alloc_of(kind, length)
-                .ok_or_else(|| self.view_error("RangeError", "Invalid typed array length"))?;
+            let view = crate::typed_arrays::alloc_of(kind, length).ok_or_else(|| {
+                self.view_error("RangeError", &format!("Invalid typed array length: {length}"))
+            })?;
             return Ok(Value::Object(view));
         };
         let is_buffer = zun_gc::with_current_heap(|h| h.buffer_len(source).is_some());
@@ -424,6 +437,10 @@ impl Interp<'_> {
                     "byteLength" => heap.typed_array_byte_len(object).map(|n| num(n as f64)),
                     "byteOffset" => heap.typed_array_byte_offset(object).map(|n| num(n as f64)),
                     "buffer" => heap.typed_array_buffer(object).map(Value::Object),
+                    // A Node `Buffer` aliases its backing store as `parent`.
+                    "parent" if kind == zun_core::TypedElement::U8 => {
+                        heap.typed_array_buffer(object).map(Value::Object)
+                    }
                     "BYTES_PER_ELEMENT" => Some(num(kind.size() as f64)),
                     _ => None,
                 };

@@ -4544,3 +4544,31 @@ attempt(() => new proc.m());
     run(&module, &mut output).expect("run method workload");
     assert_eq!(output.lines, ["undefined object", "true"]);
 }
+
+#[test]
+fn buffer_validates_offsets_with_node_errors() {
+    // A negative offset is `ERR_OUT_OF_RANGE`, a string offset `ERR_INVALID_ARG_TYPE`.
+    let source = r#"function code(f: any): string { try { f(); return "none"; } catch (e: any) { return e.code; } }
+        function main(): boolean {
+            const b = Buffer.from("abcd");
+            const neg: any = -1;
+            const str: any = "0";
+            return code(() => b.readUInt8(neg)) === "ERR_OUT_OF_RANGE"
+                && code(() => b.readUInt8(str)) === "ERR_INVALID_ARG_TYPE"
+                && code(() => Buffer.alloc(neg)) === "ERR_OUT_OF_RANGE";
+        }"#;
+    assert!(bool_of(source));
+}
+
+#[test]
+fn buffer_statics_and_string_coercion() {
+    let source = r#"function main(): boolean {
+            const b = Buffer.of(104, 105);
+            let s = "";
+            s += b;
+            return s === "hi" && String(b) === "hi" && Buffer.isEncoding("hex")
+                && Buffer.compare(Buffer.from("a"), Buffer.from("b")) === -1
+                && JSON.stringify(b) === '{"type":"Buffer","data":[104,105]}';
+        }"#;
+    assert!(bool_of(source));
+}

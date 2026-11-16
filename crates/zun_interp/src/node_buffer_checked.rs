@@ -176,11 +176,14 @@ impl Interp<'_> {
     /// `new ERR_INVALID_ARG_TYPE(name, expected, value)` with `expected` already
     /// phrased (`of type number`, `an instance of Buffer or Uint8Array`, ...).
     pub(crate) fn nb_invalid_type(&mut self, name: &str, expected: &str, value: &Value) -> RunError {
-        let noun = if name.contains('.') { "property" } else { "argument" };
-        let message = format!(
-            "The \"{name}\" {noun} must be {expected}.{}",
-            self.nb_received(value)
-        );
+        let subject = if name.ends_with(" argument") {
+            format!("The {name}")
+        } else if name.contains('.') {
+            format!("The \"{name}\" property")
+        } else {
+            format!("The \"{name}\" argument")
+        };
+        let message = format!("{subject} must be {expected}.{}", self.nb_received(value));
         self.nb_error("TypeError", "ERR_INVALID_ARG_TYPE", message)
     }
 
