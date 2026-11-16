@@ -65,15 +65,21 @@ impl ModuleScope {
         }
         for (rid, ty) in module.tables.type_defs.iter().enumerate() {
             let name = module.strings.get(ty.name).to_owned();
-            if exports
-                .insert(
-                    name.clone(),
-                    Export::Type(Token::new(TableKind::TypeDef, rid as u32 + 1)),
-                )
-                .is_some()
-            {
+            // Type names need not be unique: a class declared in several
+            // scopes (`function f() { class C {} } function g() { class C {} }`)
+            // keeps its display name in every TypeDef, and a by-name lookup
+            // resolves to the first declaration. A type clashing with a
+            // function export is still an error.
+            if let Some(existing) = exports.get(&name) {
+                if matches!(existing, Export::Type(_)) {
+                    continue;
+                }
                 return Err(LoadError::DuplicateExport(name));
             }
+            exports.insert(
+                name,
+                Export::Type(Token::new(TableKind::TypeDef, rid as u32 + 1)),
+            );
         }
         Ok(Self {
             name,

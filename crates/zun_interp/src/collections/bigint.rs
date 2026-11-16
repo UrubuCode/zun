@@ -29,6 +29,47 @@ impl<'a> Interp<'a> {
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
                 Ok(Value::Object(object))
             }
+            "bigIntFromAny" => {
+                // `BigInt(value)` for a dynamic operand: ToPrimitive(number), then
+                // a number must be integral, a string parses, a boolean is 0n/1n,
+                // a BigInt passes through, anything else is a TypeError.
+                let mut value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                if let Value::Object(obj) = &value {
+                    let is_bigint =
+                        zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_some());
+                    if !is_bigint {
+                        value = match array_join_text(*obj) {
+                            Some(text) => Value::Str(text.into()),
+                            None => match self.ordinary_to_primitive(*obj, "number")? {
+                                Some(primitive) => unbox_arg(&primitive)?,
+                                None => Value::Str("[object Object]".into()),
+                            },
+                        };
+                    }
+                }
+                let value = match value {
+                    Value::Object(obj) => return Ok(Value::Object(obj)),
+                    Value::Str(text) => zun_core::BigInt::parse_js_string(&text)
+                        .map_err(|error| RunError::Native(format!("SyntaxError: {}", error)))?,
+                    Value::Float(number, _) => zun_core::BigInt::from_f64(number)
+                        .map_err(|error| RunError::Native(format!("RangeError: {}", error)))?,
+                    Value::Int(number, _) => zun_core::BigInt::from_f64(number as f64)
+                        .map_err(|error| RunError::Native(format!("RangeError: {}", error)))?,
+                    Value::Bool(flag) => zun_core::BigInt::from_u64(u64::from(flag)),
+                    Value::Null => {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert null to a BigInt".into(),
+                        ))
+                    }
+                    _ => {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert undefined to a BigInt".into(),
+                        ))
+                    }
+                };
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value));
+                Ok(Value::Object(object))
+            }
             "bigIntUshr" => Err(RunError::Native(
                 "TypeError: BigInts have no unsigned right shift, use >> instead".into(),
             )),
@@ -120,7 +161,7 @@ impl<'a> Interp<'a> {
                     )?
                 } else {
                     match unbox_arg(value_arg) {
-                        Ok(Value::Str(text)) => zun_core::BigInt::parse(&text)
+                        Ok(Value::Str(text)) => zun_core::BigInt::parse_js_string(&text)
                             .map_err(|error| RunError::Native(format!("SyntaxError: {}", error)))?,
                         _ => {
                             return Err(RunError::Native(
@@ -200,6 +241,32 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_bigint(value.neg()));
                 Ok(Value::Object(object))
+            }
+            "bigIntToStringRadix" => {
+                let object =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                let value = zun_gc::with_current_heap(|heap| heap.bigint_value(object).cloned())
+                    .ok_or(RunError::BadToken)?;
+                // ToIntegerOrInfinity(radix); `undefined` means 10.
+                let radix = match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                    Value::Void => 10.0,
+                    other => {
+                        let number = self.dyn_to_number(&other)?;
+                        if number.is_nan() {
+                            0.0
+                        } else {
+                            number.trunc()
+                        }
+                    }
+                };
+                if !(2.0..=36.0).contains(&radix) {
+                    return Err(RunError::Native(
+                        "RangeError: toString() radix argument must be between 2 and 36".into(),
+                    ));
+                }
+                Ok(Value::Str(
+                    crate::proto_methods::bigint_to_radix(&value, radix as u64).into(),
+                ))
             }
             "bigIntToString" => {
                 let object =

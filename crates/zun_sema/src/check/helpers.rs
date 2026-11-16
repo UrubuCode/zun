@@ -247,6 +247,15 @@ impl Checker<'_> {
         value
     }
 
+    /// The AST of `void 0`, the `undefined` value.
+    pub(in crate::check) fn undefined_ast(&self, span: Span) -> ast::Expr {
+        ast::Expr::Unary {
+            op: ast::UnaryOp::Void,
+            operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+            span,
+        }
+    }
+
     pub(in crate::check) fn box_to_any(value: hir::Expr) -> hir::Expr {
         if value.ty == Ty::Any || value.ty.is_error() {
             value

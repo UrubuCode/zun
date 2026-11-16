@@ -1100,3 +1100,25 @@ fn partial_does_not_specialize_a_function_with_a_default_parameter() {
         "a function with a default/spread/rest parameter must stay generic",
     );
 }
+
+#[test]
+fn same_named_classes_in_different_scopes_keep_their_display_name() {
+    let hir = check_ok(
+        "function f(): number { class Box { v = 1; } return new Box().v; }\n\
+         function g(): number { class Box { v = 2; } return new Box().v; }\n\
+         const A = class Inner { static n(): string { return Inner.name; } };\n\
+         const B = class Inner { static n(): string { return Inner.name; } };\n\
+         const anon1 = new (class { x = 1; })();\n\
+         const anon2 = new (class { x = 2; })();\n",
+    );
+    let named = |name: &str| hir.classes.iter().filter(|class| class.name == name).count();
+    assert_eq!(named("Box"), 2);
+    assert_eq!(named("Inner"), 2);
+    assert_eq!(named(""), 2);
+}
+
+#[test]
+fn same_named_classes_in_one_scope_are_still_a_duplicate() {
+    let message = first_error("class A {}\nclass A {}\nfunction main(): void {}\n");
+    assert!(message.contains("duplicate class"), "{message}");
+}

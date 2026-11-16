@@ -7,6 +7,11 @@ pub(super) fn convert_statement_list(
     body: &[Statement<'_>],
 ) -> Result<Vec<Stmt>, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    // The range of this statement list: where a class declared in it is visible.
+    let scope = match (body.first(), body.last()) {
+        (Some(first), Some(last)) => Span::new(first.span().start, last.span().end),
+        _ => Span::new(0, 0),
+    };
     let mut statements = Vec::with_capacity(body.len());
     let saved_prelude = PENDING_PRELUDE.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
     let ordered = hoist_function_declarations(source, body);
@@ -101,7 +106,7 @@ pub(super) fn convert_statement_list(
                 convert_function_declaration(source, function, &forward_names, &mut statements)?;
             }
             Statement::ClassDeclaration(class_declaration) => {
-                convert_class_statement(source, class_declaration, &mut statements)?;
+                convert_class_statement(source, class_declaration, scope, &mut statements)?;
             }
             other => {
                 let dbg = format!("{other:?}");
@@ -429,11 +434,13 @@ fn convert_function_declaration(
 fn convert_class_statement(
     source: &str,
     class_declaration: &oxc_ast::ast::Class<'_>,
+    scope: Span,
     statements: &mut Vec<Stmt>,
 ) -> Result<(), String> {
     let mut class =
         convert_class_declaration(source, class_declaration).map_err(|errors| errors.join("; "))?;
     class.local = true;
+    class.scope = Some(scope);
     let class_name = source
         .get(class.name.span.start as usize..class.name.span.end as usize)
         .unwrap_or_default()

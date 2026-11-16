@@ -399,7 +399,10 @@ impl Checker<'_> {
             {
                 self.error(
                     span,
-                    format!("`{name}` constructor expects at least {fixed} fixed argument(s)"),
+                    format!(
+                        "`{}` constructor expects at least {fixed} fixed argument(s)",
+                        Self::display_name(name)
+                    ),
                 );
                 return self.poison(span);
             }

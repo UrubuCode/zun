@@ -354,6 +354,87 @@ fn sign_extend(value: u64, width: usize) -> i64 {
     }
 }
 
+/// Whether `name` is an encoding Node's `Buffer` accepts.
+fn is_known_encoding(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "utf8"
+            | "utf-8"
+            | "hex"
+            | "base64"
+            | "base64url"
+            | "latin1"
+            | "binary"
+            | "ascii"
+            | "ucs2"
+            | "ucs-2"
+            | "utf16le"
+            | "utf-16le"
+    )
+}
+
+fn invalid_buffer_source(value: &Value) -> RunError {
+    RunError::Native(format!(
+        "TypeError: The first argument must be of type string or an instance of Buffer, \
+         ArrayBuffer, or Array or an Array-like Object. Received {}",
+        crate::collections::describe_received(value)
+    ))
+}
+
+fn invalid_byte_length_arg(value: &Value) -> RunError {
+    RunError::Native(format!(
+        "TypeError: The \"string\" argument must be of type string or an instance of Buffer \
+         or ArrayBuffer. Received {}",
+        crate::collections::describe_received(value)
+    ))
+}
+
+/// Validate a `Buffer.alloc`/`allocUnsafe` size the way Node does: it must be a
+/// number in `0..=2^53-1` (a fraction is truncated); anything else is a
+/// TypeError or RangeError.
+fn alloc_size(value: Option<&Value>) -> Result<usize, RunError> {
+    let value = crate::collections::unbox_arg(value.ok_or(RunError::BadToken)?)?;
+    let number = match &value {
+        Value::Int(number, _) => *number as f64,
+        Value::Float(number, _) => *number,
+        other => {
+            return Err(RunError::Native(format!(
+                "TypeError: The \"size\" argument must be of type number. Received {}",
+                crate::collections::describe_received(other)
+            )))
+        }
+    };
+    if number.is_nan() || !(0.0..=9007199254740991.0).contains(&number) {
+        let shown = if number.is_nan() {
+            "NaN".to_string()
+        } else if number.is_infinite() {
+            if number < 0.0 { "-Infinity" } else { "Infinity" }.to_string()
+        } else if number.fract() == 0.0 {
+            // Node groups the digits of an integer above 2^32 with underscores.
+            let digits = format!("{}", number.abs() as u128);
+            if number.abs() > 4294967296.0 {
+                let mut grouped = String::new();
+                for (index, digit) in digits.chars().enumerate() {
+                    if index > 0 && (digits.len() - index) % 3 == 0 {
+                        grouped.push('_');
+                    }
+                    grouped.push(digit);
+                }
+                format!("{}{grouped}", if number < 0.0 { "-" } else { "" })
+            } else {
+                format!("{}", number as i64)
+            }
+        } else {
+            format!("{number}")
+        };
+        return Err(RunError::Native(format!(
+            "RangeError: The value of \"size\" is out of range. It must be >= 0 && <= \
+             9007199254740991. Received {shown}"
+        )));
+    }
+    Ok(number as usize)
+}
+
 /// Run a `nodeBuffer*` intrinsic, or `None` when `name` is not one.
 pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>> {
     match name {
@@ -361,6 +442,91 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let text = as_string(args.first()).ok_or(RunError::BadToken)?;
             let encoding = as_string(args.get(1)).unwrap_or_else(|| "utf8".into());
             buffer_from_bytes(&encode(&text, &encoding)).ok_or(RunError::BadToken)
+        })()),
+        "nodeBufferFromAny" => Some((|| {
+            // `Buffer.from(value, encoding?)` for an operand the checker could
+            // not type (`any`): the form is chosen at run time.
+            let source = crate::collections::unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+            match &source {
+                Value::Str(text) => {
+                    let encoding = match args.get(1) {
+                        Some(arg) => crate::collections::unbox_arg(arg)?,
+                        None => Value::Void,
+                    };
+                    // A non-string or empty encoding means utf8.
+                    let encoding = match &encoding {
+                        Value::Str(name) if !name.is_empty() => name.to_string(),
+                        _ => "utf8".to_string(),
+                    };
+                    if !is_known_encoding(&encoding) {
+                        return Err(RunError::Native(format!(
+                            "TypeError: Unknown encoding: {encoding}"
+                        )));
+                    }
+                    buffer_from_bytes(&encode(text, &encoding)).ok_or(RunError::BadToken)
+                }
+                Value::Object(obj) => {
+                    let (is_array, is_buffer, element) = zun_gc::with_current_heap(|heap| {
+                        (
+                            heap.array_len(*obj).is_some(),
+                            heap.buffer_len(*obj).is_some(),
+                            heap.typed_array_element(*obj),
+                        )
+                    });
+                    if is_array {
+                        return call("nodeBufferFromArray", &[source.clone()])
+                            .unwrap_or(Err(RunError::BadToken));
+                    }
+                    if is_buffer {
+                        return call("nodeBufferFromArrayBuffer", &[source.clone()])
+                            .unwrap_or(Err(RunError::BadToken));
+                    }
+                    match element {
+                        // A typed array is copied (only an ArrayBuffer is shared).
+                        Some(zun_core::TypedElement::U8) => {
+                            let bytes = view_bytes(*obj).ok_or(RunError::BadToken)?;
+                            buffer_from_bytes(&bytes).ok_or(RunError::BadToken)
+                        }
+                        Some(other) => Err(RunError::Native(format!(
+                            "Buffer.from({}) is not supported in this runtime",
+                            other.js_name()
+                        ))),
+                        None => Err(invalid_buffer_source(&source)),
+                    }
+                }
+                other => Err(invalid_buffer_source(other)),
+            }
+        })()),
+        "nodeBufferByteLengthAny" => Some((|| {
+            // `Buffer.byteLength(value, encoding?)` for an untyped operand: a
+            // string measures its encoding, a buffer or view its bytes.
+            let value = crate::collections::unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+            match &value {
+                Value::Str(text) => {
+                    let encoding = match args.get(1) {
+                        Some(arg) => crate::collections::unbox_arg(arg)?,
+                        None => Value::Void,
+                    };
+                    let encoding = match &encoding {
+                        Value::Str(name) if !name.is_empty() => name.to_string(),
+                        _ => "utf8".to_string(),
+                    };
+                    Ok(Value::Int(
+                        encode(text, &encoding).len() as i64,
+                        NumKind::U64,
+                    ))
+                }
+                Value::Object(obj) => {
+                    let length = zun_gc::with_current_heap(|heap| {
+                        heap.buffer_len(*obj).or_else(|| heap.typed_array_byte_len(*obj))
+                    });
+                    match length {
+                        Some(length) => Ok(Value::Int(length as i64, NumKind::U64)),
+                        None => Err(invalid_byte_length_arg(&value)),
+                    }
+                }
+                other => Err(invalid_byte_length_arg(other)),
+            }
         })()),
         "nodeBufferFromArray" => Some((|| {
             let array =
@@ -392,12 +558,12 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             .ok_or(RunError::BadToken)
         })()),
         "nodeBufferAlloc" => Some((|| {
-            let size = as_usize(args.first()).ok_or(RunError::BadToken)?;
+            let size = alloc_size(args.first())?;
             let fill = as_usize(args.get(1)).unwrap_or(0) as u8;
             buffer_from_bytes(&vec![fill; size]).ok_or(RunError::BadToken)
         })()),
         "nodeBufferAllocUnsafe" => Some((|| {
-            let size = as_usize(args.first()).ok_or(RunError::BadToken)?;
+            let size = alloc_size(args.first())?;
             buffer_from_bytes(&vec![0u8; size]).ok_or(RunError::BadToken)
         })()),
         "nodeBufferConcat" => Some((|| {

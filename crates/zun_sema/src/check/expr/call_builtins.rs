@@ -65,20 +65,23 @@ impl Checker<'_> {
                 |arg: &hir::Expr| matches!(arg.ty, Ty::Function(_)) || arg.ty.is_error();
             let (built_args, ret) = match name {
                 "setTimeout" | "setInterval" => {
-                    if args.is_empty() {
-                        self.error(
-                            span,
-                            format!("`{name}` expects a callback and an optional delay"),
-                        );
-                        return Some(self.poison(span));
-                    }
                     let mut it = args.into_iter();
-                    let cb = it.next().expect("callback");
-                    if !is_callback(&cb) {
-                        self.error(cb.span, format!("`{name}` expects a function callback"));
-                    }
+                    // A missing or non-function callback is a TypeError in JS; it
+                    // is raised at run time (the callback travels as `any`).
+                    let cb = match it.next() {
+                        Some(cb) => cb,
+                        None => {
+                            let undefined = self.undefined_ast(span);
+                            self.check_expr(cx, &undefined)
+                        }
+                    };
+                    let cb = if is_callback(&cb) { cb } else { Self::box_to_any(cb) };
                     let mut ms = it.next().unwrap_or_else(|| number(span));
-                    // Accept any numeric delay; a non-number is an error.
+                    // A dynamic delay is coerced with ToNumber; any other
+                    // non-number is an error.
+                    if ms.ty == Ty::Any {
+                        ms = self.to_number_expr(ms);
+                    }
                     if !ms.ty.is_int() && !ms.ty.is_float() && !ms.ty.is_error() {
                         self.error(ms.span, format!("`{name}` delay must be a number"));
                     }
@@ -114,14 +117,18 @@ impl Checker<'_> {
                     }
                 }
                 "setImmediate" | "queueMicrotask" => {
-                    if args.len() != 1 {
+                    if args.len() > 1 {
                         self.error(span, format!("`{name}` expects a single callback"));
                         return Some(self.poison(span));
                     }
-                    let cb = args.into_iter().next().expect("callback");
-                    if !is_callback(&cb) {
-                        self.error(cb.span, format!("`{name}` expects a function callback"));
-                    }
+                    let cb = match args.into_iter().next() {
+                        Some(cb) => cb,
+                        None => {
+                            let undefined = self.undefined_ast(span);
+                            self.check_expr(cx, &undefined)
+                        }
+                    };
+                    let cb = if is_callback(&cb) { cb } else { Self::box_to_any(cb) };
                     let ret = if name == "setImmediate" {
                         Ty::F64
                     } else {
@@ -131,13 +138,22 @@ impl Checker<'_> {
                 }
                 // clearTimeout / clearInterval
                 _ => {
-                    if args.len() != 1 {
+                    if args.len() > 1 {
                         self.error(span, format!("`{name}` expects a timer handle"));
                         return Some(self.poison(span));
                     }
-                    let mut handle = args.into_iter().next().expect("handle");
+                    // A handle that is not a number (`undefined`, `null`, a
+                    // string, an object) clears nothing, as in JS: it travels as
+                    // `any` and the run-time floor ignores it.
+                    let mut handle = match args.into_iter().next() {
+                        Some(handle) => handle,
+                        None => {
+                            let undefined = self.undefined_ast(span);
+                            self.check_expr(cx, &undefined)
+                        }
+                    };
                     if !handle.ty.is_int() && !handle.ty.is_float() && !handle.ty.is_error() {
-                        self.error(handle.span, format!("`{name}` expects a numeric handle"));
+                        handle = Self::box_to_any(handle);
                     }
                     coerce_numeric_literal(&mut handle, Ty::F64);
                     (vec![handle], Ty::Void)

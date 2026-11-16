@@ -70,6 +70,21 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Bool,
             imp: unavailable,
         },
+        // `Buffer.from(value, encoding?)` where the checker could not type
+        // `value` (`any`): the source form is chosen at run time.
+        NativeFn {
+            name: "nodeBufferFromAny",
+            params: &[Opaque, Opaque],
+            ret: U8Array,
+            imp: unavailable,
+        },
+        // `Buffer.byteLength(value, encoding?)` for an untyped value.
+        NativeFn {
+            name: "nodeBufferByteLengthAny",
+            params: &[Opaque, Opaque],
+            ret: U64,
+            imp: unavailable,
+        },
         // `Buffer.byteLength(string, encoding?)`.
         NativeFn {
             name: "nodeBufferByteLength",

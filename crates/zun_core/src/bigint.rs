@@ -56,7 +56,7 @@ impl BigInt {
             b'+' => (false, &trimmed[1..]),
             _ => (false, trimmed),
         };
-        let (radix, digits) = if rest.len() >= 2 && &rest[..1] == "0" {
+        let (radix, digits) = if rest.len() >= 2 && rest.as_bytes()[0] == b'0' {
             match rest.as_bytes()[1] {
                 b'x' | b'X' => (16u32, &rest[2..]),
                 b'o' | b'O' => (8, &rest[2..]),
@@ -528,6 +528,69 @@ impl core::fmt::Display for BigInt {
     }
 }
 
+impl BigInt {
+    /// StringToBigInt (what `BigInt(string)` runs): surrounding JavaScript white
+    /// space is trimmed, an empty result is `0n`, and the rest is either an
+    /// optionally signed run of decimal digits or an unsigned `0x`/`0o`/`0b`
+    /// literal. Separators, fractions, exponents and a trailing `n` are
+    /// syntax errors, unlike the source-literal parser [`BigInt::parse`].
+    pub fn parse_js_string(text: &str) -> Result<Self, &'static str> {
+        let is_space = |c: char| {
+            matches!(
+                c,
+                '\u{9}'..='\u{d}'
+                    | ' '
+                    | '\u{a0}'
+                    | '\u{1680}'
+                    | '\u{2000}'..='\u{200a}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202f}'
+                    | '\u{205f}'
+                    | '\u{3000}'
+                    | '\u{feff}'
+            )
+        };
+        let body = text.trim_matches(is_space);
+        if body.is_empty() {
+            return Ok(Self::zero());
+        }
+        let bytes = body.as_bytes();
+        let (negative, radix, digits) = if bytes.len() > 2 && bytes[0] == b'0' {
+            match bytes[1] {
+                b'x' | b'X' => (false, 16u32, &body[2..]),
+                b'o' | b'O' => (false, 8, &body[2..]),
+                b'b' | b'B' => (false, 2, &body[2..]),
+                _ => (false, 10, body),
+            }
+        } else {
+            match bytes[0] {
+                b'-' => (true, 10, &body[1..]),
+                b'+' => (false, 10, &body[1..]),
+                _ => (false, 10, body),
+            }
+        };
+        if digits.is_empty() {
+            return Err("invalid bigint literal");
+        }
+        let mut result = Self::zero();
+        for byte in digits.bytes() {
+            let value = match byte {
+                b'0'..=b'9' => u32::from(byte - b'0'),
+                b'a'..=b'f' => u32::from(byte - b'a') + 10,
+                b'A'..=b'F' => u32::from(byte - b'A') + 10,
+                _ => return Err("invalid bigint digit"),
+            };
+            if value >= radix {
+                return Err("bigint digit out of range for radix");
+            }
+            result.mul_small(radix);
+            result.add_small(value);
+        }
+        result.negative = negative && !result.is_zero();
+        Ok(result)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::BigInt;
@@ -624,5 +687,32 @@ mod tests {
         );
         assert!(BigInt::from_f64(1.5).is_err());
         assert!(BigInt::from_f64(f64::INFINITY).is_err());
+    }
+}
+
+#[cfg(test)]
+mod js_string_tests {
+    use super::BigInt;
+
+    #[test]
+    fn string_to_bigint_follows_the_spec_grammar() {
+        let ok = |text: &str| BigInt::parse_js_string(text).map(|value| value.to_string());
+        assert_eq!(ok(""), Ok("0".into()));
+        assert_eq!(ok("  \u{feff}\t"), Ok("0".into()));
+        assert_eq!(ok("\u{feff}10\u{feff}"), Ok("10".into()));
+        assert_eq!(ok("-10"), Ok("-10".into()));
+        assert_eq!(ok("007"), Ok("7".into()));
+        assert_eq!(ok("0x1F"), Ok("31".into()));
+        assert_eq!(ok("0b101"), Ok("5".into()));
+        assert_eq!(ok("0o17"), Ok("15".into()));
+        for bad in ["1_0", "1n", "1.5", "1e3", "-0x1f", "+0x1f", "0x", "Infinity", "é", "1 0"] {
+            assert!(BigInt::parse_js_string(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn source_literal_parser_does_not_panic_on_non_ascii() {
+        assert!(BigInt::parse("\u{feff}10").is_err());
+        assert!(BigInt::parse("é1").is_err());
     }
 }

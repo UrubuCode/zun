@@ -398,6 +398,8 @@ impl<'a> Interp<'a> {
             "stringMatchAll" => self.col_regexp(name, args),
             "bigIntNew" => self.col_bigint(name, args),
             "bigIntFromNumber" => self.col_bigint(name, args),
+            "bigIntFromAny" => self.col_bigint(name, args),
+            "bigIntToStringRadix" => self.col_bigint(name, args),
             "bigIntUshr" => self.col_bigint(name, args),
             "bigIntPow" | "bigIntAnd" | "bigIntOr" | "bigIntXor" | "bigIntShl" | "bigIntShr" => {
                 self.col_bigint(name, args)
@@ -1050,4 +1052,30 @@ thread_local! {
     /// Set while a `recv.m?.(..)` probe call runs: a missing member answers
     /// `BadToken` (-> `undefined`) instead of throwing `TypeError`.
     static OPTIONAL_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// How Node words the offending value in an `ERR_INVALID_ARG_TYPE` message
+/// (`Received undefined`, `Received type string ('abc')`, ...), without the
+/// leading `Received `.
+pub(crate) fn describe_received(value: &Value) -> String {
+    match value {
+        Value::Void => "undefined".to_string(),
+        Value::Null => "null".to_string(),
+        Value::Str(text) => {
+            let text = text.to_string();
+            let shown: String = if text.chars().count() > 28 {
+                format!("{}...", text.chars().take(25).collect::<String>())
+            } else {
+                text
+            };
+            format!("type string ('{shown}')")
+        }
+        Value::Bool(flag) => format!("type boolean ({flag})"),
+        Value::Int(number, _) => format!("type number ({number})"),
+        Value::Float(number, _) if number.fract() == 0.0 && number.is_finite() => {
+            format!("type number ({})", *number as i64)
+        }
+        Value::Float(number, _) => format!("type number ({number})"),
+        _ => "an instance of Object".to_string(),
+    }
 }

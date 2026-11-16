@@ -81,7 +81,10 @@ pub(super) fn convert_class_expression(
     let name_span = match (hint, class_expression.id.as_ref()) {
         (_, Some(id)) => Span::new(id.span.start, id.span.end),
         (Some(binding), None) => binding,
-        (None, None) => Span::new(class_expression.span.start, class_expression.span.start + 5),
+        // An anonymous class nobody binds is keyed by its source offset so
+        // that two of them never collide; the key has an empty display name
+        // (the part before `#`), as `(class {}).name` is `""`.
+        (None, None) => crate::ast::synthetic_ident(&format!("#{}", class_expression.span.start)).span,
     };
     if let Some(id) = class_expression.id.as_ref() {
         IMMUTABLE_SELF_NAMES.with(|names| names.borrow_mut().push(id.name.to_string()));
@@ -96,6 +99,10 @@ pub(super) fn convert_class_expression(
         PENDING_PRELUDE.with(|pending| pending.borrow_mut().extend(trailing));
     }
     class.name = Name { span: name_span };
+    // A named class expression's own name is visible only inside it.
+    if class_expression.id.is_some() {
+        class.scope = Some(Span::new(class_expression.span.start, class_expression.span.end));
+    }
     HOISTED_CLASSES.with(|cells| cells.borrow_mut().push(class));
     Ok(Expr::Ident(Name { span: name_span }))
 }

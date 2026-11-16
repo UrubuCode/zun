@@ -145,6 +145,7 @@ pub(super) fn convert_class_declaration_inner(
         symbol_methods,
         span: Span::new(class_declaration.span.start, class_declaration.span.end),
         local: false,
+        scope: None,
     })
 }
 

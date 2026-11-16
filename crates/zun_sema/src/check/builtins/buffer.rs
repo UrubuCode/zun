@@ -41,18 +41,14 @@ impl Checker<'_> {
                     return self.poison(span);
                 }
                 let source = self.check_expr(cx, &args[0]);
+                let encoding_arg = args.get(1).map(|arg| self.check_expr(cx, arg));
+                let encoding_is_string = encoding_arg
+                    .as_ref()
+                    .is_none_or(|value| value.ty == Ty::String || value.ty.is_error());
                 match source.ty {
-                    Ty::String => {
-                        let encoding = match args.get(1) {
-                            Some(arg) => {
-                                let value = self.check_expr(cx, arg);
-                                if value.ty != Ty::String && !value.ty.is_error() {
-                                    self.error(value.span, "Buffer encoding must be a string");
-                                }
-                                value
-                            }
-                            None => string_lit("utf8", span),
-                        };
+                    Ty::String if encoding_is_string => {
+                        let encoding =
+                            encoding_arg.unwrap_or_else(|| string_lit("utf8", span));
                         call(
                             self,
                             "nodeBufferFromString",
@@ -62,12 +58,24 @@ impl Checker<'_> {
                     }
                     Ty::Array => call(self, "nodeBufferFromArray", vec![source], u8_view),
                     Ty::Buffer => call(self, "nodeBufferFromArrayBuffer", vec![source], u8_view),
+                    // Any other operand (`any`, a typed-array view, a non-string
+                    // encoding) picks its form at run time, where a value Node
+                    // rejects is a TypeError.
                     other if !other.is_error() => {
-                        self.error(
-                            source.span,
-                            format!("`Buffer.from` expects a string, array or ArrayBuffer, found {other:?}"),
-                        );
-                        self.poison(span)
+                        let encoding = match encoding_arg {
+                            Some(value) => Self::box_to_any(value),
+                            None => {
+                                let undefined = self.undefined_ast(span);
+                                let value = self.check_expr(cx, &undefined);
+                                Self::box_to_any(value)
+                            }
+                        };
+                        call(
+                            self,
+                            "nodeBufferFromAny",
+                            vec![Self::box_to_any(source), encoding],
+                            u8_view,
+                        )
                     }
                     _ => self.poison(span),
                 }
@@ -79,8 +87,9 @@ impl Checker<'_> {
                 }
                 let mut size = self.check_expr(cx, &args[0]);
                 coerce_numeric_literal(&mut size, Ty::Int(IntKind::U64));
-                if !size.ty.is_int() && !size.ty.is_error() {
-                    self.error(size.span, "Buffer size must be an integer");
+                // A `number` or dynamic size is validated at run time (range, type).
+                if !size.ty.is_int() && !size.ty.is_error() && size.ty != Ty::F64 {
+                    size = Self::box_to_any(size);
                 }
                 let fill = match args.get(1) {
                     Some(arg) => {
@@ -102,8 +111,9 @@ impl Checker<'_> {
                 }
                 let mut size = self.check_expr(cx, &args[0]);
                 coerce_numeric_literal(&mut size, Ty::Int(IntKind::U64));
-                if !size.ty.is_int() && !size.ty.is_error() {
-                    self.error(size.span, "Buffer size must be an integer");
+                // A `number` or dynamic size is validated at run time (range, type).
+                if !size.ty.is_int() && !size.ty.is_error() && size.ty != Ty::F64 {
+                    size = Self::box_to_any(size);
                 }
                 call(self, "nodeBufferAllocUnsafe", vec![size], u8_view)
             }
@@ -147,19 +157,27 @@ impl Checker<'_> {
                     return self.poison(span);
                 }
                 let string = self.check_expr(cx, &args[0]);
-                if string.ty != Ty::String && !string.ty.is_error() {
-                    self.error(string.span, "`Buffer.byteLength` expects a string");
-                }
                 let encoding = match args.get(1) {
                     Some(arg) => self.check_expr(cx, arg),
                     None => string_lit("utf8", span),
                 };
-                call(
-                    self,
-                    "nodeBufferByteLength",
-                    vec![string, encoding],
-                    Ty::Int(IntKind::U64),
-                )
+                if string.ty != Ty::String && !string.ty.is_error() {
+                    // A buffer, an `ArrayBuffer` or a value Node rejects (a
+                    // TypeError) is measured at run time.
+                    call(
+                        self,
+                        "nodeBufferByteLengthAny",
+                        vec![Self::box_to_any(string), Self::box_to_any(encoding)],
+                        Ty::Int(IntKind::U64),
+                    )
+                } else {
+                    call(
+                        self,
+                        "nodeBufferByteLength",
+                        vec![string, encoding],
+                        Ty::Int(IntKind::U64),
+                    )
+                }
             }
             other => {
                 self.error(

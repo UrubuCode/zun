@@ -147,6 +147,12 @@ pub struct Class {
     /// class runs its static initializers at its declaration site (a marker
     /// statement), not at module start.
     pub local: bool,
+    /// The source range in which this class's name refers to it, when the class
+    /// is not program-global: a class declared in a nested block or function
+    /// body (the enclosing statement list) or a named class expression (the
+    /// expression itself). Several classes may share one name when their
+    /// scopes differ; sema keys each by its innermost enclosing scope.
+    pub scope: Option<Span>,
     /// Span of the whole declaration.
     pub span: Span,
 }

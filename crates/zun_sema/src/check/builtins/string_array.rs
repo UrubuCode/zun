@@ -247,23 +247,49 @@ impl Checker<'_> {
                 }
             }
             "from" => {
-                if args.is_empty() || args.len() > 2 {
+                if args.is_empty() || args.len() > 3 {
                     self.error(
                         span,
                         format!(
-                            "`Array.from` expects 1 or 2 argument(s), found {}",
+                            "`Array.from` expects 1 to 3 argument(s), found {}",
                             args.len()
                         ),
                     );
                     return self.poison(span);
                 }
                 let source = box_any(self.check_expr(cx, &args[0]));
-                if args.len() == 2 {
-                    let map_fn = self.check_expr(cx, &args[1]);
-                    if !map_fn.ty.is_error()
-                        && !self.is_assignable(map_fn.ty, Ty::Function(hir::DYNAMIC_FUNCTION))
-                    {
-                        self.error(map_fn.span, "`Array.from` map argument must be a function");
+                if args.len() >= 2 {
+                    let mut map_fn = self.check_expr(cx, &args[1]);
+                    let is_function = matches!(map_fn.ty, Ty::Function(_));
+                    if is_function && args.len() == 3 {
+                        // `thisArg` is bound onto the mapper, as for the
+                        // array callback methods.
+                        if let Some((bind_id, _)) =
+                            zun_natives::resolve("collections", "functionBind")
+                        {
+                            let checked = self.check_expr(cx, &args[2]);
+                            let bound_this = self.box_function_argument(checked);
+                            map_fn = hir::Expr {
+                                span: map_fn.span,
+                                kind: hir::ExprKind::FunctionBind {
+                                    callee: Box::new(map_fn),
+                                    args: vec![bound_this],
+                                    native_id: bind_id,
+                                },
+                                ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+                            };
+                        }
+                    } else if !is_function && !map_fn.ty.is_error() {
+                        // A mapper that is not statically a function (`any`, or a
+                        // value JS rejects with a TypeError) is validated at run
+                        // time, before the source is read.
+                        if args.len() == 3 {
+                            self.error(
+                                args[2].span(),
+                                "`Array.from` thisArg needs a statically known mapper function",
+                            );
+                        }
+                        map_fn = Self::box_to_any(map_fn);
                     }
                     let Some((id, _)) = zun_natives::resolve("array", "arrayFromMapped") else {
                         self.error(span, "missing Array intrinsic `arrayFromMapped`");

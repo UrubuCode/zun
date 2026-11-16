@@ -19,11 +19,14 @@ impl Checker<'_> {
                 // Declaration site of a nested-block / function-local class: run
                 // its static initializers here (in an always-true `if`, which
                 // carries a statement list).
-                let class_name = match args.first() {
-                    Some(ast::Expr::String { value, .. }) => value.clone(),
-                    _ => String::new(),
-                };
-                let body = match self.classes_by_name.get(&class_name).copied() {
+                // The marker carries the class declaration's span, which picks
+                // the class even when several share one name.
+                let class_idx = self
+                    .classes
+                    .iter()
+                    .position(|class| class.span_start == span.start)
+                    .map(|index| index as u32);
+                let body = match class_idx {
                     Some(class_idx) => self.class_static_initializers(cx, class_idx),
                     None => Vec::new(),
                 };

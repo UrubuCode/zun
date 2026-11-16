@@ -22,6 +22,24 @@ impl Checker<'_> {
         (slot, name)
     }
 
+    /// The name as it should appear in a diagnostic. `text` returns the
+    /// uniqueness key of a class declared under the same name in several
+    /// scopes (`Sub#64`), which must never reach the user. Only a trailing
+    /// `#<digits>` after a non-empty stem is stripped, so a private member
+    /// name such as `#x` is left alone.
+    pub(crate) fn display_name(key: &str) -> &str {
+        match key.rsplit_once('#') {
+            Some((stem, suffix))
+                if !stem.is_empty()
+                    && !suffix.is_empty()
+                    && suffix.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                stem
+            }
+            _ => key,
+        }
+    }
+
     /// Source text of a name. Dotted `Intl.X` names (the only dotted names the
     /// parser produces) are mapped here onto the prelude classes `IntlX`
     /// (`builtin/intl.zun`). This is the entire `Intl` namespace shim: a
@@ -39,6 +57,24 @@ impl Checker<'_> {
             return leaked;
         }
         let raw = &self.source[name.span.start as usize..name.span.end as usize];
+        if let Some(scoped) = self.scoped_class_names.get(raw) {
+            // A name declared as several scoped classes: pick the innermost
+            // scope enclosing this occurrence (a member access `x.Name` is not
+            // a class reference).
+            let member = name.span.start > 0
+                && self.source.as_bytes()[name.span.start as usize - 1] == b'.';
+            if !member {
+                let found = scoped
+                    .iter()
+                    .filter(|(scope, _)| {
+                        scope.start <= name.span.start && name.span.end <= scope.end
+                    })
+                    .min_by_key(|(scope, _)| scope.end - scope.start);
+                if let Some((_, key)) = found {
+                    return key;
+                }
+            }
+        }
         match raw {
             "Intl.Collator" => "IntlCollator",
             "Intl.NumberFormat" => "IntlNumberFormat",

@@ -1,5 +1,6 @@
 use super::{Checker, ClassInfo};
 use crate::hir;
+use std::collections::HashMap;
 use zun_common::Span;
 use zun_syntax::ast;
 
@@ -29,6 +30,25 @@ impl<'a> Checker<'a> {
     /// First pass over classes: register names (so annotations resolve) and
     /// remember each base's name for later resolution.
     pub(super) fn collect_classes(&mut self, program: &ast::Program) {
+        // Names declared by more than one class: each scoped declaration gets
+        // a unique key (`Name#<index>`), which `text` substitutes for the name
+        // inside that declaration's scope. An unscoped duplicate is still an
+        // error below.
+        let mut declared: HashMap<String, u32> = HashMap::new();
+        for c in &program.classes {
+            *declared.entry(self.text(&c.name).to_string()).or_insert(0) += 1;
+        }
+        for (index, c) in program.classes.iter().enumerate() {
+            let raw = self.text(&c.name).to_string();
+            if declared[&raw] > 1 {
+                if let Some(scope) = c.scope {
+                    self.scoped_class_names
+                        .entry(raw.clone())
+                        .or_default()
+                        .push((scope, format!("{raw}#{index}")));
+                }
+            }
+        }
         for c in &program.classes {
             let name = self.text(&c.name).to_string();
             let index = self.classes.len() as u32;
@@ -119,7 +139,11 @@ impl<'a> Checker<'a> {
                 })
                 .collect();
             out.push(hir::Class {
-                name: self.text(&c.name).to_string(),
+                // Strip the uniqueness key (`Name#<n>`) down to the display name.
+                name: {
+                    let key = self.text(&c.name);
+                    key.split('#').next().unwrap_or(key).to_string()
+                },
                 base: self.classes[index].base,
                 decorators: c
                     .decorators

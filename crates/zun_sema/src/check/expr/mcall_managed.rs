@@ -306,6 +306,10 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        // `bigint.toString(radix)` is handled by `mcall_number_a`.
+        if receiver.ty == Ty::BigInt && mname == "toString" && args.len() == 1 {
+            return Err(receiver);
+        }
         let Some((native_name, return_ty, expected)) =
             Self::managed_method_descriptor(receiver.ty, mname)
         else {

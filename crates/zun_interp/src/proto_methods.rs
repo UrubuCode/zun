@@ -160,13 +160,19 @@ impl Interp<'_> {
                     None | Some(Value::Void) => 10.0,
                     Some(value) => {
                         let value = value.clone();
-                        self.to_number_value(value)?
+                        // ToIntegerOrInfinity: a fraction truncates, NaN is 0.
+                        let radix = self.to_number_value(value)?;
+                        if radix.is_nan() {
+                            0.0
+                        } else {
+                            radix.trunc()
+                        }
                     }
                 };
                 if radix == 10.0 {
                     return self.call_managed_collection("bigIntToString", &[Value::Object(big)]);
                 }
-                if !(2.0..=36.0).contains(&radix) || radix.fract() != 0.0 {
+                if !(2.0..=36.0).contains(&radix) {
                     return Err(self.proto_range_error("toString() radix argument must be between 2 and 36"));
                 }
                 let value = zun_gc::with_current_heap(|heap| heap.bigint_value(big).cloned())
@@ -397,7 +403,7 @@ impl Interp<'_> {
 }
 
 /// `BigInt.prototype.toString(radix)` for a radix other than 10.
-fn bigint_to_radix(value: &zun_core::BigInt, radix: u64) -> String {
+pub(crate) fn bigint_to_radix(value: &zun_core::BigInt, radix: u64) -> String {
     const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     if value.is_zero() {
         return "0".to_owned();

@@ -208,13 +208,9 @@ impl<'a> Interp<'a> {
                 self.promise_combinator(name, array)
             }
             "setTimeout" | "setInterval" | "setImmediate" => {
-                // The callback is required and must be a function value; a
-                // missing/non-function callback is a no-op that still returns a
-                // (dead) handle, matching the lenient host surface.
-                let callback = match args.first() {
-                    Some(value @ Value::Function(_)) => value.clone(),
-                    _ => return Ok(Value::Float(f64::NAN, zun_il::NumKind::F64)),
-                };
+                // The callback must be a function value; anything else is a
+                // TypeError, as in Node.
+                let callback = timer_callback(args.first())?;
                 // `setImmediate` is a 0-delay macrotask; the others read the
                 // (checker-defaulted) delay argument.
                 let delay = if name == "setImmediate" {
@@ -236,10 +232,7 @@ impl<'a> Interp<'a> {
                 Ok(Value::Float(handle as f64, zun_il::NumKind::F64))
             }
             "setTimeoutArgs" | "setIntervalArgs" => {
-                let callback = match args.first() {
-                    Some(value @ Value::Function(_)) => value.clone(),
-                    _ => return Ok(Value::Float(f64::NAN, zun_il::NumKind::F64)),
-                };
+                let callback = timer_callback(args.first())?;
                 let delay = match args.get(1) {
                     Some(Value::Float(ms, _)) => *ms as i64,
                     Some(Value::Int(ms, _)) => *ms,
@@ -269,10 +262,12 @@ impl<'a> Interp<'a> {
                 Ok(Value::Float(handle as f64, zun_il::NumKind::F64))
             }
             "clearTimeout" | "clearInterval" => {
-                let handle = match args.first() {
-                    Some(Value::Float(handle, _)) => *handle as i64,
-                    Some(Value::Int(handle, _)) => *handle,
-                    // A nullish/absent handle clears nothing (JS is lenient).
+                // A handle that is not a finite number (`undefined`, `null`, a
+                // string, an object, a boxed non-number) clears nothing (JS is
+                // lenient); a boxed number is unwrapped first.
+                let handle = match args.first().map(unbox_arg).transpose()? {
+                    Some(Value::Float(handle, _)) if handle.is_finite() => handle as i64,
+                    Some(Value::Int(handle, _)) => handle,
                     _ => return Ok(Value::Void),
                 };
                 if handle >= 0 {
@@ -281,8 +276,8 @@ impl<'a> Interp<'a> {
                 Ok(Value::Void)
             }
             "queueMicrotask" => {
-                let callback = match args.first() {
-                    Some(Value::Function(handle)) => *handle,
+                let callback = match timer_callback(args.first())? {
+                    Value::Function(handle) => handle,
                     _ => return Ok(Value::Void),
                 };
                 self.queue_microtask(callback)?;
@@ -291,4 +286,20 @@ impl<'a> Interp<'a> {
             _ => Err(RunError::BadToken),
         }
     }
+}
+
+/// The `callback` argument of a timer or microtask call, unboxed to its function
+/// value. Anything else is a TypeError, worded as Node words it.
+fn timer_callback(value: Option<&Value>) -> Result<Value, RunError> {
+    let unboxed = match value {
+        Some(value) => unbox_arg(value)?,
+        None => Value::Void,
+    };
+    if matches!(unboxed, Value::Function(_)) {
+        return Ok(unboxed);
+    }
+    Err(RunError::Native(format!(
+        "TypeError: The \"callback\" argument must be of type function. Received {}",
+        describe_received(&unboxed)
+    )))
 }

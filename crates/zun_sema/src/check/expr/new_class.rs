@@ -214,7 +214,8 @@ impl Checker<'_> {
             self.error(
                 span,
                 format!(
-                    "`{name}` has {} field(s), found {} initializer(s)",
+                    "`{}` has {} field(s), found {} initializer(s)",
+                    Self::display_name(name),
                     field_tys.len(),
                     args.len()
                 ),

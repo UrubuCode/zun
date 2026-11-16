@@ -227,6 +227,7 @@ fn check_impl(
         by_name: HashMap::new(),
         classes: Vec::new(),
         classes_by_name: HashMap::new(),
+        scoped_class_names: HashMap::new(),
         full_fields_cache: std::cell::RefCell::new(HashMap::new()),
         full_initializers_cache: std::cell::RefCell::new(HashMap::new()),
         field_index_cache: std::cell::RefCell::new(HashMap::new()),
@@ -486,6 +487,10 @@ struct Checker<'a> {
     by_name: HashMap<String, u32>,
     classes: Vec<ClassInfo>,
     classes_by_name: HashMap<String, u32>,
+    /// Class names declared more than once, each with the scope and unique key
+    /// of every scoped declaration (see `ast::Class::scope`). `Checker::text`
+    /// rewrites a name occurrence inside such a scope to that key.
+    scoped_class_names: HashMap<String, Vec<(Span, String)>>,
     /// Memoized full field layout per class (inherited-first slot order), built
     /// lazily once the class table is final. Avoids re-walking the base chain on
     /// every `full_fields`/`field_of` call (previously O(classes * depth)).

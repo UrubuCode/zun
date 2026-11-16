@@ -661,8 +661,26 @@ impl<'a> Interp<'a> {
             "symbolKeyFor" => {
                 // `Symbol.keyFor(symbol)` — the registry key, or `undefined`.
                 let id = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Any(any) => any.as_symbol().ok_or(RunError::BadToken)?,
-                    _ => return Err(RunError::BadToken),
+                    Value::Any(any) if any.as_symbol().is_some() => {
+                        any.as_symbol().ok_or(RunError::BadToken)?
+                    }
+                    other => {
+                        // Anything that is not a symbol is a TypeError
+                        // (`Symbol.keyFor("x")`, `Symbol.keyFor()`).
+                        let shown = match unbox_arg(other)? {
+                            Value::Str(text) => text.to_string(),
+                            Value::Int(number, _) => number.to_string(),
+                            Value::Float(number, _) if number.fract() == 0.0 => {
+                                (number as i64).to_string()
+                            }
+                            Value::Float(number, _) => number.to_string(),
+                            Value::Bool(flag) => flag.to_string(),
+                            Value::Null => "null".to_string(),
+                            Value::Void => "undefined".to_string(),
+                            _ => "#<Object>".to_string(),
+                        };
+                        return Err(RunError::Native(format!("TypeError: {shown} is not a symbol")));
+                    }
                 };
                 Ok(zun_gc::with_current_heap(|heap| {
                     heap.symbol_key_for(id).map(|key| Value::Str(key.into()))

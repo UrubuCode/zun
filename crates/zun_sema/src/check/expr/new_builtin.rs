@@ -178,12 +178,13 @@ impl Checker<'_> {
             let native_name = if arg.ty.is_int() || arg.ty.is_float() {
                 "bigIntFromNumber"
             } else if arg.ty == Ty::String {
-                "bigIntNew"
+                "bigIntFromAny"
             } else if arg.ty.is_error() {
                 return Some(self.poison(span));
             } else {
-                self.error(arg.span, "`BigInt` expects a string or number argument");
-                return Some(self.poison(span));
+                // Any other operand (`any`, a boolean, a BigInt, an object):
+                // ToPrimitive and the integer check run at run time.
+                "bigIntFromAny"
             };
             let Some((id, _)) = zun_natives::resolve("collections", native_name) else {
                 self.error(

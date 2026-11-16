@@ -112,6 +112,23 @@ impl Checker<'_> {
                 span,
             });
         }
+        // `bigint.toString(radix)`: the radix is validated and converted at
+        // run time (it may be `any`, a number or a numeric string).
+        if receiver.ty == Ty::BigInt && mname == "toString" && args.len() == 1 {
+            let Some((id, _)) = zun_natives::resolve("collections", "bigIntToStringRadix") else {
+                self.error(span, "missing collection intrinsic `bigIntToStringRadix`");
+                return Ok(self.poison(span));
+            };
+            let radix = self.check_expr(cx, &args[0]);
+            return Ok(hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: vec![receiver, radix],
+                },
+                ty: Ty::String,
+                span,
+            });
+        }
         Err(receiver)
     }
 

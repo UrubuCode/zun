@@ -516,6 +516,40 @@ impl<'a> Interp<'a> {
                 )
             }
             "arrayFrom" | "arrayFromMapped" => {
+                // `Array.from(items, mapFn)`: the mapper is validated before the
+                // source is touched. `undefined` means no mapper; anything that is
+                // neither undefined nor a function is a TypeError. A mapper that
+                // arrives boxed as `any` is unwrapped to its function handle.
+                let mapped_args;
+                let args = if name == "arrayFromMapped" {
+                    match unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? {
+                        Value::Function(handle) => {
+                            mapped_args = [args[0].clone(), Value::Function(handle)];
+                            &mapped_args[..]
+                        }
+                        Value::Void => {
+                            return self.call_managed_collection("arrayFrom", &args[..1]);
+                        }
+                        other => {
+                            let shown = match other {
+                                Value::Str(text) => format!("string \"{text}\""),
+                                Value::Int(number, _) => format!("number {number}"),
+                                Value::Float(number, _) if number.fract() == 0.0 => {
+                                    format!("number {}", number as i64)
+                                }
+                                Value::Float(number, _) => format!("number {number}"),
+                                Value::Bool(flag) => format!("boolean {flag}"),
+                                Value::Null => "object null".to_string(),
+                                _ => "object".to_string(),
+                            };
+                            return Err(RunError::Native(format!(
+                                "TypeError: {shown} is not a function"
+                            )));
+                        }
+                    }
+                } else {
+                    args
+                };
                 // Build the base array from the source (a managed Array or a
                 // string; other iterables are deferred).
                 let concrete = match args.first().ok_or(RunError::BadToken)? {

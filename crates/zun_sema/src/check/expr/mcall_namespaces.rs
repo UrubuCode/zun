@@ -226,20 +226,29 @@ impl Checker<'_> {
                     return Some(self.poison(span));
                 }
             };
-            if args.len() != 1 {
-                self.error(span, format!("`Symbol.{member}` expects one argument"));
-                return Some(self.poison(span));
-            }
+            // An omitted argument is `undefined` (JS ignores a missing argument,
+            // and extra ones).
+            let undefined = self.undefined_ast(span);
+            let arg_ast = args.first().unwrap_or(&undefined);
             let Some((id, _)) = zun_natives::resolve("collections", native) else {
                 self.error(span, format!("missing `{native}` intrinsic"));
                 return Some(self.poison(span));
             };
-            let mut arg = self.check_expr(cx, &args[0]);
-            if !arg.ty.is_error() && !self.is_assignable(arg.ty, arg_ty) {
-                self.error(
-                    arg.span,
-                    format!("`Symbol.{member}` expects a {arg_ty:?} argument"),
-                );
+            let mut arg = self.check_expr(cx, arg_ast);
+            let needs_conversion = if member == "for" {
+                arg.ty != Ty::String
+            } else {
+                !self.is_assignable(arg.ty, arg_ty)
+            };
+            if !arg.ty.is_error() && needs_conversion {
+                if member == "for" {
+                    // `Symbol.for(key)` runs ToString on the key.
+                    arg = self.to_string_for_parse(arg);
+                } else {
+                    // `Symbol.keyFor(x)` with a non-symbol is a TypeError raised
+                    // by the native, so the operand travels as `any`.
+                    arg = Self::box_to_any(arg);
+                }
             }
             coerce_numeric_literal(&mut arg, arg_ty);
             return Some(hir::Expr {

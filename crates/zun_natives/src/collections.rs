@@ -592,6 +592,18 @@ pub const MODULE: crate::Module = crate::Module {
             imp: unavailable,
         },
         NativeFn {
+            name: "bigIntToStringRadix",
+            params: &[BigInt, Opaque],
+            ret: Str,
+            imp: unavailable,
+        },
+        NativeFn {
+            name: "bigIntFromAny",
+            params: &[Opaque],
+            ret: BigInt,
+            imp: unavailable,
+        },
+        NativeFn {
             name: "bigIntPow",
             params: &[BigInt, BigInt],
             ret: BigInt,
