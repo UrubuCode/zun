@@ -4,9 +4,11 @@ Audit snapshot: 2026-11-12, with a fix pass the same day. Line numbers move;
 re-locate with a search before acting. Mark an entry FIXED (with the commit)
 instead of deleting it.
 
-Conformance: **121/168** fixtures exit 0 (at `551837f2`), and the same 121
-pass under `ZUN_GC_STRESS=1` with a byte-identical pass set. The one gain over
-the long-standing 120 is `json-stringify-replacer-and-tojson` (`3ebbf3fb`).
+Conformance: **135/168 (80.4%)** fixtures exit 0 (at `2d417873`), and the same
+135 pass under `ZUN_GC_STRESS=1` with a byte-identical pass set. The 120 -> 135
+run of 2026-11-13..15 is summarised in the memory file `zun-conformance-push`;
+every commit in it carries a pass-set diff, a stdout diff against a binary
+built from its parent, and a stress run.
 
 **Measure proximity, not error counts.** A failing fixture's visible error
 count is a *floor*, not a total: these are 80-160 line probe programs with
@@ -531,3 +533,80 @@ A green suite is not evidence here.
   `undefined`; a spread through `.call` reports "spread arguments are not
   lowered yet". Both pre-date the receiver work and apply equally to functions
   with no `this`.
+
+## The 120 -> 135 conformance run (2026-11-13..15)
+
+Eighteen subsystems, `56ee7980`..`2d417873`. Full per-commit detail is in the
+git log; what belongs here is what the run *taught*, and what it left open.
+
+### Verification that actually catches damage
+Pass/fail hides silent output changes, and a dozen changes in this run passed
+all 168 fixtures while producing plausible-but-wrong output. Three checks per
+commit became the standard, and every one of them caught something:
+1. a fixture **pass-set diff**, never just the count;
+2. stdout of all 168 fixtures diffed against a binary built from the parent
+   commit in a temporary worktree, with mismatches against node counted
+   **symmetrically** (`diff | grep -c '^[<>]'`);
+3. the suite under `ZUN_GC_STRESS=1`.
+
+Two traps in that process, both hit for real:
+- A one-directional mismatch count makes an **empty** output score best, so a
+  fixture that prints nothing looks perfect. It produced a report of "43
+  fixtures regressing" when four had improved.
+- Removing the comparison worktree before the comparison finishes makes every
+  baseline run read empty, with the same effect. Keep it until the last
+  measurement.
+
+### The shape to fear: lists but does not behave
+Not a crash — a plausible wrong answer no fixture covers. Instances found:
+`new Error(0 as any).message` answered `"Math"` (a misread slot);
+`new Object(5)` answered the `Object` constructor itself; `fn.prototype`
+returned a *fresh empty object on every read*, so `F.prototype.x = …` was
+silently lost; `f(...xs)` dropped an argument when a hidden receiver was
+added; a natively thrown error read uninitialised heap for its `name`;
+installing names on `Object.prototype` made them list while calling them
+threw. **Prove both directions — reflection and behaviour — against node, and
+treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
+
+### Engine panics closed (user code must never panic the process)
+- a nullish dynamic store (`x.v = 1` with `x` undefined);
+- `new` on a declared `function F(this: any)`;
+- a typed class instance used as an iterator in native `for...of`/spread;
+- `Object.setPrototypeOf(7, Number.prototype)`.
+
+### Still open, with reproducers
+- **OPEN - output that varies with the GC budget.**
+  `streams/web-streams-core` prints 13 lines normally, 11 under
+  `ZUN_GC_STRESS=1` and `=4`, and 13 again at `=16`;
+  `events-async/microtask-macrotask-ordering` prints 12 and 6. A line count
+  that tracks the collection budget is a rooting bug around promise
+  reactions, not a logic difference. Both fixtures still exit 0, which is why
+  it went unseen. Highest-value GC lead remaining.
+- **OPEN - an `async function*` silently stops under stress.** Given an object
+  argument after an awaiting `for await` loop, it exits 0 with output
+  missing. Reproducers `rt_ag21.ts` (free function) and `rt_ag11.ts` (method).
+  Reproduced on a baseline binary, so it predates this run.
+- **OPEN - `.call`/`.apply` had shifted a free function's arguments since
+  `5b75749a` (2026-11-11), fixed in `4ae8a539`.** Worth remembering as a
+  method lesson rather than a live bug: it was reported as a regression from
+  this run's prototype-method work, and a `git bisect run` with a real build
+  per step proved it four days older. The culprit clause tested
+  `types.virtual_slot(method_rid).is_some()`, which is true for free
+  functions too; the right question is "owned by a class and non-static",
+  which `method_rid_is_instance_method` now answers. No fixture covered it —
+  a regression test was added with the fix.
+- **OPEN - not globals at all:** `Blob`, `Request`, `File`, `MessageChannel`,
+  `MessagePort` (block `platform-classes` at 59/151), and
+  `queueMicrotask`/`setTimeout`/`Intl`, which live in `zun-node` and need an
+  event loop (block `globalthis` at 24/160).
+- **OPEN - `Function` is a global but not callable through it**, and lacks
+  `name`/`length`/`prototype` identity.
+- **OPEN - a static class symbol method** (`class D { static
+  [Symbol.hasInstance]() {} }`) is not an own property of the class value;
+  they live in `class_symbol_methods` and need a class-constructor
+  own-property model.
+- **OPEN - an arrow function is still constructible via `new`**: the runtime
+  function metadata carries no constructibility flag.
+- **OPEN - `structuredClone` keeps a class instance typed** where node gives a
+  plain object (`serialize`/`deserialize` keep types deliberately, so this
+  needs a flatten mode), and array expandos are not cloned.
