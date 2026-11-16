@@ -640,3 +640,24 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   lines above are the whole reproducer. Identical on `2e976e59`, so it is not a regression
   from that step; it blocks own-override lines in `array-join-tostring-and-
   generic` and most of `obfuscated/*`.
+- **OPEN - an uncaught thrown object prints a heap address, not its message.**
+  `throw new TypeError("boom")` reports
+  `runtime error: unhandled exception: Object(Obj(0x28be372fcf0))`; only a
+  thrown *string* renders. This blinds every diagnosis of a fixture that dies
+  at run time, which is most of the remaining thirty, so it is worth fixing
+  before more conformance work. `errors::thrown_text` already tries and its
+  comment blames the heap scope being gone at print time, but a time-boxed
+  attempt (reverted, not committed) ruled that out and narrowed it:
+  - Hooking `ExecutionOutcome::Thrown` in `runner.rs` does **not** help: the
+    CLI escapes through `interp.call(...)` -> `interp.annotate_error(error)`
+    in `run_method_with`, not through `resume`.
+  - Hooking `annotate_error` in `state.rs` and rendering there -- including
+    walking the `SourceFrame` chain for a wrapped `Thrown`, and reading
+    `name`/`message` as **typed fields** via `instance_field_map` +
+    `load_field` rather than through the GC error table or a dynamic property
+    -- still printed the address. So either `annotate_error` is not on the
+    escaping path either, or the field read fails for a prelude `Error`
+    subclass. The next attempt should instrument first and find the real
+    escape boundary before writing any rendering code.
+  - Rendering must not call a `get_name` accessor: it runs while an exception
+    is already unwinding and managed code could throw again.
