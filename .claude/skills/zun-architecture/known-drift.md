@@ -813,3 +813,49 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   **not** the `Box.length` store that was assumed. Worth recording as a method
   note: the blocker named in a report was one fixture earlier than the real one,
   and only running it proved which.
+
+### At the 141 mark (`529da44a`)
+- **CLOSED - the `value.rs:228` abort on a typed field access.** Both typed
+  field opcodes called `as_object()` on the receiver, so `this.field` with no
+  receiver aborted the process where node throws
+  `TypeError: Cannot read properties of undefined (reading 'n')`. Also closes
+  the static-initializer abort recorded earlier. **Note the sequence as a
+  lesson:** `0f47da98` fixed a wrong answer (the element was being eaten as the
+  receiver) and by doing so turned it into an abort. A correct fix upstream can
+  surface a latent abort downstream, so after fixing a receiver bug, run the
+  probe that previously produced the wrong answer and check it does not now
+  crash.
+- **Borrowed receivers**: a typed field access on a plain dynamic object falls
+  back to the named property **only when the object carries it**. Being public
+  is not enough -- a built-in's internal slot is an ordinary field too, and a
+  public-name-only fallback made `Date.prototype.getTime.call({})` answer
+  `undefined` where node throws. **The pass count stayed at 141 through both
+  versions; only the 168-fixture stdout comparison caught it.** That is the
+  whole argument for measuring stdout and not just the counter.
+- **OPEN - a *direct* call of a detached instance method shifts its
+  arguments.** `const d: any = C.prototype.m; d(5)` puts `5` in the receiver
+  slot, leaving the real parameter `Void`, which now panics in
+  `value.rs:157` (`as_number`) instead of answering wrongly. This is the fifth
+  distinct site of the receiver-insertion family (after `5b75749a`/`4ae8a539`,
+  `c07a0cea`, the array-callback path in `0f47da98`, and this commit's load
+  side). `.call`, `.apply`, `.bind` and the array callbacks are all correct;
+  only the bare call is not.
+- **OPEN - `as_number` aborts on a non-number**, the same shape as the
+  `as_object` abort just closed. Worth sweeping the remaining `as_*` accessors
+  in `value.rs` for callers that can be reached with a user-controlled value.
+- **OPEN - `f.apply(null, Object("abc"))` cannot match node today.**
+  `Object(primitive)` does not build a wrapper object in Zun -- `typeof`
+  answers `"string"` where node says `"object"` -- and node accepts a wrapper
+  but *rejects* a bare primitive as an argument list, so accepting
+  `Value::Str` there would make `f.apply(null, "abc")` wrongly succeed. Needs
+  real primitive wrapper objects. It is the last mismatching line of
+  `call-apply-bind-semantics`.
+- **OPEN, test-harness divergence - a bare module compiled in a unit test
+  takes a different array-callback path than the CLI.** The same program
+  (`[5].map(detachedMethod)`) throws node's TypeError through
+  `target/release/zun.exe` but panics in `as_number` under
+  `zun_compiler::compile` + `run` in `zun_interp`'s own tests, so a regression
+  test for the fix above could not be written there. Worth understanding: the
+  project's invariant is that the interpreter is the always-correct fallback,
+  and two different answers for one program in two harnesses undercuts every
+  unit test written that way.
