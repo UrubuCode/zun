@@ -230,6 +230,25 @@ impl Value {
     }
 }
 
+/// The object a typed field access addresses, or `None` when the receiver is
+/// not one.
+///
+/// `as_object` panics in that case, which aborted the engine on an ordinary
+/// JS mistake: a class method reached with no receiver (`[x].map(inst.m)`,
+/// where the callback's `thisArg` is `undefined`) reads `this.field` and node
+/// answers `TypeError: Cannot read properties of undefined`. The caller turns
+/// a `None` into that TypeError.
+pub fn field_receiver(value: &Value) -> Option<zun_gc::Obj> {
+    match value {
+        Value::Object(object) => Some(*object),
+        Value::Any(any) => any
+            .as_object()
+            .filter(|address| *address != 0)
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+        _ => None,
+    }
+}
+
 /// Field value-type code for an object reference (beyond the `JitKind` codes).
 pub const FIELD_OBJECT: u8 = 11;
 /// Field value-type code for an array reference. Like [`FIELD_OBJECT`] it

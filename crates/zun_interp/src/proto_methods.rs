@@ -22,6 +22,57 @@ const ARRAY_READ_ONLY: &[&str] = &[
 ];
 
 impl Interp<'_> {
+    /// The source name of a field token, or `None` when the field is
+    /// `#private`. A public field addressed on a plain dynamic object is an
+    /// ordinary property read or write by that name; a private one is a brand
+    /// mismatch and must still throw.
+    pub(crate) fn public_field_name(&self, token: zun_metadata::Token) -> Option<String> {
+        let field = self
+            .module
+            .tables
+            .field_defs
+            .get((token.rid() as usize).wrapping_sub(1))?;
+        if field.is_private {
+            return None;
+        }
+        let name = self.module.strings.get(field.name);
+        if name.starts_with('#') {
+            return None;
+        }
+        Some(name.to_owned())
+    }
+
+    /// Node's wording for a typed field access whose receiver is not an
+    /// object: `Cannot read properties of undefined (reading 'tag')`, or
+    /// `Cannot set properties of null (setting 'tag')`.
+    pub(crate) fn field_receiver_error(
+        &mut self,
+        token: zun_metadata::Token,
+        receiver: &Value,
+        storing: bool,
+    ) -> RunError {
+        let field = self
+            .module
+            .tables
+            .field_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .map(|field| self.module.strings.get(field.name).to_owned())
+            .unwrap_or_default();
+        let shown = match receiver {
+            Value::Void => "undefined".to_owned(),
+            Value::Null => "null".to_owned(),
+            other => crate::collections::describe_received(other),
+        };
+        let (verb, gerund) = if storing {
+            ("set", "setting")
+        } else {
+            ("read", "reading")
+        };
+        self.proto_type_error(&format!(
+            "Cannot {verb} properties of {shown} ({gerund} '{field}')"
+        ))
+    }
+
     pub(crate) fn proto_type_error(&mut self, message: &str) -> RunError {
         match self.new_error_object("TypeError", message) {
             Some(object) => RunError::Thrown(Value::Object(object)),

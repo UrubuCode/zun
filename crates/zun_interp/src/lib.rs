@@ -1635,7 +1635,11 @@ impl Interp<'_> {
                         .ok_or(RunError::BadToken)?;
                     let slot = field.slot;
                     let kind = field.kind;
-                    let obj = pop(stack)?.as_object();
+                    let receiver = pop(stack)?;
+                    let obj = match value::field_receiver(&receiver) {
+                        Some(obj) => obj,
+                        None => return Err(self.field_receiver_error(token, &receiver, false)),
+                    };
                     // A dynamic object never carries a class's fixed fields
                     // (a private-brand mismatch): TypeError, not a bad read.
                     // An *instance bag* is the exception: a typed instance that
@@ -1650,8 +1654,39 @@ impl Interp<'_> {
                             Some(value::load_field(kind, obj, slot, h))
                         }
                     });
-                    let Some(v) = loaded else {
-                        throw_native!(self, body, stack, pc, next - size, "TypeError: Cannot read private member from an object whose class did not declare it".to_string());
+                    let v = match loaded {
+                        Some(v) => v,
+                        // A plain dynamic object that *carries* the property is
+                        // a legitimate borrowed receiver:
+                        // `Counter.prototype.bump` called on `{ n: 10 }` reads
+                        // `n` by name in JS. The property has to be present,
+                        // not merely public: a built-in's internal slot is
+                        // declared as an ordinary field too, so falling back
+                        // whenever the name was public made
+                        // `Date.prototype.getTime.call({})` answer `undefined`
+                        // where node throws. A `#private` field keeps the brand
+                        // check in every case, which is what this rule was
+                        // written for.
+                        None => match self
+                            .public_field_name(token)
+                            .and_then(|name| zun_gc::with_current_heap(|h| h.dynamic_get(obj, &name)))
+                        {
+                            Some(any) => Value::Any(any),
+                            None => {
+                                // The stored name is class-qualified
+                                // (`#P##secret`); node names only the member.
+                                let named = self
+                                    .module
+                                    .tables
+                                    .field_defs
+                                    .get((token.rid() as usize).wrapping_sub(1))
+                                    .map(|f| self.module.strings.get(f.name))
+                                    .and_then(|raw| raw.rsplit('#').find(|part| !part.is_empty()))
+                                    .map(|member| format!(" #{member}"))
+                                    .unwrap_or_default();
+                                throw_native!(self, body, stack, pc, next - size, format!("TypeError: Cannot read private member{named} from an object whose class did not declare it"));
+                            }
+                        },
                     };
                     stack.push(v);
                 }
@@ -1664,10 +1699,37 @@ impl Interp<'_> {
                     let slot = field.slot;
                     let kind = field.kind;
                     let value = pop(stack)?;
-                    let obj = pop(stack)?.as_object();
-                    zun_gc::with_current_heap_mut(|h| {
-                        value::store_field(kind, obj, slot, &value, h);
+                    let receiver = pop(stack)?;
+                    let obj = match value::field_receiver(&receiver) {
+                        Some(obj) => obj,
+                        None => return Err(self.field_receiver_error(token, &receiver, true)),
+                    };
+                    // The mirror of the load side: writing a class's fixed slot
+                    // into a plain dynamic object would scribble on whatever
+                    // that object keeps there, so a public field stores by
+                    // name instead.
+                    let dynamic_target = zun_gc::with_current_heap(|h| {
+                        h.is_dynamic_object(obj) && !h.is_instance_bag(obj)
                     });
+                    let by_name = self
+                        .public_field_name(token)
+                        .filter(|_| dynamic_target)
+                        .filter(|name| {
+                            zun_gc::with_current_heap(|h| h.dynamic_get(obj, name).is_some())
+                        });
+                    match by_name {
+                        Some(name) => {
+                            let boxed = self.proto_box(value.clone());
+                            let any = match boxed {
+                                Value::Any(any) => any,
+                                _ => zun_core::Any::void(),
+                            };
+                            zun_gc::with_current_heap_mut(|h| h.dynamic_set(obj, &name, any));
+                        }
+                        None => zun_gc::with_current_heap_mut(|h| {
+                            value::store_field(kind, obj, slot, &value, h);
+                        }),
+                    }
                     stack.push(value);
                 }
                 Opcode::CallVirt => {
