@@ -732,6 +732,16 @@ impl<'a> Interp<'a> {
                     if handle.builtin_method().is_some_and(|kind| kind >= 16) {
                         call_args.insert(0, Value::Object(namespace));
                     } else if !handle.is_bound() {
+                        // A class instance method *stored on* a plain object
+                        // takes the receiver too: `o.show = C.prototype.show;
+                        // o.show()` must see `o` as `this`, and answered
+                        // `undefined` because this site asked only about the
+                        // `@this` closure marker that an object-literal method
+                        // carries. `method_rid_is_instance_method` is the same
+                        // question that settled the four other receiver sites
+                        // (`4ae8a539`, `c07a0cea`, `0f47da98`, `529da44a`) --
+                        // here the receiver was wrongly *omitted* rather than
+                        // wrongly inserted.
                         let takes_this = self
                             .module
                             .tables
@@ -741,7 +751,8 @@ impl<'a> Interp<'a> {
                                 let n = self.module.strings.get(method.name);
                                 n.ends_with("@this>") || n.ends_with("@this@rest>")
                             })
-                            .unwrap_or(false);
+                            .unwrap_or(false)
+                            || self.method_rid_is_instance_method(handle.method_rid());
                         if takes_this {
                             call_args.insert(0, Value::Object(namespace));
                         }
