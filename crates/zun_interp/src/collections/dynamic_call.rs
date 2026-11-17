@@ -29,6 +29,55 @@ impl<'a> Interp<'a> {
                         crate::feedback::record(self.module, method_rid, offset, args);
                     }
                 }
+                // A method a program installed on `String.prototype` wins over
+                // the built-in of the same name and is called with the string
+                // as `this`.
+                if let (Ok(Value::Str(text)), Some(Value::Str(member))) =
+                    (unbox_arg(args.first().ok_or(RunError::BadToken)?), args.get(1))
+                {
+                    if let Some(handle) = self.installed_wrapper_method("String", member) {
+                        let call_values = args[2..]
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Any(any) => {
+                                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .ok_or(RunError::BadToken)
+                                }
+                                other => Ok(other.clone()),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let call_args = self.with_this_value(handle, Value::Str(text), call_values);
+                        let result = self.invoke_function_value(handle, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
+                // A primitive-wrapper instance (`new String("ab")`) has no
+                // methods of its own beyond the ones its class declares: any
+                // other member is its primitive's (`w.trim()`, `n.toFixed(1)`).
+                if let (Some(wrapper), Some(Value::Str(member))) =
+                    (args.first().and_then(object), args.get(1))
+                {
+                    let declared = self
+                        .class_named_methods
+                        .get(&wrapper.type_rid())
+                        .is_some_and(|methods| methods.contains_key(&**member));
+                    if !declared {
+                        if let Some(ctor) = self.wrapper_instance_kind(wrapper) {
+                            let own = zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_get_function(wrapper, member).is_some()
+                                    || heap.dynamic_get(wrapper, member).is_some()
+                            });
+                            if !own {
+                                let primitive = self.wrapper_primitive(Value::Object(wrapper), ctor)?;
+                                let mut redirected = args.to_vec();
+                                redirected[0] = self.proto_box(primitive);
+                                return self.col_dynamic_call(name, &redirected);
+                            }
+                        }
+                    }
+                }
                 // A string receiver (an `any`-typed string): JS String methods.
                 if let Ok(Value::Str(text)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
                     // A RegExp argument routes the regex-taking String methods
@@ -654,6 +703,29 @@ impl<'a> Interp<'a> {
                             })
                             .collect::<Result<Vec<_>, _>>()?;
                         let call_args = self.with_this_arg(method, bag, call_values);
+                        let result = self.invoke_function_value(method, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            .unwrap_or_else(zun_core::Any::void);
+                        return Ok(Value::Any(boxed));
+                    }
+                }
+                // A member a function inherits from `Function.prototype`
+                // (`fn.toString()`, or a method a program installed there):
+                // called with the function itself as `this`.
+                if let Value::Function(handle) = &receiver_concrete {
+                    if let Some(Value::Function(method)) = self.function_prototype_member(&member) {
+                        let call_values = args[2..]
+                            .iter()
+                            .map(|arg| match arg {
+                                Value::Any(any) => {
+                                    zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                                        .ok_or(RunError::BadToken)
+                                }
+                                other => Ok(other.clone()),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let call_args =
+                            self.with_this_value(method, Value::Function(*handle), call_values);
                         let result = self.invoke_function_value(method, call_args)?;
                         let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                             .unwrap_or_else(zun_core::Any::void);

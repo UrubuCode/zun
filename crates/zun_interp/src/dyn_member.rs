@@ -82,6 +82,7 @@ impl Interp<'_> {
                 return Ok(ArmFlow::Continue);
             }
         }
+        let function_receiver = Self::is_function_value(&popped);
         let raw = expando_receiver(popped);
         // A dynamic receiver that unboxes to a primitive string or an
         // array exposes `.length` the same as the typed forms, so a
@@ -163,8 +164,15 @@ impl Interp<'_> {
         if name == "description" {
             if let Value::Any(any) = &concrete {
                 if let Some(id) = any.as_symbol() {
+                    // The accessor lives on `Symbol.prototype`; once a program
+                    // deletes it there, a symbol no longer answers.
+                    let present = self.builtin_prototype_by_name("Symbol").map_or(true, |proto| {
+                        zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_accessor_getter(proto, "description").is_some()
+                        })
+                    });
                     let description = zun_gc::with_current_heap(|heap| {
-                        heap.symbol_description(id).map(|text| text.to_string())
+                        heap.symbol_description(id).filter(|_| present).map(|text| text.to_string())
                     });
                     stack.push(match description {
                         Some(text) => Value::Str(text.into()),
@@ -409,8 +417,8 @@ impl Interp<'_> {
                     }
                 }
                 if !user_class {
-                    if let Some(value) = self.builtin_constant_value(token, &name) {
-                        stack.push(Value::Float(value, zun_il::NumKind::F64));
+                    if let Some(value) = self.builtin_constant(token, &name) {
+                        stack.push(value);
                         return Ok(ArmFlow::Continue);
                     }
                     if let Some(kind) = self.builtin_static_kind(token, &name) {
@@ -426,6 +434,11 @@ impl Interp<'_> {
                 } else if name == "prototype" {
                     let proto = self.builtin_prototype_object(token);
                     Value::Any(zun_core::Any::object(proto.addr() as usize))
+                } else if self.callable_ctor_handle(&Value::Any(*descriptor)).is_some() {
+                    // A constructor that is callable without `new` (`Symbol`)
+                    // reads `call` / `apply` / `bind` exactly where calling
+                    // them works.
+                    self.function_prototype_member(&name).unwrap_or(Value::Void)
                 } else {
                     Value::Void
                 });
@@ -517,6 +530,13 @@ impl Interp<'_> {
                 Some(inherited) => inherited,
                 None => Value::Void,
             }
+        } else {
+            value
+        };
+        // A function inherits `call` / `apply` / `bind` / `toString` (and
+        // anything a program installs) from `Function.prototype`.
+        let value = if matches!(value, Value::Void) && function_receiver {
+            self.function_prototype_member(&name).unwrap_or(Value::Void)
         } else {
             value
         };
@@ -706,7 +726,8 @@ impl Interp<'_> {
                 || (name == "length"
                     && zun_gc::with_current_heap(|heap| {
                         heap.typed_array_element(object).is_some()
-                    }));
+                    }))
+                || self.string_wrapper_owns(object, &name);
             if read_only {
                 stack.push(value);
                 return Ok(ArmFlow::Next);
@@ -957,6 +978,7 @@ impl Interp<'_> {
                 }
             }
         }
+        let function_receiver = Self::is_function_value(&receiver);
         let object_raw = expando_receiver(receiver);
         {
             let concrete = match &object_raw {
@@ -1406,6 +1428,8 @@ impl Interp<'_> {
             } else {
                 return Err(RunError::BadToken);
             }
+        } else if let Some(unit) = self.string_wrapper_unit(object, &key) {
+            unit
         } else if let Some(element) = match &key {
             // A canonical index string on an array addresses the element.
             Value::Str(text) => zun_gc::with_current_heap(|heap| {
@@ -1430,6 +1454,12 @@ impl Interp<'_> {
             element
         } else if let Value::Str(key) = &key {
             match self.dynamic_member_get(object, key) {
+                // `fn["call"]`: inherited from `Function.prototype`.
+                Ok(Value::Void)
+                    if function_receiver && self.function_prototype_member(key).is_some() =>
+                {
+                    self.function_prototype_member(key).unwrap_or(Value::Void)
+                }
                 // An inherited `Object.prototype` method read off a plain
                 // dynamic object is a callable function value.
                 Ok(Value::Void)
@@ -1559,6 +1589,14 @@ impl Interp<'_> {
                     }
                     Err(error) => return Err(error),
                 }
+            }
+        }
+        // The indices and `length` of a `String` wrapper are read-only: the
+        // write is ignored, as on the primitive.
+        if let Some(wrapper) = store_receiver(receiver.clone()) {
+            if self.string_wrapper_owns_key(wrapper, &key) {
+                stack.push(value);
+                return Ok(ArmFlow::Next);
             }
         }
         let Some(object) = store_receiver(receiver.clone()) else {
@@ -1838,6 +1876,51 @@ impl Interp<'_> {
     /// back-reference `constructor`) from the moment it is created. Functions
     /// here materialise it lazily, on the first read of `fn.prototype`, unless
     /// the script already stored its own value.
+    /// `w[i]` on a `String` wrapper object: the code unit at the canonical
+    /// index `key`, an own property of the wrapper exactly as on its primitive.
+    fn string_wrapper_unit(&mut self, object: zun_gc::Obj, key: &Value) -> Option<Value> {
+        let index = match key {
+            Value::Int(n, _) if *n >= 0 => *n as usize,
+            Value::Float(n, _) if *n >= 0.0 && n.fract() == 0.0 && *n < 4_294_967_295.0 => {
+                *n as usize
+            }
+            Value::Str(text) => text.parse::<usize>().ok().filter(|i| i.to_string() == **text)?,
+            _ => return None,
+        };
+        let text = self.string_wrapper_text(object)?;
+        let unit = zun_core::wtf16::encode(&text).nth(index)?;
+        Some(Value::Str(zun_core::wtf16::from_units(&[unit]).into()))
+    }
+
+    /// Whether `value` is a function value, bare or carried through `any`
+    /// (a callable rides in a `__boxedFn` record there).
+    fn is_function_value(value: &Value) -> bool {
+        let concrete = match value {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),
+            other => Some(other.clone()),
+        };
+        concrete.is_some_and(|value| {
+            matches!(
+                zun_gc::with_current_heap(|heap| crate::collections::unbox_function_box(value, heap)),
+                Value::Function(_)
+            )
+        })
+    }
+
+    /// The member `name` a function value inherits from `Function.prototype`:
+    /// one of the built-in method values (`call`, `apply`, `bind`, `toString`)
+    /// or whatever a program stored there. Read off the prototype object, so a
+    /// write to or a `delete` from `Function.prototype` is seen.
+    pub(crate) fn function_prototype_member(&self, name: &str) -> Option<Value> {
+        let proto = Self::function_prototype_singleton();
+        zun_gc::with_current_heap(|heap| {
+            if let Some(any) = heap.dynamic_get(proto, name) {
+                return Some(Value::Any(any));
+            }
+            heap.dynamic_get_function(proto, name).map(Value::Function)
+        })
+    }
+
     pub(crate) fn ensure_function_prototype(handle: zun_core::FunctionHandle) {
         if handle.builtin_method().is_some() || handle.is_bound() {
             return;

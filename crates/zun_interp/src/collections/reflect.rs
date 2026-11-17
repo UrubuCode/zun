@@ -283,6 +283,15 @@ impl<'a> Interp<'a> {
                     }
                     return Ok(Value::Bool(true));
                 }
+                // The indices and `length` of a `String` wrapper are
+                // non-configurable.
+                if let (Some(target), Some(Ok(Value::Str(key)))) =
+                    (args.first().and_then(object), args.get(1).map(unbox_arg))
+                {
+                    if self.string_wrapper_owns(target, &key) {
+                        return Ok(Value::Bool(false));
+                    }
+                }
                 if let Some(token) = args.first().and_then(Self::class_token_of) {
                     if let Some(Value::Str(key)) = args.get(1) {
                         let bag = Self::class_expando_bag(token);

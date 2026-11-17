@@ -143,6 +143,8 @@ pub(crate) const BUILTIN_FN_HAS_INSTANCE: u32 = 105;
 /// `Object.setPrototypeOf(this, proto)` (a non-object proto is ignored).
 pub(crate) const BUILTIN_OBJ_PROTO_GET: u32 = 106;
 pub(crate) const BUILTIN_OBJ_PROTO_SET: u32 = 107;
+/// The getter of the `Symbol.prototype.description` accessor.
+pub(crate) const BUILTIN_SYMBOL_DESCRIPTION: u32 = 108;
 pub(crate) const BUILTIN_MAP_SIZE: u32 = 16;
 pub(crate) const BUILTIN_SET_SIZE: u32 = 17;
 pub(crate) const BUILTIN_ARRAY_ITER_NEXT: u32 = 18;
@@ -480,6 +482,11 @@ impl Interp<'_> {
     /// created on first use, anchored (non-enumerable) on the realm global so
     /// it is rooted, and linked to its base class's prototype.
     pub(crate) fn class_prototype_object(&self, rid: u32) -> zun_gc::Obj {
+        // A primitive-wrapper class has no prototype of its own: its instances
+        // (and classes derived from it) inherit the constructor's prototype.
+        if let Some(proto) = self.wrapper_class_prototype(rid) {
+            return proto;
+        }
         self.prototype_keys
             .borrow_mut()
             .entry(rid)
@@ -710,6 +717,18 @@ impl Interp<'_> {
             if let Some(class) = crate::intrinsic_meta::builtin_class_name_in(heap, token) {
                 crate::intrinsic_meta::install_prototype_methods(heap, proto, &class);
             }
+            // `Symbol.prototype.description`: an accessor with a getter and no
+            // setter (non-enumerable, configurable).
+            if is_class(heap, "Symbol") {
+                heap.dynamic_define_accessor(
+                    proto,
+                    "description".to_owned(),
+                    Some(zun_core::FunctionHandle::new_builtin_method(BUILTIN_SYMBOL_DESCRIPTION)),
+                    None,
+                    false,
+                    true,
+                );
+            }
             if is_class(heap, "String") {
                 heap.dynamic_set_symbol_method(
                     proto,
@@ -937,6 +956,23 @@ impl Interp<'_> {
             _ => None,
         };
         match kind {
+            BUILTIN_SYMBOL_DESCRIPTION => {
+                let symbol = match &this {
+                    Value::Any(any) => any.as_symbol(),
+                    _ => None,
+                };
+                let Some(symbol) = symbol else {
+                    let message = "Symbol.prototype.description requires that 'this' be a Symbol";
+                    return Err(match self.new_error_object("TypeError", message) {
+                        Some(object) => RunError::Thrown(Value::Object(object)),
+                        None => RunError::Native(format!("TypeError: {message}")),
+                    });
+                };
+                let description = zun_gc::with_current_heap(|heap| {
+                    heap.symbol_description(symbol).map(|text| text.to_string())
+                });
+                Ok(description.map_or(Value::Void, |text| Value::Str(text.into())))
+            }
             BUILTIN_MAP_SIZE => {
                 let len = this_obj
                     .and_then(|o| zun_gc::with_current_heap(|heap| heap.map_len(o)))
@@ -1236,6 +1272,7 @@ impl Interp<'_> {
         }
         let label = match kind {
             BUILTIN_MAP_SIZE | BUILTIN_SET_SIZE => "get size",
+            BUILTIN_SYMBOL_DESCRIPTION => "get description",
             BUILTIN_ARRAY_ITER_NEXT | BUILTIN_STRING_ITER_NEXT | BUILTIN_SETMAP_ITER_NEXT | BUILTIN_GEN_NEXT => "next",
             28 => "return",
             BUILTIN_GEN_THROW => "throw",
@@ -2404,7 +2441,7 @@ impl Interp<'_> {
                 }
             }
             // A constant of a built-in constructor is read-only.
-            if matches!(&key, PropKey::Str(name) if self.builtin_constant_value(token, name).is_some())
+            if matches!(&key, PropKey::Str(name) if self.builtin_constant(token, name).is_some())
             {
                 return Ok(Value::Bool(false));
             }
@@ -2423,6 +2460,10 @@ impl Interp<'_> {
             let Some(target) = object(first) else {
                 return Ok(Value::Bool(false));
             };
+            // The indices and `length` of a `String` wrapper are non-writable.
+            if matches!(&key, PropKey::Str(name) if self.string_wrapper_owns(target, name)) {
+                return Ok(Value::Bool(false));
+            }
             target
         };
         // A typed class instance: a declared field or `set` accessor takes the

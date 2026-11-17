@@ -182,15 +182,23 @@ impl Interp<'_> {
             .find_map(|name| static_method_kind(name, key))
     }
 
-    /// The value of the constant `key` the built-in constructor `token` owns
-    /// (`Number.EPSILON`), if it has one.
-    pub(crate) fn builtin_constant_value(&self, token: u32, key: &str) -> Option<f64> {
+    /// The constant `key` the built-in constructor `token` owns, if it has
+    /// one: a number (`Number.EPSILON`) or a well-known symbol
+    /// (`Symbol.iterator`). All of them are non-writable, non-enumerable and
+    /// non-configurable.
+    pub(crate) fn builtin_constant(&self, token: u32, key: &str) -> Option<Value> {
         if token & zun_natives::USER_CLASS_FLAG != 0 {
             return None;
         }
-        zun_gc::with_current_heap_mut(|heap| builtin_class_names_in(heap, token))
-            .iter()
-            .find_map(|name| constant_value(name, key))
+        zun_gc::with_current_heap_mut(|heap| builtin_class_names_in(heap, token)).iter().find_map(
+            |name| {
+                if let Some(number) = constant_value(name, key) {
+                    return Some(Value::Float(number, zun_il::NumKind::F64));
+                }
+                symbol_constant(name, key)
+                    .map(|symbol| Value::Any(zun_core::Any::symbol(symbol.id())))
+            },
+        )
     }
 
     /// The names of the constants the built-in constructor `token` owns.
@@ -200,7 +208,11 @@ impl Interp<'_> {
         }
         zun_gc::with_current_heap_mut(|heap| builtin_class_names_in(heap, token))
             .iter()
-            .flat_map(|name| constant_names(name))
+            .flat_map(|name| {
+                let mut names = constant_names(name);
+                names.extend(symbol_constant_names(name));
+                names
+            })
             .collect()
     }
 
@@ -235,9 +247,8 @@ impl Interp<'_> {
             // `length` and `name` are read-only but configurable.
             "length" | "name" => (self.builtin_ctor_own_value(token, key)?, false, true),
             // A constant is read-only, non-enumerable and non-configurable.
-            _ if self.builtin_constant_value(token, key).is_some() => {
-                let value = self.builtin_constant_value(token, key)?;
-                (Value::Float(value, zun_il::NumKind::F64), false, false)
+            _ if self.builtin_constant(token, key).is_some() => {
+                (self.builtin_constant(token, key)?, false, false)
             }
             // A static method is writable, non-enumerable and configurable.
             _ => {
@@ -624,6 +635,27 @@ fn constant_value(class: &str, key: &str) -> Option<f64> {
     constants_of(class).iter().find(|(n, _)| *n == key).map(|(_, v)| *v)
 }
 
+/// The well-known symbol the `Symbol` constructor owns under `key`
+/// (`Symbol.iterator`).
+fn symbol_constant(class: &str, key: &str) -> Option<zun_core::WellKnownSymbol> {
+    if class != "Symbol" {
+        return None;
+    }
+    zun_core::WellKnownSymbol::from_member(key)
+}
+
+/// The member names of the well-known symbols `class` owns: every one the
+/// runtime seeds, named by its description without the `Symbol.` prefix.
+fn symbol_constant_names(class: &str) -> Vec<&'static str> {
+    if class != "Symbol" {
+        return Vec::new();
+    }
+    zun_core::WellKnownSymbol::ALL
+        .iter()
+        .filter_map(|symbol| symbol.description().strip_prefix("Symbol."))
+        .collect()
+}
+
 /// The names of the constants of the built-in `class`.
 fn constant_names(class: &str) -> Vec<&'static str> {
     constants_of(class).iter().map(|(n, _)| *n).collect()
@@ -632,8 +664,9 @@ fn constant_names(class: &str) -> Vec<&'static str> {
 /// The static methods each built-in namespace or constructor exposes as
 /// function values: `(name, specified length, native)`. As with
 /// [`PROTOTYPE_METHODS`], names and counts mirror the specification. `native`
-/// is the `zun_natives` collection intrinsic the method runs through the
-/// ordinary managed-call path (one implementation); an empty string marks a
+/// is the `zun_natives` intrinsic the method runs through the ordinary
+/// managed-call path (one implementation), written `module:name` when it is
+/// not in the `collections` group; an empty string marks a
 /// member `static_methods.rs` adapts by name (`Math` and the few members whose
 /// result shape differs from their native).
 const STATIC_METHODS: &[(&str, &[(&str, u32, &str)])] = &[
@@ -694,17 +727,29 @@ const STATIC_METHODS: &[(&str, &[(&str, u32, &str)])] = &[
     // `static_methods.rs` adapts them by name. `fromAsync` is absent on purpose:
     // it has no value form yet, and a listed function must also behave.
     ("Array", &[("from", 1, ""), ("isArray", 1, ""), ("of", 0, "")]),
+    // `String`'s statics. Like `Number`, `String` read as a value is the
+    // coercion function, and `static_methods.rs` adapts the three by name: the
+    // natives are single-code helpers the typed call sites fold onto.
+    ("String", &[("fromCharCode", 1, ""), ("fromCodePoint", 1, ""), ("raw", 1, "")]),
     // `BigInt.asIntN`/`asUintN` and `ArrayBuffer.isView` were callable but were
     // not *values*: `typeof BigInt.asIntN` read `undefined`, the descriptor was
     // absent, and `Object.getOwnPropertyNames(BigInt)` raised `BadToken`. The
     // same lists-vs-behaves shape that `6f201f27` fixed for prototype methods,
     // `4141e09e` for the `Number` statics and `3fa7a60b` for the `Array` ones.
-    // `ArrayBuffer.isView` is deliberately not here: its native lives in the
-    // `buffer` module, while the static-value dispatch resolves only from
-    // `collections`. Adding it means widening that dispatch, which is a
-    // separate change.
     ("BigInt", &[("asIntN", 2, "bigIntAsIntN"), ("asUintN", 2, "bigIntAsUintN")]),
+    // `Symbol.for` / `Symbol.keyFor`; the well-known symbols the constructor
+    // also owns are constants (see [`symbol_constant`]).
+    ("Symbol", &[("for", 1, "symbolFor"), ("keyFor", 1, "symbolKeyFor")]),
+    // `isView`'s native lives in the `buffer` group rather than `collections`,
+    // so its row names the module (see [`static_native`]).
+    ("ArrayBuffer", &[("isView", 1, "buffer:isView")]),
 ];
+
+/// Split a [`STATIC_METHODS`] native entry into `(module, name)`. A bare name
+/// lives in the `collections` group; `module:name` names another group.
+pub(crate) fn static_native(native: &'static str) -> (&'static str, &'static str) {
+    native.split_once(':').unwrap_or(("collections", native))
+}
 
 /// The static methods of the built-in `class` as `(kind, name)` pairs.
 pub(crate) fn static_methods_of(class: &str) -> Vec<(u32, &'static str)> {
@@ -787,6 +832,19 @@ mod tests {
             assert_eq!(static_methods_of(class).len(), methods.len());
         }
         assert_eq!(static_method_at(BUILTIN_STATIC_BASE + seen.len() as u32), None);
+        // Every named native resolves in the module its row names.
+        for (class, methods) in STATIC_METHODS {
+            for (name, _, native) in *methods {
+                if native.is_empty() {
+                    continue;
+                }
+                let (module, function) = static_native(native);
+                assert!(
+                    zun_natives::resolve(module, function).is_some(),
+                    "{class}.{name}: no native `{function}` in `{module}`"
+                );
+            }
+        }
         let prototype_kinds: usize = PROTOTYPE_METHODS.iter().map(|(_, m)| m.len()).sum();
         assert!(BUILTIN_PROTO_BASE as usize + prototype_kinds <= BUILTIN_STATIC_BASE as usize);
     }

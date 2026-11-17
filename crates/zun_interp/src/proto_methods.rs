@@ -304,6 +304,12 @@ impl Interp<'_> {
                         return self.call_object_prototype_method("toString", recv, args);
                     }
                 }
+                // A constructor callable without `new` (`Symbol`) acts through
+                // its call behaviour, as `Symbol.call(...)` does.
+                let recv = match self.callable_ctor_handle(&recv) {
+                    Some(handle) => Value::Function(handle),
+                    None => recv,
+                };
                 if !matches!(recv, Value::Function(_)) {
                     return Err(self.proto_type_error(&format!(
                         "Function.prototype.{name} requires that 'this' be a Function"
@@ -544,6 +550,99 @@ impl Interp<'_> {
             Some(Self::string_prototype_singleton())
         } else {
             self.builtin_prototype_by_name(ctor)
+        }
+    }
+
+    /// The prototype object instances of the prelude wrapper class `rid`
+    /// inherit from: `StringObject` stands in for `String`, so its instances
+    /// share `String.prototype` (and likewise `Number` / `Boolean`) instead of
+    /// a class prototype of their own.
+    pub(crate) fn wrapper_class_prototype(&self, rid: u32) -> Option<zun_gc::Obj> {
+        let def = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1))?;
+        let ctor = match self.module.strings.get(def.name) {
+            "StringObject" => "String",
+            "NumberObject" => "Number",
+            "BooleanObject" => "Boolean",
+            _ => return None,
+        };
+        self.wrapper_prototype_object(ctor)
+    }
+
+    /// Which wrapper constructor the *instance* `object` belongs to (`new
+    /// String("ab")`, or an instance of a class derived from it). The
+    /// constructors' own prototypes are wrapper objects too but are not
+    /// instances, and answer `None`.
+    pub(crate) fn wrapper_instance_kind(&self, object: zun_gc::Obj) -> Option<&'static str> {
+        // A core runtime type id aliases the `TypeDef` rid space, so the rid
+        // alone does not make an object an instance.
+        if !self.type_rid_describes_object(object)
+            || zun_gc::with_current_heap(|heap| {
+                heap.is_dynamic_object(object) && !heap.is_instance_bag(object)
+            })
+        {
+            return None;
+        }
+        ["Boolean", "Number", "String"]
+            .into_iter()
+            .find(|ctor| self.is_wrapper_object(object, &format!("{ctor}Object")))
+    }
+
+    /// The text of the `String` wrapper instance `object`.
+    pub(crate) fn string_wrapper_text(&mut self, object: zun_gc::Obj) -> Option<String> {
+        if self.wrapper_instance_kind(object) != Some("String") {
+            return None;
+        }
+        match self.wrapper_primitive(Value::Object(object), "String") {
+            Ok(Value::Str(text)) => Some(text.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Whether `key` names one of the properties a `String` wrapper instance
+    /// owns by construction -- a code-unit index or `length`. They are
+    /// non-writable and non-configurable, exactly as on the primitive.
+    pub(crate) fn string_wrapper_owns(&mut self, object: zun_gc::Obj, key: &str) -> bool {
+        let Some(text) = self.string_wrapper_text(object) else {
+            return false;
+        };
+        key == "length"
+            || key
+                .parse::<usize>()
+                .ok()
+                .filter(|index| index.to_string() == key)
+                .is_some_and(|index| index < zun_core::wtf16::len16(&text))
+    }
+
+    /// [`Self::string_wrapper_owns`] for a computed key.
+    pub(crate) fn string_wrapper_owns_key(&mut self, object: zun_gc::Obj, key: &Value) -> bool {
+        match key {
+            Value::Str(name) => self.string_wrapper_owns(object, name),
+            Value::Int(index, _) => self.string_wrapper_owns(object, &index.to_string()),
+            Value::Float(index, _) if index.fract() == 0.0 && *index >= 0.0 => {
+                self.string_wrapper_owns(object, &(*index as u64).to_string())
+            }
+            _ => false,
+        }
+    }
+
+    /// A function a program stored on the prototype of the wrapper constructor
+    /// `ctor` under `member` (`String.prototype.shout = function () {..}`). The
+    /// built-in method values installed there are not reported: a primitive
+    /// receiver runs those on its natives.
+    pub(crate) fn installed_wrapper_method(
+        &self,
+        ctor: &str,
+        member: &str,
+    ) -> Option<zun_core::FunctionHandle> {
+        let proto = self.wrapper_prototype_object(ctor)?;
+        let found = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get_function(proto, member)
+                .map(Value::Function)
+                .or_else(|| heap.dynamic_get(proto, member).map(Value::Any))
+        })?;
+        match proto_concrete(found) {
+            Value::Function(handle) if handle.builtin_method().is_none() => Some(handle),
+            _ => None,
         }
     }
 

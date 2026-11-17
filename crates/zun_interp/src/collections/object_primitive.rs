@@ -106,7 +106,21 @@ impl Interp<'_> {
         ) {
             return None;
         }
-        let primitive = classify(args.first())?;
+        let primitive = match classify(args.first()) {
+            Some(primitive) => primitive,
+            // A `String` wrapper object owns the same index and `length`
+            // properties as its primitive; any other key is an ordinary one.
+            None => {
+                if !matches!(name, "objectGetOwnPropertyDescriptor" | "objectHasOwn") {
+                    return None;
+                }
+                let wrapper = object(args.first()?)?;
+                let text = self.string_wrapper_text(wrapper)?;
+                let key = self.primitive_key(args.get(1)).ok()??;
+                string_own(&text, &key)?;
+                Primitive::Str(text)
+            }
+        };
         match self.object_primitive_answer(name, args, primitive) {
             Err(RunError::BadToken) => None,
             answer => Some(answer),

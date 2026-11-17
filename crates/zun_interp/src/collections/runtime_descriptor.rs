@@ -50,28 +50,20 @@ impl<'a> Interp<'a> {
         // A primitive wrapper object (`new String("hi")`, `new Number(1)`):
         // a string wrapper exposes its characters; number/boolean wrappers
         // have no own enumerable properties.
-        if !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) && obj.type_rid() >= 1 {
-            let wrapper = self
-                .module
-                .tables
-                .type_defs
-                .get(obj.type_rid() as usize - 1)
-                .map(|def| self.module.strings.get(def.name).to_string());
-            match wrapper.as_deref() {
-                Some("StringObject") => {
-                    let text = match self.instance_member_get(obj, "value")? {
-                        Some(Value::Str(text)) => text.to_string(),
-                        _ => String::new(),
-                    };
-                    return Ok(text
-                        .chars()
+        // The internal `value` slot of the wrapper is never listed; a property
+        // a script stored on the wrapper follows the indices.
+        if let Some(kind) = self.wrapper_instance_kind(obj) {
+            let mut out: Vec<(String, Value)> = Vec::new();
+            if kind == "String" {
+                let text = self.string_wrapper_text(obj).unwrap_or_default();
+                out.extend(
+                    text.chars()
                         .enumerate()
-                        .map(|(index, ch)| (index.to_string(), Value::Str(ch.to_string().into())))
-                        .collect());
-                }
-                Some("NumberObject") | Some("BooleanObject") => return Ok(Vec::new()),
-                _ => {}
+                        .map(|(index, ch)| (index.to_string(), Value::Str(ch.to_string().into()))),
+                );
             }
+            out.extend(Self::wrapper_expandos(obj, true));
+            return Ok(out);
         }
         // A typed array: its elements by index.
         if let Some(len) = crate::typed_arrays::element_len(obj) {
@@ -288,26 +280,40 @@ impl<'a> Interp<'a> {
         Ok(out)
     }
 
+    /// The properties a script stored on the primitive-wrapper instance `obj`,
+    /// in insertion order; `enumerable_only` drops the non-enumerable ones.
+    fn wrapper_expandos(obj: zun_gc::Obj, enumerable_only: bool) -> Vec<(String, Value)> {
+        zun_gc::with_current_heap(|heap| {
+            heap.dynamic_keys(obj)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|key| !enumerable_only || heap.dynamic_is_enumerable(obj, key))
+                .map(|key| {
+                    let value = match heap.dynamic_get_function(obj, &key) {
+                        Some(function) => Value::Function(function),
+                        None => heap
+                            .dynamic_get(obj, &key)
+                            .and_then(|any| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void),
+                    };
+                    (key, value)
+                })
+                .collect()
+        })
+    }
+
     /// Own string property names of `obj` (dynamic or typed), including
     /// non-enumerable keys (`getOwnPropertyNames`).
     pub(crate) fn object_own_names(&mut self, obj: zun_gc::Obj) -> Result<Vec<String>, RunError> {
-        if !zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj)) && obj.type_rid() >= 1 {
-            let is_string_wrapper = self
-                .module
-                .tables
-                .type_defs
-                .get(obj.type_rid() as usize - 1)
-                .map(|def| self.module.strings.get(def.name) == "StringObject")
-                .unwrap_or(false);
-            if is_string_wrapper {
-                let mut names: Vec<String> = self
-                    .object_own_entries(obj)?
-                    .into_iter()
-                    .map(|(name, _)| name)
-                    .collect();
+        if let Some(kind) = self.wrapper_instance_kind(obj) {
+            let mut names: Vec<String> = Vec::new();
+            if kind == "String" {
+                let text = self.string_wrapper_text(obj).unwrap_or_default();
+                names.extend((0..text.chars().count()).map(|index| index.to_string()));
                 names.push("length".to_owned());
-                return Ok(names);
             }
+            names.extend(Self::wrapper_expandos(obj, false).into_iter().map(|(name, _)| name));
+            return Ok(names);
         }
         if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(obj)) {
             let mut names: Vec<String> = zun_gc::with_current_heap(|heap| {

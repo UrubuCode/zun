@@ -111,9 +111,12 @@ impl Interp<'_> {
         if class == "Number" {
             return self.call_number_static(name, count, &arg);
         }
+        if class == "String" {
+            return self.call_string_static(name, count, &arg);
+        }
         if !native.is_empty() {
-            let (_, signature) =
-                zun_natives::resolve("collections", native).ok_or(RunError::BadToken)?;
+            let (module, native) = crate::intrinsic_meta::static_native(native);
+            let (_, signature) = zun_natives::resolve(module, native).ok_or(RunError::BadToken)?;
             let mut call = Vec::with_capacity(signature.params.len());
             for (index, ty) in signature.params.iter().enumerate() {
                 call.push(match ty {
@@ -244,6 +247,107 @@ impl Interp<'_> {
         let result = zun_natives::dispatch(id, &native_args, self.output)
             .map_err(|error| RunError::Native(error.0))?;
         Ok(crate::native::from_native_value(result, id))
+    }
+
+    /// `String.fromCharCode` / `fromCodePoint` / `raw` as function values. The
+    /// typed call sites fold the first two onto the single-code natives; a
+    /// value call is variadic, so the code units are assembled here.
+    fn call_string_static(
+        &mut self,
+        name: &str,
+        count: usize,
+        arg: &dyn Fn(usize) -> Value,
+    ) -> Result<Value, RunError> {
+        let mut units: Vec<u16> = Vec::new();
+        match name {
+            "fromCharCode" => {
+                for index in 0..count {
+                    let number = self.static_to_number(proto_concrete(arg(index)))?;
+                    // ToUint16: NaN and the infinities are 0.
+                    let unit = if number.is_finite() {
+                        number.trunc().rem_euclid(65_536.0) as u16
+                    } else {
+                        0
+                    };
+                    units.push(unit);
+                }
+            }
+            "fromCodePoint" => {
+                for index in 0..count {
+                    let value = proto_concrete(arg(index));
+                    let number = self.static_to_number(value.clone())?;
+                    if number.fract() != 0.0 || !(0.0..=1_114_111.0).contains(&number) {
+                        let shown = self.dyn_to_string(&value)?;
+                        let message = format!("Invalid code point {shown}");
+                        return Err(match self.new_error_object("RangeError", &message) {
+                            Some(object) => RunError::Thrown(Value::Object(object)),
+                            None => RunError::Native(format!("RangeError: {message}")),
+                        });
+                    }
+                    let point = number as u32;
+                    if point >= 0x1_0000 {
+                        let offset = point - 0x1_0000;
+                        units.push(0xD800 + (offset >> 10) as u16);
+                        units.push(0xDC00 + (offset & 0x3FF) as u16);
+                    } else {
+                        units.push(point as u16);
+                    }
+                }
+            }
+            "raw" => {
+                let cooked = proto_concrete(arg(0));
+                if matches!(cooked, Value::Void | Value::Null) {
+                    return Err(self.static_type_error("Cannot convert undefined or null to object"));
+                }
+                let raw = match cooked {
+                    Value::Object(_) => self.reflect_get_value(cooked, Value::Str("raw".into()))?,
+                    _ => Value::Void,
+                };
+                let raw = proto_concrete(raw);
+                if matches!(raw, Value::Void | Value::Null) {
+                    return Err(self.static_type_error("Cannot convert undefined or null to object"));
+                }
+                // The segments ride in a rooted array: ToString below can run
+                // managed code.
+                let segments = match raw {
+                    Value::Str(text) => {
+                        let list = zun_gc::with_current_heap_mut(|heap| {
+                            let list = heap.alloc_array(0);
+                            for unit in zun_core::wtf16::encode(&text) {
+                                let piece = zun_core::wtf16::from_units(&[unit]);
+                                let any = zun_core::Any::string(heap.intern_string(piece.as_str()));
+                                heap.array_push(list, any);
+                            }
+                            list
+                        });
+                        Value::Object(list)
+                    }
+                    Value::Object(_) => self.static_list(raw, "String.raw")?,
+                    _ => return Ok(Value::Str("".into())),
+                };
+                let Value::Object(segments) = segments else {
+                    return Ok(Value::Str("".into()));
+                };
+                zun_gc::root!(segments = segments);
+                let length =
+                    zun_gc::with_current_heap(|heap| heap.array_len(segments.get())).unwrap_or(0);
+                let mut text = String::new();
+                for index in 0..length {
+                    let segment = zun_gc::with_current_heap(|heap| {
+                        heap.array_get(segments.get(), index)
+                    })
+                    .filter(|any| !any.is_hole())
+                    .map_or(Value::Void, Value::Any);
+                    text.push_str(&self.dyn_to_string(&proto_concrete(segment))?);
+                    if index + 1 < length && index + 1 < count {
+                        text.push_str(&self.dyn_to_string(&proto_concrete(arg(index + 1)))?);
+                    }
+                }
+                return Ok(Value::Str(text.into()));
+            }
+            _ => return Err(RunError::BadToken),
+        }
+        Ok(Value::Str(zun_core::wtf16::from_units(&units).into()))
     }
 
     /// `Reflect.get(target, key)`: the value of `key` on `target`, through the
