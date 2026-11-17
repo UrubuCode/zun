@@ -71,8 +71,19 @@ impl<'a> Interp<'a> {
             call_args.extend(values);
             let call_args = self.pack_rest_call_args(ctor, call_args);
             let mut call_args = call_args;
-            // Omitted trailing parameters carry the null sentinel that the
-            // callee's default-parameter prologue consumes.
+            // An omitted trailing parameter is `undefined`, which is both what
+            // JS says and what the callee's default-parameter prologue
+            // consumes: an explicit `undefined` triggers the default, while
+            // `null` does not.
+            //
+            // This used to pad with `Value::Null`, on the belief that null was
+            // the prologue's sentinel. It is not, so a defaulted parameter
+            // arrived as `null` (`Reflect.construct(Two, ["X"])` answered
+            // `X|null` where node answers `X|D`), and an *optional* parameter
+            // with no default -- `constructor(input: any, base?: any)` --
+            // leaked the raw `null` into the body, so `URL`'s
+            // `if (base !== undefined)` took the base branch and every dynamic
+            // `new URL(...)` died with "Invalid URL: null".
             let declared = self
                 .module
                 .tables
@@ -81,7 +92,7 @@ impl<'a> Interp<'a> {
                 .and_then(|method| read_body(&self.module.code, method.body_offset).ok())
                 .map_or(call_args.len(), |body| body.param_count as usize);
             while call_args.len() < declared {
-                call_args.push(Value::Null);
+                call_args.push(Value::Void);
             }
             let returned = self.call(ctor, call_args, None)?;
             // A constructor that returns another object replaces the instance.
