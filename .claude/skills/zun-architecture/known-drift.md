@@ -859,3 +859,48 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   project's invariant is that the interpreter is the always-correct fallback,
   and two different answers for one program in two harnesses undercuts every
   unit test written that way.
+
+### At the 143 mark (`8f5c54c8`)
+- **Known-red, NOT ours and NOT new:** `zun_compiler --lib`'s
+  `dynamic_fallback_report_covers_reflective_property_access` and
+  `reachability_excludes_unused_methods` both fail identically on `205c1b3d`,
+  verified in a worktree. The monomorphization report now sees a dynamic site
+  outside `main` and sets `dynamic_fallback` where the tests expect neither, so
+  the `prove` analysis has drifted from its own tests. Add these to the
+  known-red list beside `zun_codegen`'s stack-size pair and `wintercg`'s
+  `headers_set_append_delete`.
+- **`zun_cli --test aot` fails with a *stale artifact*, not a bug.** Five tests
+  assert the AOT staticlib is newer than the runtime sources; after any change
+  under `zun_vm`/`zun_interp` they fail until `cargo build -p zun_vm` is run.
+  The assertion message says exactly that. Run that build before trusting
+  `cargo test -p zun_cli`. (A good example of a test that explains itself --
+  worth imitating.)
+- **`cargo test -p zun_compiler` cannot link on this machine**: `link.exe`
+  exits 1285 on the `prove_baseline` and `prove_prelude_scale` test binaries,
+  with or without anything else running. Use `--lib` there.
+- **FRAGILE - the checker decides whether to keep module-binding mirrors by
+  scanning the source *text* for `eval(` or `Function(`.** It matched the
+  prelude's own source and silently changed the output of every program; the
+  prelude now writes `function eval (x: any)` with a space to dodge its own
+  scan, pinned by a `zun_prelude` test. A textual trigger for a semantic
+  decision is a trap: it fires on a comment or a string literal, and it is the
+  reason a one-line prelude edit could move an unrelated fixture. Worth
+  replacing with a real binding-use check.
+- **`EvalHost` gained a required method, `compile_eval`.** `CompilerEvalHost`
+  is the only implementor in this workspace; an out-of-tree host (the drift
+  notes mention `zun-node`) will not compile until it adds one.
+- **OPEN - module bindings still leak onto `globalThis`.**
+  `const secret = "x"` at module level makes `globalThis.secret` readable,
+  where node (CommonJS module scope) answers `undefined`. Verified on
+  `205c1b3d`, so it predates the eval work; `8f5c54c8` only hid these names
+  from *generated code's* identifier lookups, so `(0, eval)("this.secret")`
+  still sees one.
+- **OPEN - typed `.length` folds trailing `any` parameters to 0**, so
+  `function one(x: any) {}; one.length` answers 0 where node says 1, and
+  `eval.length` differs between the typed and dynamic paths.
+- **OPEN - `Function("a", "return this.x + a")` and
+  `Function("return this")(1)`** are refused or answer the argument instead of
+  `globalThis`, both for the same open receiver bug; `Function.bind` is still
+  missing; and a generator function used as an array callback or through
+  `.bind` aborts with "malformed bytecode: parked a frame that is not awaiting
+  a promise".
