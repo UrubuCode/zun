@@ -66,9 +66,9 @@ pub(super) fn convert_expression(
         Expression::Super(super_keyword) => Ok(Expr::Ident(Name {
             span: span(super_keyword.span),
         })),
-        Expression::ThisExpression(this_expression) => Ok(Expr::Ident(Name {
-            span: span(this_expression.span),
-        })),
+        // Inside a derived run-time class constructor `this` is the object
+        // `super(...)` returned, held in a local (see `runtime_class`).
+        Expression::ThisExpression(this_expression) => Ok(this_expr(span(this_expression.span))),
         Expression::ParenthesizedExpression(parenthesized) => {
             convert_expression(source, &parenthesized.expression)
         }
@@ -150,6 +150,11 @@ pub(super) fn convert_expression(
         // `new.target`: first-class class values are not modelled yet, so it
         // evaluates to `undefined` (the value it has in every plain call).
         Expression::NewTarget(meta) => {
+            // A run-time class constructor reads it off the object `new`
+            // allocated for it.
+            if let Some(target) = runtime_new_target(span(meta.span)) {
+                return Ok(target);
+            }
             // The identifier text is `new.target`; the checker resolves it.
             Ok(Expr::Ident(Name {
                 span: span(meta.span),

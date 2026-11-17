@@ -161,6 +161,16 @@ pub(super) fn convert_computed_member(
             && (text.span.end - text.span.start) as usize
                 == text.value.as_str().map_or(0, str::len) + 2);
     // `super[key]` reads the base class's member: a lookup on the home object.
+    if matches!(member.object, Expression::Super(_)) && !member.optional {
+        if super::super::runtime_class::in_runtime_class() {
+            let key = convert_expression(source, &member.expression)?;
+            if let Some(read) =
+                super::super::runtime_class::runtime_super_member_read(key, span(member.span))
+            {
+                return Ok(read);
+            }
+        }
+    }
     if matches!(member.object, Expression::Super(_)) && !member.optional && !plain_literal_key {
         if let Some(home) = super::super::class::super_home_object(span(member.span)) {
             return Ok(Expr::Index {
@@ -253,6 +263,18 @@ pub(super) fn convert_static_member(
     member: &oxc_ast::ast::StaticMemberExpression<'_>,
 ) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    // `super.name` in a run-time class: a lookup that starts at the base.
+    if matches!(member.object, Expression::Super(_)) && !member.optional {
+        if let Some(read) = super::super::runtime_class::runtime_super_member_read(
+            Expr::String {
+                value: member.property.name.to_string(),
+                span: span(member.property.span),
+            },
+            span(member.span),
+        ) {
+            return Ok(read);
+        }
+    }
     let object = Box::new(convert_expression(source, &member.object)?);
     let field = Name {
         span: span(member.property.span),

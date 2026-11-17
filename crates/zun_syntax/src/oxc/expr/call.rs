@@ -147,14 +147,50 @@ pub(super) fn convert_call(
         }
     }
     match callee_expression {
-        // `super(args)`: the callee name is the source text `super`.
-        Expression::Super(super_expression) => Ok(Expr::Call {
-            callee: Name {
-                span: span(super_expression.span),
-            },
-            args,
-            span: span(call.span),
-        }),
+        // `super(args)`: the callee name is the source text `super`. In a
+        // run-time class the base is a value, so the call is lowered here.
+        Expression::Super(super_expression) => {
+            if super::super::runtime_class::in_runtime_class() {
+                if let Some(lowered) =
+                    super::super::runtime_class::runtime_super_call(args, span(call.span))
+                {
+                    return lowered;
+                }
+                return Err("`super(...)` could not be lowered in a run-time class".into());
+            }
+            Ok(Expr::Call {
+                callee: Name {
+                    span: span(super_expression.span),
+                },
+                args,
+                span: span(call.span),
+            })
+        }
+        // `super.name(args)` in a run-time class: the base's member, called
+        // on the current `this`.
+        Expression::StaticMemberExpression(member)
+            if !member.optional
+                && matches!(member.object, Expression::Super(_))
+                && super::super::runtime_class::in_runtime_class() =>
+        {
+            super::super::runtime_class::runtime_super_member_call(
+                Ok(Name {
+                    span: span(member.property.span),
+                }),
+                args,
+                span(call.span),
+            )
+            .ok_or_else(|| "`super` could not be lowered in a run-time class".to_string())
+        }
+        Expression::ComputedMemberExpression(member)
+            if !member.optional
+                && matches!(member.object, Expression::Super(_))
+                && super::super::runtime_class::in_runtime_class() =>
+        {
+            let key = convert_expression(source, &member.expression)?;
+            super::super::runtime_class::runtime_super_member_call(Err(key), args, span(call.span))
+                .ok_or_else(|| "`super` could not be lowered in a run-time class".to_string())
+        }
         Expression::Identifier(identifier) => Ok(Expr::Call {
             callee: Name {
                 span: span(identifier.span),
@@ -426,13 +462,24 @@ pub(super) fn convert_new_expression(
                 });
             }
             if matches!(peeled, Expression::ClassExpression(_)) {
-                if let Expr::Ident(name) = convert_expression(source, peeled)? {
-                    return Ok(Expr::New {
-                        class: name,
+                // Constructed where it is written, so it need not be a
+                // run-time value (unless its base is one).
+                super::super::runtime_class::set_new_callee_class(true);
+                let converted = convert_expression(source, peeled);
+                super::super::runtime_class::set_new_callee_class(false);
+                let converted = converted?;
+                let Expr::Ident(name) = converted else {
+                    return Ok(Expr::NewDynamic {
+                        callee: Box::new(converted),
                         args,
                         span: span(new_expression.span),
                     });
-                }
+                };
+                return Ok(Expr::New {
+                    class: name,
+                    args,
+                    span: span(new_expression.span),
+                });
             }
             Ok(Expr::NewDynamic {
                 callee: Box::new(convert_expression(source, callee)?),

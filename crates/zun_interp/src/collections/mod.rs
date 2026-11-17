@@ -24,6 +24,8 @@ mod object_descriptor;
 mod object_primitive;
 
 mod function;
+mod function_chain;
+pub(crate) use function_chain::InheritedStatic;
 mod promise;
 mod proxy;
 mod reflect;

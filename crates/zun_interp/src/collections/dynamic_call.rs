@@ -686,7 +686,10 @@ impl<'a> Interp<'a> {
                     }
                 }
                 // A function-valued expando property on a function (`fn.m = () => ..;
-                // fn.m()`): called with the function's property bag as `this`.
+                // fn.m()`, or a static method of a run-time class): called with
+                // the function itself as `this`, so `this === fn` holds and
+                // `new this(...)` constructs it. Property reads and writes on
+                // that receiver still land in the function's property bag.
                 if let Value::Function(handle) = &receiver_concrete {
                     let bag = crate::function_expando_bag(*handle);
                     if let Some(method) =
@@ -702,11 +705,49 @@ impl<'a> Interp<'a> {
                                 other => Ok(other.clone()),
                             })
                             .collect::<Result<Vec<_>, _>>()?;
-                        let call_args = self.with_this_arg(method, bag, call_values);
+                        let call_args = self.with_this_value(method, Value::Function(*handle), call_values);
                         let result = self.invoke_function_value(method, call_args)?;
                         let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                             .unwrap_or_else(zun_core::Any::void);
                         return Ok(Value::Any(boxed));
+                    }
+                }
+                // A static a function inherits through its `[[Prototype]]`
+                // (`Object.setPrototypeOf(F, Base)`, which is how a run-time
+                // class chains to its base): found on a parent function, it is
+                // called like an own one; reaching a class, the call continues
+                // on the class value, whose own dispatch resolves it.
+                if let Value::Function(handle) = &receiver_concrete {
+                    match self.function_inherited_static(*handle, &member) {
+                        Some(InheritedStatic::Function(holder)) => {
+                            let holder_bag = crate::function_expando_bag(holder);
+                            if let Some(method) = zun_gc::with_current_heap(|heap| {
+                                heap.dynamic_get_function(holder_bag, &member)
+                            }) {
+                                let call_values = args[2..]
+                                    .iter()
+                                    .map(|arg| match arg {
+                                        Value::Any(any) => zun_gc::with_current_heap(|heap| {
+                                            Value::unbox_any(*any, heap)
+                                        })
+                                        .ok_or(RunError::BadToken),
+                                        other => Ok(other.clone()),
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()?;
+                                let call_args = self.with_this_value(method, Value::Function(*handle), call_values);
+                                let result = self.invoke_function_value(method, call_args)?;
+                                let boxed =
+                                    zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                                        .unwrap_or_else(zun_core::Any::void);
+                                return Ok(Value::Any(boxed));
+                            }
+                        }
+                        Some(InheritedStatic::Class(class)) => {
+                            let mut forwarded = args.to_vec();
+                            forwarded[0] = Value::Any(class);
+                            return self.col_dynamic_call(name, &forwarded);
+                        }
+                        None => {}
                     }
                 }
                 // A member a function inherits from `Function.prototype`

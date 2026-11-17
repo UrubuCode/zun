@@ -230,6 +230,7 @@ pub(super) fn convert_top_level_function(
     };
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     let function_span = span(function.span);
+    let _scope = enter_function(function.params.span, function.span, false);
     let mut params = Vec::with_capacity(function.params.items.len());
     let mut prologue = Vec::new();
     for parameter in &function.params.items {

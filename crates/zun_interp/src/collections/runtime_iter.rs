@@ -840,6 +840,9 @@ impl<'a> Interp<'a> {
             if let Some(found) = Self::native_chain_constructor(object) {
                 return Ok(Value::Any(found));
             }
+            if let Some(found) = self.explicit_constructor(object)? {
+                return Ok(found);
+            }
             if let Some(record) = self.constructor_record(object) {
                 return Ok(Value::Object(record));
             }

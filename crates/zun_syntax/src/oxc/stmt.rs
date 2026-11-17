@@ -437,6 +437,25 @@ fn convert_class_statement(
     scope: Span,
     statements: &mut Vec<Stmt>,
 ) -> Result<(), String> {
+    // A class over a run-time base is a value: it is lowered in place and
+    // bound like a `let` (see `runtime_class`).
+    if let Some(id) = class_declaration.id.as_ref() {
+        if wants_runtime_class(source, class_declaration, ClassSite::Declaration) {
+            let whole = Span::new(class_declaration.span.start, class_declaration.span.end);
+            statements.push(Stmt::Let {
+                name: Name {
+                    span: Span::new(id.span.start, id.span.end),
+                },
+                ty: Some(crate::ast::TypeAnnotation {
+                    name: crate::ast::synthetic_ident("any"),
+                    is_array: false,
+                }),
+                init: convert_runtime_class(source, class_declaration, id.name.as_str())?,
+                span: whole,
+            });
+            return Ok(());
+        }
+    }
     let mut class =
         convert_class_declaration(source, class_declaration).map_err(|errors| errors.join("; "))?;
     class.local = true;

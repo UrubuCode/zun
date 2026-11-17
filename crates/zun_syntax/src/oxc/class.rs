@@ -70,6 +70,9 @@ pub(super) fn convert_class_declaration(
             class_declaration.span.end,
         ));
     PRIVATE_SCOPES.with(|scopes| scopes.borrow_mut().push((id_span, names)));
+    // A static class's members have the ordinary `this` and leave `super` to
+    // the checker, even when the class sits inside a run-time class member.
+    let _frames = enter_member_frames(None, None);
     let result = convert_class_declaration_inner(source, class_declaration);
     PRIVATE_SCOPES.with(|scopes| scopes.borrow_mut().pop());
     result
@@ -150,7 +153,7 @@ pub(super) fn convert_class_declaration_inner(
 }
 
 /// Peel parentheses and TS casts off a heritage expression.
-fn peel_heritage<'a, 'b>(mut expression: &'b Expression<'a>) -> &'b Expression<'a> {
+pub(super) fn peel_heritage<'a, 'b>(mut expression: &'b Expression<'a>) -> &'b Expression<'a> {
     loop {
         match expression {
             Expression::ParenthesizedExpression(inner) => expression = &inner.expression,
@@ -187,6 +190,19 @@ fn convert_heritage(
             }));
         }
     }
+    // A class expression is hoisted like any other class, so it is a static
+    // base under the name it is hoisted with.
+    if matches!(expression, Expression::ClassExpression(_)) {
+        set_new_callee_class(true);
+        let hoisted = convert_expression(source, expression);
+        set_new_callee_class(false);
+        if let Expr::Ident(name) = hoisted.map_err(|error| vec![error])? {
+            return Ok(Some(name));
+        }
+        return Err(vec![
+            "OXC adapter: a class-expression base did not hoist to a class".into(),
+        ]);
+    }
     let value = convert_expression(source, expression).map_err(|error| vec![error])?;
     let span = Span::new(expression.span().start, expression.span().end);
     let n = COMPUTED_FIELD_COUNTER.with(|counter| {
@@ -217,7 +233,7 @@ fn convert_heritage(
 
 /// Locate `function <callee>(...): typeof <Name>` in the source and return the
 /// byte range of `<Name>`.
-fn declared_typeof_return(source: &str, callee: &str) -> Option<(usize, usize)> {
+pub(super) fn declared_typeof_return(source: &str, callee: &str) -> Option<(usize, usize)> {
     let needle = format!("function {callee}(");
     let at = source.find(&needle)?;
     let rest = &source[at..];
@@ -684,6 +700,7 @@ fn build_method_function(
     // The method body uses the unified statement converter so
     // class methods support the same statement surface as any
     // other function body.
+    let _scope = enter_function(method.value.params.span, method.value.span, false);
     let mut method_prologue = Vec::new();
     let mut params = Vec::with_capacity(method.value.params.items.len());
     for parameter in &method.value.params.items {
@@ -885,7 +902,7 @@ thread_local! {
 }
 
 /// Pops the `super` context pushed by [`push_super_context`] when dropped.
-struct SuperContextGuard;
+pub(super) struct SuperContextGuard;
 
 impl Drop for SuperContextGuard {
     fn drop(&mut self) {
@@ -895,7 +912,7 @@ impl Drop for SuperContextGuard {
     }
 }
 
-fn push_super_context(class_name: Option<Name>, is_static: bool) -> SuperContextGuard {
+pub(super) fn push_super_context(class_name: Option<Name>, is_static: bool) -> SuperContextGuard {
     SUPER_CONTEXT.with(|stack| stack.borrow_mut().push(class_name.map(|name| (name, is_static))));
     SuperContextGuard
 }

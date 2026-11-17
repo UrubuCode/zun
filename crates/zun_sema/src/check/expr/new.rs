@@ -62,6 +62,20 @@ impl Checker<'_> {
             }
         }
         let callee = self.check_expr(cx, callee);
+        // A dynamic-object callee (`new this(...)` in a function whose
+        // receiver is dynamic, such as a static method of a run-time class)
+        // is decided at run time like any other dynamic value.
+        let callee = if callee.ty == Ty::DynamicObject {
+            hir::Expr {
+                span: callee.span,
+                kind: hir::ExprKind::BoxAny {
+                    value: Box::new(callee),
+                },
+                ty: Ty::Any,
+            }
+        } else {
+            callee
+        };
         if callee.ty == Ty::Any {
             // A dynamic callee may hold a proxy over a class: construct through
             // it at run time (anything else throws a TypeError there).

@@ -298,6 +298,11 @@ impl Checker<'_> {
             if !self.closure_takes_this && mentions_this_word(text) {
                 self.closure_takes_this = true;
             }
+            // A compiler-made function reads the receiver through a reference
+            // its source text does not spell out; ask the AST.
+            if !self.closure_takes_this && self.closure_reads_this(cx, function) {
+                self.closure_takes_this = true;
+            }
         }
         self.check_closure_expr(cx, function, span)
     }

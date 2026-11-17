@@ -586,7 +586,17 @@ impl Checker<'_> {
                     self.collect_capture_expr(cx, parameters, arg, uses);
                 }
             }
-            ast::Expr::New { args, .. } => {
+            ast::Expr::New { class, args, .. } => {
+                // `new C(...)` with `C` an enclosing local that holds a
+                // constructor value (a run-time class, a proxy) reads that
+                // local; a declared class or a realm global is resolved by
+                // name and captures nothing.
+                let callee = self.text(class);
+                if !self.classes_by_name.contains_key(callee)
+                    && !self.realm_globals.contains_key(callee)
+                {
+                    add_name(class, false);
+                }
                 for arg in args {
                     self.collect_capture_expr(cx, parameters, arg, uses);
                 }
@@ -749,6 +759,32 @@ impl Checker<'_> {
         cx.declare(name, Ty::Any);
         let mut uses = CaptureUse::default();
         self.collect_capture_expr(cx, &HashSet::new(), init, &mut uses);
+        cx.scopes.pop();
+        cx.locals.truncate(locals_len);
+        uses.slot_set.contains(&(locals_len as hir::LocalSlot))
+    }
+}
+
+impl Checker<'_> {
+    /// Whether a function expression's body reads `this`, decided on the AST
+    /// with the closure-capture collector. The textual scan in
+    /// `check_function_expr` only sees a `this` the source spells out; a
+    /// compiler-made member function (the constructor and field initializers
+    /// of a run-time class, see `zun_syntax`'s `runtime_class`) reads the
+    /// receiver through a synthesized reference its source text does not show.
+    pub(crate) fn closure_reads_this(
+        &self,
+        cx: &mut FunctionCx,
+        function: &ast::FunctionExpr,
+    ) -> bool {
+        // Probe with a throwaway binding so the collector resolves the name.
+        let locals_len = cx.locals.len();
+        cx.scopes.push(Scope::new());
+        cx.declare("this", Ty::Any);
+        let mut uses = CaptureUse::default();
+        for statement in &function.body.statements {
+            self.collect_capture_stmt(cx, &HashSet::new(), statement, &mut uses);
+        }
         cx.scopes.pop();
         cx.locals.truncate(locals_len);
         uses.slot_set.contains(&(locals_len as hir::LocalSlot))

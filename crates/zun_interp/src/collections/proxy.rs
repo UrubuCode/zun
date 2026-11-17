@@ -248,7 +248,12 @@ impl<'a> Interp<'a> {
                 }
                 // An ordinary function value: `[[Construct]]` through its
                 // `prototype` (same path as `Reflect.construct(fn, args)`).
-                if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
+                // A function read out of an array or a property arrives in its
+                // `functionBox` wrapper (functions do not box into `Any`).
+                let callee = args.first().and_then(|arg| unbox_arg(arg).ok()).map(|value| {
+                    zun_gc::with_current_heap(|heap| unbox_function_box(value, heap))
+                });
+                if let Some(Value::Function(handle)) = callee {
                     let array = object(args.get(1).ok_or(RunError::BadToken)?)
                         .ok_or(RunError::BadToken)?;
                     let values = self.read_array_values(array)?;
@@ -258,6 +263,15 @@ impl<'a> Interp<'a> {
                         return Err(RunError::Native(
                             "TypeError: value is not a constructor".into(),
                         ));
+                    }
+                    // A bound function is a constructor only when its target
+                    // is one: binding an arrow (or a method shorthand) does
+                    // not make it constructible.
+                    if handle.is_bound() {
+                        let (target, _) = self.unwrap_bound_chain(handle, Vec::new())?;
+                        if self.is_arrow_closure(target) || self.is_method_closure(target) {
+                            return Err(self.proto_type_error("value is not a constructor"));
+                        }
                     }
                     return self.construct_ordinary_function(handle, handle, values);
                 }

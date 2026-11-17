@@ -73,6 +73,25 @@ pub(super) fn convert_class_expression(
     class_expression: &oxc_ast::ast::Class<'_>,
 ) -> Result<Expr, String> {
     let hint = CLASS_NAME_HINT.with(|cell| cell.borrow_mut().take());
+    // A class that is a value at run time -- its base is one, or it is
+    // produced per call of the enclosing function -- is not hoisted: it is
+    // lowered in place to the closure form (see `runtime_class`).
+    let site = if super::super::runtime_class::take_new_callee_class() || hint.is_some() {
+        super::super::runtime_class::ClassSite::Bound
+    } else {
+        super::super::runtime_class::ClassSite::Value
+    };
+    if super::super::runtime_class::wants_runtime_class(source, class_expression, site) {
+        let name = match (class_expression.id.as_ref(), hint) {
+            (Some(id), _) => id.name.to_string(),
+            (None, Some(binding)) => source
+                .get(binding.start as usize..binding.end as usize)
+                .unwrap_or_default()
+                .to_string(),
+            (None, None) => String::new(),
+        };
+        return super::super::runtime_class::convert_runtime_class(source, class_expression, &name);
+    }
     // A class bound by a declarator takes the binding's name so that
     // `new Binding()` resolves statically (limitation: an inner
     // reference to a distinct class-expression name is not bound).

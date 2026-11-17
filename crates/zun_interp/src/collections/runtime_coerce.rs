@@ -697,6 +697,24 @@ impl<'a> Interp<'a> {
             }
             return Ok(Some(result));
         }
+        // A `[Symbol.toPrimitive]` the object inherits through its linked
+        // prototype chain.
+        if let Some(handle) = Self::linked_chain_function(obj, |heap, holder| {
+            heap.dynamic_get_symbol_function(holder, tp)
+        }) {
+            let hint_value = zun_gc::with_current_heap_mut(|heap| {
+                Value::Any(zun_core::Any::string(heap.intern_string(hint)))
+            });
+            let call_args = self.inherited_method_args(handle, obj, vec![hint_value]);
+            let result = self.invoke_function_value(handle, call_args)?;
+            let result = unbox_arg(&result)?;
+            if matches!(result, Value::Object(_) | Value::Function(_)) {
+                return Err(RunError::Native(
+                    "TypeError: Cannot convert object to primitive value".into(),
+                ));
+            }
+            return Ok(Some(result));
+        }
         let mut rejected = false;
         let order: [&str; 2] = if hint == "string" {
             ["toString", "valueOf"]
@@ -726,6 +744,15 @@ impl<'a> Interp<'a> {
                         // hidden first argument, like a built-in method value.
                         let call_args = self.with_this_arg(method, obj, Vec::new());
                         (method, call_args)
+                    })
+                    // Not an own method: the one the object inherits through
+                    // the prototype chain it was linked to (an instance of a
+                    // constructor function or of a run-time class).
+                    .or_else(|| {
+                        let method = Self::linked_chain_function(obj, |heap, holder| {
+                            heap.dynamic_get_function(holder, name)
+                        })?;
+                        Some((method, self.inherited_method_args(method, obj, Vec::new())))
                     }),
             };
             // String hint: `Object.prototype.toString` always exists and

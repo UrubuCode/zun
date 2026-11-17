@@ -167,6 +167,10 @@ pub const BUILTIN_BASES: &str = include_str!("../builtin/builtin_bases.zun");
 /// `Atomics` (`builtin/atomics.zun`): single-agent shared-memory operations.
 pub const ATOMICS: &str = include_str!("../builtin/atomics.zun");
 
+/// Run-time class helpers (`builtin/runtime_class.zun`): the closure form a
+/// class takes when it is a value (a mixin, or one produced per call).
+pub const RUNTIME_CLASS: &str = include_str!("../builtin/runtime_class.zun");
+
 pub const REALM: &str = include_str!("../builtin/realm.zun");
 
 /// The prelude **classes**, in compile order. Classes cannot cross a module
@@ -205,6 +209,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     ASYNC,
     BUILTIN_BASES,
     ATOMICS,
+    RUNTIME_CLASS,
 ];
 
 /// Stable content fingerprint for cache invalidation of compiled prelude data.

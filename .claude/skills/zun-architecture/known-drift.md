@@ -1054,3 +1054,78 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   `undefined`**, and `arguments.length` reads 1 for a call with none. This is
   what forced `getRandomValues` to be declared with a rest parameter, and it
   is the same gap recorded at the 140 mark for parameter defaults.
+
+### Run-time classes (after `02ffaaaa`, still 153 of 169)
+Design and rationale: `docs/design/runtime-classes.md`. What belongs here is
+what the work taught and what it left open.
+
+- **CLOSED - a class evaluated more than once had one identity.** A class is
+  one static TypeDef, so `make("a") !== make("b")` answered false for
+  `function make(tag) { return class { label = tag } }`, the two shared one
+  prototype, and members could not see `tag`. A class that is a run-time value
+  -- a class expression used as a value inside a function, or any class whose
+  base is only known at run time -- is no longer hoisted: `zun_syntax`
+  (`oxc/runtime_class.rs`) lowers it in place to a constructor function, a
+  prototype object and member closures, with the class rules in the prelude's
+  `builtin/runtime_class.zun`. No format change, no opcode, no type invented at
+  run time. **The descriptor model could not carry this**: it could have held
+  identity (an instance may already carry a prototype other than its
+  TypeDef's), but a typed method has no environment slot, so captures and the
+  per-application home object of `super` had nowhere to live.
+- **CLOSED - the `super` placeholder of `efbce851`.** "`super` is not
+  supported in a class whose base class is a run-time value" is now reached
+  only by a class the closure form cannot express (`#private` members,
+  decorators, parameter properties); every other such class has a real
+  `super(...)` (`Reflect.construct(base, args, newTarget)`) and `super.m()`.
+- **Five gaps in the dynamic object model were closed on the way**, none of
+  them specific to classes -- an ordinary constructor function needed each:
+  `F.prototype.constructor` was never defined (a function does not box into
+  `Any`, so the definition silently did nothing); `instance.constructor`
+  ignored the prototype chain; a store through an inherited setter created an
+  own property; statics were not inherited through
+  `Object.setPrototypeOf(F, Base)`; and ToPrimitive ignored an inherited
+  `toString` / `valueOf` / `Symbol.toPrimitive`. Also: `new list[i]()` on a
+  function read out of an array, and `new C()` inside a closure where `C` is
+  an enclosing local (it threw `C is not defined` -- the capture collector did
+  not look at the callee of `new`).
+- **BEHAVIOUR CHANGE - a function-valued property of a function is called with
+  the function as `this`**, not its property bag (`fn.m = function () { return
+  this === fn }; fn.m()` now answers true, as node does). Only the receiver
+  *value* changed; whether a receiver is passed is decided where it was.
+- **FRAGILE, the same shape three times - sema decides from the closure's
+  source text.** Whether a closure takes `this` (`mentions_this_word`),
+  whether a self-referencing initializer binds its own name
+  (`body.contains(name)`), and whether a captured local is boxed up front (the
+  identifier tokens of the closure's text) are all textual. A compiler-made
+  reference has no text, so each one silently misfired for the lowered class:
+  a constructor received no `this`, `__zcC is not defined`, and an arrow in a
+  derived constructor read a stale `this`. The lowering works around the last
+  two (assign-after-declare; a one-element cell that is never reassigned) and
+  sema gained an AST fallback for the first (`closure_reads_this`). **Any
+  future AST-level desugaring will hit these again**; the real fix is to make
+  the three decisions on the AST.
+- **OPEN - a class declared, or bound by a declarator, inside a function
+  captures nothing.** `function f(p) { class K { m() { return p } } return new
+  K().m() }` throws `p is not defined`, exactly as before; only class
+  *expressions used as values* are lowered. Widening the rule moves typed local
+  classes onto the dynamic path, so it needs a capture test first (lower only
+  the classes that actually capture).
+- **OPEN - a `Proxy` over a class value is opaque**: `new Proxy(C, {}).prototype`
+  (and every other member) reads `undefined`, and `Reflect.construct(proxy,
+  args)` answers "value is not a constructor". So `class X extends proxy`
+  throws at the class definition. Verified on `02ffaaaa`. It is the next park
+  of `class-mixins` after the item below, and the theme of
+  `proxy-constructor-callable-and-brand`.
+- **OPEN, engine panic - a wrongly typed argument reaching a typed field
+  store.** `class User { age: number; constructor(n: string, age: number) {
+  this.age = age } }` then `new User("Bob", null as any)` aborts at
+  `value.rs:157` ("expected float, found Null") -- in fully static code, with
+  no run-time class involved, and identically on `02ffaaaa`. It is the fifth
+  site of the `as_*` accessor family and the park of `class-mixins` (line 2 of
+  59; 20 more lines print correctly behind it).
+- **Where the three fixtures park now.** `class-expressions` 25 of 57 matching
+  lines (was 6): `Dog.bind(null)` on a static class value. `class-mixins` 1 of
+  59 (was 0, it did not compile): the panic above. `proxy-constructor-
+  callable-and-brand` 0 of 285: four compile errors unrelated to classes
+  (`new Proxy(..)()` called directly, `this.#shared` in a static method), and
+  with those patched out it stops on line 3 inside the Proxy surface.

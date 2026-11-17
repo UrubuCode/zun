@@ -1,0 +1,186 @@
+// Run-time classes.
+//
+// A class is normally one static TypeDef: fixed layout, vtable dispatch, and a
+// single descriptor for every evaluation of its source text. That cannot model
+// a class that is a *value*: one produced per call of a factory (each
+// evaluation needs its own constructor and prototype, and its methods close
+// over the factory's locals), or one whose base class is only known at run
+// time (a mixin). The front end lowers those classes to the closure form
+// below instead of hoisting them: the constructor is an ordinary function
+// value, its `prototype` is an ordinary object, and the members are closures
+// installed on it. Nothing here invents a type at run time; it is the dynamic
+// object model the language already has, used on purpose.
+//
+// The lowered shape of `class Name extends Base { ... }` is
+//
+//   (() => {
+//     const B = Base;
+//     const I = function () { this.field = init; ... };      // field initializers
+//     const C = function (...) { ... };                      // the constructor
+//     __zunClassBegin(C, "Name", true, B);
+//     __zunClassMethod(C.prototype, "m", function () { ... });
+//     return C;
+//   })()
+
+// Link a freshly created constructor function into a class: validate the
+// heritage value, build `prototype` over the base's, chain the constructor to
+// the base (so statics inherit), and define `constructor` and `name`.
+function __zunClassBegin(ctor: any, name: string, hasBase: boolean, base: any): any {
+    if (hasBase) {
+        if (base === null) {
+            ctor.prototype = Object.create(null);
+        } else {
+            if (typeof base !== "function") {
+                throw new TypeError("Class extends value " + String(base) + " is not a constructor or null");
+            }
+            const baseProto: any = base.prototype;
+            if (baseProto !== null && typeof baseProto !== "object" && typeof baseProto !== "function") {
+                throw new TypeError("Class extends value does not have valid prototype property " + String(baseProto));
+            }
+            ctor.prototype = Object.create(baseProto);
+            Object.setPrototypeOf(ctor, base);
+        }
+    }
+    Object.defineProperty(ctor.prototype, "constructor", {
+        value: ctor,
+        writable: true,
+        configurable: true,
+        enumerable: false,
+    });
+    Object.defineProperty(ctor, "name", {
+        value: name,
+        writable: false,
+        configurable: true,
+        enumerable: false,
+    });
+    // A class's `prototype` is read-only (a function's is writable).
+    Object.defineProperty(ctor, "prototype", { writable: false });
+    return ctor;
+}
+
+// A method: a non-enumerable, writable, configurable data property.
+function __zunClassMethod(target: any, key: any, fn: any): void {
+    Object.defineProperty(target, key, {
+        value: fn,
+        writable: true,
+        configurable: true,
+        enumerable: false,
+    });
+}
+
+// A getter; pairs with a setter already defined under the same key.
+function __zunClassGetter(target: any, key: any, fn: any): void {
+    const prior: any = Object.getOwnPropertyDescriptor(target, key);
+    Object.defineProperty(target, key, {
+        get: fn,
+        set: prior === undefined ? undefined : prior.set,
+        configurable: true,
+        enumerable: false,
+    });
+}
+
+// A setter; pairs with a getter already defined under the same key.
+function __zunClassSetter(target: any, key: any, fn: any): void {
+    const prior: any = Object.getOwnPropertyDescriptor(target, key);
+    Object.defineProperty(target, key, {
+        get: prior === undefined ? undefined : prior.get,
+        set: fn,
+        configurable: true,
+        enumerable: false,
+    });
+}
+
+// A static field: defined (not assigned), so it shadows an inherited setter
+// and can replace the constructor's own `name` / `length`.
+function __zunClassStatic(target: any, key: any, value: any): void {
+    Object.defineProperty(target, key, {
+        value: value,
+        writable: true,
+        configurable: true,
+        enumerable: true,
+    });
+}
+
+// The class being instantiated, as seen from a run-time class constructor.
+// `new` hands the constructor an object already linked to
+// `newTarget.prototype`, so the prototype's `constructor` names it; when a
+// script has broken that link the class itself is the answer.
+function __zunNewTarget(cls: any, allocated: any): any {
+    if (allocated === null || allocated === undefined) {
+        return cls;
+    }
+    const proto: any = Object.getPrototypeOf(allocated);
+    if (proto === null || proto === undefined) {
+        return cls;
+    }
+    const target: any = proto.constructor;
+    if (typeof target !== "function" || target.prototype !== proto) {
+        return cls;
+    }
+    return target;
+}
+
+// `super(...args)` in a run-time class: construct the base with the class
+// being instantiated as `newTarget`, so the result already carries the most
+// derived prototype, then run this class's field initializers on it. The
+// result -- not the object `new` pre-allocated -- is the constructor's `this`.
+function __zunSuperCall(cls: any, allocated: any, args: any[], init: any): any {
+    const base: any = Object.getPrototypeOf(cls);
+    // `class extends null` leaves the constructor on the default function
+    // prototype, which is not a constructor: `super()` there is a TypeError.
+    if (typeof base !== "function") {
+        const shown: string = base === null || typeof base === "object" ? "null" : String(base);
+        const owner: string = cls.name === "" ? "anonymous class" : "class '" + cls.name + "'";
+        throw new TypeError("Super constructor " + shown + " of " + owner + " is not a constructor");
+    }
+    const made: any = Reflect.construct(base, args, __zunNewTarget(cls, allocated));
+    if (made === null || (typeof made !== "object" && typeof made !== "function")) {
+        throw new TypeError("Derived constructors may only return object or undefined");
+    }
+    if (init !== undefined) {
+        init.call(made);
+    }
+    return made;
+}
+
+// The `this` a derived run-time constructor returns: reading it before
+// `super()` has run is a ReferenceError, as in ECMAScript.
+function __zunDerivedThis(self: any): any {
+    if (self === undefined) {
+        throw new ReferenceError("Must call super constructor in derived class before accessing 'this' or returning from derived constructor");
+    }
+    return self;
+}
+
+// Whether `allocated` is the object `new` hands a constructor of `cls`: one
+// that inherits from the class's prototype (the class or a subclass is being
+// instantiated), or a fresh empty object (`Reflect.construct` with an
+// unrelated `newTarget`). A constructor reached by a plain call sees either
+// no receiver or the object it was read from, which is neither.
+function __zunIsAllocated(cls: any, allocated: any): boolean {
+    if (allocated === undefined || allocated === null || typeof allocated !== "object") {
+        return false;
+    }
+    const proto: any = cls.prototype;
+    let link: any = Object.getPrototypeOf(allocated);
+    let hops = 0;
+    while (link !== null && link !== undefined && hops < 1024) {
+        if (link === proto) {
+            return true;
+        }
+        link = Object.getPrototypeOf(link);
+        hops = hops + 1;
+    }
+    return Object.getOwnPropertyNames(allocated).length === 0;
+}
+
+// A class constructor is not callable.
+function __zunClassCallCheck(cls: any, allocated: any): void {
+    if (!__zunIsAllocated(cls, allocated)) {
+        const name: string = cls.name;
+        if (name === "") {
+            throw new TypeError("Class constructors cannot be invoked without 'new'");
+        }
+        throw new TypeError("Class constructor " + name + " cannot be invoked without 'new'");
+    }
+}

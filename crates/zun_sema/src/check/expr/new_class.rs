@@ -118,9 +118,15 @@ impl Checker<'_> {
         // wrapped class's default construction).
         if !self.classes_by_name.contains_key(name)
             && !self.realm_globals.contains_key(name)
-            && cx
+            && (cx
                 .lookup(name)
                 .is_some_and(|slot| matches!(cx.locals[slot as usize], Ty::Proxy | Ty::Any))
+                // The same local reached from inside a closure is a capture.
+                || (cx.lookup(name).is_none()
+                    && cx
+                        .captures
+                        .get(name)
+                        .is_some_and(|capture| matches!(capture.ty, Ty::Proxy | Ty::Any))))
         {
             let callee = self.check_expr(cx, &ast::Expr::Ident(*class));
             let elements: Vec<Option<hir::Expr>> =

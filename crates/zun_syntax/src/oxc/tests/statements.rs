@@ -504,3 +504,79 @@ fn synthetic_names_are_deterministic_across_repeated_compiles() {
     let second = parse_subset(source, true).expect("second parse");
     assert_eq!(first, second);
 }
+
+/// How many classes a program hoists (the static path) and how many `let`
+/// statements its top level declares (a run-time class declaration is one).
+fn hoisted_and_lets(source: &str) -> (usize, usize) {
+    let program = parse_subset(source, true).expect("oxc parse");
+    let lets = program
+        .top_level
+        .iter()
+        .filter(|statement| matches!(statement, crate::ast::Stmt::Let { .. }))
+        .count();
+    (program.classes.len(), lets)
+}
+
+#[test]
+fn a_class_over_a_static_base_stays_a_hoisted_class() {
+    // Declarations, a class bound by a declarator and a class constructed in
+    // place are static: one TypeDef each, resolved by name.
+    assert_eq!(hoisted_and_lets("class A {} class B extends A {}"), (2, 0));
+    assert_eq!(hoisted_and_lets("const C = class { v = 1; };"), (1, 1));
+    assert_eq!(hoisted_and_lets("class A {} const C = class extends A {};"), (2, 1));
+    assert_eq!(
+        hoisted_and_lets("function f() { class K { m() { return 1; } } return new K().m(); }"),
+        (1, 0)
+    );
+    // A built-in base keeps the checker's handling, and an anonymous class
+    // expression as a base is hoisted like any other class.
+    assert_eq!(hoisted_and_lets("class E extends Error {}"), (1, 0));
+    assert_eq!(hoisted_and_lets("class P extends (class {} as any) {}"), (2, 0));
+}
+
+#[test]
+fn a_class_over_a_run_time_base_is_lowered_in_place() {
+    // The base is a parameter, a variable, or the result of a call: the
+    // class is a value, bound like a `let`, and nothing is hoisted for it.
+    assert_eq!(
+        hoisted_and_lets("function mix(Base: any) { return class extends Base {}; }"),
+        (0, 0)
+    );
+    assert_eq!(
+        hoisted_and_lets("class A {} const B: any = A; class C extends B {}"),
+        (1, 2)
+    );
+    assert_eq!(
+        hoisted_and_lets("function f(): any { return 1; } class C extends f() {}"),
+        (0, 1)
+    );
+    // A parameter shadows a class of the same name.
+    assert_eq!(
+        hoisted_and_lets("class Base {} function mix(Base: any) { return class extends Base {}; }"),
+        (1, 0)
+    );
+}
+
+#[test]
+fn a_class_expression_used_as_a_value_in_a_function_is_lowered_in_place() {
+    // Each call must produce its own constructor, so the class is not hoisted.
+    assert_eq!(
+        hoisted_and_lets("function make(tag: string) { return class { label = tag; }; }"),
+        (0, 0)
+    );
+    // At module level the same expression is evaluated once and stays static.
+    assert_eq!(hoisted_and_lets("const list = [class { v = 1; }];"), (1, 1));
+}
+
+#[test]
+fn a_class_the_closure_form_cannot_express_keeps_the_static_path() {
+    // `#private` members need the static class's lexical knowledge, so the
+    // class is hoisted as before (and keeps the checker's diagnostics).
+    assert_eq!(
+        hoisted_and_lets("function make() { return class { #secret = 1; read() { return this.#secret; } }; }"),
+        (1, 0)
+    );
+    // A base named nowhere else in the program is not a value either: the
+    // checker reports the unknown base class.
+    assert_eq!(hoisted_and_lets("class Dog extends Missing {}"), (1, 0));
+}

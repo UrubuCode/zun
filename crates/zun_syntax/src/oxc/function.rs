@@ -139,6 +139,7 @@ pub(super) fn convert_oxc_function(
     let Some(body) = function.body.as_ref() else {
         return Err("OXC adapter requires an object method body".into());
     };
+    let _scope = enter_function(function.params.span, function.span, false);
     let mut params = Vec::with_capacity(function.params.items.len());
     let mut prologue = Vec::new();
     for parameter in &function.params.items {
@@ -189,6 +190,7 @@ pub(super) fn convert_arrow(
     arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>,
 ) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
+    let _scope = enter_function(arrow.params.span, arrow.span, true);
     let mut params = Vec::with_capacity(arrow.params.items.len());
     let mut prologue = Vec::new();
     for parameter in &arrow.params.items {

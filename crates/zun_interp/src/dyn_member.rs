@@ -82,6 +82,27 @@ impl Interp<'_> {
                 return Ok(ArmFlow::Continue);
             }
         }
+        // A static a constructor function inherits from a class it was
+        // chained to (`Object.setPrototypeOf(F, Class)`, as a run-time class
+        // over a static base is): the read continues on the class value. A
+        // function parent needs nothing here -- its property bag is already
+        // the link the ordinary lookup follows.
+        let function_handle = match &popped {
+            Value::Function(handle) => Some(*handle),
+            Value::Any(any) => {
+                match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
+                    Some(Value::Function(handle)) => Some(handle),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let popped = match function_handle
+            .and_then(|handle| self.function_inherited_static(handle, &name))
+        {
+            Some(crate::collections::InheritedStatic::Class(class)) => Value::Any(class),
+            _ => popped,
+        };
         let function_receiver = Self::is_function_value(&popped);
         let raw = expando_receiver(popped);
         // A dynamic receiver that unboxes to a primitive string or an
@@ -228,6 +249,27 @@ impl Interp<'_> {
                     let record = Self::builtin_constructor_record(class_name);
                     stack.push(Value::Object(record));
                     return Ok(ArmFlow::Continue);
+                }
+            }
+        }
+        // An ordinary object reads `constructor` like any other property:
+        // its own, else through the prototype chain it was linked to (an
+        // instance of a constructor function, or of a run-time class).
+        if name == "constructor" {
+            if let Value::Object(obj) = &concrete {
+                match self.explicit_constructor(*obj) {
+                    Ok(Some(found)) => {
+                        stack.push(found);
+                        return Ok(ArmFlow::Continue);
+                    }
+                    Ok(None) => {}
+                    Err(RunError::Thrown(exception)) => {
+                        if self.route_exception(body, stack, pc, next - size, &exception) {
+                            return Ok(ArmFlow::Continue);
+                        }
+                        return Err(RunError::Thrown(exception));
+                    }
+                    Err(error) => return Err(error),
                 }
             }
         }
@@ -854,8 +896,10 @@ impl Interp<'_> {
                     self.proto_chain_accessor_setter(object, &name)
                 } else if !handled {
                     // A native-backed subclass instance inherits the setters
-                    // its class declares.
+                    // its class declares, and an ordinary object the setters
+                    // on its prototype chain (an instance of a run-time class).
                     Self::native_chain_accessor_setter(object, &name)
+                        .or_else(|| Self::dynamic_chain_accessor_setter(object, &name))
                 } else {
                     None
                 };
@@ -1960,9 +2004,11 @@ impl Interp<'_> {
                 return;
             }
             let proto = heap.alloc_dynamic();
-            if let Some(constructor) = Value::Function(handle).box_any(heap) {
-                heap.dynamic_define_data(proto, "constructor", constructor, true, false, true);
-            }
+            // `F.prototype.constructor === F`, writable, non-enumerable and
+            // configurable. A function value does not box into an `Any`, so
+            // it is installed as a (non-enumerable) function slot; boxing it
+            // here used to yield nothing and leave the property undefined.
+            heap.dynamic_set_method(proto, "constructor", handle);
             let proto_any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define_data(bag, "prototype", proto_any, true, false, false);
         });
