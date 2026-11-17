@@ -183,11 +183,22 @@ impl Interp<'_> {
                     _ => None,
                 }
                 .ok_or_else(|| {
-                    self.proto_type_error(&format!(
-                        "Symbol.prototype.{name} requires that 'this' be a Symbol"
-                    ))
+                    // Node names a symbol-keyed method as
+                    // `Symbol.prototype [ @@toPrimitive ]`, not with a dot.
+                    let shown = if name == "[Symbol.toPrimitive]" {
+                        "Symbol.prototype [ @@toPrimitive ]".to_owned()
+                    } else {
+                        format!("Symbol.prototype.{name}")
+                    };
+                    self.proto_type_error(&format!("{shown} requires that 'this' be a Symbol"))
                 })?;
-                if name == "valueOf" {
+                // `Symbol.prototype[Symbol.toPrimitive](hint)` answers the
+                // symbol itself whatever the hint, exactly as `valueOf` does.
+                // It is a *separate* function object, not an alias: node
+                // reports its `name` as `[Symbol.toPrimitive]` and its `length`
+                // as 1, so aliasing `valueOf` here would have answered
+                // `valueOf:0` -- right behaviour, wrong reflection.
+                if name == "valueOf" || name == "[Symbol.toPrimitive]" {
                     return Ok(recv);
                 }
                 let description = zun_gc::with_current_heap(|heap| {

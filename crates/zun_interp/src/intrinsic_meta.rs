@@ -464,7 +464,7 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
         &[("toExponential", 1), ("toFixed", 1), ("toPrecision", 1), ("toString", 1), ("valueOf", 0), ("toLocaleString", 0)],
     ),
     ("BigInt", &[("toString", 0), ("valueOf", 0)]),
-    ("Symbol", &[("toString", 0), ("valueOf", 0)]),
+    ("Symbol", &[("toString", 0), ("valueOf", 0), ("[Symbol.toPrimitive]", 1)]),
     ("WeakRef", &[("deref", 0)]),
     ("WeakMap", &[("delete", 1), ("get", 1), ("set", 2), ("has", 1)]),
     ("WeakSet", &[("delete", 1), ("has", 1), ("add", 1)]),
@@ -529,6 +529,21 @@ pub(crate) fn prototype_method_at(kind: u32) -> Option<(&'static str, &'static s
 /// non-enumerable, configurable, exactly like a built-in's own methods.
 pub(crate) fn install_prototype_methods(heap: &mut zun_gc::Heap, proto: zun_gc::Obj, class: &str) {
     for (kind, name) in prototype_methods_of(class) {
+        // A well-known-symbol-keyed method lives under that symbol, not under
+        // its display name. `Symbol.prototype[Symbol.toPrimitive]` is the only
+        // one so far; the name in the table is what `.name` must answer.
+        if class == "Symbol" && name == "[Symbol.toPrimitive]" {
+            let id = zun_core::WellKnownSymbol::ToPrimitive.id();
+            heap.dynamic_set_symbol_method(
+                proto,
+                id,
+                zun_core::FunctionHandle::new_builtin_method(kind),
+            );
+            // Non-writable, unlike an ordinary prototype method.
+            heap.dynamic_set_symbol_enumerable(proto, id, false);
+            heap.dynamic_set_symbol_attributes(proto, id, Some(false), Some(true));
+            continue;
+        }
         heap.dynamic_set_method(proto, name, zun_core::FunctionHandle::new_builtin_method(kind));
         // In the specification `Array.prototype[Symbol.iterator]` *is* the same
         // function object as `Array.prototype.values`, so it is installed under
