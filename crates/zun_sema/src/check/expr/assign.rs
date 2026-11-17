@@ -147,6 +147,31 @@ impl Checker<'_> {
                     || self.classes_by_name.contains_key(&text)
                     || self.realm_globals.contains_key(&text);
                 if known_declaration {
+                    // Assigning to a class or function declaration's own name
+                    // is a run-time TypeError in JS, not a compile error: the
+                    // binding is immutable and a class body is strict code, so
+                    // `class D { static f() { D = 1 } }` must throw when `f`
+                    // runs. Reporting "unknown variable" here was both the
+                    // wrong moment and the wrong message -- reading the same
+                    // name in the same place already worked.
+                    if let Some(&helper) = self.by_name.get("__zunAssignToConstant") {
+                        let throw = hir::Expr {
+                            kind: hir::ExprKind::Call {
+                                func: helper,
+                                args: Vec::new(),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                        return hir::Expr {
+                            kind: hir::ExprKind::Sequence {
+                                effect: Box::new(value),
+                                value: Box::new(throw),
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
                     self.error(target.span, format!("unknown variable `{text}`"));
                     return self.poison(span);
                 }

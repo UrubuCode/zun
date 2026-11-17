@@ -159,6 +159,14 @@ function __zunNotConstructor(name: string): any {
     throw new TypeError(name + " is not a constructor");
 }
 
+// Assignment to an immutable binding: a class or function declaration's own
+// name. JS makes this a run-time TypeError (a class body is strict code), not
+// a compile error -- the inner class-name binding is const, so
+// `class D { static f() { D = 1 } }` throws when `f` runs.
+function __zunAssignToConstant(): any {
+    throw new TypeError("Assignment to constant variable.");
+}
+
 // `String.prototype.m.call(thisArg, ...)`: RequireObjectCoercible + ToString of
 // the receiver (the adapter rewrites the call onto `ToString(thisArg).m(...)`).
 function __thisString(value: any): string {
