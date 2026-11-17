@@ -1222,6 +1222,24 @@ impl<'a> Interp<'a> {
                     Value::Str(_) => "String".into(),
                     Value::Function(_) => "Function".into(),
                     Value::Any(a) if a.as_symbol().is_some() => "Symbol".into(),
+                    // A namespace the prelude models as a class of statics
+                    // (`JSON`, `Atomics`, `crypto`) carries its own brand.
+                    Value::Any(a)
+                        if a.as_class_descriptor()
+                            .is_some_and(|token| self.descriptor_is_namespace(token)) =>
+                    {
+                        let rid = (a.as_class_descriptor().unwrap_or(0)
+                            & !zun_natives::USER_CLASS_FLAG) as usize;
+                        self.module
+                            .tables
+                            .type_defs
+                            .get(rid.wrapping_sub(1))
+                            .map(|def| {
+                                zun_natives::namespace_class_tag(self.module.strings.get(def.name))
+                                    .to_string()
+                            })
+                            .unwrap_or_else(|| "Object".into())
+                    }
                     Value::Object(obj) => {
                         // The tag read can run a user getter, which can move the
                         // object: read its address back afterwards.

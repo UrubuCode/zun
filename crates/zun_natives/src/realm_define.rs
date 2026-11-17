@@ -37,5 +37,13 @@ pub const MODULE: crate::Module = crate::Module {
 /// holds their static members), so the bare identifier evaluates to a class
 /// descriptor. `typeof` must still answer `"object"` for these: they are plain
 /// objects, not constructors. `Math`, `Reflect` and `Iterator` are seeded as
-/// real objects and need no entry.
-pub const NAMESPACE_CLASSES: &[&str] = &["JSON", "Atomics"];
+/// real objects and need no entry. `crypto` is listed too: in Node it is an
+/// instance of `Crypto`, and a namespace class is the one model that keeps the
+/// bare identifier and `globalThis.crypto` the same value.
+pub const NAMESPACE_CLASSES: &[&str] = &["JSON", "Atomics", "crypto"];
+
+/// The `Object.prototype.toString` brand of a [`NAMESPACE_CLASSES`] member: its
+/// own name, except `crypto`, whose brand is its interface name.
+pub fn namespace_class_tag(name: &str) -> &str {
+    if name == "crypto" { "Crypto" } else { name }
+}

@@ -758,7 +758,25 @@ const STATIC_METHODS: &[(&str, &[(&str, u32, &str)])] = &[
     // `isView`'s native lives in the `buffer` group rather than `collections`,
     // so its row names the module (see [`static_native`]).
     ("ArrayBuffer", &[("isView", 1, "buffer:isView")]),
+    // `from` / `of` of every typed-array constructor. The specification keeps
+    // them on the shared `%TypedArray%` intrinsic each constructor inherits
+    // from; here each constructor owns its pair, so `hasOwnProperty` answers
+    // `true` where Node says `false`. `static_methods.rs` adapts them by name.
+    ("Int8Array", TYPED_ARRAY_STATICS),
+    ("Uint8Array", TYPED_ARRAY_STATICS),
+    ("Uint8ClampedArray", TYPED_ARRAY_STATICS),
+    ("Int16Array", TYPED_ARRAY_STATICS),
+    ("Uint16Array", TYPED_ARRAY_STATICS),
+    ("Int32Array", TYPED_ARRAY_STATICS),
+    ("Uint32Array", TYPED_ARRAY_STATICS),
+    ("Float32Array", TYPED_ARRAY_STATICS),
+    ("Float64Array", TYPED_ARRAY_STATICS),
+    ("BigInt64Array", TYPED_ARRAY_STATICS),
+    ("BigUint64Array", TYPED_ARRAY_STATICS),
 ];
+
+/// The static methods every typed-array constructor carries.
+const TYPED_ARRAY_STATICS: &[(&str, u32, &str)] = &[("from", 1, ""), ("of", 0, "")];
 
 /// Split a [`STATIC_METHODS`] native entry into `(module, name)`. A bare name
 /// lives in the `collections` group; `module:name` names another group.

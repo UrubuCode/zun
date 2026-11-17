@@ -114,6 +114,11 @@ impl Interp<'_> {
         if class == "String" {
             return self.call_string_static(name, count, &arg);
         }
+        if let Some(kind) =
+            zun_core::TypedElement::ALL.iter().copied().find(|kind| kind.js_name() == class)
+        {
+            return self.call_typed_array_static(name, kind, count, &arg);
+        }
         if !native.is_empty() {
             let (module, native) = crate::intrinsic_meta::static_native(native);
             let (_, signature) = zun_natives::resolve(module, native).ok_or(RunError::BadToken)?;
@@ -471,6 +476,113 @@ impl Interp<'_> {
             }
             _ => Err(RunError::BadToken),
         }
+    }
+
+    /// `<TypedArray>.of` / `<TypedArray>.from` as function values, for the
+    /// constructor of element `kind`. Both run on the natives the typed call
+    /// sites lower to; a source that is neither an array nor a typed array (a
+    /// string, a `Set`, an array-like, any iterable) is collected into a plain
+    /// array first, exactly as `Array.from` reads it.
+    fn call_typed_array_static(
+        &mut self,
+        name: &str,
+        kind: zun_core::TypedElement,
+        count: usize,
+        arg: &dyn Fn(usize) -> Value,
+    ) -> Result<Value, RunError> {
+        let kind_index = Value::Int(i64::from(kind.index()), zun_il::NumKind::I32);
+        match name {
+            "of" => {
+                let list = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(count));
+                zun_gc::root!(list = list);
+                for index in 0..count {
+                    if let Value::Any(any) = arg(index) {
+                        zun_gc::with_current_heap_mut(|heap| heap.array_set(list.get(), index, any));
+                    }
+                }
+                let elements = self.typed_array_static_elements(Value::Object(list.get()), kind)?;
+                self.call_managed_collection("typedArrayOf", &[elements, kind_index])
+            }
+            "from" => {
+                // The mapper is validated before the source is touched.
+                let mapper = proto_concrete(arg(1));
+                if !matches!(mapper, Value::Void | Value::Function(_)) {
+                    let shown = self.dyn_to_string(&mapper)?;
+                    return Err(self.static_type_error(&format!("{shown} is not a function")));
+                }
+                let direct = |value: &Value| match value {
+                    Value::Object(object) => zun_gc::with_current_heap(|heap| {
+                        heap.array_len(*object).is_some()
+                            || heap.typed_array_len(*object).is_some()
+                    }),
+                    _ => false,
+                };
+                let source = if direct(&proto_concrete(arg(0))) {
+                    proto_concrete(arg(0))
+                } else {
+                    self.call_array_static("from", Value::Void, 1, arg)?
+                };
+                match proto_concrete(arg(1)) {
+                    Value::Function(handle) => self.call_managed_collection(
+                        "typedArrayFromMapped",
+                        &[source, Value::Function(handle), kind_index],
+                    ),
+                    _ => {
+                        let source = self.typed_array_static_elements(source, kind)?;
+                        self.call_managed_collection("typedArrayFrom", &[source, kind_index])
+                    }
+                }
+            }
+            _ => Err(RunError::BadToken),
+        }
+    }
+
+    /// The elements `<TypedArray>.from` / `.of` store, converted the way the
+    /// element kind demands: ToNumber for a number kind, and a BigInt kind
+    /// accepts BigInts only. A typed-array source is already converted.
+    fn typed_array_static_elements(
+        &mut self,
+        source: Value,
+        kind: zun_core::TypedElement,
+    ) -> Result<Value, RunError> {
+        let Value::Object(list) = source else {
+            return Ok(source);
+        };
+        let Some(length) = zun_gc::with_current_heap(|heap| heap.array_len(list)) else {
+            return Ok(source);
+        };
+        let big = matches!(
+            kind,
+            zun_core::TypedElement::I64 | zun_core::TypedElement::U64
+        );
+        // ToNumber can run a user `valueOf`, which can move both arrays.
+        zun_gc::root!(list = list);
+        let converted = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(length));
+        zun_gc::root!(converted = converted);
+        for index in 0..length {
+            let element = zun_gc::with_current_heap(|heap| heap.array_get(list.get(), index))
+                .map_or(Value::Void, Value::Any);
+            let concrete = proto_concrete(element.clone());
+            let stored = if big {
+                let is_bigint = matches!(&concrete, Value::Object(object)
+                    if zun_gc::with_current_heap(|heap| heap.bigint_value(*object).is_some()));
+                if !is_bigint {
+                    let shown = self.dyn_to_string(&concrete)?;
+                    return Err(self.static_type_error(&format!(
+                        "Cannot convert {shown} to a BigInt"
+                    )));
+                }
+                element
+            } else {
+                Value::Float(self.static_to_number(concrete)?, zun_il::NumKind::F64)
+            };
+            zun_gc::with_current_heap_mut(|heap| {
+                if let Some(any) = stored.box_any(heap) {
+                    heap.array_set(converted.get(), index, any);
+                }
+            });
+        }
+        Ok(Value::Object(converted.get()))
     }
 
     /// The result of `Array.of` / `Array.from` for the receiver `this`: `list`

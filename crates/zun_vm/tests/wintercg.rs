@@ -561,3 +561,100 @@ fn response_has_a_public_constructor() {
         ]
     );
 }
+
+#[test]
+fn crypto_is_a_branded_global_object() {
+    let out = run(r#"const g: any = globalThis;
+    const c: any = g.crypto;
+    const t = (f: () => any): string => {
+        try { return String(f()); } catch (e: any) { return "throw:" + e.constructor.name; }
+    };
+    console.log(typeof c, Object.prototype.toString.call(c), c === g.crypto);
+    console.log(typeof c.getRandomValues, typeof c.randomUUID, typeof c.subtle);
+    console.log(Object.prototype.toString.call(c.subtle), c.subtle === c.subtle);
+    console.log(Object.keys(c).length, Object.keys(g).indexOf("crypto") >= 0);
+    console.log(t(() => new c.getRandomValues(new Uint8Array(1))), t(() => new c.randomUUID()));"#);
+    assert_eq!(
+        out.lines,
+        [
+            "object [object Crypto] true",
+            "function function object",
+            "[object SubtleCrypto] true",
+            "0 true",
+            "throw:TypeError throw:TypeError",
+        ]
+    );
+}
+
+#[test]
+fn crypto_get_random_values_fills_every_integer_kind_in_place() {
+    let out = run(r#"const c: any = (globalThis as any).crypto;
+    const kinds: any[] = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array,
+        Int32Array, Uint32Array, BigInt64Array, BigUint64Array];
+    let line = "";
+    for (let k = 0; k < kinds.length; k++) {
+        const view: any = new kinds[k](64);
+        const same = c.getRandomValues(view) === view;
+        let nonZero = 0;
+        for (let i = 0; i < 64; i++) {
+            if (Number(view[i]) !== 0) { nonZero++; }
+        }
+        line += (same && nonZero > 32 ? "y" : "n");
+    }
+    console.log(line);
+    // Only the view's own window is written.
+    const backing = new Uint8Array(32);
+    c.getRandomValues(backing.subarray(8, 24));
+    let outside = 0;
+    for (let i = 0; i < 32; i++) {
+        if ((i < 8 || i >= 24) && backing[i] !== 0) { outside++; }
+    }
+    console.log(outside);
+    class Tagged extends Uint8Array {}
+    const tagged = new Tagged(8);
+    console.log(c.getRandomValues(tagged) === tagged, tagged instanceof Tagged);
+    console.log(c.getRandomValues(new Uint8Array(0)).length, c.getRandomValues(new Uint8Array(65536)).length);"#);
+    assert_eq!(out.lines, ["yyyyyyyyy", "0", "true true", "0 65536"]);
+}
+
+#[test]
+fn crypto_get_random_values_rejects_what_node_rejects() {
+    let out = run(r#"const c: any = (globalThis as any).crypto;
+    const t = (f: () => any): string => {
+        try { return String(f()); } catch (e: any) { return e.constructor.name + "/" + e.name + "/" + e.code; }
+    };
+    console.log(t(() => c.getRandomValues()));
+    const bad: any[] = [new Float32Array(2), new Float64Array(2), [1, 2], "abc", { length: 4 }, null,
+        undefined, 5, new ArrayBuffer(8), new DataView(new ArrayBuffer(8))];
+    let mismatches = 0;
+    for (let i = 0; i < bad.length; i++) {
+        if (t(() => c.getRandomValues(bad[i])) === "DOMException/TypeMismatchError/17") { mismatches++; }
+    }
+    console.log(mismatches);
+    console.log(t(() => c.getRandomValues(new Uint8Array(65537))));
+    console.log(t(() => c.getRandomValues(new Uint16Array(32769))), t(() => c.getRandomValues(new Uint16Array(32768)).length));"#);
+    assert_eq!(
+        out.lines,
+        [
+            "TypeError/TypeError/undefined",
+            "10",
+            "DOMException/QuotaExceededError/22",
+            "DOMException/QuotaExceededError/22 32768",
+        ]
+    );
+}
+
+#[test]
+fn crypto_random_uuids_are_distinct_lowercase_v4() {
+    let out = run(r#"const c: any = (globalThis as any).crypto;
+    const shape = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const seen = new Set<string>();
+    let valid = true;
+    for (let i = 0; i < 500; i++) {
+        const id: string = c.randomUUID();
+        if (!shape.test(id) || id.length !== 36) { valid = false; }
+        seen.add(id);
+    }
+    console.log(seen.size, valid);"#);
+    assert_eq!(out.lines, ["500 true"]);
+}

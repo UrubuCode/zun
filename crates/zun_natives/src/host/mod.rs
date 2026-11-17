@@ -85,16 +85,17 @@ fn is_tty(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError>
 }
 
 /// 64 bits of OS randomness (reinterpreted as an `i64`), for Web Crypto.
+///
+/// The operating system's CSPRNG is the only source. If it is unavailable the
+/// call fails: substituting a predictable value (time, a PRNG) under a
+/// `crypto` name would hand out guessable keys and identifiers silently.
 fn crypto_random_u64(_: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     let mut buf = [0u8; 8];
-    if getrandom::getrandom(&mut buf).is_err() {
-        // Essentially unreachable; degrade to a time-seeded value, not a panic.
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x9E37_79B9_7F4A_7C15);
-        buf = nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15).to_le_bytes();
-    }
+    getrandom::getrandom(&mut buf).map_err(|error| {
+        NativeError(format!(
+            "the operating system's random source is unavailable: {error}"
+        ))
+    })?;
     Ok(NativeValue::Int(i64::from_le_bytes(buf)))
 }
 

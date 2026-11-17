@@ -920,6 +920,12 @@ impl<'a> Interp<'a> {
                             }
                         }
                     }
+                    // A function relinked by `Object.setPrototypeOf`.
+                    if let Value::Function(handle) = &first {
+                        if let Some(link) = crate::function_prototype_override(*handle) {
+                            return Ok(Value::Any(link));
+                        }
+                    }
                     if is_builtin_ctor || matches!(first, Value::Function(_)) {
                         let proto = Self::function_prototype_singleton();
                         return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
@@ -963,6 +969,15 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
                 }
                 let prototype = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(obj));
+                // A link to a function's expando bag stands for that function
+                // (a function relinked onto a parent function).
+                if let Some(parent) = prototype
+                    .and_then(|link| link.as_object())
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+                    .and_then(crate::function_of_linked_bag)
+                {
+                    return Ok(Value::Any(parent));
+                }
                 if prototype.is_none() {
                     if let Some(kind) =
                         zun_gc::with_current_heap(|heap| heap.typed_array_element(obj))
@@ -1157,6 +1172,71 @@ impl<'a> Interp<'a> {
                             });
                         }
                     }
+                }
+                // A function value relinked by a script
+                // (`Object.setPrototypeOf(Derived, Base)`, the tsc `__extends`
+                // helper). Two links are kept: the one `Object.getPrototypeOf`
+                // answers (a parent function rides in its function cell), and
+                // the expando bag's own link, which points at the parent's bag
+                // so a static read inherits through it. `Function.prototype`
+                // itself restores the default.
+                if let Ok(Value::Function(target)) =
+                    unbox_arg(args.first().ok_or(RunError::BadToken)?)
+                {
+                    let proto_arg = args.get(1).ok_or(RunError::BadToken)?;
+                    // Everything that can allocate runs first, so no address
+                    // read below is taken across a collection.
+                    let _ = Self::function_prototype_singleton();
+                    let _ = crate::function_expando_bag(target);
+                    if let Ok(Value::Function(parent)) = unbox_arg(proto_arg) {
+                        let _ = crate::function_expando_bag(parent);
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.function_cell(parent);
+                        });
+                    }
+                    let Ok(Value::Function(handle)) = unbox_arg(&args[0]) else {
+                        return Err(RunError::BadToken);
+                    };
+                    let (link, lookup) = match unbox_arg(proto_arg) {
+                        Ok(Value::Function(parent)) => {
+                            let parent_bag = crate::function_expando_bag(parent);
+                            let cell = zun_gc::with_current_heap_mut(|heap| {
+                                Value::Function(parent).box_any_cell(heap)
+                            });
+                            if let Some(cell) = cell {
+                                crate::record_linked_function_bag(parent_bag, cell);
+                            }
+                            (cell, Some(zun_core::Any::object(parent_bag.addr() as usize)))
+                        }
+                        Ok(Value::Null | Value::Void) => {
+                            (Some(zun_core::Any::null()), Some(zun_core::Any::null()))
+                        }
+                        _ => {
+                            let link = match Self::class_token_of(proto_arg) {
+                                Some(token) => Some(zun_core::Any::class_descriptor(token)),
+                                None => prototype_from_arg(proto_arg),
+                            };
+                            (link, link)
+                        }
+                    };
+                    let Some(link) = link else {
+                        // Not an object or null: only `Reflect` reaches here.
+                        return Err(self.proto_type_error(
+                            "Object prototype may only be an Object or null",
+                        ));
+                    };
+                    let default = Self::function_prototype_singleton();
+                    let relinked = link.as_object() != Some(default.addr() as usize);
+                    crate::set_function_prototype_override(handle, relinked.then_some(link));
+                    let bag = crate::function_expando_bag(handle);
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_set_prototype(bag, lookup.filter(|_| relinked))
+                    });
+                    return Ok(if reflect {
+                        Value::Bool(true)
+                    } else {
+                        args[0].clone()
+                    });
                 }
                 let proxy =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;

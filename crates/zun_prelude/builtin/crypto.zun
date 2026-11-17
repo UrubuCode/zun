@@ -1,34 +1,81 @@
 // Nucleus `crypto` (Web Crypto basics, prelude class).
 //
 //   crypto.randomUUID()            RFC 4122 version-4 UUID string
-//   crypto.getRandomValues(arr)    fills a Uint8Array with random bytes
+//   crypto.getRandomValues(view)   fills an integer typed array in place and
+//                                  returns that same view
+//   crypto.subtle                  the `SubtleCrypto` object (no algorithms yet)
 //
-// Self-contained over the `host` group (`cryptoRandomU64`) and the `string`
-// group of `zun:core`. Deferred: other typed-array views, `subtle`.
+// Every random byte comes from the operating system's CSPRNG through the
+// `host` group's `cryptoRandomU64` native, which raises instead of degrading
+// when the OS source is unavailable. Nothing here may ever be backed by
+// `Math.random`.
+//
+// `crypto` is a namespace class (see `zun_natives::NAMESPACE_CLASSES`), so it
+// is one value for typed code and for `globalThis.crypto`. Known differences
+// from Node, where `crypto` is an instance of a `Crypto` class:
+//   * the members are own properties of `crypto`, not inherited ones, and the
+//     `Crypto` / `SubtleCrypto` / `CryptoKey` constructors are not globals;
+//   * a member called without its receiver works instead of throwing;
+//   * `subtle` carries no algorithms: `crypto.subtle.digest` is `undefined`.
 
 import { host as cryptoHost, string as cryptoString } from "zun:core";
 
+function __zunCryptoHexDigit(d: u64): string {
+    let digits = "0123456789abcdef";
+    return cryptoString.substring(digits, d, d + 1);
+}
+
+function __zunCryptoHexByte(b: u64): string {
+    return __zunCryptoHexDigit(b / 16) + __zunCryptoHexDigit(b % 16);
+}
+
+// One fresh random byte (0..255) from 64 OS random bits.
+function __zunCryptoRandomByte(): u64 {
+    let bits = cryptoHost.cryptoRandomU64() as u64;
+    return (bits >> 56) & 255;
+}
+
+// Whether `data` is a typed array of an integer element kind (a subclass
+// instance included). Float arrays, `DataView`, buffers and everything else
+// are not.
+function __zunCryptoIsIntegerView(data: any): boolean {
+    if (data === null || data === undefined || typeof data !== "object") {
+        return false;
+    }
+    return data instanceof Uint8Array || data instanceof Int8Array ||
+        data instanceof Uint8ClampedArray || data instanceof Int16Array ||
+        data instanceof Uint16Array || data instanceof Int32Array ||
+        data instanceof Uint32Array || data instanceof BigInt64Array ||
+        data instanceof BigUint64Array;
+}
+
+// The `SubtleCrypto` object behind `crypto.subtle`. It exists so the member
+// has Node's type and brand; no algorithm is implemented.
+class __ZunSubtleCrypto {
+    get [Symbol.toStringTag](): string {
+        return "SubtleCrypto";
+    }
+}
+
+// Holds the one `SubtleCrypto` object, away from `crypto` itself so the cache
+// is not an own property of the namespace.
+class __ZunCryptoState {
+    static subtle: any = null;
+}
+
 class crypto {
-    static hexDigit(d: u64): string {
-        let digits = "0123456789abcdef";
-        return cryptoString.substring(digits, d, d + 1);
-    }
-
-    static hexByte(b: u64): string {
-        return crypto.hexDigit(b / 16) + crypto.hexDigit(b % 16);
-    }
-
-    // One fresh random byte (0..255) from 64 OS random bits.
-    static randomByte(): u64 {
-        let bits = cryptoHost.cryptoRandomU64() as u64;
-        return (bits >> 56) & 255;
+    static get subtle(): any {
+        if (__ZunCryptoState.subtle === null) {
+            __ZunCryptoState.subtle = new __ZunSubtleCrypto();
+        }
+        return __ZunCryptoState.subtle;
     }
 
     static randomUUID(): string {
         let out = "";
         let i: u64 = 0;
         while (i < 16) {
-            let b: u64 = crypto.randomByte();
+            let b: u64 = __zunCryptoRandomByte();
             if (i == 6) {
                 b = (b & 15) | 64;
             }
@@ -38,26 +85,52 @@ class crypto {
             if (i == 4 || i == 6 || i == 8 || i == 10) {
                 out = out + "-";
             }
-            out = out + crypto.hexByte(b);
+            out = out + __zunCryptoHexByte(b);
             i = i + 1;
         }
         return out;
     }
 
-    static getRandomValues(arr: Uint8Array): Uint8Array {
-        let n: u64 = arr.length;
+    static getRandomValues(...args: any[]): any {
+        if (args.length === 0) {
+            throw new TypeError(
+                "Failed to execute 'getRandomValues' on 'Crypto': 1 argument required, but only 0 present.",
+            );
+        }
+        const data: any = args[0];
+        if (!__zunCryptoIsIntegerView(data)) {
+            throw new DOMException(
+                "The data argument must be an integer-type TypedArray",
+                "TypeMismatchError",
+            );
+        }
+        const size: number = data.byteLength;
+        if (size > 65536) {
+            throw new DOMException(
+                "The requested length exceeds 65,536 bytes",
+                "QuotaExceededError",
+            );
+        }
+        if (size === 0) {
+            return data;
+        }
+        // Write through a byte view of exactly the receiver's window, so every
+        // element kind (BigInt ones included) is filled with uniform bits and
+        // nothing outside a `subarray` is touched.
+        const bytes: Uint8Array = new Uint8Array(data.buffer, data.byteOffset, size);
+        let n: u64 = bytes.length;
         let i: u64 = 0;
         while (i < n) {
             let bits = cryptoHost.cryptoRandomU64() as u64;
             let k: u64 = 0;
             while (k < 8) {
                 if (i + k < n) {
-                    arr[i + k] = ((bits >> (k * 8)) & 255) as u8;
+                    bytes[i + k] = ((bits >> (k * 8)) & 255) as u8;
                 }
                 k = k + 1;
             }
             i = i + 8;
         }
-        return arr;
+        return data;
     }
 }

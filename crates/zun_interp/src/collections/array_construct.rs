@@ -629,6 +629,13 @@ impl<'a> Interp<'a> {
                             forwarded[0] = list;
                             return self.call_managed_collection(name, &forwarded);
                         }
+                        // A typed array is read element by element through the
+                        // shared view reader, so a BigInt kind yields BigInts.
+                        if name == "arrayFrom"
+                            && crate::typed_arrays::element_len(source).is_some()
+                        {
+                            return Ok(Value::Object(self.typed_array_snapshot(source)));
+                        }
                         // A typed array copies its numeric elements into a plain array.
                         if let Some(count) = crate::typed_arrays::element_len(source) {
                             let result =

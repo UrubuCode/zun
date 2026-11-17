@@ -264,3 +264,73 @@ fn array_buffer_slice_coerces_its_bounds() {
         ]
     );
 }
+
+#[test]
+fn a_function_can_be_relinked_onto_another_function() {
+    // `Object.setPrototypeOf(Derived, Base)` (the tsc `__extends` helper) used
+    // to raise "invalid argument to built-in function". The link must be
+    // visible to reflection and to a static read alike.
+    assert_eq!(
+        out(r#"function Base(this: any) {}
+        function Derived(this: any) {}
+        (Base as any).shared = 7;
+        const d: any = Derived;
+        console.log(Object.getPrototypeOf(Derived) === Function.prototype, d.shared);
+        console.log(Object.setPrototypeOf(Derived, Base) === Derived);
+        console.log(Object.getPrototypeOf(Derived) === Base, d.__proto__ === Base, d.shared);
+        console.log(Object.getPrototypeOf(Base) === Function.prototype);
+        const plain: any = { tag: "p" };
+        console.log(Reflect.setPrototypeOf(Derived, plain), Object.getPrototypeOf(Derived) === plain, d.tag, d.shared);
+        console.log(Reflect.setPrototypeOf(Derived, null), Object.getPrototypeOf(Derived) === null);
+        Object.setPrototypeOf(Derived, Function.prototype);
+        console.log(Object.getPrototypeOf(Derived) === Function.prototype, d.tag);"#),
+        [
+            "true undefined",
+            "true",
+            "true true 7",
+            "true",
+            "true true p undefined",
+            "true true",
+            "true undefined",
+        ]
+    );
+}
+
+#[test]
+fn typed_array_from_and_of_are_function_values() {
+    // Read through `any`, `<TypedArray>.from` / `.of` were `undefined` while
+    // the typed call sites worked.
+    assert_eq!(
+        out(r#"const show = (f: () => any): string => {
+            try { return String(f()); } catch (e: any) { return e.name + ": " + e.message; }
+        };
+        const I: any = Int16Array;
+        const B: any = BigInt64Array;
+        console.log(typeof I.from, typeof I.of, I.from.name, I.from.length, I.of.name, I.of.length);
+        console.log(show(() => I.from([1, 2, 3]).join(",")), "|", show(() => I.of(4, 5).join(",")), "|", show(() => I.of().length));
+        console.log(show(() => Object.prototype.toString.call(I.from(new I(2)))), "|", show(() => I.from(new Set([7, 8])).join(",")));
+        console.log(show(() => I.from("12").join(",")), "|", show(() => I.from({ length: 2, 0: 9, 1: 8 }).join(",")));
+        console.log(show(() => I.from([1, 2], (v: number, i: number) => v * 2 + i).join(",")));
+        console.log(show(() => B.from([1n, 2n]).join(",")), "|", show(() => typeof B.of(3n)[0]), "|", show(() => B.from([1])));"#),
+        [
+            "function function from 1 of 0",
+            "1,2,3 | 4,5 | 0",
+            "[object Int16Array] | 7,8",
+            "1,2 | 9,8",
+            "2,5",
+            "1,2 | bigint | TypeError: Cannot convert 1 to a BigInt",
+        ]
+    );
+}
+
+#[test]
+fn array_from_keeps_bigint_elements_of_a_bigint_view() {
+    assert_eq!(
+        out(r#"const signed: any = new BigInt64Array(2);
+        const unsigned: any = new BigUint64Array(1);
+        unsigned[0] = 18446744073709551615n;
+        console.log(Array.from(signed).map((v: any) => typeof v).join(","), String(Array.from(unsigned)[0]));
+        console.log(Array.from(new Int8Array([1, -2])).join(","));"#),
+        ["bigint,bigint 18446744073709551615", "1,-2"]
+    );
+}

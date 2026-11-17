@@ -106,8 +106,9 @@ pub const STREAMS: &str = include_str!("../builtin/streams.zun");
 
 pub const ABORT: &str = include_str!("../builtin/abort.zun");
 
-/// The `crypto` class (`builtin/crypto.zun`): Web Crypto `randomUUID` and
-/// `getRandomValues` over the `zun:core` OS-randomness native.
+/// The `crypto` namespace class (`builtin/crypto.zun`): Web Crypto `randomUUID`,
+/// `getRandomValues` and `subtle` over the `zun:core` OS-randomness native.
+/// Uses `DOMException`.
 pub const CRYPTO: &str = include_str!("../builtin/crypto.zun");
 
 /// The `Headers` class (`builtin/headers.zun`): case-insensitive header list.

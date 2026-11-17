@@ -513,11 +513,12 @@ const PLATFORM_FUNCTIONS: &[&str] = &[
     "fetch",
 ];
 
-/// Prelude classes (constructors, and the `Atomics` namespace) that are own
+/// Prelude classes (constructors, and the `Atomics` and `crypto` namespaces) that are own
 /// properties of the global object in Node.
 const PLATFORM_CLASSES: &[&str] = &[
     "Date",
     "Atomics",
+    "crypto",
     "DOMException",
     "TextEncoder",
     "TextDecoder",
@@ -542,7 +543,7 @@ const PLATFORM_CLASSES: &[&str] = &[
 impl Checker<'_> {
     /// Whether Node reports the global's own property as enumerable. Every
     /// ECMAScript and web-platform class, namespace and function is not; the
-    /// Node timer, microtask, clone and base64 functions (and `fetch`) are.
+    /// Node timer, microtask, clone and base64 functions, `fetch` and `crypto` are.
     fn platform_global_enumerable(name: &str) -> bool {
         matches!(
             name,
@@ -557,6 +558,7 @@ impl Checker<'_> {
                 | "fetch"
                 | "atob"
                 | "btoa"
+                | "crypto"
         )
     }
 }

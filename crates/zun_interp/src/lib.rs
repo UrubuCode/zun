@@ -2140,16 +2140,7 @@ pub(crate) fn function_expando_bag(handle: zun_core::FunctionHandle) -> zun_gc::
     // both alias a dead closure's properties onto a new closure and lose the
     // bag whenever the environment moved. Identity hashes are per-object,
     // monotonic, and survive a move.
-    let environment = handle
-        .environment()
-        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }.identity_hash())
-        .unwrap_or(0);
-    let key = format!(
-        "__fnbag:{}:{}:{}",
-        handle.method_rid(),
-        handle.is_bound(),
-        environment
-    );
+    let key = format!("__fnbag:{}", function_identity_key(handle));
     zun_gc::with_current_heap_mut(|heap| {
         let statics = heap.statics_object();
         if let Some(any) = heap.dynamic_get(statics, &key) {
@@ -2162,6 +2153,81 @@ pub(crate) fn function_expando_bag(handle: zun_core::FunctionHandle) -> zun_gc::
             heap.dynamic_set(statics, key, any);
         }
         bag
+    })
+}
+
+/// The part of a hidden statics-object key that names one function object:
+/// its method, whether it is bound, and its captured environment.
+fn function_identity_key(handle: zun_core::FunctionHandle) -> String {
+    let environment = handle
+        .environment()
+        .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }.identity_hash())
+        .unwrap_or(0);
+    format!(
+        "{}:{}:{}",
+        handle.method_rid(),
+        handle.is_bound(),
+        environment
+    )
+}
+
+/// The `[[Prototype]]` a script gave a function with `Object.setPrototypeOf`,
+/// or `None` while it still inherits `Function.prototype`. Kept beside the
+/// expando bag under a hidden `__fnproto:<function>` key, because the bag's own
+/// link points at the parent's *bag* (so static lookup inherits through it) and
+/// cannot name a parent function.
+pub(crate) fn function_prototype_override(
+    handle: zun_core::FunctionHandle,
+) -> Option<zun_core::Any> {
+    let key = format!("__fnproto:{}", function_identity_key(handle));
+    zun_gc::with_current_heap_mut(|heap| {
+        let statics = heap.statics_object();
+        heap.dynamic_get(statics, &key)
+            .filter(|link| link.tag() != zun_core::AnyTag::Void)
+    })
+}
+
+/// Record (`Some`) or clear (`None`) a function's relinked `[[Prototype]]`;
+/// see [`function_prototype_override`].
+pub(crate) fn set_function_prototype_override(
+    handle: zun_core::FunctionHandle,
+    link: Option<zun_core::Any>,
+) {
+    let key = format!("__fnproto:{}", function_identity_key(handle));
+    zun_gc::with_current_heap_mut(|heap| {
+        let statics = heap.statics_object();
+        heap.dynamic_set(statics, key, link.unwrap_or_else(zun_core::Any::void));
+    });
+}
+
+thread_local! {
+    /// Whether any function's expando bag has been linked as a prototype on
+    /// this thread; keeps [`function_of_linked_bag`] off the common path.
+    static FUNCTION_BAG_LINKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Remember that `bag` is the expando bag of `parent`, now serving as another
+/// function's `[[Prototype]]` link, so reflection can answer the function
+/// instead of leaking the bag.
+pub(crate) fn record_linked_function_bag(bag: zun_gc::Obj, parent: zun_core::Any) {
+    let key = format!("__bagfn:{}", bag.identity_hash());
+    zun_gc::with_current_heap_mut(|heap| {
+        let statics = heap.statics_object();
+        heap.dynamic_set(statics, key, parent);
+    });
+    FUNCTION_BAG_LINKED.with(|flag| flag.set(true));
+}
+
+/// The function (as its function cell) whose expando bag `bag` is, when that
+/// bag was linked as a prototype; see [`record_linked_function_bag`].
+pub(crate) fn function_of_linked_bag(bag: zun_gc::Obj) -> Option<zun_core::Any> {
+    if !FUNCTION_BAG_LINKED.with(std::cell::Cell::get) {
+        return None;
+    }
+    let key = format!("__bagfn:{}", bag.identity_hash());
+    zun_gc::with_current_heap_mut(|heap| {
+        let statics = heap.statics_object();
+        heap.dynamic_get(statics, &key)
     })
 }
 
