@@ -516,7 +516,21 @@ impl<'a> Interp<'a> {
         if handle.builtin_method().is_some_and(|kind| kind >= 16) {
             return self.invoke_builtin_with_this(handle, Value::Void, call_args);
         }
-        let (method_rid, mut final_args) = self.resolve_call_target(handle, call_args)?;
+        // A *bound* handle whose target is a built-in or a generator method has
+        // no method rid to resolve, so `resolve_call_target` raised `BadToken`
+        // and `xs.map(Math.max.bind(null, 5))` -- and the uncurried-this idiom
+        // `xs.map(m.call.bind(m))` -- answered
+        // `TypeError: invalid argument to built-in function`. A bound *user*
+        // function always worked. `invoke_function_value` already makes this
+        // distinction after unwrapping the chain; this is the same check on the
+        // callback path.
+        let (unwrapped, call_args) = self.unwrap_bound_chain(handle, call_args)?;
+        if unwrapped != handle
+            && (unwrapped.builtin_method().is_some() || unwrapped.generator_method().is_some())
+        {
+            return self.invoke_function_value(unwrapped, call_args);
+        }
+        let (method_rid, mut final_args) = Self::finish_call_target(unwrapped, call_args);
         // A class instance method used as a callback (`xs.map(inst.describe)`)
         // runs with the callback's `thisArg`, which is `undefined` here -- not
         // with the first real argument in the receiver slot. Without this the
