@@ -770,3 +770,46 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   measurements. Remaining there: a number written into a `BigInt64Array` is
   accepted where node throws, and `toSpliced` through a dynamic call is "not a
   function" even on a plain array.
+
+### After the property-store repair (`6e38aec3`)
+- **CLOSED - the store half of the own-property family.** Both store opcodes
+  called `as_object()` on whatever the receiver was, so a store on a class
+  value, a function or a primitive through `any` **aborted the engine** at
+  `value.rs:226`. `store_receiver` replaces it. `Reflect.set` now reaches
+  typed instances, `Map`/`Set`, class values and functions; function-valued own
+  properties survive `Object.values`/`entries`/`assign`/spread; an assigned
+  `hasOwnProperty`/`propertyIsEnumerable`/`isPrototypeOf` is honoured; and
+  `isFrozen`/`isSealed`/`isExtensible` answer node's false/false/true for an
+  object that was never frozen instead of true/true/false.
+- **Deliberate divergence from node, kept:** a store on a frozen object throws
+  `TypeError` where *sloppy* node is silent. The interpreter was already strict
+  for data stores, so this extends one rule instead of mixing two modes, and it
+  fails loudly rather than losing a write. A store on a *primitive* is silent,
+  where strict node throws.
+- **OPEN - a typed-code `StoreField` to a frozen instance is not refused.**
+  `box.tag = "z"` compiled as a direct field store bypasses the integrity
+  check; only `any` stores, `Reflect.set` and `Object.assign` are guarded.
+  Closing it needs an integrity bit that `StoreField` consults in **both** the
+  interpreter and the JIT, which does not exist -- the interp/JIT equivalence
+  invariant makes this a two-sided change, not a one-line check.
+- **OPEN - a function or class value cannot be frozen or sealed**
+  (`Object.freeze(fn)` is the identity), and `Reflect.set` with a function or an
+  array as the borrowed receiver returns false.
+- **OPEN - `F.m()` in typed code still calls the declared static** after
+  `(F as any).m = fn`, because the call is bound at compile time. The dynamic
+  read and call do see the override. Inherited statics are missing from
+  `for...in` on a subclass.
+- **OPEN - eight built-in static descriptors carry no `.value`**
+  (`Map.groupBy` and the seven `Promise` statics), kept folded in sema through
+  `FOLDED_STATIC_DESCRIPTORS` because the runtime has no function value for
+  them. The same shape `6f201f27`, `4141e09e` and `3fa7a60b` each fixed for a
+  different family.
+- **OPEN - `Date` instances leak their internal `t` field** into `Object.keys`
+  and `JSON.stringify`; `Error.stackTraceLimit` and an error's own
+  `stack`/`message` names are missing; `Reflect.ownKeys(fn)` throws; and a
+  store on the `JSON` namespace through `any` is dropped (no longer a panic).
+- **OPEN - `array-construction-and-species` did not move** (59 of 92 lines, 45
+  mismatches): its death point is `s.toSpliced(...)` through a dynamic call,
+  **not** the `Box.length` store that was assumed. Worth recording as a method
+  note: the blocker named in a report was one fixture earlier than the real one,
+  and only running it proved which.
