@@ -482,6 +482,10 @@ struct ClassInfo {
     /// The `extends` value is a runtime value rather than a known class, so the
     /// class is compiled base-less and `super(...)` is a no-op.
     dynamic_base: bool,
+    /// The `extends` value is `BigInt` or `Symbol`: a function that may be
+    /// named in an `extends` clause but throws a TypeError when constructed,
+    /// so `new` on such a class (through the implicit `super(...)`) throws too.
+    unconstructible_base: Option<&'static str>,
     /// The native built-in this class derives from (`Array`, `ArrayBuffer`, a
     /// typed array, `RegExp`: `zun_natives::NATIVE_CARRIER_BASES`), when its
     /// chain ends at a `__Builtin<Name>` carrier root.

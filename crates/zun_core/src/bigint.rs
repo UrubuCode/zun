@@ -716,3 +716,59 @@ mod js_string_tests {
         assert!(BigInt::parse("é1").is_err());
     }
 }
+
+impl BigInt {
+    /// The exact mathematical order of this BigInt against a `number`, as the
+    /// relational operators need it (ECMA-262 BigInt::lessThan with a Number
+    /// operand): `None` when `number` is `NaN` (every comparison is then
+    /// false), and otherwise the order of the two real values. Nothing is
+    /// rounded, so `2n ** 53n + 1n` is greater than `9007199254740992` and any
+    /// BigInt is below `Infinity`.
+    pub fn cmp_f64(&self, number: f64) -> Option<Ordering> {
+        if number.is_nan() {
+            return None;
+        }
+        if number == f64::INFINITY {
+            return Some(Ordering::Less);
+        }
+        if number == f64::NEG_INFINITY {
+            return Some(Ordering::Greater);
+        }
+        // Compare against the integer below `number`; when the two agree, a
+        // fractional part puts `number` strictly above.
+        let floor = number.floor();
+        let below = Self::from_f64(floor).ok()?;
+        Some(match self.cmp(&below) {
+            Ordering::Equal if number > floor => Ordering::Less,
+            order => order,
+        })
+    }
+}
+
+#[cfg(test)]
+mod number_order_tests {
+    use super::BigInt;
+    use core::cmp::Ordering::{Equal, Greater, Less};
+
+    #[test]
+    fn a_bigint_orders_exactly_against_a_number() {
+        let big = |text: &str| BigInt::parse_js_string(text).unwrap();
+        assert_eq!(big("1").cmp_f64(2.0), Some(Less));
+        assert_eq!(big("2").cmp_f64(2.0), Some(Equal));
+        assert_eq!(big("0").cmp_f64(-0.0), Some(Equal));
+        assert_eq!(big("1").cmp_f64(1.5), Some(Less));
+        assert_eq!(big("2").cmp_f64(1.5), Some(Greater));
+        assert_eq!(big("-1").cmp_f64(-0.5), Some(Less));
+        assert_eq!(big("-1").cmp_f64(-1.5), Some(Greater));
+        assert_eq!(big("5").cmp_f64(f64::NAN), None);
+        // Beyond 2^53 the number cannot represent the neighbour, the BigInt can.
+        assert_eq!(big("9007199254740993").cmp_f64(9007199254740992.0), Some(Greater));
+        assert_eq!(big("9007199254740992").cmp_f64(9007199254740992.0), Some(Equal));
+        // A BigInt past the largest finite number is still below Infinity.
+        let huge = BigInt::from_u64(2).pow(&BigInt::from_u64(1024)).unwrap();
+        assert_eq!(huge.cmp_f64(f64::INFINITY), Some(Less));
+        assert_eq!(huge.cmp_f64(f64::MAX), Some(Greater));
+        assert_eq!(huge.neg().cmp_f64(f64::NEG_INFINITY), Some(Greater));
+        assert_eq!(huge.neg().cmp_f64(-f64::MAX), Some(Less));
+    }
+}

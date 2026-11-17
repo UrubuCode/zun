@@ -67,6 +67,7 @@ impl<'a> Checker<'a> {
                 base: None,
                 base_name,
                 dynamic_base: false,
+                unconstructible_base: None,
                 native_base: None,
                 own_fields: Vec::new(),
                 own_initializers: Vec::new(),
@@ -100,6 +101,11 @@ impl<'a> Checker<'a> {
                         // is compiled base-less.
                         if self.is_runtime_value_name(&base_name) {
                             self.classes[i].dynamic_base = true;
+                            self.classes[i].unconstructible_base = match base_name.as_str() {
+                                "BigInt" => Some("BigInt"),
+                                "Symbol" => Some("Symbol"),
+                                _ => None,
+                            };
                             self.classes[i].base_name = None;
                         } else if let Some(b) = &c.base {
                             self.error(b.span, format!("unknown base class `{base_name}`"));

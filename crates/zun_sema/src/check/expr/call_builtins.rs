@@ -361,8 +361,17 @@ impl Checker<'_> {
                     }
                     value
                 }
+                // No description is `undefined`, which the native tells apart
+                // from an explicit `null` (`Symbol(null).description` is `"null"`).
                 None => hir::Expr {
-                    kind: hir::ExprKind::Null,
+                    kind: hir::ExprKind::Unary {
+                        op: ast::UnaryOp::Void,
+                        operand: Box::new(hir::Expr {
+                            kind: hir::ExprKind::Number(0.0),
+                            ty: Ty::F64,
+                            span,
+                        }),
+                    },
                     ty: Ty::Any,
                     span,
                 },

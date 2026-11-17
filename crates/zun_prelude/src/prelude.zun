@@ -145,11 +145,29 @@ function __coerceBoolean(value: any): boolean {
     return Boolean(value);
 }
 
+// `Symbol` read as a value is a class descriptor, yet it is callable
+// (`const S: any = Symbol; S("d")`, `Symbol.call(undefined, "d")`): the
+// interpreter runs this function when that descriptor is called rather than
+// constructed. `new Symbol()` never reaches it and still throws.
+function __zunSymbolCall(description?: any): any {
+    return Symbol(description);
+}
+
+// `new` on a class whose base refuses construction (`class B extends BigInt {}`,
+// `class S extends Symbol {}`): the implicit `super(...)` throws.
+function __zunNotConstructor(name: string): any {
+    throw new TypeError(name + " is not a constructor");
+}
+
 // `String.prototype.m.call(thisArg, ...)`: RequireObjectCoercible + ToString of
 // the receiver (the adapter rewrites the call onto `ToString(thisArg).m(...)`).
 function __thisString(value: any): string {
     if (value === null || value === undefined) {
         throw new TypeError("String.prototype method called on null or undefined");
+    }
+    // ToString, not `String(value)`: a Symbol receiver is a TypeError here.
+    if (typeof value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
     }
     return String(value);
 }

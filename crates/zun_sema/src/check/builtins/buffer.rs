@@ -118,18 +118,37 @@ impl Checker<'_> {
                 call(self, "nodeBufferAllocUnsafe", vec![size], u8_view)
             }
             "concat" => {
-                if args.len() != 1 {
+                // `Buffer.concat(list, totalLength?)`. Both operands are
+                // validated at run time, the way Node does: a `list` that is
+                // not an array, a member that is not a byte view and a
+                // `totalLength` that is not a safe non-negative integer each
+                // throw Node's own error.
+                if args.len() > 2 {
                     self.error(
                         span,
-                        "`Buffer.concat` expects 1 argument (a list)".to_string(),
+                        "`Buffer.concat` expects a list and an optional total length".to_string(),
                     );
                     return self.poison(span);
                 }
-                let list = self.check_expr(cx, &args[0]);
-                if list.ty != Ty::Array && !list.ty.is_error() {
-                    self.error(list.span, "`Buffer.concat` expects an array of buffers");
+                let undefined = self.undefined_ast(span);
+                let list = self.check_expr(cx, args.first().unwrap_or(&undefined));
+                let total = self.check_expr(cx, args.get(1).unwrap_or(&undefined));
+                if list.ty.is_error() || total.ty.is_error() {
+                    return self.poison(span);
                 }
-                call(self, "nodeBufferConcat", vec![list], u8_view)
+                let Some((id, _)) = zun_natives::resolve("nodeBufferExt", "nodeBufferConcatAny")
+                else {
+                    self.error(span, "missing Buffer intrinsic `nodeBufferConcatAny`");
+                    return self.poison(span);
+                };
+                hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![Self::box_to_any(list), Self::box_to_any(total)],
+                    },
+                    ty: u8_view,
+                    span,
+                }
             }
             "isBuffer" => {
                 if args.len() != 1 {

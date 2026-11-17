@@ -441,6 +441,11 @@ const PROTOTYPE_METHODS: &[(&str, &[(&str, u32)])] = &[
             ("substring", 2), ("startsWith", 1), ("toString", 0), ("toWellFormed", 0),
             ("trim", 0), ("trimStart", 0), ("trimEnd", 0), ("toLowerCase", 0),
             ("toUpperCase", 0), ("valueOf", 0),
+            // Annex B legacy HTML methods; mirrors `zun_natives::STRING_HTML_METHODS`
+            // (a test below keeps the two in step).
+            ("anchor", 1), ("big", 0), ("blink", 0), ("bold", 0), ("fixed", 0),
+            ("fontcolor", 1), ("fontsize", 1), ("italics", 0), ("link", 1), ("small", 0),
+            ("strike", 0), ("sub", 0), ("sup", 0),
         ],
     ),
     (
@@ -788,6 +793,20 @@ mod tests {
             assert_eq!(prototype_methods_of(class).len(), methods.len());
         }
         assert_eq!(prototype_method_at(BUILTIN_PROTO_BASE + seen.len() as u32), None);
+    }
+
+    #[test]
+    fn string_html_methods_are_reflected_with_their_specified_length() {
+        let reflected = prototype_methods_of("String");
+        for (name, _, attribute) in zun_natives::STRING_HTML_METHODS {
+            let kind = reflected
+                .iter()
+                .find(|(_, method)| method == name)
+                .map(|(kind, _)| *kind)
+                .unwrap_or_else(|| panic!("String.prototype.{name} is not reflected"));
+            let (_, _, length) = prototype_method_at(kind).expect("kind resolves");
+            assert_eq!(length, u32::from(!attribute.is_empty()), "String.prototype.{name}.length");
+        }
     }
 }
 

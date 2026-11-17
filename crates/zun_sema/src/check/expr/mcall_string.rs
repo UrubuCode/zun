@@ -100,6 +100,62 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        // The Annex B legacy HTML methods (`"x".big()`, `"x".anchor(name)`):
+        // the attribute value takes any type and is converted with ToString at
+        // run time, so they always go through the dynamic `stringMethod`.
+        if receiver.ty == Ty::String
+            && zun_natives::string_html_method(mname).is_some()
+            && args.len() <= 2
+        {
+            let checked: Vec<hir::Expr> = args.iter().map(|a| self.check_expr(cx, a)).collect();
+            if checked.iter().any(|e| e.ty.is_error()) {
+                return Ok(self.poison(span));
+            }
+            let Some((id, _)) = zun_natives::resolve("collections", "stringMethod") else {
+                self.error(span, "missing collection intrinsic `stringMethod`");
+                return Ok(self.poison(span));
+            };
+            let mut call_args = vec![
+                receiver,
+                hir::Expr {
+                    kind: hir::ExprKind::String(mname.to_string()),
+                    ty: Ty::String,
+                    span: method.span,
+                },
+            ];
+            // `stringMethod` takes exactly two operands; an omitted one is
+            // `undefined`.
+            let mut operands = checked.into_iter().map(Self::box_to_any);
+            for _ in 0..2 {
+                call_args.push(operands.next().unwrap_or_else(|| hir::Expr {
+                    kind: hir::ExprKind::Unary {
+                        op: ast::UnaryOp::Void,
+                        operand: Box::new(hir::Expr {
+                            kind: hir::ExprKind::Number(0.0),
+                            ty: Ty::F64,
+                            span,
+                        }),
+                    },
+                    ty: Ty::Any,
+                    span,
+                }));
+            }
+            let call = hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id,
+                    args: call_args,
+                },
+                ty: Ty::Any,
+                span,
+            };
+            return Ok(hir::Expr {
+                kind: hir::ExprKind::Convert {
+                    value: Box::new(call),
+                },
+                ty: Ty::String,
+                span,
+            });
+        }
         if receiver.ty == Ty::String
             && matches!(
                 mname,

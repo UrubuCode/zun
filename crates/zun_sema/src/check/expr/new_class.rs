@@ -214,6 +214,48 @@ impl Checker<'_> {
             }
             return self.wrap_hooked_new(class_idx, new, span);
         }
+        // `class Big extends BigInt {}` (or `Symbol`): the implicit constructor
+        // forwards to a base that refuses construction, so `new` throws a
+        // TypeError once its arguments are evaluated.
+        let mut unconstructible = None;
+        let mut walk = Some(class_idx);
+        while let Some(current) = walk {
+            let Some(info) = self.classes.get(current as usize) else {
+                break;
+            };
+            unconstructible = unconstructible.or(info.unconstructible_base);
+            walk = info.base;
+        }
+        if let Some(base) = unconstructible {
+            // The prelude helper throws `TypeError: <base> is not a constructor`.
+            let mut result = match self.by_name.get("__zunNotConstructor") {
+                Some(&func) => hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        func,
+                        args: vec![hir::Expr {
+                            kind: hir::ExprKind::String(base.to_string()),
+                            ty: Ty::String,
+                            span,
+                        }],
+                    },
+                    ty: Ty::Any,
+                    span,
+                },
+                None => self.runtime_type_error(cx, span),
+            };
+            for arg in args.iter().rev() {
+                let effect = self.check_expr(cx, arg);
+                result = hir::Expr {
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(effect),
+                        value: Box::new(result),
+                    },
+                    ty: Ty::Any,
+                    span,
+                };
+            }
+            return result;
+        }
         let field_tys: Vec<Ty> = self
             .full_fields(class_idx)
             .into_iter()

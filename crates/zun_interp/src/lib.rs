@@ -1328,6 +1328,12 @@ impl Interp<'_> {
                             }
                         }
                     }
+                    // A built-in constructor that is a plain function when called
+                    // (`const S: any = Symbol; S("d")`) runs its call behaviour.
+                    let function = match self.callable_ctor_handle(&function) {
+                        Some(handle) => Value::Function(handle),
+                        None => function,
+                    };
                     let Value::Function(handle) = function else {
                         // `Function(p1, ..., body)` reached as a value: calling the
                         // constructor is identical to constructing it.

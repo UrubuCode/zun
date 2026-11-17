@@ -51,6 +51,7 @@ mod collections;
 mod managed_methods;
 pub use managed_methods::{managed_method, ManagedMethod, ManagedTy};
 mod node_buffer;
+mod node_buffer_ext;
 pub use collections::USER_CLASS_FLAG;
 
 /// Built-ins whose subclasses are *native-backed*: `class X extends <Name>`
@@ -87,6 +88,8 @@ mod number;
 pub use number::{js_to_exponential, js_to_fixed, js_to_precision, js_to_radix_string};
 mod string;
 pub use string::normalize_form as string_normalize_form;
+mod string_html;
+pub use string_html::{create_html, string_html_method, STRING_HTML_METHODS};
 mod promise;
 mod math_late;
 mod object_ext;
@@ -386,6 +389,9 @@ pub static MODULES: &[Module] = &[
     // Runtime code generation from strings (`indirectEval`). Appended last so
     // every existing dispatch id stays stable.
     codegen::MODULE,
+    // `Buffer` intrinsics that postdate the `nodeBuffer` group. Appended last so
+    // every existing dispatch id stays stable.
+    node_buffer_ext::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

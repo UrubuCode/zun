@@ -453,10 +453,16 @@ impl Checker<'_> {
                     let direct = (lhs.ty == rhs.ty && lhs.ty == Ty::String)
                         || (prim(lhs.ty) && rhs.ty == Ty::F64)
                         || (lhs.ty == Ty::F64 && prim(rhs.ty));
-                    !direct
-                        && (prim(lhs.ty) || prim(rhs.ty))
-                        && (prim(lhs.ty) || lhs.ty == Ty::F64)
-                        && (prim(rhs.ty) || rhs.ty == Ty::F64)
+                    // A BigInt compares with a string, boolean or nullish
+                    // operand too (`1n < "2"`): only arithmetic refuses the
+                    // mix, so the dynamic comparison decides at run time.
+                    let bigint_mix = (lhs.ty == Ty::BigInt && prim(rhs.ty))
+                        || (prim(lhs.ty) && rhs.ty == Ty::BigInt);
+                    bigint_mix
+                        || (!direct
+                            && (prim(lhs.ty) || prim(rhs.ty))
+                            && (prim(lhs.ty) || lhs.ty == Ty::F64)
+                            && (prim(rhs.ty) || rhs.ty == Ty::F64))
                 })
         {
             (Self::box_to_any(lhs), Self::box_to_any(rhs))

@@ -7,6 +7,7 @@
 #![allow(clippy::wrong_self_convention)]
 
 use super::*;
+use core::cmp::Ordering;
 
 impl<'a> Interp<'a> {
     /// The current virtual time (ms), seeded lazily from the real `nowMillis`
@@ -525,39 +526,31 @@ impl<'a> Interp<'a> {
             }
             _ => false,
         };
-        let bigint_as_f64 = |v: &Value| -> Option<f64> {
+        let bigint_of = |v: &Value| -> Option<zun_core::BigInt> {
             match v {
-                Value::Object(obj) => zun_gc::with_current_heap(|heap| {
-                    heap.bigint_value(*obj)
-                        .map(|big| big.to_string().parse::<f64>().unwrap_or(f64::NAN))
-                }),
+                Value::Object(obj) => {
+                    zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).cloned())
+                }
                 _ => None,
             }
         };
-        // A BigInt against a non-BigInt primitive compares by (approximate) numeric value.
-        match (bigint_as_f64(&a), bigint_as_f64(&b)) {
+        // A BigInt against a non-BigInt primitive compares by exact
+        // mathematical value, never through a rounded `number`.
+        match (bigint_of(&a), bigint_of(&b)) {
             (Some(x), None) if !is_plain_object(&b) || matches!(b, Value::Str(_)) => {
-                let other = match &b {
-                    Value::Str(text) => js_string_to_number(text),
-                    other => self.to_number_value(other.clone())?,
-                };
-                stack[len - 2] = Value::Float(x, zun_il::NumKind::F64);
-                stack[len - 1] = Value::Float(other, zun_il::NumKind::F64);
+                let order = self.bigint_mixed_order(&x, &b)?;
+                Self::store_relational_order(stack, order);
                 return Ok(());
             }
             (None, Some(y)) if !is_plain_object(&a) || matches!(a, Value::Str(_)) => {
-                let other = match &a {
-                    Value::Str(text) => js_string_to_number(text),
-                    other => self.to_number_value(other.clone())?,
-                };
-                stack[len - 2] = Value::Float(other, zun_il::NumKind::F64);
-                stack[len - 1] = Value::Float(y, zun_il::NumKind::F64);
+                let order = self.bigint_mixed_order(&y, &a)?.map(Ordering::reverse);
+                Self::store_relational_order(stack, order);
                 return Ok(());
             }
             _ => {}
         }
         let numeric = |v: &Value| matches!(v, Value::Int(..) | Value::Float(..));
-        let both_bigint = bigint_as_f64(&a).is_some() && bigint_as_f64(&b).is_some();
+        let both_bigint = bigint_of(&a).is_some() && bigint_of(&b).is_some();
         let needs = !both_bigint
             && !(numeric(&a) && numeric(&b))
             && !(matches!(a, Value::Str(_)) && matches!(b, Value::Str(_)));
@@ -584,10 +577,28 @@ impl<'a> Interp<'a> {
             };
             prims.push(prim);
         }
-        if !prims.iter().all(|p| matches!(p, Value::Str(_))) {
-            for prim in prims.iter_mut() {
-                let number = self.to_number_value(prim.clone())?;
-                *prim = Value::Float(number, zun_il::NumKind::F64);
+        // ToPrimitive can itself answer a BigInt (`{ valueOf() { return 1n } }`):
+        // two BigInts compare as they are, and one against another primitive
+        // compares exactly, as above.
+        match (bigint_of(&prims[0]), bigint_of(&prims[1])) {
+            (Some(_), Some(_)) => {}
+            (Some(x), None) => {
+                let order = self.bigint_mixed_order(&x, &prims[1])?;
+                Self::store_relational_order(stack, order);
+                return Ok(());
+            }
+            (None, Some(y)) => {
+                let order = self.bigint_mixed_order(&y, &prims[0])?.map(Ordering::reverse);
+                Self::store_relational_order(stack, order);
+                return Ok(());
+            }
+            (None, None) => {
+                if !prims.iter().all(|p| matches!(p, Value::Str(_))) {
+                    for prim in prims.iter_mut() {
+                        let number = self.to_number_value(prim.clone())?;
+                        *prim = Value::Float(number, zun_il::NumKind::F64);
+                    }
+                }
             }
         }
         let second = prims.pop().ok_or(RunError::BadToken)?;
@@ -595,6 +606,42 @@ impl<'a> Interp<'a> {
         stack[len - 2] = first;
         stack[len - 1] = second;
         Ok(())
+    }
+
+    /// The order of `big` against the non-BigInt primitive `other` (ECMA-262
+    /// IsLessThan with one BigInt operand). A string is read with
+    /// StringToBigInt and compared as a BigInt; anything else is converted
+    /// with ToNumber and compared exactly. `None` means "undefined": an
+    /// unparsable string or a `NaN`, for which every relation is false.
+    fn bigint_mixed_order(
+        &mut self,
+        big: &zun_core::BigInt,
+        other: &Value,
+    ) -> Result<Option<Ordering>, RunError> {
+        match other {
+            Value::Str(text) => Ok(zun_core::BigInt::parse_js_string(text)
+                .ok()
+                .map(|parsed| big.cmp(&parsed))),
+            Value::Any(any) if any.as_symbol().is_some() => Err(RunError::Native(
+                "TypeError: Cannot convert a Symbol value to a number".into(),
+            )),
+            other => Ok(big.cmp_f64(self.to_number_value(other.clone())?)),
+        }
+    }
+
+    /// Replace the two operands on top of `stack` with a pair of numbers in
+    /// the given order, so the comparison opcode that follows answers it; an
+    /// undefined order becomes two `NaN`s, which every relation rejects.
+    fn store_relational_order(stack: &mut [Value], order: Option<Ordering>) {
+        let (first, second) = match order {
+            None => (f64::NAN, f64::NAN),
+            Some(Ordering::Less) => (0.0, 1.0),
+            Some(Ordering::Equal) => (0.0, 0.0),
+            Some(Ordering::Greater) => (1.0, 0.0),
+        };
+        let len = stack.len();
+        stack[len - 2] = Value::Float(first, zun_il::NumKind::F64);
+        stack[len - 1] = Value::Float(second, zun_il::NumKind::F64);
     }
 
     /// Owned-value spelling of [`Interp::dyn_to_number`], the one ToNumber.

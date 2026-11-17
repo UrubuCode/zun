@@ -625,6 +625,17 @@ impl Checker<'_> {
                 | Ty::Function(_)
                 | Ty::BufferView(_)
                 | Ty::Buffer
+                // A statically primitive target is valid JS: it takes the same
+                // run-time check as a primitive reaching `Reflect` through `any`
+                // (a TypeError, except for a string or a BigInt, which are how
+                // their wrapper objects are modelled -- `Object(255n)`).
+                | Ty::String
+                | Ty::Boolean
+                | Ty::BigInt
+                | Ty::Symbol
+                | Ty::Int(_)
+                | Ty::Float(_)
+                | Ty::Void
         ) {
             let target = checked.remove(0);
             checked.insert(0, Self::box_to_any(target));

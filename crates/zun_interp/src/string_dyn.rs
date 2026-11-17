@@ -353,6 +353,20 @@ impl<'a> Interp<'a> {
                 Value::Str(normalized.into())
             }
             "toString" | "valueOf" => Value::Str(recv.into()),
+            // The Annex B legacy HTML methods (`big`, `anchor`, `link`, ...):
+            // CreateHTML over the receiver, with the attribute value, when the
+            // method takes one, converted with ToString (so a Symbol throws
+            // and an object's `toString` runs, after the receiver's own).
+            _ if zun_natives::string_html_method(name).is_some() => {
+                let (tag, attribute) =
+                    zun_natives::string_html_method(name).ok_or(RunError::BadToken)?;
+                let value = if attribute.is_empty() {
+                    None
+                } else {
+                    Some(self.dyn_to_string(&a0)?)
+                };
+                Value::Str(zun_natives::create_html(recv, tag, attribute, value.as_deref()).into())
+            }
             "toUpperCase" => Value::Str(recv.to_uppercase().into()),
             "toLowerCase" => Value::Str(recv.to_lowercase().into()),
             _ => return Ok(None),

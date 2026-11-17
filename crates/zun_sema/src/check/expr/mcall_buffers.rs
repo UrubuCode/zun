@@ -373,7 +373,25 @@ impl Checker<'_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if !Self::view_call_is_dynamic(receiver.ty, mname, args.len()) {
+        // `ArrayBuffer.prototype.slice(begin, end)` keeps its typed native only
+        // when both bounds are written as numbers. Any other operand
+        // (`undefined`, `null`, a string, an object, an `any` value) needs the
+        // relative-index coercion the dynamic path performs, where an
+        // `undefined` end means "to the end"; the typed native takes exactly
+        // two integers and rejected everything else.
+        let numeric_literal = |arg: &ast::Expr| match arg {
+            ast::Expr::Number { .. } => true,
+            ast::Expr::Unary {
+                op: ast::UnaryOp::Neg,
+                operand,
+                ..
+            } => matches!(**operand, ast::Expr::Number { .. }),
+            _ => false,
+        };
+        let coerced_slice = receiver.ty == Ty::Buffer
+            && mname == "slice"
+            && !args.iter().all(numeric_literal);
+        if !coerced_slice && !Self::view_call_is_dynamic(receiver.ty, mname, args.len()) {
             return Err(receiver);
         }
         self.mcall_view_dynamic_forced(cx, receiver, mname, method, args, span)

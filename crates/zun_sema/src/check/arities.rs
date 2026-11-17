@@ -32,6 +32,12 @@ pub(in crate::check) fn math_function_length(name: &str) -> Option<f64> {
 /// Spec `length` of well-known built-in functions addressed by a dotted path
 /// such as `["Map", "groupBy"]` or `["Promise", "prototype", "then"]`.
 pub(in crate::check) fn builtin_function_length(path: &[&str]) -> Option<f64> {
+    // The Annex B legacy HTML methods: an attribute-taking one has length 1.
+    if let ["String", "prototype", name] = path {
+        if let Some((_, attribute)) = zun_natives::string_html_method(name) {
+            return Some(if attribute.is_empty() { 0.0 } else { 1.0 });
+        }
+    }
     Some(match path {
         ["Map", "groupBy"] | ["Object", "groupBy"] => 2.0,
         ["Promise", "all" | "race" | "allSettled" | "any" | "resolve" | "reject"] => 1.0,

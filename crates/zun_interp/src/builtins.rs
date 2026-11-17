@@ -479,10 +479,15 @@ pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
         "nodeBufferIndexOf",
         "nodeBufferLastIndexOf",
         "nodeBufferIncludes",
+        // The `nodeBufferExt` group (appended after `nodeBuffer` was frozen).
+        "nodeBufferConcatAny",
     ]
     .into_iter()
     .find(|&name| {
-        zun_natives::resolve("nodeBuffer", name).map(|(candidate, _)| candidate) == Some(id)
+        zun_natives::resolve("nodeBuffer", name)
+            .or_else(|| zun_natives::resolve("nodeBufferExt", name))
+            .map(|(candidate, _)| candidate)
+            == Some(id)
     })
     .map(|v| v as _)
 }

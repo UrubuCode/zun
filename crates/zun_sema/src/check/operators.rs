@@ -420,7 +420,15 @@ impl Checker<'_> {
                 }
             }
         }
+        let operand_is_this = matches!(operand, ast::Expr::Ident(name) if self.text(name) == "this");
         let mut operand = self.check_expr(cx, operand);
+        // `typeof this` in a method cannot fold to "object": a method borrowed
+        // with `call`/`apply`/`bind` receives whatever value was bound, and
+        // class code is strict, so a primitive receiver stays a primitive
+        // (`m.call(42)` sees `typeof this === "number"`). Read it at run time.
+        if operand_is_this && matches!(operand.ty, Ty::Instance(_)) {
+            operand = Self::box_to_any(operand);
+        }
         // `typeof undeclared` is "undefined", never a ReferenceError.
         if let hir::ExprKind::CallBuiltin { id, args } = &mut operand.kind {
             if let (Some((read, _)), Some((get, _))) = (

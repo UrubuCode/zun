@@ -218,6 +218,24 @@ fn codegen_disallowed() -> RunError {
 const NATIVE_GLOBAL_FUNCTIONS: &[&str] = &["eval"];
 
 impl Interp<'_> {
+    /// The function a built-in constructor value runs when it is *called*
+    /// rather than constructed, for the constructors that are plain functions
+    /// in ECMAScript but class descriptors here. Today that is `Symbol`
+    /// (`const S: any = Symbol; S("d")`, `Symbol.call(undefined, "d")`), which
+    /// the prelude's `__zunSymbolCall` implements. Construction does not come
+    /// through here, so `new Symbol()` keeps throwing its TypeError.
+    pub(crate) fn callable_ctor_handle(&self, value: &Value) -> Option<zun_core::FunctionHandle> {
+        let Value::Any(any) = value else {
+            return None;
+        };
+        let token = any.as_class_descriptor()?;
+        if Self::builtin_ctor_global_name(token) != Some("Symbol") {
+            return None;
+        }
+        let rid = self.free_function_rid("__zunSymbolCall")?;
+        Some(zun_core::FunctionHandle::new(rid, None))
+    }
+
     /// Whether `value` is the `Function` constructor (the realm descriptor
     /// behind the global `Function`).
     pub(crate) fn is_function_constructor(&self, value: &Value) -> bool {

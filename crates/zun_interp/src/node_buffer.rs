@@ -405,34 +405,137 @@ fn alloc_size(value: Option<&Value>) -> Result<usize, RunError> {
         }
     };
     if number.is_nan() || !(0.0..=9007199254740991.0).contains(&number) {
-        let shown = if number.is_nan() {
-            "NaN".to_string()
-        } else if number.is_infinite() {
-            if number < 0.0 { "-Infinity" } else { "Infinity" }.to_string()
-        } else if number.fract() == 0.0 {
-            // Node groups the digits of an integer above 2^32 with underscores.
-            let digits = format!("{}", number.abs() as u128);
-            if number.abs() > 4294967296.0 {
-                let mut grouped = String::new();
-                for (index, digit) in digits.chars().enumerate() {
-                    if index > 0 && (digits.len() - index) % 3 == 0 {
-                        grouped.push('_');
-                    }
-                    grouped.push(digit);
-                }
-                format!("{}{grouped}", if number < 0.0 { "-" } else { "" })
-            } else {
-                format!("{}", number as i64)
-            }
-        } else {
-            format!("{number}")
-        };
+        let shown = range_error_number(number);
         return Err(RunError::Native(format!(
             "RangeError: The value of \"size\" is out of range. It must be >= 0 && <= \
              9007199254740991. Received {shown}"
         )));
     }
     Ok(number as usize)
+}
+
+/// How Node prints a number in an `ERR_OUT_OF_RANGE` message: an integer
+/// above 2^32 has its digits grouped with underscores.
+fn range_error_number(number: f64) -> String {
+    if number.is_nan() {
+        "NaN".to_string()
+    } else if number.is_infinite() {
+        if number < 0.0 { "-Infinity" } else { "Infinity" }.to_string()
+    } else if number.fract() == 0.0 {
+        let digits = format!("{}", number.abs() as u128);
+        if number.abs() > 4294967296.0 {
+            let mut grouped = String::new();
+            for (index, digit) in digits.chars().enumerate() {
+                if index > 0 && (digits.len() - index) % 3 == 0 {
+                    grouped.push('_');
+                }
+                grouped.push(digit);
+            }
+            format!("{}{grouped}", if number < 0.0 { "-" } else { "" })
+        } else {
+            format!("{}", number as i64)
+        }
+    } else {
+        format!("{number}")
+    }
+}
+
+/// [`crate::collections::describe_received`], naming an array or a typed
+/// array the way Node does (`an instance of Uint16Array`).
+fn describe_received_view(value: &Value) -> String {
+    if let Value::Object(obj) = value {
+        let (is_array, element) = zun_gc::with_current_heap(|heap| {
+            (heap.array_len(*obj).is_some(), heap.typed_array_element(*obj))
+        });
+        if is_array {
+            return "an instance of Array".to_string();
+        }
+        if let Some(element) = element {
+            return format!("an instance of {}", element.js_name());
+        }
+    }
+    crate::collections::describe_received(value)
+}
+
+/// `Buffer.concat(list, totalLength?)`, validated the way Node does. `list`
+/// must be an array whose members are all `Uint8Array` views; `totalLength`,
+/// when not `undefined`, must be a non-negative safe integer and then fixes the
+/// result's size, truncating the joined bytes or zero-padding them.
+fn concat_any(list: &Value, total: &Value) -> Result<Value, RunError> {
+    let members = match list {
+        Value::Object(obj) => zun_gc::with_current_heap(|heap| {
+            let len = heap.array_len(*obj)?;
+            (0..len)
+                .map(|index| heap.array_get(*obj, index))
+                .collect::<Option<Vec<_>>>()
+        }),
+        _ => None,
+    };
+    let Some(members) = members else {
+        return Err(RunError::Native(format!(
+            "TypeError: The \"list\" argument must be an instance of Array. Received {}",
+            describe_received_view(list)
+        )));
+    };
+    let total = match total {
+        Value::Void => None,
+        Value::Int(number, _) => Some(*number as f64),
+        Value::Float(number, _) => Some(*number),
+        other => {
+            return Err(RunError::Native(format!(
+                "TypeError: The \"length\" argument must be of type number. Received {}",
+                describe_received_view(other)
+            )))
+        }
+    };
+    if let Some(number) = total {
+        if number.is_nan() || number.is_infinite() || number.fract() != 0.0 {
+            return Err(RunError::Native(format!(
+                "RangeError: The value of \"length\" is out of range. It must be an integer. \
+                 Received {}",
+                range_error_number(number)
+            )));
+        }
+        if !(0.0..=9007199254740991.0).contains(&number) {
+            return Err(RunError::Native(format!(
+                "RangeError: The value of \"length\" is out of range. It must be >= 0 && <= \
+                 9007199254740991. Received {}",
+                range_error_number(number)
+            )));
+        }
+    }
+    let mut bytes = Vec::new();
+    for (index, any) in members.into_iter().enumerate() {
+        let member = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+            .ok_or(RunError::BadToken)?;
+        let view = match &member {
+            Value::Object(obj)
+                if zun_gc::with_current_heap(|heap| heap.typed_array_element(*obj))
+                    == Some(zun_core::TypedElement::U8) =>
+            {
+                *obj
+            }
+            other => {
+                return Err(RunError::Native(format!(
+                    "TypeError: The \"list[{index}]\" argument must be an instance of Buffer or \
+                     Uint8Array. Received {}",
+                    describe_received_view(other)
+                )))
+            }
+        };
+        bytes.extend(view_bytes(view).ok_or(RunError::BadToken)?);
+    }
+    if let Some(number) = total {
+        // The size is allocated up front, so an absurd one is a failed
+        // allocation in Node; refuse it the same way instead of aborting.
+        if number > u32::MAX as f64 {
+            return Err(RunError::Native(
+                "RangeError: Array buffer allocation failed".to_string(),
+            ));
+        }
+        bytes.resize(number as usize, 0);
+    }
+    buffer_from_bytes(&bytes).ok_or(RunError::BadToken)
 }
 
 /// Run a `nodeBuffer*` intrinsic, or `None` when `name` is not one.
@@ -585,6 +688,14 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
                 bytes.extend(view_bytes(view).ok_or(RunError::BadToken)?);
             }
             buffer_from_bytes(&bytes).ok_or(RunError::BadToken)
+        })()),
+        "nodeBufferConcatAny" => Some((|| {
+            let list = crate::collections::unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+            let total = match args.get(1) {
+                Some(arg) => crate::collections::unbox_arg(arg)?,
+                None => Value::Void,
+            };
+            concat_any(&list, &total)
         })()),
         "nodeBufferIsBuffer" => Some((|| {
             let is_buffer = match object(args.first().ok_or(RunError::BadToken)?) {

@@ -133,8 +133,55 @@ impl<'a> Checker<'a> {
                 {
                     return self.lower_dynamic_reflective(cx, receiver, "call", args, span);
                 }
-                let mut combined: Vec<hir::Expr> =
-                    args.iter().map(|arg| self.check_expr(cx, arg)).collect();
+                // A method borrowed onto a receiver its class does not describe
+                // (`w.kindOfThis.call(42)`, `acct.show.call({ label: "x" })`):
+                // JS binds any value as `this`, so the call cannot be the
+                // positional one, whose receiver slot is typed as the class.
+                // The receiver is evaluated once into a temporary and the call
+                // goes through the dynamic `call` path, which owns the binding.
+                let mut this_checked = Some(self.check_expr(cx, &args[0]));
+                if !is_dynamic {
+                    let receiver_ty = self.signatures[func as usize].params.first().copied();
+                    let this_ty = this_checked.as_ref().map(|this| this.ty).unwrap_or(Ty::Error);
+                    if let Some(receiver_ty @ Ty::Instance(_)) = receiver_ty {
+                        if !self.signatures[func as usize].is_static
+                            && !this_ty.is_error()
+                            && !self.is_assignable(this_ty, receiver_ty)
+                        {
+                            let this_value = this_checked.take().expect("checked above");
+                            let (slot, tmp) = self.synthetic_local(cx, this_ty);
+                            let mut dynamic_args = args.to_vec();
+                            dynamic_args[0] = ast::Expr::Ident(tmp);
+                            let call = self.lower_dynamic_reflective(
+                                cx,
+                                receiver,
+                                "call",
+                                &dynamic_args,
+                                span,
+                            );
+                            return hir::Expr {
+                                kind: hir::ExprKind::Sequence {
+                                    effect: Box::new(hir::Expr {
+                                        kind: hir::ExprKind::Assign {
+                                            slot,
+                                            value: Box::new(this_value),
+                                        },
+                                        ty: this_ty,
+                                        span,
+                                    }),
+                                    value: Box::new(call),
+                                },
+                                ty: Ty::Any,
+                                span,
+                            };
+                        }
+                    }
+                }
+                let mut combined: Vec<hir::Expr> = Vec::with_capacity(args.len());
+                combined.extend(this_checked);
+                for arg in &args[1..] {
+                    combined.push(self.check_expr(cx, arg));
+                }
                 let return_ty = if is_dynamic {
                     // A plain dynamic function value accepts any argument count, like
                     // a direct call to it; only the fixed-shape predicate and reducer

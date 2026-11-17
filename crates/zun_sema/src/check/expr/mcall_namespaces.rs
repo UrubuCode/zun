@@ -218,6 +218,20 @@ impl Checker<'_> {
         // cross-realm registry.
         if class_name == "Symbol" && !self.classes_by_name.contains_key("Symbol") {
             let member = self.text(method).to_string();
+            // `Symbol.call(thisArg, description)`, `Symbol.apply(thisArg, [d])`
+            // and `Symbol.bind(thisArg)`: `Symbol` is a function, so the
+            // `Function.prototype` members act on the constructor value through
+            // the same dynamic member call an `any` receiver gets.
+            if matches!(member.as_str(), "call" | "apply" | "bind") {
+                if let Some(token) = self.realm_globals.get("Symbol").map(|b| b.token) {
+                    let receiver = self.realm_descriptor_expr(token, span);
+                    if let Ok(call) =
+                        self.mcall_view_dynamic_forced(cx, receiver, &member, method, args, span)
+                    {
+                        return Some(call);
+                    }
+                }
+            }
             let (native, arg_ty, ret_ty) = match member.as_str() {
                 "for" => ("symbolFor", Ty::String, Ty::Symbol),
                 "keyFor" => ("symbolKeyFor", Ty::Symbol, Ty::Any),

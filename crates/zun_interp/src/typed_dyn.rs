@@ -79,6 +79,14 @@ impl Interp<'_> {
             None | Some(Value::Void) => return Ok(default),
             Some(other) => unbox_arg(other)?,
         };
+        // ToIntegerOrInfinity refuses the two primitives ToNumber cannot read.
+        if matches!(&value, Value::Object(o) if zun_gc::with_current_heap(|h| h.bigint_value(*o).is_some()))
+        {
+            return Err(self.view_error("TypeError", "Cannot convert a BigInt value to a number"));
+        }
+        if matches!(&value, Value::Any(any) if any.as_symbol().is_some()) {
+            return Err(self.view_error("TypeError", "Cannot convert a Symbol value to a number"));
+        }
         let n = integer_of(self.dyn_to_number(&value)?);
         Ok(if n < 0.0 {
             (len as f64 + n).max(0.0) as usize

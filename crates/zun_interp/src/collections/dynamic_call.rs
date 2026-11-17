@@ -152,6 +152,18 @@ impl<'a> Interp<'a> {
                 let receiver_concrete = zun_gc::with_current_heap(|heap| {
                     unbox_function_box(receiver_concrete, heap)
                 });
+                // `Symbol.call(...)`, `.apply(...)` and `.bind(...)`: the
+                // constructor value is callable, so the three
+                // `Function.prototype` members act on its call behaviour.
+                let receiver_concrete =
+                    if matches!(member.as_ref(), "call" | "apply" | "bind") {
+                        match self.callable_ctor_handle(&receiver_concrete) {
+                            Some(handle) => Value::Function(handle),
+                            None => receiver_concrete,
+                        }
+                    } else {
+                        receiver_concrete
+                    };
                 if let Value::Str(_) = &receiver_concrete {
                     if let Some((id, native)) = zun_natives::resolve("string", &member) {
                         let mut native_values = Vec::with_capacity(args.len() - 1);
@@ -745,6 +757,16 @@ impl<'a> Interp<'a> {
                     .is_some_and(|any| self.is_function_constructor(&Value::Any(any)))
                 {
                     return self.function_from_strings_boxed(call_args);
+                }
+                // A callable constructor held as a property (`globalThis.Symbol("d")`).
+                if let Some(handle) =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get(namespace, &member))
+                        .and_then(|any| self.callable_ctor_handle(&Value::Any(any)))
+                {
+                    let result = self.invoke_function_value(handle, call_args)?;
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::null);
+                    return Ok(Value::Any(boxed));
                 }
                 // An own non-callable data property on an array (`arr.join = "x"`)
                 // shadows the built-in method of that name: calling it is a

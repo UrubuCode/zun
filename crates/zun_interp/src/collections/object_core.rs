@@ -713,15 +713,14 @@ impl<'a> Interp<'a> {
                 Ok(Value::Float(token, zun_il::NumKind::F64))
             }
             "symbolNew" => {
-                // `Symbol(description?)` mints a fresh, unique symbol. `Void`
-                // (undefined) or `Null` means no description.
-                let description = match args.first() {
+                // `Symbol(description?)` mints a fresh, unique symbol. An
+                // omitted or `undefined` description means none; anything else
+                // is converted with ToString (`Symbol(42).description` is
+                // `"42"`, `Symbol(null)` is `"null"`, and a Symbol throws).
+                let description = match args.first().map(unbox_arg).transpose()? {
+                    None | Some(Value::Void) => None,
                     Some(Value::Str(text)) => Some(text.to_string()),
-                    Some(Value::Any(any)) => zun_gc::with_current_heap(|heap| {
-                        any.as_string()
-                            .and_then(|handle| heap.try_string(handle).map(|s| s.to_string()))
-                    }),
-                    _ => None,
+                    Some(other) => Some(self.dyn_to_string(&other)?),
                 };
                 let id = zun_gc::with_current_heap_mut(|heap| heap.symbol_create(description));
                 Ok(Value::Any(zun_core::Any::symbol(id)))
