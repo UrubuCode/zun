@@ -985,3 +985,37 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
 - **Noted trade-off:** when `.call` takes the dynamic path for a primitive
   receiver, the `this` argument is evaluated before the callee expression.
   Observable only if both have side effects.
+
+### At `e6183f7b` (145 of 168)
+- **CLOSED - the fifth and last known site of the receiver-insertion family.**
+  A class instance method *stored on* a plain object (`o.show =
+  C.prototype.show; o.show()`) was called with **no receiver**, because the
+  own-function dispatch decided "takes a receiver" from the `@this` closure
+  suffix alone -- the marker an object-literal method carries. It now also asks
+  `method_rid_is_instance_method`. The whole family, for the record:
+  `5b75749a` -> `4ae8a539` (`.call`/`.apply` shifted a free function's
+  arguments), `c07a0cea` (a rest function with >= 2 parameters), `0f47da98`
+  (the array-callback `thisArg`), `529da44a` (the typed field receiver), and
+  this one. Four inserted the receiver wrongly; this one omitted it. **The
+  question is always "owned by a class and non-static, or explicit `@this`",
+  and five different sites each asked it differently.** A sixth site is
+  recorded below.
+- **OPEN - the sixth site, and the only one still known: a *bare* call of a
+  detached instance method.** `const d: any = C.prototype.m; d(5)` puts `5` in
+  the receiver slot. The fix belongs in `invoke_function_value`
+  (`collections/runtime_iter.rs`), but that has twelve callers, several of
+  which legitimately supply a receiver as the first argument (the `kind >= 16`
+  built-in branch does exactly that), so a change there risks the four fixes
+  above. No fixture needs it and it fails loudly, so it is deliberately left.
+- **OPEN - `Function.prototype`'s methods do not read off a function value.**
+  `typeof m.call`, `m.apply`, `m.bind` and `m.toString` are all `undefined`
+  for a function value `m`, while `m.call(...)` works (the call syntax is
+  special-cased) and `Function.prototype.call.bind(m)` works. So the
+  uncurried-this idiom `m.call.bind(m)` throws. It is the park of
+  `fn-meta/this-binding-and-arrows` at 73 of 99 lines. **A time-boxed attempt
+  failed and was reverted:** adding the four names to the `Value::Function`
+  arm of the member read in `dyn_member.rs` (around the `function_meta` call)
+  changed nothing, so that arm is not the path a `m.call` read takes. The next
+  attempt should instrument to find the real read site first -- the same
+  mistake, and the same remedy, as the uncaught-throw rendering recorded
+  earlier.
