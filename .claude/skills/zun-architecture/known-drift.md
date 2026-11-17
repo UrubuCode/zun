@@ -1019,3 +1019,38 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   attempt should instrument to find the real read site first -- the same
   mistake, and the same remedy, as the uncaught-throw rendering recorded
   earlier.
+
+### Target reached: 152 of 169 (`23ffa5e3`)
+- **SECURITY, closed - `crypto` had a predictable fallback.**
+  `crypto_random_u64` degraded to `nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15)`
+  when the OS source failed, handing out a guessable value under the `crypto`
+  name, with a comment calling it "essentially unreachable". It now returns an
+  error. **The rule this run settled on: a `crypto` primitive either has the
+  OS CSPRNG or it fails loudly.** Never substitute time or a PRNG behind that
+  name, and never under a fixture's "values are never printed" excuse -- the
+  probe would pass and the defect would ship.
+- **Node's `getRandomValues` rejections are `DOMException`s, not TypeErrors:**
+  `TypeMismatchError` (code 17) for a float array, plain array, string,
+  object, `null`, number, `ArrayBuffer` or `DataView`, and
+  `QuotaExceededError` (code 22) over 65536 **bytes** (so `Uint16Array(32769)`
+  throws). A **detached** buffer does not throw -- it answers length 0. Only
+  the no-argument call is a TypeError.
+- **`crypto` is modelled as a namespace class of statics** (like `JSON` and
+  `Atomics`) where node has an instance of `Crypto`. Deliberate, and the cost
+  is reflection: members are own and non-enumerable, `getOwnPropertyNames`
+  is not empty, `getRandomValues.length` is 0 where node says 1, and
+  `Crypto`/`SubtleCrypto`/`CryptoKey` are not globals. `subtle` is a branded
+  object whose algorithms fail loudly rather than returning plausible bytes.
+- **OPEN, engine panic:** typed
+  `Array.from(new Int8Array([1, 2]), (v: number) => v * 3)` aborts at
+  `value.rs:157` ("expected float, found Int"). The fourth site of the `as_*`
+  accessor-panic family; three others were closed in this run.
+- **OPEN - `Array.from(<BigInt64Array>, mapper)` hands the mapper numbers**
+  (the unmapped form was fixed), `Int8Array.from([300])` saturates to 127
+  where node wraps to 44, and each typed-array constructor owns its own
+  `from`/`of` so `Int8Array.from === Uint8Array.from` is false where node says
+  true.
+- **OPEN - a dynamic call pads an omitted argument with `null`, not
+  `undefined`**, and `arguments.length` reads 1 for a call with none. This is
+  what forced `getRandomValues` to be declared with a rest parameter, and it
+  is the same gap recorded at the 140 mark for parameter defaults.
