@@ -25,9 +25,9 @@ impl Checker<'_> {
                 let base_text = self.text(base).to_string();
                 let base_is_dynamic = !self.classes_by_name.contains_key(&base_text)
                     && !self.realm_globals.contains_key(&base_text)
-                    && cx.lookup(&base_text).is_some_and(|slot| {
+                    && (cx.lookup(&base_text).is_some_and(|slot| {
                         matches!(cx.locals[slot as usize], Ty::Any | Ty::DynamicObject)
-                    });
+                    }) || self.dynamic_module_global_name(cx, base, &base_text));
                 if base_is_dynamic {
                     let member = self.text(field).to_string();
                     let base_expr = self.check_expr(cx, &ast::Expr::Ident(*base));
@@ -136,6 +136,10 @@ impl Checker<'_> {
             unreachable!()
         };
         let name = self.text(class).to_string();
+        // The deprecated `new Buffer(arg, encodingOrOffset, length)`.
+        if name == "Buffer" && !self.classes_by_name.contains_key("Buffer") {
+            return self.check_buffer_ctor(cx, args, span);
+        }
         // Forms that must be caught before the realm/built-in paths
         // (collection-argument sugar, `new Function`, cross-module and
         // proxy-local construction).

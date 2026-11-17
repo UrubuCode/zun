@@ -24,6 +24,8 @@ mod namespace;
 mod native;
 mod native_error;
 mod node_buffer;
+mod node_buffer_checked;
+mod node_buffer_ops;
 mod operands;
 mod output;
 mod property_ops;
@@ -1445,6 +1447,17 @@ impl Interp<'_> {
                         stack.push(result);
                         continue;
                     }
+                    // A plain call of a receiver-taking closure value (`const f =
+                    // function () { this.x }; f(1)`): the receiver is `undefined`,
+                    // so the hidden first parameter must not swallow an argument.
+                    let args = if (counted || dynamic) && self.handle_is_this_closure(handle) {
+                        let mut with_receiver = Vec::with_capacity(args.len() + 1);
+                        with_receiver.push(Value::Void);
+                        with_receiver.extend(args);
+                        with_receiver
+                    } else {
+                        args
+                    };
                     if handle.is_bound() {
                         // A `bind`-produced bound function: resolve its target and
                         // prepended arguments, then dispatch through the shared
@@ -2080,7 +2093,11 @@ impl Interp<'_> {
         } else {
             self.minor_collections = self.minor_collections.saturating_add(1);
         }
-        self.gc_interval = next_gc_interval(self.gc_interval, reclaimed, young_before);
+        let live_objects = zun_gc::with_current_heap(|heap| {
+            let (young, old) = heap.generation_counts();
+            young + old
+        });
+        self.gc_interval = next_gc_interval(self.gc_interval, reclaimed, young_before, live_objects);
     }
 }
 

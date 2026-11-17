@@ -51,7 +51,6 @@ mod collections;
 mod managed_methods;
 pub use managed_methods::{managed_method, ManagedMethod, ManagedTy};
 mod node_buffer;
-mod node_buffer_ext;
 pub use collections::USER_CLASS_FLAG;
 
 /// Built-ins whose subclasses are *native-backed*: `class X extends <Name>`
@@ -391,7 +390,6 @@ pub static MODULES: &[Module] = &[
     codegen::MODULE,
     // `Buffer` intrinsics that postdate the `nodeBuffer` group. Appended last so
     // every existing dispatch id stays stable.
-    node_buffer_ext::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

@@ -291,7 +291,70 @@ impl Checker<'_> {
                     self.closure_takes_this = true;
                 }
             }
+            // A plain (JavaScript) `function () { ... this ... }` has no `this:`
+            // annotation, but its body reads the receiver, so it takes the hidden
+            // parameter too: `emitter.on('x', function () { this.close(); })` and
+            // `fn.call(obj)` bind `this` instead of leaving it undefined.
+            if !self.closure_takes_this && mentions_this_word(text) {
+                self.closure_takes_this = true;
+            }
         }
         self.check_closure_expr(cx, function, span)
+    }
+}
+
+/// Whether `text` uses the word `this` as code: not inside a comment or a
+/// string literal, and not part of a longer identifier.
+fn mentions_this_word(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if b == b'/' && bytes.get(i + 1) == Some(&b'*') {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2;
+        } else if b == b'\'' || b == b'"' {
+            i += 1;
+            while i < bytes.len() && bytes[i] != b {
+                if bytes[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            i += 1;
+        } else if is_ident(b) {
+            let start = i;
+            while i < bytes.len() && is_ident(bytes[i]) {
+                i += 1;
+            }
+            if &bytes[start..i] == b"this" {
+                return true;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod this_word_tests {
+    use super::mentions_this_word;
+
+    #[test]
+    fn finds_code_uses_only() {
+        assert!(mentions_this_word("function () { return this.x; }"));
+        assert!(mentions_this_word("function (a) { a(this); }"));
+        assert!(!mentions_this_word("function (e) { // on this system\n return e; }"));
+        assert!(!mentions_this_word("function (e) { /* this */ return 'this'; }"));
+        assert!(!mentions_this_word("function (e) { return thisArg + this_ + $this; }"));
     }
 }

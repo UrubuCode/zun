@@ -64,7 +64,7 @@ impl Checker<'_> {
                 let member = name[dot + 1..].to_string();
                 let base_is_dynamic = cx.lookup(base).is_some_and(|slot| {
                     matches!(cx.locals[slot as usize], Ty::Any | Ty::DynamicObject)
-                });
+                }) || self.dynamic_module_global(cx, class, base);
                 if base_is_dynamic {
                     let base_name = ast::Name {
                         span: Span::new(class.span.start, class.span.start + base.len() as u32),
@@ -374,6 +374,40 @@ impl Checker<'_> {
         }
         self.error(class.span, format!("unknown class `{name}`"));
         self.poison(span)
+    }
+
+    /// Whether `base` (the receiver of a dotted `new base.member(...)`) is a
+    /// module-level `any`/dynamic-object variable read from inside a function,
+    /// where it is not a local of `cx`. Such a receiver constructs through
+    /// `dynamicConstruct`, which rejects a non-class member with a TypeError,
+    /// instead of silently calling the member.
+    pub(in crate::check) fn dynamic_module_global(
+        &mut self,
+        cx: &mut FunctionCx,
+        class: &ast::Name,
+        base: &str,
+    ) -> bool {
+        let name = ast::Name {
+            span: Span::new(class.span.start, class.span.start + base.len() as u32),
+        };
+        self.dynamic_module_global_name(cx, &name, base)
+    }
+
+    pub(in crate::check) fn dynamic_module_global_name(
+        &mut self,
+        cx: &mut FunctionCx,
+        base_name: &ast::Name,
+        base: &str,
+    ) -> bool {
+        if cx.lookup(base).is_some()
+            || !self.module_globals.contains(base)
+            || self.classes_by_name.contains_key(base)
+            || self.realm_globals.contains_key(base)
+        {
+            return false;
+        }
+        let probe = self.check_expr(cx, &ast::Expr::Ident(*base_name));
+        matches!(probe.ty, Ty::Any | Ty::DynamicObject)
     }
 
     /// Lower `new callee(args)` to the `reflectConstruct` native: the callee is

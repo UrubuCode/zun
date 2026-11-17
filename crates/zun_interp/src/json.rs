@@ -379,6 +379,20 @@ impl Interp<'_> {
                     Some(text) => Value::Str(text.into()),
                     None => Value::Null,
                 };
+            } else if zun_gc::with_current_heap(|heap| {
+                heap.typed_array_element(obj) == Some(zun_core::TypedElement::U8)
+                    && inherited_function(heap, obj, "toJSON").is_none()
+            }) {
+                // A Node `Buffer` serialises as `{ type: 'Buffer', data: [..] }`.
+                let json = self.nb_to_json(obj, &[])?;
+                value = match json {
+                    Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                        .unwrap_or(Value::Void),
+                    other => other,
+                };
+                if let Some(next) = as_obj(&value) {
+                    ctx.slot_set(slot, next);
+                }
             } else if let Some(handle) =
                 zun_gc::with_current_heap(|heap| inherited_function(heap, obj, "toJSON"))
             {

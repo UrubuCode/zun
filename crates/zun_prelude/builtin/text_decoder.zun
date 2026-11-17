@@ -82,7 +82,7 @@ class TextDecoder {
             return this.decode16(bytes);
         }
         if (this.enc == "windows-1252") {
-            return decBuffer.nodeBufferToString(bytes, "latin1", 0, bytes.length);
+            return decBuffer.nodeBufferToString(bytes, "latin1" as any, 0 as any, bytes.length as any);
         }
         // UTF-8 streaming: an incomplete trailing sequence is held for the next call.
         const stream: boolean = options !== null && options !== undefined && options.stream ? true : false;
@@ -126,7 +126,7 @@ class TextDecoder {
         if (!this.bomFlag && bytes.length >= 3 && bytes[0] == 239 && bytes[1] == 187 && bytes[2] == 191) {
             start = 3;
         }
-        const text: string = decBuffer.nodeBufferToString(bytes, "utf8", start, bytes.length);
+        const text: string = decBuffer.nodeBufferToString(bytes, "utf8" as any, start as any, bytes.length as any);
         if (this.fatalFlag && text.indexOf("�") >= 0) {
             // Lossy decoding changes the byte length of malformed input; a valid
             // input round-trips to the same number of bytes.

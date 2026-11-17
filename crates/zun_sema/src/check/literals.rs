@@ -188,7 +188,9 @@ impl Checker<'_> {
                         &self.source[function.span.start as usize..function.span.end as usize];
                     self.closure_takes_this = body_takes_this(body);
                 }
+                self.closure_is_method = true;
                 let func = self.check_expr(cx, &property.value);
+                self.closure_is_method = false;
                 self.closure_takes_this = false;
                 match &property.key {
                     ast::PropertyKey::Computed(key) => {

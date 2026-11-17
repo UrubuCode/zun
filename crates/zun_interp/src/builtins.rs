@@ -420,7 +420,6 @@ pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
         "nodeBufferConcat",
         "nodeBufferIsBuffer",
         "nodeBufferByteLength",
-        "nodeBufferFromAny",
         "nodeBufferByteLengthAny",
         "nodeBufferToString",
         "nodeBufferWrite",
@@ -479,8 +478,15 @@ pub(crate) fn managed_node_buffer_builtin(id: u32) -> Option<&'static str> {
         "nodeBufferIndexOf",
         "nodeBufferLastIndexOf",
         "nodeBufferIncludes",
-        // The `nodeBufferExt` group (appended after `nodeBuffer` was frozen).
-        "nodeBufferConcatAny",
+        "nodeBufferAllocFillString",
+        "nodeBufferFillString",
+        "nodeBufferFromAny",
+        "nodeBufferIsEncoding",
+        "nodeBufferCompare",
+        "nodeBufferCompareRange",
+        "nodeBufferToJSON",
+        "nodeBufferCtor",
+        "nodeBufferCopyBytesFrom",
     ]
     .into_iter()
     .find(|&name| {

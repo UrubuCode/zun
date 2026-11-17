@@ -162,7 +162,15 @@ impl<'a> Interp<'a> {
                 .tables
                 .method_defs
                 .get((method_rid as usize).wrapping_sub(1))
-                .is_some_and(|method| !method.is_static)
+                .is_some_and(|method| {
+                    // A closure declared inside a class body falls in the
+                    // class's method range but is not an instance method, so
+                    // it takes no receiver. Callers used to apply this guard
+                    // themselves; it belongs here, which is also where the
+                    // upstream twin of this helper (`is_class_instance_method`,
+                    // deleted in the merge that unified them) kept it.
+                    !method.is_static && !self.module.strings.get(method.name).starts_with('<')
+                })
     }
 
     /// The method RID implementing `name` on a typed instance (most-derived

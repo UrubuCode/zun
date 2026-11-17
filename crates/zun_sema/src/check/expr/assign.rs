@@ -708,7 +708,8 @@ impl Checker<'_> {
                 self.proxy_set(object, key, value, span)
             }
             Ty::Error => self.poison(span),
-            Ty::Function(_) => {
+            // A byte view (a Node `Buffer`) carries expando properties.
+            Ty::Function(_) | Ty::BufferView(_) | Ty::Buffer => {
                 let boxed = if value.ty == Ty::Any || matches!(value.ty, Ty::Function(_)) {
                     value
                 } else {

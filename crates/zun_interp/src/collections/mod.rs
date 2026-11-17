@@ -226,11 +226,20 @@ impl<'a> Interp<'a> {
             // A view constructor the buffer cannot back (misaligned or
             // out-of-range window) is a RangeError, not a malformed call.
             if matches!(result, Err(RunError::BadToken)) && name.ends_with("ArrayNew") {
-                return match self.new_error_object("RangeError", "Invalid typed array length") {
+                // The message names the offending length, as V8 does.
+                let shown = match args.first() {
+                    Some(Value::Int(n, _)) => format!(": {n}"),
+                    Some(Value::Float(n, _)) => format!(": {}", zun_natives::js_to_radix_string(*n, None).unwrap_or_default()),
+                    _ => String::new(),
+                };
+                return match self.new_error_object("RangeError", &format!("Invalid typed array length{shown}")) {
                     Some(error) => Err(RunError::Thrown(Value::Object(error))),
                     None => result,
                 };
             }
+            return result;
+        }
+        if let Some(result) = self.node_buffer_checked(name, args) {
             return result;
         }
         if let Some(result) = crate::node_buffer::call(name, args) {

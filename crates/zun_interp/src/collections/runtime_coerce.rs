@@ -355,6 +355,9 @@ impl<'a> Interp<'a> {
         if let Some(text) = array_join_text(obj) {
             return Ok(Value::Str(text.into()));
         }
+        if let Some(text) = crate::node_buffer::buffer_text(obj) {
+            return Ok(Value::Str(text.into()));
+        }
         Ok(match self.ordinary_to_primitive(obj, "default")? {
             Some(primitive) => primitive,
             None => Value::Str("[object Object]".into()),
@@ -560,6 +563,9 @@ impl<'a> Interp<'a> {
         let mut prims = Vec::with_capacity(2);
         for value in [a, b] {
             let prim = match value {
+                Value::Object(obj) if crate::node_buffer::buffer_text(obj).is_some() => {
+                    Value::Str(crate::node_buffer::buffer_text(obj).unwrap_or_default().into())
+                }
                 Value::Object(obj) if is_plain_object(&Value::Object(obj)) => {
                     let overridden = self.array_own_primitive(obj, "number")?;
                     if let Some(primitive) = overridden {
@@ -661,6 +667,10 @@ impl<'a> Interp<'a> {
         if let Some(text) =
             zun_gc::with_current_heap(|heap| heap.bigint_value(obj).map(|v| v.to_string()))
         {
+            return Ok(Some(Value::Str(text.into())));
+        }
+        // A Node `Buffer` converts to its utf8 text.
+        if let Some(text) = crate::node_buffer::buffer_text(obj) {
             return Ok(Some(Value::Str(text.into())));
         }
         if zun_gc::with_current_heap(|heap| heap.proxy_target(obj).is_some()) {

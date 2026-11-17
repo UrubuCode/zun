@@ -62,7 +62,16 @@ impl Interp<'_> {
         }
         let n = integer_of(self.dyn_to_number(&value)?);
         if n < 0.0 || n > 9007199254740991.0 {
-            return Err(self.view_error("RangeError", &format!("Invalid {what}")));
+            // V8 names the offending length for a typed array.
+            let shown = if what == "typed array length" {
+                format!(
+                    ": {}",
+                    zun_natives::js_to_radix_string(n, None).unwrap_or_default()
+                )
+            } else {
+                String::new()
+            };
+            return Err(self.view_error("RangeError", &format!("Invalid {what}{shown}")));
         }
         Ok(n as usize)
     }
@@ -192,7 +201,7 @@ impl Interp<'_> {
         Ok(())
     }
 
-    fn view_collect(&mut self, view: zun_gc::Obj) -> Vec<Value> {
+    pub(crate) fn view_collect(&mut self, view: zun_gc::Obj) -> Vec<Value> {
         let len = crate::typed_arrays::element_len(view).unwrap_or(0);
         (0..len).map(|i| self.view_read(view, i)).collect()
     }
@@ -346,10 +355,14 @@ impl Interp<'_> {
             // A length (ToIndex of any primitive).
             let length = self.view_to_index(Some(&first), "typed array length")?;
             if length.saturating_mul(size) > (1usize << 32) {
-                return Err(self.view_error("RangeError", "Invalid typed array length"));
+                return Err(self.view_error(
+                    "RangeError",
+                    &format!("Invalid typed array length: {length}"),
+                ));
             }
-            let view = crate::typed_arrays::alloc_of(kind, length)
-                .ok_or_else(|| self.view_error("RangeError", "Invalid typed array length"))?;
+            let view = crate::typed_arrays::alloc_of(kind, length).ok_or_else(|| {
+                self.view_error("RangeError", &format!("Invalid typed array length: {length}"))
+            })?;
             return Ok(Value::Object(view));
         };
         let is_buffer = zun_gc::with_current_heap(|h| h.buffer_len(source).is_some());
@@ -432,6 +445,10 @@ impl Interp<'_> {
                     "byteLength" => heap.typed_array_byte_len(object).map(|n| num(n as f64)),
                     "byteOffset" => heap.typed_array_byte_offset(object).map(|n| num(n as f64)),
                     "buffer" => heap.typed_array_buffer(object).map(Value::Object),
+                    // A Node `Buffer` aliases its backing store as `parent`.
+                    "parent" if kind == zun_core::TypedElement::U8 => {
+                        heap.typed_array_buffer(object).map(Value::Object)
+                    }
                     "BYTES_PER_ELEMENT" => Some(num(kind.size() as f64)),
                     _ => None,
                 };
@@ -476,6 +493,90 @@ impl Interp<'_> {
             return self.data_view_call(object, member, &args);
         }
         Ok(None)
+    }
+
+    /// The members only a Node `Buffer` has (plus `toString`, whose Buffer form
+    /// takes an encoding): routed to the `nodeBuffer` natives the typed path
+    /// lowers to, with the same optional-argument defaults
+    /// (`zun_natives::view_member`). `Ok(None)` for every other member, which the
+    /// typed-array arms answer.
+    fn node_buffer_member_call(
+        &mut self,
+        view: zun_gc::Obj,
+        member: &str,
+        args: &[Value],
+    ) -> Result<Option<Value>, RunError> {
+        use zun_natives::{NativeTy, ViewArg};
+        let buffer_member = matches!(
+            member,
+            "toString"
+                | "write"
+                | "equals"
+                | "copy"
+                | "swap16"
+                | "swap32"
+                | "swap64"
+                | "compare"
+                | "toJSON"
+                | "slice"
+                | "indexOf"
+                | "lastIndexOf"
+                | "includes"
+        ) || (member == "fill" && (args.len() == 1 || matches!(args.first(), Some(Value::Str(_)))))
+            || member.starts_with("read")
+            || (member.starts_with("write") && member.len() > "write".len());
+        if !buffer_member {
+            return Ok(None);
+        }
+        let Some(spec) = zun_natives::view_member(member, true, if member == "fill" { 1 } else { args.len() }) else {
+            return Ok(None);
+        };
+        if spec.module != "nodeBuffer" {
+            return Ok(None);
+        }
+        let present = |slot: usize| args.get(slot).filter(|value| !matches!(value, Value::Void));
+        let mut slots = Vec::with_capacity(spec.args.len());
+        for (slot, kind) in spec.args.iter().enumerate() {
+            let value = match (present(slot), kind) {
+                (Some(value), ViewArg::RequiredAny | ViewArg::Raw) => {
+                    let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    Value::Any(boxed)
+                }
+                (Some(value), _) => value.clone(),
+                (None, ViewArg::Raw) => Value::Any(zun_core::Any::void()),
+                (None, ViewArg::U64(default)) => Value::Int(*default as i64, NumKind::U64),
+                (None, ViewArg::I64(default)) => Value::Int(*default, NumKind::I64),
+                (None, ViewArg::Str(default)) => Value::Str((*default).into()),
+                (None, ViewArg::Required | ViewArg::RequiredAny) => return Ok(None),
+            };
+            slots.push(value);
+        }
+        if spec.value_first && slots.len() >= 2 {
+            slots.swap(0, 1);
+        }
+        let params = zun_natives::resolve(spec.module, &spec.native).map(|(_, info)| info.params);
+        let mut native_args = Vec::with_capacity(slots.len() + 1);
+        native_args.push(Value::Object(view));
+        for (slot, value) in slots.into_iter().enumerate() {
+            let kind = match params.and_then(|params| params.get(slot + 1)) {
+                Some(NativeTy::I8) => Some(NumKind::I8),
+                Some(NativeTy::I16) => Some(NumKind::I16),
+                Some(NativeTy::I32) => Some(NumKind::I32),
+                Some(NativeTy::I64) => Some(NumKind::I64),
+                Some(NativeTy::U8) => Some(NumKind::U8),
+                Some(NativeTy::U16) => Some(NumKind::U16),
+                Some(NativeTy::U32) => Some(NumKind::U32),
+                Some(NativeTy::U64) => Some(NumKind::U64),
+                _ => None,
+            };
+            native_args.push(match (value, kind) {
+                (Value::Float(n, _), Some(kind)) => Value::Int(n as i64, kind),
+                (Value::Int(n, _), Some(kind)) => Value::Int(n, kind),
+                (other, _) => other,
+            });
+        }
+        self.call_managed_collection(&spec.native, &native_args).map(Some)
     }
 
     fn array_buffer_call(
@@ -666,6 +767,14 @@ impl Interp<'_> {
         args: &[Value],
     ) -> Result<Option<Value>, RunError> {
         let kind = crate::typed_arrays::element_of(view).ok_or(RunError::BadToken)?;
+        // A byte view is a Node `Buffer` here (the checker types both as the same
+        // view and lowers `buf.toString(..)` to the Buffer native), so the
+        // Buffer-only members answer through `any` as they do when typed.
+        if kind == TypedElement::U8 {
+            if let Some(result) = self.node_buffer_member_call(view, member, args)? {
+                return Ok(Some(result));
+            }
+        }
         let len = crate::typed_arrays::element_len(view).unwrap_or(0);
         let truthy = |v: &Value| zun_gc::with_current_heap(|h| crate::collections::is_truthy(v, h));
         let callback = |args: &[Value]| match args.first() {

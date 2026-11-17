@@ -50,12 +50,17 @@ impl<'a> Interp<'a> {
                 let array =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let spread = self.read_array_values(array)?;
-                let call_args = zun_gc::with_current_heap(|heap| {
+                let mut call_args = zun_gc::with_current_heap(|heap| {
                     spread
                         .into_iter()
                         .map(|value| unbox_function_box(value, heap))
                         .collect::<Vec<_>>()
                 });
+                // A plain spread call of a receiver-taking closure: `this` is
+                // `undefined`, and the hidden parameter must not take an argument.
+                if self.handle_is_this_closure(target) {
+                    call_args.insert(0, Value::Void);
+                }
                 self.invoke_function_value(target, call_args)
             }
             "functionBind" => {

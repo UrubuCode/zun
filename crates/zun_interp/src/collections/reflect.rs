@@ -531,7 +531,7 @@ impl<'a> Interp<'a> {
                     },
                     None => match unbox_arg(&new_target) {
                         Ok(Value::Function(handle)) => {
-                            Self::ensure_function_prototype(handle);
+                            self.ensure_function_prototype(handle);
                             Self::function_prototype_property(handle)
                         }
                         _ => None,
@@ -660,9 +660,19 @@ impl<'a> Interp<'a> {
         proto_source: zun_core::FunctionHandle,
         values: Vec<Value>,
     ) -> Result<Value, RunError> {
+        // An arrow function and an object-literal method shorthand are not
+        // constructible: both own no `prototype`, and `new` on either is a
+        // TypeError in JS. Upstream's `018e5d3d` taught
+        // `ensure_function_prototype` to withhold the `prototype` from them;
+        // this is the other half, and it is the long-open "constructibility
+        // flag" item -- without it `new ({ m() {} }).m()` ran the method body
+        // and answered an object.
+        if self.is_arrow_closure(handle) || self.is_method_closure(handle) {
+            return Err(self.proto_type_error("value is not a constructor"));
+        }
         // The `prototype` is created lazily; a later read must see the object
         // this instance inherits, so materialise it before inheriting.
-        Self::ensure_function_prototype(proto_source);
+        self.ensure_function_prototype(proto_source);
         let fresh = zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic());
         // The call below re-enters managed code, which can collect and move it.
         zun_gc::root!(fresh = fresh);
@@ -709,7 +719,7 @@ impl<'a> Interp<'a> {
         value: &Value,
         handle: zun_core::FunctionHandle,
     ) -> Result<bool, RunError> {
-        Self::ensure_function_prototype(handle);
+        self.ensure_function_prototype(handle);
         let Some(target) = Self::function_prototype_property(handle) else {
             return Ok(false);
         };

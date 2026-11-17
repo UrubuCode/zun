@@ -16,6 +16,7 @@ impl Checker<'_> {
         let self_name = self.closure_self_name.take();
         let captures = self.analyze_closure_captures(outer, function, self_name.as_deref());
         let takes_this = std::mem::take(&mut self.closure_takes_this);
+        let is_method = std::mem::take(&mut self.closure_is_method);
         let mut saw_default = false;
         for parameter in &function.params {
             if parameter.is_rest {
@@ -203,10 +204,17 @@ impl Checker<'_> {
         }
         self.closures.push(hir::ClosureFunction {
             name: {
+                // An arrow function has no `prototype` and is not
+                // constructible; the runtime reads that off the `@arrow`
+                // marker (it never combines with `@this`).
+                let arrow = if function.is_arrow { "@arrow" } else { "" };
+                // A method shorthand owns no `prototype` either; its marker
+                // sits before `@this` so the `@this>` suffix stays intact.
+                let method = if is_method { "@method" } else { "" };
                 let rest_suffix = if function.params.iter().any(|p| p.is_rest) {
-                    "@rest"
+                    format!("{arrow}@rest")
                 } else {
-                    ""
+                    arrow.to_string()
                 };
                 // The same source closure can be checked more than once (e.g. each
                 // arm of a runtime-key dispatch chain re-checks its arguments);
@@ -227,9 +235,9 @@ impl Checker<'_> {
                     format!("#{copies}")
                 };
                 if takes_this {
-                    format!("<closure@{}{unique}@this{rest_suffix}>", span.start)
+                    format!("<closure@{}{unique}{method}@this{rest_suffix}>", span.start)
                 } else {
-                    format!("<closure@{}{unique}{rest_suffix}>", span.start)
+                    format!("<closure@{}{unique}{method}{rest_suffix}>", span.start)
                 }
             },
             param_count: function.params.len() as u16 + u16::from(takes_this),
@@ -717,4 +725,32 @@ fn first_return_ty(statements: &[hir::Stmt]) -> Option<Ty> {
             .or_else(|| finally_body.as_ref().and_then(|b| first_return_ty(b))),
         _ => None,
     })
+}
+
+impl Checker<'_> {
+    /// Whether a closure inside `init` (not itself a function expression) refers
+    /// to `name`, the variable being declared (`const req = get(url, () => req.id)`).
+    /// Walks the AST with the closure-capture collector, so nested parameters
+    /// shadow the name and property names, strings and comments never match.
+    /// Over-approximates (an inner declaration of the same name still counts);
+    /// a false positive only costs static typing of the variable.
+    pub(crate) fn initializer_references_name(
+        &self,
+        cx: &mut FunctionCx,
+        name: &str,
+        init: &ast::Expr,
+    ) -> bool {
+        if cx.is_module_scope || matches!(init, ast::Expr::Function(_)) {
+            return false;
+        }
+        // Probe with a throwaway binding so the collector resolves the name.
+        let locals_len = cx.locals.len();
+        cx.scopes.push(Scope::new());
+        cx.declare(name, Ty::Any);
+        let mut uses = CaptureUse::default();
+        self.collect_capture_expr(cx, &HashSet::new(), init, &mut uses);
+        cx.scopes.pop();
+        cx.locals.truncate(locals_len);
+        uses.slot_set.contains(&(locals_len as hir::LocalSlot))
+    }
 }

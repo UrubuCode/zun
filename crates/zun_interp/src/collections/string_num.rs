@@ -182,6 +182,9 @@ impl<'a> Interp<'a> {
                         zun_gc::with_current_heap(|heap| regex_to_string(heap, obj))
                             .unwrap_or_default()
                     }
+                    Value::Object(obj) if crate::node_buffer::buffer_text(obj).is_some() => {
+                        crate::node_buffer::buffer_text(obj).unwrap_or_default()
+                    }
                     Value::Object(obj) => {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
                             prim.display()

@@ -95,6 +95,20 @@ impl<'a> Interp<'a> {
             return zun_gc::with_current_heap_mut(|heap| heap.alloc_map_iterator(source))
                 .ok_or(RunError::BadToken);
         }
+        // A typed array (a Node `Buffer`) iterates a snapshot of its elements.
+        if zun_gc::with_current_heap(|heap| heap.typed_array_element(source).is_some()) {
+            let values = self.view_collect(source);
+            let snapshot = zun_gc::with_current_heap_mut(|heap| {
+                let array = heap.alloc_array(0);
+                for value in &values {
+                    let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                    heap.array_push(array, boxed);
+                }
+                array
+            });
+            return zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(snapshot))
+                .ok_or(RunError::BadToken);
+        }
         // A `new String("..")` wrapper iterates its primitive by code point.
         if self.json_class_name(source) == "StringObject" {
             if let Some(Value::Str(text)) = self
@@ -1145,17 +1159,35 @@ impl<'a> Interp<'a> {
                 ));
             }
             let body = read_body(&self.module.code, method.body_offset).ok()?;
+            // `param_count` counts every hidden parameter: the `@this`
+            // receiver, a class instance method's implicit receiver, the
+            // captured environment of a closure, and the rest array, none of
+            // which ECMAScript's `length` includes.
             let mut receiver = usize::from(method_name.contains("@this"));
             // Only a method a class owns takes the instance as its receiver; a
             // free function's parameters are all its own.
-            if self.method_rid_is_instance_method(rid) && !method_name.starts_with('<') {
+            if self.method_rid_is_instance_method(rid) {
                 receiver = 1;
             }
+            // No environment adjustment here. The merge brought in a clause
+            // that added 1 for any closure with an environment, which is wrong
+            // for an arrow: the environment exists but is not a declared
+            // parameter, so `((a, b, c) => ...).length` answered 2. Measured
+            // against node (3, 1, 2 for a three-, one- and two-parameter
+            // arrow): this branch answers 3, 1, 2; with that clause it answered
+            // 2, 0, 1; and the upstream build it came from answered 0, 0, 0 --
+            // which is why `function-identity-recursion-and-hof` *passed*
+            // there, since an arity of 0 makes a curry helper call through
+            // immediately instead of reaching the bad path.
             // The rest parameter is not counted: closures mark it in their name,
-            // declared functions in their signature blob.
-            if method_name.ends_with("@rest>")
-                || (method.signature.0 != 0 && self.module.blobs.get(method.signature) == b"R")
-            {
+            // declared functions in their signature blob -- and a closure must
+            // not be read through the blob, which belongs to its enclosing
+            // method.
+            let rest = method_name.ends_with("@rest>")
+                || (!method_name.starts_with('<')
+                    && method.signature.0 != 0
+                    && self.module.blobs.get(method.signature) == b"R");
+            if rest {
                 receiver += 1;
             }
             let length = (body.param_count as usize).saturating_sub(receiver + usize::from(handle.environment().is_some()));

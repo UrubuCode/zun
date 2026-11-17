@@ -125,7 +125,7 @@ class URLSearchParams {
     static decode(s: string): string {
         let bytes = upBuffer.nodeBufferFromString(s, "utf8");
         let n: u64 = bytes.length;
-        let out = upBuffer.nodeBufferAlloc(n, 0);
+        let out = upBuffer.nodeBufferAlloc(n as any, 0 as any, "utf8" as any);
         let count: u64 = 0;
         let i: u64 = 0;
         while (i < n) {
@@ -155,7 +155,7 @@ class URLSearchParams {
             }
             count = count + 1;
         }
-        return upBuffer.nodeBufferToString(out, "utf8", 0, count);
+        return upBuffer.nodeBufferToString(out, "utf8" as any, 0 as any, count as any);
     }
 
     static isUnreserved(b: u32): boolean {

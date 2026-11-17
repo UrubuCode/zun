@@ -152,7 +152,16 @@ pub(crate) fn cmp(stack: &mut Vec<Value>, want_equal: bool) -> Result<(), RunErr
         (Value::Void, Value::Void) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
-        (Value::Object(x), Value::Object(y)) => x.addr() == y.addr(),
+        // Two BigInts are equal by value, not by heap identity.
+        (Value::Object(x), Value::Object(y)) => {
+            x.addr() == y.addr()
+                || zun_gc::with_current_heap(|heap| {
+                    matches!(
+                        (heap.bigint_value(*x), heap.bigint_value(*y)),
+                        (Some(left), Some(right)) if left == right
+                    )
+                })
+        }
         // Function values compare by identity (same method + captured
         // environment), so `f == f` is true. Two distinct closures / bound
         // functions differ, matching JS reference equality.

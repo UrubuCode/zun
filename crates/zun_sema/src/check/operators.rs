@@ -527,7 +527,7 @@ impl Checker<'_> {
         if !self.classes_by_name.contains_key(&name)
             && matches!(
                 name.as_str(),
-                "Array" | "Map" | "Set" | "Promise" | "RegExp" | "Object" | "Function"
+                "Array" | "Map" | "Set" | "Promise" | "RegExp" | "Object" | "Function" | "Buffer"
             )
             && !cx.scopes.iter().any(|s| s.contains_key(name.as_str()))
         {

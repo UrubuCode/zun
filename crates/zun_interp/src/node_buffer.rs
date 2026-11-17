@@ -50,7 +50,7 @@ fn as_string(value: Option<&Value>) -> Option<zun_core::ZStr> {
 }
 
 /// Build a fresh Buffer (a `U8` view over a new buffer) holding `bytes`.
-fn buffer_from_bytes(bytes: &[u8]) -> Option<Value> {
+pub(crate) fn buffer_from_bytes(bytes: &[u8]) -> Option<Value> {
     zun_gc::with_current_heap_mut(|heap| {
         let buffer = heap.alloc_buffer(bytes.len());
         for (index, byte) in bytes.iter().enumerate() {
@@ -62,7 +62,7 @@ fn buffer_from_bytes(bytes: &[u8]) -> Option<Value> {
 }
 
 /// Read every byte of a `U8` view (offset-adjusted through the view).
-fn view_bytes(view: Obj) -> Option<Vec<u8>> {
+pub(crate) fn view_bytes(view: Obj) -> Option<Vec<u8>> {
     zun_gc::with_current_heap(|heap| {
         let len = heap.typed_array_len(view)?;
         let mut bytes = Vec::with_capacity(len);
@@ -73,14 +73,15 @@ fn view_bytes(view: Obj) -> Option<Vec<u8>> {
     })
 }
 
-fn view_len(view: Obj) -> Option<usize> {
+pub(crate) fn view_len(view: Obj) -> Option<usize> {
     zun_gc::with_current_heap(|heap| heap.typed_array_len(view))
 }
 
 /// Normalize an encoding name. Unknown names fall back to utf8 (lenient).
-fn normalize_encoding(name: &str) -> &'static str {
+pub(crate) fn normalize_encoding(name: &str) -> &'static str {
     match name.to_ascii_lowercase().as_str() {
         "hex" => "hex",
+        "ascii" => "ascii",
         "base64" => "base64",
         "base64url" => "base64url",
         "latin1" | "binary" => "latin1",
@@ -93,23 +94,26 @@ fn normalize_encoding(name: &str) -> &'static str {
 }
 
 /// Encode a string into bytes under an encoding.
-fn encode(text: &str, encoding: &str) -> Vec<u8> {
+pub(crate) fn encode(text: &str, encoding: &str) -> Vec<u8> {
     match normalize_encoding(encoding) {
         "hex" => decode_hex(text),
         "base64" | "base64url" => decode_base64(text),
-        "latin1" => text.chars().map(|c| (c as u32 & 0xff) as u8).collect(),
+        // `ascii` writes the low byte of each UTF-16 unit, exactly like latin1.
+        "latin1" | "ascii" => text.encode_utf16().map(|c| (c & 0xff) as u8).collect(),
         "utf16le" => encode_utf16le(text),
         _ => text.as_bytes().to_vec(),
     }
 }
 
 /// Decode bytes into a string under an encoding.
-fn decode(bytes: &[u8], encoding: &str) -> String {
+pub(crate) fn decode(bytes: &[u8], encoding: &str) -> String {
     match normalize_encoding(encoding) {
         "hex" => bytes.iter().map(|b| format!("{b:02x}")).collect(),
         "base64" => encode_base64(bytes),
         "base64url" => encode_base64url(bytes),
         "latin1" => bytes.iter().map(|&b| b as char).collect(),
+        // Node's `ascii` decoder masks the high bit.
+        "ascii" => bytes.iter().map(|&b| (b & 0x7f) as char).collect(),
         "utf16le" => decode_utf16le(bytes),
         _ => String::from_utf8_lossy(bytes).into_owned(),
     }
@@ -136,21 +140,26 @@ fn decode_utf16le(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// Node's hex decoder: whole pairs of hex digits, stopping at the first pair
+/// that is not (an odd trailing digit is dropped).
 fn decode_hex(text: &str) -> Vec<u8> {
-    let digits: Vec<u8> = text
-        .bytes()
-        .filter_map(|b| match b {
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
-        })
-        .collect();
-    digits
-        .chunks(2)
-        .filter(|c| c.len() == 2)
-        .map(|c| (c[0] << 4) | c[1])
-        .collect()
+    let digit = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    };
+    let mut out = Vec::new();
+    for pair in text.as_bytes().chunks(2) {
+        if pair.len() < 2 {
+            break;
+        }
+        match (digit(pair[0]), digit(pair[1])) {
+            (Some(high), Some(low)) => out.push((high << 4) | low),
+            _ => break,
+        }
+    }
+    out
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -224,7 +233,7 @@ fn decode_base64(text: &str) -> Vec<u8> {
 
 /// Read `width` bytes from `view` starting at `offset`, assembling a little- or
 /// big-endian unsigned integer. Returns `None` if the range is out of bounds.
-fn read_uint(view: Obj, offset: usize, width: usize, little_endian: bool) -> Option<u64> {
+pub(crate) fn read_uint(view: Obj, offset: usize, width: usize, little_endian: bool) -> Option<u64> {
     zun_gc::with_current_heap(|heap| {
         let mut value: u64 = 0;
         for i in 0..width {
@@ -242,7 +251,7 @@ fn read_uint(view: Obj, offset: usize, width: usize, little_endian: bool) -> Opt
 
 /// Write the low `width` bytes of `value` into `view` at `offset`. Returns the
 /// next offset (`offset + width`), as Node's `write*` do.
-fn write_uint(
+pub(crate) fn write_uint(
     view: Obj,
     offset: usize,
     value: u64,
@@ -302,7 +311,7 @@ fn accessor(name: &str) -> Option<Accessor> {
 /// Scan `haystack` for `needle`, honoring a possibly-negative `byte_offset`
 /// (negative counts from the end). `last` searches backward (for
 /// `lastIndexOf`). Returns the matching byte index, or `None`.
-fn buffer_search(haystack: &[u8], needle: &[u8], byte_offset: i64, last: bool) -> Option<usize> {
+pub(crate) fn buffer_search(haystack: &[u8], needle: &[u8], byte_offset: i64, last: bool) -> Option<usize> {
     let len = haystack.len();
     if needle.is_empty() {
         let off = if byte_offset < 0 {
@@ -344,7 +353,7 @@ fn buffer_search(haystack: &[u8], needle: &[u8], byte_offset: i64, last: bool) -
 }
 
 /// Sign-extend an unsigned value of `width` bytes.
-fn sign_extend(value: u64, width: usize) -> i64 {
+pub(crate) fn sign_extend(value: u64, width: usize) -> i64 {
     let bits = width * 8;
     if bits >= 64 {
         value as i64
@@ -354,188 +363,13 @@ fn sign_extend(value: u64, width: usize) -> i64 {
     }
 }
 
-/// Whether `name` is an encoding Node's `Buffer` accepts.
-fn is_known_encoding(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "utf8"
-            | "utf-8"
-            | "hex"
-            | "base64"
-            | "base64url"
-            | "latin1"
-            | "binary"
-            | "ascii"
-            | "ucs2"
-            | "ucs-2"
-            | "utf16le"
-            | "utf-16le"
-    )
-}
-
-fn invalid_buffer_source(value: &Value) -> RunError {
-    RunError::Native(format!(
-        "TypeError: The first argument must be of type string or an instance of Buffer, \
-         ArrayBuffer, or Array or an Array-like Object. Received {}",
-        crate::collections::describe_received(value)
-    ))
-}
-
-fn invalid_byte_length_arg(value: &Value) -> RunError {
-    RunError::Native(format!(
-        "TypeError: The \"string\" argument must be of type string or an instance of Buffer \
-         or ArrayBuffer. Received {}",
-        crate::collections::describe_received(value)
-    ))
-}
-
-/// Validate a `Buffer.alloc`/`allocUnsafe` size the way Node does: it must be a
-/// number in `0..=2^53-1` (a fraction is truncated); anything else is a
-/// TypeError or RangeError.
-fn alloc_size(value: Option<&Value>) -> Result<usize, RunError> {
-    let value = crate::collections::unbox_arg(value.ok_or(RunError::BadToken)?)?;
-    let number = match &value {
-        Value::Int(number, _) => *number as f64,
-        Value::Float(number, _) => *number,
-        other => {
-            return Err(RunError::Native(format!(
-                "TypeError: The \"size\" argument must be of type number. Received {}",
-                crate::collections::describe_received(other)
-            )))
-        }
-    };
-    if number.is_nan() || !(0.0..=9007199254740991.0).contains(&number) {
-        let shown = range_error_number(number);
-        return Err(RunError::Native(format!(
-            "RangeError: The value of \"size\" is out of range. It must be >= 0 && <= \
-             9007199254740991. Received {shown}"
-        )));
+/// `text` repeated and truncated to exactly `len` bytes (Node's string fill);
+/// an empty pattern fills with zeros.
+pub(crate) fn repeat_to(pattern: &[u8], len: usize) -> Vec<u8> {
+    if pattern.is_empty() {
+        return vec![0; len];
     }
-    Ok(number as usize)
-}
-
-/// How Node prints a number in an `ERR_OUT_OF_RANGE` message: an integer
-/// above 2^32 has its digits grouped with underscores.
-fn range_error_number(number: f64) -> String {
-    if number.is_nan() {
-        "NaN".to_string()
-    } else if number.is_infinite() {
-        if number < 0.0 { "-Infinity" } else { "Infinity" }.to_string()
-    } else if number.fract() == 0.0 {
-        let digits = format!("{}", number.abs() as u128);
-        if number.abs() > 4294967296.0 {
-            let mut grouped = String::new();
-            for (index, digit) in digits.chars().enumerate() {
-                if index > 0 && (digits.len() - index) % 3 == 0 {
-                    grouped.push('_');
-                }
-                grouped.push(digit);
-            }
-            format!("{}{grouped}", if number < 0.0 { "-" } else { "" })
-        } else {
-            format!("{}", number as i64)
-        }
-    } else {
-        format!("{number}")
-    }
-}
-
-/// [`crate::collections::describe_received`], naming an array or a typed
-/// array the way Node does (`an instance of Uint16Array`).
-fn describe_received_view(value: &Value) -> String {
-    if let Value::Object(obj) = value {
-        let (is_array, element) = zun_gc::with_current_heap(|heap| {
-            (heap.array_len(*obj).is_some(), heap.typed_array_element(*obj))
-        });
-        if is_array {
-            return "an instance of Array".to_string();
-        }
-        if let Some(element) = element {
-            return format!("an instance of {}", element.js_name());
-        }
-    }
-    crate::collections::describe_received(value)
-}
-
-/// `Buffer.concat(list, totalLength?)`, validated the way Node does. `list`
-/// must be an array whose members are all `Uint8Array` views; `totalLength`,
-/// when not `undefined`, must be a non-negative safe integer and then fixes the
-/// result's size, truncating the joined bytes or zero-padding them.
-fn concat_any(list: &Value, total: &Value) -> Result<Value, RunError> {
-    let members = match list {
-        Value::Object(obj) => zun_gc::with_current_heap(|heap| {
-            let len = heap.array_len(*obj)?;
-            (0..len)
-                .map(|index| heap.array_get(*obj, index))
-                .collect::<Option<Vec<_>>>()
-        }),
-        _ => None,
-    };
-    let Some(members) = members else {
-        return Err(RunError::Native(format!(
-            "TypeError: The \"list\" argument must be an instance of Array. Received {}",
-            describe_received_view(list)
-        )));
-    };
-    let total = match total {
-        Value::Void => None,
-        Value::Int(number, _) => Some(*number as f64),
-        Value::Float(number, _) => Some(*number),
-        other => {
-            return Err(RunError::Native(format!(
-                "TypeError: The \"length\" argument must be of type number. Received {}",
-                describe_received_view(other)
-            )))
-        }
-    };
-    if let Some(number) = total {
-        if number.is_nan() || number.is_infinite() || number.fract() != 0.0 {
-            return Err(RunError::Native(format!(
-                "RangeError: The value of \"length\" is out of range. It must be an integer. \
-                 Received {}",
-                range_error_number(number)
-            )));
-        }
-        if !(0.0..=9007199254740991.0).contains(&number) {
-            return Err(RunError::Native(format!(
-                "RangeError: The value of \"length\" is out of range. It must be >= 0 && <= \
-                 9007199254740991. Received {}",
-                range_error_number(number)
-            )));
-        }
-    }
-    let mut bytes = Vec::new();
-    for (index, any) in members.into_iter().enumerate() {
-        let member = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
-            .ok_or(RunError::BadToken)?;
-        let view = match &member {
-            Value::Object(obj)
-                if zun_gc::with_current_heap(|heap| heap.typed_array_element(*obj))
-                    == Some(zun_core::TypedElement::U8) =>
-            {
-                *obj
-            }
-            other => {
-                return Err(RunError::Native(format!(
-                    "TypeError: The \"list[{index}]\" argument must be an instance of Buffer or \
-                     Uint8Array. Received {}",
-                    describe_received_view(other)
-                )))
-            }
-        };
-        bytes.extend(view_bytes(view).ok_or(RunError::BadToken)?);
-    }
-    if let Some(number) = total {
-        // The size is allocated up front, so an absurd one is a failed
-        // allocation in Node; refuse it the same way instead of aborting.
-        if number > u32::MAX as f64 {
-            return Err(RunError::Native(
-                "RangeError: Array buffer allocation failed".to_string(),
-            ));
-        }
-        bytes.resize(number as usize, 0);
-    }
-    buffer_from_bytes(&bytes).ok_or(RunError::BadToken)
+    pattern.iter().cycle().take(len).copied().collect()
 }
 
 /// Run a `nodeBuffer*` intrinsic, or `None` when `name` is not one.
@@ -545,91 +379,6 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             let text = as_string(args.first()).ok_or(RunError::BadToken)?;
             let encoding = as_string(args.get(1)).unwrap_or_else(|| "utf8".into());
             buffer_from_bytes(&encode(&text, &encoding)).ok_or(RunError::BadToken)
-        })()),
-        "nodeBufferFromAny" => Some((|| {
-            // `Buffer.from(value, encoding?)` for an operand the checker could
-            // not type (`any`): the form is chosen at run time.
-            let source = crate::collections::unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
-            match &source {
-                Value::Str(text) => {
-                    let encoding = match args.get(1) {
-                        Some(arg) => crate::collections::unbox_arg(arg)?,
-                        None => Value::Void,
-                    };
-                    // A non-string or empty encoding means utf8.
-                    let encoding = match &encoding {
-                        Value::Str(name) if !name.is_empty() => name.to_string(),
-                        _ => "utf8".to_string(),
-                    };
-                    if !is_known_encoding(&encoding) {
-                        return Err(RunError::Native(format!(
-                            "TypeError: Unknown encoding: {encoding}"
-                        )));
-                    }
-                    buffer_from_bytes(&encode(text, &encoding)).ok_or(RunError::BadToken)
-                }
-                Value::Object(obj) => {
-                    let (is_array, is_buffer, element) = zun_gc::with_current_heap(|heap| {
-                        (
-                            heap.array_len(*obj).is_some(),
-                            heap.buffer_len(*obj).is_some(),
-                            heap.typed_array_element(*obj),
-                        )
-                    });
-                    if is_array {
-                        return call("nodeBufferFromArray", &[source.clone()])
-                            .unwrap_or(Err(RunError::BadToken));
-                    }
-                    if is_buffer {
-                        return call("nodeBufferFromArrayBuffer", &[source.clone()])
-                            .unwrap_or(Err(RunError::BadToken));
-                    }
-                    match element {
-                        // A typed array is copied (only an ArrayBuffer is shared).
-                        Some(zun_core::TypedElement::U8) => {
-                            let bytes = view_bytes(*obj).ok_or(RunError::BadToken)?;
-                            buffer_from_bytes(&bytes).ok_or(RunError::BadToken)
-                        }
-                        Some(other) => Err(RunError::Native(format!(
-                            "Buffer.from({}) is not supported in this runtime",
-                            other.js_name()
-                        ))),
-                        None => Err(invalid_buffer_source(&source)),
-                    }
-                }
-                other => Err(invalid_buffer_source(other)),
-            }
-        })()),
-        "nodeBufferByteLengthAny" => Some((|| {
-            // `Buffer.byteLength(value, encoding?)` for an untyped operand: a
-            // string measures its encoding, a buffer or view its bytes.
-            let value = crate::collections::unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
-            match &value {
-                Value::Str(text) => {
-                    let encoding = match args.get(1) {
-                        Some(arg) => crate::collections::unbox_arg(arg)?,
-                        None => Value::Void,
-                    };
-                    let encoding = match &encoding {
-                        Value::Str(name) if !name.is_empty() => name.to_string(),
-                        _ => "utf8".to_string(),
-                    };
-                    Ok(Value::Int(
-                        encode(text, &encoding).len() as i64,
-                        NumKind::U64,
-                    ))
-                }
-                Value::Object(obj) => {
-                    let length = zun_gc::with_current_heap(|heap| {
-                        heap.buffer_len(*obj).or_else(|| heap.typed_array_byte_len(*obj))
-                    });
-                    match length {
-                        Some(length) => Ok(Value::Int(length as i64, NumKind::U64)),
-                        None => Err(invalid_byte_length_arg(&value)),
-                    }
-                }
-                other => Err(invalid_byte_length_arg(other)),
-            }
         })()),
         "nodeBufferFromArray" => Some((|| {
             let array =
@@ -661,12 +410,75 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             .ok_or(RunError::BadToken)
         })()),
         "nodeBufferAlloc" => Some((|| {
-            let size = alloc_size(args.first())?;
+            let size = as_usize(args.first()).ok_or(RunError::BadToken)?;
             let fill = as_usize(args.get(1)).unwrap_or(0) as u8;
             buffer_from_bytes(&vec![fill; size]).ok_or(RunError::BadToken)
         })()),
+        "nodeBufferAllocFillString" => Some((|| {
+            let size = as_usize(args.first()).ok_or(RunError::BadToken)?;
+            let text = as_string(args.get(1)).unwrap_or_else(|| "".into());
+            let encoding = as_string(args.get(2)).unwrap_or_else(|| "utf8".into());
+            buffer_from_bytes(&repeat_to(&encode(&text, &encoding), size))
+                .ok_or(RunError::BadToken)
+        })()),
+        "nodeBufferFillString" => Some((|| {
+            let view = object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            let text = as_string(args.get(1)).unwrap_or_else(|| "".into());
+            let encoding = as_string(args.get(2)).unwrap_or_else(|| "utf8".into());
+            let len = view_len(view).ok_or(RunError::BadToken)?;
+            let bytes = repeat_to(&encode(&text, &encoding), len);
+            zun_gc::with_current_heap_mut(|heap| {
+                for (i, byte) in bytes.iter().enumerate() {
+                    heap.u8_array_set(view, i, *byte);
+                }
+            });
+            Ok(Value::Bool(true))
+        })()),
+        "nodeBufferFromAny" => Some((|| {
+            let source = match args.first().ok_or(RunError::BadToken)? {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                    .ok_or(RunError::BadToken)?,
+                other => other.clone(),
+            };
+            let encoding = as_string(args.get(1)).unwrap_or_else(|| "utf8".into());
+            match &source {
+                Value::Str(text) => {
+                    buffer_from_bytes(&encode(text, &encoding)).ok_or(RunError::BadToken)
+                }
+                Value::Object(obj) => {
+                    // A byte view is copied; an array is read element-wise; an
+                    // ArrayBuffer is wrapped.
+                    if let Some(bytes) = view_bytes(*obj) {
+                        return buffer_from_bytes(&bytes).ok_or(RunError::BadToken);
+                    }
+                    if let Some(bytes) = zun_gc::with_current_heap(|heap| {
+                        let len = heap.array_len(*obj)?;
+                        let mut bytes = Vec::with_capacity(len);
+                        for index in 0..len {
+                            let any = heap.array_get(*obj, index)?;
+                            let value = any
+                                .as_int()
+                                .or_else(|| any.as_float().map(|f| f as i64))
+                                .unwrap_or(0);
+                            bytes.push((value & 0xff) as u8);
+                        }
+                        Some(bytes)
+                    }) {
+                        return buffer_from_bytes(&bytes).ok_or(RunError::BadToken);
+                    }
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let len = heap.buffer_len(*obj)?;
+                        let view =
+                            heap.alloc_typed_array(*obj, 0, len, zun_core::TypedElement::U8)?;
+                        Some(Value::Object(view))
+                    })
+                    .ok_or(RunError::BadToken)
+                }
+                _ => Err(RunError::BadToken),
+            }
+        })()),
         "nodeBufferAllocUnsafe" => Some((|| {
-            let size = alloc_size(args.first())?;
+            let size = as_usize(args.first()).ok_or(RunError::BadToken)?;
             buffer_from_bytes(&vec![0u8; size]).ok_or(RunError::BadToken)
         })()),
         "nodeBufferConcat" => Some((|| {
@@ -688,14 +500,6 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
                 bytes.extend(view_bytes(view).ok_or(RunError::BadToken)?);
             }
             buffer_from_bytes(&bytes).ok_or(RunError::BadToken)
-        })()),
-        "nodeBufferConcatAny" => Some((|| {
-            let list = crate::collections::unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
-            let total = match args.get(1) {
-                Some(arg) => crate::collections::unbox_arg(arg)?,
-                None => Value::Void,
-            };
-            concat_any(&list, &total)
         })()),
         "nodeBufferIsBuffer" => Some((|| {
             let is_buffer = match object(args.first().ok_or(RunError::BadToken)?) {
@@ -992,4 +796,15 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             None
         }
     }
+}
+
+/// A Node `Buffer`'s string form (`String(buf)`, `"" + buf`): its utf8 text.
+pub(crate) fn buffer_text(object: Obj) -> Option<String> {
+    let is_u8 = zun_gc::with_current_heap(|heap| {
+        heap.typed_array_element(object) == Some(zun_core::TypedElement::U8)
+    });
+    if !is_u8 {
+        return None;
+    }
+    view_bytes(object).map(|bytes| decode(&bytes, "utf8"))
 }

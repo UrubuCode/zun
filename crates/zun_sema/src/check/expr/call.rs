@@ -323,6 +323,39 @@ impl Checker<'_> {
             while let ast::Expr::Cast { expr, .. } = inner {
                 inner = expr.as_ref();
             }
+            // `recv[key](...args)` on a dynamic or byte-view receiver: dispatched
+            // by the stringified key, the same lane `recv.key(...args)` takes.
+            if let ast::Expr::Index { object, index, .. } = inner {
+                let probe = self.check_expr(cx, object);
+                if matches!(
+                    probe.ty,
+                    Ty::Any | Ty::DynamicObject | Ty::BufferView(_) | Ty::Buffer
+                ) {
+                    let elements = args
+                        .iter()
+                        .map(|arg| match arg {
+                            ast::Expr::Spread { expr, .. } => {
+                                ast::ArrayElement::Spread((**expr).clone())
+                            }
+                            other => ast::ArrayElement::Expr(other.clone()),
+                        })
+                        .collect();
+                    let literal = ast::Expr::ArrayLiteral { elements, span };
+                    let list = self.check_expr(cx, &literal);
+                    let key = self.check_expr(cx, index);
+                    if let Some((id, _)) = zun_natives::resolve("array", "methodCallSpread") {
+                        let key = self.to_string_for_parse(key);
+                        return hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![Self::box_to_any(probe), Self::box_to_any(key), list],
+                            },
+                            ty: Ty::Any,
+                            span,
+                        };
+                    }
+                }
+            }
             if let ast::Expr::Field { object, field, .. } = inner {
                 let probe = self.check_expr(cx, object);
                 if matches!(probe.ty, Ty::Any | Ty::DynamicObject) {
@@ -608,10 +641,14 @@ impl Checker<'_> {
                         | Ty::Map
                         | Ty::Set
                         | Ty::String
+                        | Ty::BufferView(_)
+                        | Ty::Buffer
                 ) {
                     let key_hir = self.check_expr(cx, key_ast);
-                    let array_ok =
-                        !matches!(recv_hir.ty, Ty::Array | Ty::Map | Ty::Set | Ty::String)
+                    let array_ok = !matches!(
+                        recv_hir.ty,
+                        Ty::Array | Ty::Map | Ty::Set | Ty::String | Ty::BufferView(_) | Ty::Buffer
+                    )
                             || matches!(key_hir.ty, Ty::String | Ty::Any);
                     // A key of unknown type may be a Symbol: split on its run-time type;
                     // a symbol key reads the member and calls it with the receiver as
