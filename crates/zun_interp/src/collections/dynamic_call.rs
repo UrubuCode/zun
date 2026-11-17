@@ -1018,6 +1018,48 @@ impl<'a> Interp<'a> {
                             });
                             native_args = vec![Value::Object(namespace), Value::Object(list)];
                         }
+                        Some(ArrayHandling::ToSplicedCounts) => {
+                            // `(array, start, deleteCount, items)`: the counts
+                            // as integers, the variadic inserts packed.
+                            let length = zun_gc::with_current_heap(|heap| {
+                                heap.array_len(namespace).unwrap_or(0)
+                            });
+                            let start = match call_args.first().cloned() {
+                                None | Some(Value::Void) => 0,
+                                Some(other) => self.to_number_value(other)? as i64,
+                            };
+                            let start = if start < 0 {
+                                (length as i64 + start).max(0)
+                            } else {
+                                start.min(length as i64)
+                            };
+                            let remaining = length as i64 - start;
+                            // Per spec: with no arguments at all `skipCount` is
+                            // 0, so `toSpliced()` is a full copy; only once
+                            // `start` is present does an absent `skipCount`
+                            // mean "to the end".
+                            let delete_count = match call_args.get(1).cloned() {
+                                None | Some(Value::Void) if call_args.is_empty() => 0,
+                                None | Some(Value::Void) => remaining,
+                                Some(other) => self.to_number_value(other)? as i64,
+                            }
+                            .clamp(0, remaining);
+                            let items = zun_gc::with_current_heap_mut(|heap| {
+                                let items = heap.alloc_array(0);
+                                for value in call_args.iter().skip(2) {
+                                    let boxed =
+                                        value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+                                    heap.array_push(items, boxed);
+                                }
+                                items
+                            });
+                            native_args = vec![
+                                Value::Object(namespace),
+                                Value::Int(start, zun_il::NumKind::I64),
+                                Value::Int(delete_count, zun_il::NumKind::I64),
+                                Value::Object(items),
+                            ];
+                        }
                         Some(ArrayHandling::SpliceList) => {
                             let list = zun_gc::with_current_heap_mut(|heap| {
                                 let list = heap.alloc_array(0);

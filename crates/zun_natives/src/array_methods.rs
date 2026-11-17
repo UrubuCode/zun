@@ -49,6 +49,13 @@ pub enum ArrayHandling {
     /// `splice`: the call arguments are gathered into a managed list and routed
     /// to `arraySpliceArgs`.
     SpliceList,
+    /// `toSpliced`: the native takes exactly `(array, start, deleteCount,
+    /// items)`, so the dynamic path coerces the two counts to integers and
+    /// gathers the variadic inserts into a managed Array -- the shape the
+    /// typed path builds in sema. Forwarded unchanged, the counts arrived as
+    /// floats and the items array was missing, and `toSpliced` answered
+    /// "is not a function" through `any` while working in typed code.
+    ToSplicedCounts,
 }
 
 /// One row of the authoritative `Array` method table.
@@ -103,7 +110,7 @@ static ARRAY_METHODS: &[ArrayMethod] = &[
     row("toReversed", "arrayToReversed", Plain),
     row("toSorted", "arrayToSorted", Plain),
     row("with", "arrayWith", Plain),
-    row("toSpliced", "arrayToSpliced", Plain),
+    row("toSpliced", "arrayToSpliced", ToSplicedCounts),
     row("has", "arrayHas", Plain),
     // Methods whose dynamic path refines the native or reshapes its arguments.
     row("sort", "arraySortDefault", Sort),

@@ -524,6 +524,54 @@ pub(crate) fn install_prototype_methods(heap: &mut zun_gc::Heap, proto: zun_gc::
             );
         }
     }
+    if class == "Array" {
+        install_array_unscopables(heap, proto);
+    }
+}
+
+/// The member names `Array.prototype[Symbol.unscopables]` marks, exactly as in
+/// the specification: every `Array.prototype` method added after ES5, so a
+/// `with` block over an array does not shadow an outer binding of the same
+/// name.
+const ARRAY_UNSCOPABLES: &[&str] = &[
+    "at",
+    "copyWithin",
+    "entries",
+    "fill",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flat",
+    "flatMap",
+    "includes",
+    "keys",
+    "toReversed",
+    "toSorted",
+    "toSpliced",
+    "values",
+];
+
+/// Install `Array.prototype[Symbol.unscopables]`: a null-prototype object whose
+/// members are all `true`.
+///
+/// Zun has no `with` statement, so this changes no behaviour -- but the object
+/// is observable (`Object.keys`, `getPrototypeOf`, the values), and reading it
+/// answered `undefined`, which made every reflective probe of it throw.
+fn install_array_unscopables(heap: &mut zun_gc::Heap, proto: zun_gc::Obj) {
+    let list = heap.alloc_dynamic();
+    // An *explicit* null prototype is `Some(Any::null())`; `None` means "not
+    // set", which falls back to `Object.prototype`.
+    heap.dynamic_set_prototype(list, Some(zun_core::Any::null()));
+    for name in ARRAY_UNSCOPABLES {
+        heap.dynamic_set(list, *name, zun_core::Any::bool(true));
+    }
+    let value = zun_core::Any::object(list.addr() as usize);
+    let id = zun_core::WellKnownSymbol::Unscopables.id();
+    heap.dynamic_set_symbol(proto, id, value);
+    // Non-writable, non-enumerable, configurable, as the specification says.
+    heap.dynamic_set_symbol_enumerable(proto, id, false);
+    heap.dynamic_set_symbol_attributes(proto, id, Some(false), Some(true));
 }
 
 /// First kind of the built-in static method values (`Math.max`, `Object.keys`,
