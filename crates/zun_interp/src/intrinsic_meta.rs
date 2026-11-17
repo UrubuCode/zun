@@ -694,6 +694,16 @@ const STATIC_METHODS: &[(&str, &[(&str, u32, &str)])] = &[
     // `static_methods.rs` adapts them by name. `fromAsync` is absent on purpose:
     // it has no value form yet, and a listed function must also behave.
     ("Array", &[("from", 1, ""), ("isArray", 1, ""), ("of", 0, "")]),
+    // `BigInt.asIntN`/`asUintN` and `ArrayBuffer.isView` were callable but were
+    // not *values*: `typeof BigInt.asIntN` read `undefined`, the descriptor was
+    // absent, and `Object.getOwnPropertyNames(BigInt)` raised `BadToken`. The
+    // same lists-vs-behaves shape that `6f201f27` fixed for prototype methods,
+    // `4141e09e` for the `Number` statics and `3fa7a60b` for the `Array` ones.
+    // `ArrayBuffer.isView` is deliberately not here: its native lives in the
+    // `buffer` module, while the static-value dispatch resolves only from
+    // `collections`. Adding it means widening that dispatch, which is a
+    // separate change.
+    ("BigInt", &[("asIntN", 2, "bigIntAsIntN"), ("asUintN", 2, "bigIntAsUintN")]),
 ];
 
 /// The static methods of the built-in `class` as `(kind, name)` pairs.
