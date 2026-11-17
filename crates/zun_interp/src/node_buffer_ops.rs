@@ -885,8 +885,12 @@ impl Interp<'_> {
         tail: &str,
         args: &[Value],
     ) -> Option<Result<Value, RunError>> {
+        // The receiver arrives as a bare object from typed code and boxed in an
+        // `Any` when it came through a dynamic lane (a view built by a dynamic
+        // `new Uint8Array(buffer, ...)`, as `TextDecoder.decode` does).
         let view = || match args.first() {
             Some(Value::Object(view)) => Some(*view),
+            Some(value @ Value::Any(_)) => super::collections::object(value),
             _ => None,
         };
         macro_rules! on_view {

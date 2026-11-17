@@ -4,7 +4,7 @@
 //   encoding, fatal, ignoreBOM, decode(input?, { stream }?) -> string
 //
 // Supported encodings: utf-8, utf-16le, utf-16be and the windows-1252 family
-// (decoded as latin1). Other labels from the Encoding Standard are accepted by
+// (one decoder: latin1 plus the 0x80..0x9F table). Other labels from the Encoding Standard are accepted by
 // the constructor but decode as UTF-8. Deferred: streaming state across
 // calls (`stream: true` is accepted and ignored).
 
@@ -21,7 +21,7 @@ class TextDecoder {
         if (label !== undefined) {
             name = TextDecoder.canonical(String(label));
             if (name == "") {
-                throw new RangeError("The encoding label provided is invalid.");
+                throw new RangeError("The \"" + String(label) + "\" encoding is not supported");
             }
         }
         this.enc = name;
@@ -61,7 +61,13 @@ class TextDecoder {
         if (l == "windows-1252" || l == "latin1" || l == "iso-8859-1" || l == "iso8859-1" || l == "ascii" || l == "us-ascii" || l == "cp1252" || l == "ansi_x3.4-1968" || l == "l1" || l == "iso_8859-1" || l == "x-cp1252") {
             return "windows-1252";
         }
-        if (l == "big5" || l == "gbk" || l == "gb18030" || l == "shift_jis" || l == "sjis" || l == "euc-jp" || l == "euc-kr" || l == "iso-2022-jp" || l == "iso-8859-2" || l == "koi8-r" || l == "windows-1251" || l == "gb2312") {
+        if (l == "sjis") {
+            return "shift_jis";
+        }
+        if (l == "gb2312") {
+            return "gbk";
+        }
+        if (l == "big5" || l == "gbk" || l == "gb18030" || l == "shift_jis" || l == "euc-jp" || l == "euc-kr" || l == "iso-2022-jp" || l == "iso-8859-2" || l == "koi8-r" || l == "windows-1251") {
             return l;
         }
         return "";
@@ -69,20 +75,38 @@ class TextDecoder {
 
     decode(input: any = undefined, options: any = null): string {
         let bytes: any = new Uint8Array(0);
-        if (input !== undefined && input !== null) {
+        if (input === null) {
+            throw new TypeError("The \"list\" argument must be an instance of SharedArrayBuffer, ArrayBuffer or ArrayBufferView.");
+        }
+        if (input !== undefined) {
             if (input.buffer !== undefined) {
                 bytes = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
             } else if (input.byteLength !== undefined) {
                 bytes = new Uint8Array(input);
             } else {
-                throw new TypeError("The provided value is not of type ArrayBuffer or ArrayBufferView.");
+                throw new TypeError("The \"list\" argument must be an instance of SharedArrayBuffer, ArrayBuffer or ArrayBufferView.");
             }
         }
         if (this.enc == "utf-16le" || this.enc == "utf-16be") {
             return this.decode16(bytes);
         }
         if (this.enc == "windows-1252") {
-            return decBuffer.nodeBufferToString(bytes, "latin1" as any, 0 as any, bytes.length as any);
+            const raw: string = decBuffer.nodeBufferToString(bytes, "latin1" as any, 0 as any, bytes.length as any);
+            // windows-1252 differs from latin1 only in 0x80..0x9F.
+            const c1: string = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ";
+            let mapped: string = "";
+            let from: number = 0;
+            for (let k = 0; k < raw.length; k++) {
+                const unit: number = raw.charCodeAt(k);
+                if (unit >= 128 && unit <= 159) {
+                    mapped = mapped + raw.substring(from, k) + c1.charAt(unit - 128);
+                    from = k + 1;
+                }
+            }
+            if (from == 0) {
+                return raw;
+            }
+            return mapped + raw.substring(from);
         }
         // UTF-8 streaming: an incomplete trailing sequence is held for the next call.
         const stream: boolean = options !== null && options !== undefined && options.stream ? true : false;
@@ -128,14 +152,32 @@ class TextDecoder {
         }
         const text: string = decBuffer.nodeBufferToString(bytes, "utf8" as any, start as any, bytes.length as any);
         if (this.fatalFlag && text.indexOf("�") >= 0) {
-            // Lossy decoding changes the byte length of malformed input; a valid
-            // input round-trips to the same number of bytes.
-            const back: any = decBuffer.nodeBufferFromString(text, "utf8");
-            if (back.length != bytes.length - start) {
+            // A U+FFFD in the text is legitimate only where the input spells it
+            // out (EF BF BD). `EF` always opens a sequence, so those three bytes
+            // decode to exactly one U+FFFD wherever they appear; any further
+            // U+FFFD is a replacement the lossy decoder inserted.
+            let replaced: number = 0;
+            for (let k = 0; k < text.length; k++) {
+                if (text.charCodeAt(k) == 65533) {
+                    replaced = replaced + 1;
+                }
+            }
+            let spelled: number = 0;
+            const last: number = bytes.length - 2;
+            for (let k: number = start as any; k < last; k++) {
+                if (bytes[k] == 239 && bytes[k + 1] == 191 && bytes[k + 2] == 189) {
+                    spelled = spelled + 1;
+                }
+            }
+            if (replaced != spelled) {
                 throw new TypeError("The encoded data was not valid for encoding utf-8");
             }
         }
         return text;
+    }
+
+    get [Symbol.toStringTag](): string {
+        return "TextDecoder";
     }
 
     decode16(bytes: any): string {

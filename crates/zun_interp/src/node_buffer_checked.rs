@@ -468,6 +468,11 @@ impl Interp<'_> {
         }
         let view = match args.first() {
             Some(Value::Object(view)) => *view,
+            // A view that came through a dynamic lane is boxed in an `Any`.
+            Some(value @ Value::Any(_)) => match super::collections::object(value) {
+                Some(view) => view,
+                None => return Some(Err(RunError::BadToken)),
+            },
             _ => return Some(Err(RunError::BadToken)),
         };
         let kind = &tail[if is_read { 4 } else { 5 }..];

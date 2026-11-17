@@ -17,6 +17,10 @@ class TextEncoder {
         return "utf-8";
     }
 
+    get [Symbol.toStringTag](): string {
+        return "TextEncoder";
+    }
+
     encode(input: any = ""): Uint8Array {
         const text: string = input === undefined ? "" : String(input);
         return encBuffer.nodeBufferFromString(text, "utf8");
