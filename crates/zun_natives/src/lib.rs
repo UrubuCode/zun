@@ -95,6 +95,7 @@ mod object_ext;
 mod realm_define;
 pub use realm_define::{namespace_class_tag, NAMESPACE_CLASSES};
 mod view_members;
+pub use node_buffer::buffer_encoding_alias;
 pub use view_members::{node_buffer_accessor_native, view_member, ViewArg, ViewMember, LENGTH_SENTINEL};
 mod serde;
 mod time;

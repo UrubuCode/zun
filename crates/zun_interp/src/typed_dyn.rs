@@ -507,6 +507,34 @@ impl Interp<'_> {
         args: &[Value],
     ) -> Result<Option<Value>, RunError> {
         use zun_natives::{NativeTy, ViewArg};
+        // A per-encoding alias is `write`/`toString` with the encoding fixed.
+        // Rewrite it here, before the member table is consulted, so the typed
+        // and the `any` paths answer the same thing -- a method that works
+        // typed and not through `any` is the asymmetry this engine keeps
+        // producing.
+        let rewritten: Option<(&str, Vec<Value>)> =
+            zun_natives::buffer_encoding_alias(member).map(|(encoding, is_write)| {
+                let encoding = Value::Str(zun_core::ZStr::from(encoding));
+                if is_write {
+                    let mut call = Vec::with_capacity(4);
+                    for slot in 0..3 {
+                        call.push(args.get(slot).cloned().unwrap_or(Value::Void));
+                    }
+                    call.push(encoding);
+                    ("write", call)
+                } else {
+                    let mut call = vec![encoding];
+                    for slot in 0..2 {
+                        call.push(args.get(slot).cloned().unwrap_or(Value::Void));
+                    }
+                    ("toString", call)
+                }
+            });
+        let (member, owned_args) = match &rewritten {
+            Some((base, call)) => (*base, Some(call)),
+            None => (member, None),
+        };
+        let args: &[Value] = owned_args.map_or(args, |call| call.as_slice());
         let buffer_member = matches!(
             member,
             "toString"

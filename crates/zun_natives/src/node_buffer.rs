@@ -508,3 +508,30 @@ pub const MODULE: crate::Module = crate::Module {
         },
     ],
 };
+
+/// Node's per-encoding `Buffer.prototype` aliases: `<enc>Write` forwards to
+/// `write` and `<enc>Slice` to `toString`, with the encoding fixed. Returns the
+/// canonical encoding name and whether it is the write form.
+///
+/// It lives here, in the shared format/native layer, because both the compiler
+/// side (sema's typed lowering) and the runtime side (the dynamic member call
+/// in `zun_interp`) need the same table, and those two may never depend on each
+/// other.
+pub fn buffer_encoding_alias(member: &str) -> Option<(&'static str, bool)> {
+    let (stem, is_write) = match member.strip_suffix("Write") {
+        Some(stem) => (stem, true),
+        None => (member.strip_suffix("Slice")?, false),
+    };
+    let encoding = match stem {
+        "utf8" => "utf8",
+        "latin1" => "latin1",
+        "ascii" => "ascii",
+        "base64" => "base64",
+        "base64url" => "base64url",
+        "hex" => "hex",
+        // Node exposes both spellings for the same encoding.
+        "ucs2" | "utf16le" => "utf16le",
+        _ => return None,
+    };
+    Some((encoding, is_write))
+}

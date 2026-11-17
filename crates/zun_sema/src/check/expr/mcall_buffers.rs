@@ -117,7 +117,15 @@ impl Checker<'_> {
                 "indexOf" | "includes" | "lastIndexOf" => true,
                 "swap16" | "swap32" | "swap64" => true,
                 "fill" => args.len() == 1,
-                other => other.starts_with("read") || other.starts_with("write"),
+                other => {
+                    other.starts_with("read")
+                        || other.starts_with("write")
+                        // The per-encoding aliases end in `Write`/`Slice`
+                        // (`utf8Write`, `hexSlice`), so a prefix test misses
+                        // them and they fell through to the typed-array
+                        // surface, which has no such member.
+                        || zun_natives::buffer_encoding_alias(other).is_some()
+                }
             };
             if intercept {
                 return Ok(self.check_buffer_method(cx, receiver, mname, args, span));
@@ -278,7 +286,12 @@ impl Checker<'_> {
                             | "swap32"
                             | "swap64"
                     ) || mname.starts_with("read")
-                        || mname.starts_with("write");
+                        || mname.starts_with("write")
+                        // Per-encoding aliases end in `Write`/`Slice`, so the
+                        // prefix tests above miss them and they were routed to
+                        // the typed-array surface, which has no such member --
+                        // a *runtime* "is not a function", not a compile error.
+                        || zun_natives::buffer_encoding_alias(mname).is_some();
                     if node {
                         return false;
                     }

@@ -297,6 +297,35 @@ impl Checker<'_> {
                 call_args.extend(raws(self, cx, max));
                 call(self, native, call_args, ret)
             }
+            // Node's per-encoding aliases are thin wrappers over `write` and
+            // `toString` with the encoding fixed: `b.utf8Write(s, off, len)`
+            // is `b.write(s, off, len, "utf8")` and `b.hexSlice(a, b)` is
+            // `b.toString("hex", a, b)`. They are real own methods of
+            // `Buffer.prototype`, not sugar, so code that reaches for them
+            // (and this suite's buffer fixtures) needs them by name.
+            other if zun_natives::buffer_encoding_alias(other).is_some() => {
+                let (encoding, is_write) =
+                    zun_natives::buffer_encoding_alias(other).expect("checked by the guard");
+                let literal = Self::string_literal(encoding.to_owned(), span);
+                if is_write {
+                    if args.is_empty() || args.len() > 3 {
+                        self.error(span, format!("`{other}` expects 1 to 3 arguments"));
+                        return self.poison(span);
+                    }
+                    let mut call_args = vec![receiver];
+                    call_args.extend(raws(self, cx, 3));
+                    call_args.push(Self::box_to_any(literal));
+                    call(self, "nodeBufferWrite", call_args, u64_ty)
+                } else {
+                    if args.len() > 2 {
+                        self.error(span, format!("`{other}` expects at most 2 arguments"));
+                        return self.poison(span);
+                    }
+                    let mut call_args = vec![receiver, Self::box_to_any(literal)];
+                    call_args.extend(raws(self, cx, 2));
+                    call(self, "nodeBufferToString", call_args, Ty::String)
+                }
+            }
             "toJSON" => {
                 let json = call(self, "nodeBufferToJSON", vec![receiver], Ty::Any);
                 json
@@ -391,3 +420,4 @@ impl Checker<'_> {
 pub(in crate::check) fn buffer_accessor_native(method: &str) -> String {
     zun_natives::node_buffer_accessor_native(method)
 }
+
