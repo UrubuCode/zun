@@ -942,3 +942,46 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   `X instanceof Function` is false for a class value (also for `Headers` and
   `Map`), so the platform classes still differ from node in reflection even
   where behaviour matches.
+
+### At `71d61617` (still 144) — a measurement correction and six blockers
+- **MEASUREMENT: a symmetric mismatch count is not monotonic with progress.**
+  `buffer-compare-rw-and-views` went from printing **nothing** to printing 52
+  lines, 9 of which match node, and its symmetric count *rose* 143 -> 177.
+  Empty output scores exactly one mismatch per node line and nothing worse, so
+  partial-but-wrong output can score worse than silence. Symmetric counting
+  remains the right guard against the one-directional trap (where empty output
+  scores *perfect*), but **rank by matching lines**:
+  `(zun_lines + node_lines - symmetric) / 2`. Report both.
+- **Known-red, verified at the parent in a worktree:**
+  `zun_vm --test function_apply_args` (both tests). Joins `zun_codegen`'s
+  `equivalence_string_methods`/`int_recursion`, `wintercg`'s
+  `headers_set_append_delete`, and `zun_compiler --lib`'s two report tests.
+- **OPEN, engine panic:** `5n - (x as any)` -- a typed BigInt against an `any`
+  operand, for `-`, `*`, `/`, `%`, `**` and the bitwise/shift operators --
+  aborts at `value.rs:157` (`as_number`). The same accessor family as the three
+  aborts already closed; needs a dynamic BigInt arithmetic native.
+- **OPEN - BigInt identity through `any` compares by heap address**, so `===`,
+  `switch`, `Map`/`Set` keys, `includes`/`indexOf` and `Object.is` all answer
+  wrongly for equal BigInts. This is most of what
+  `bigint-conversion-and-equality` still mismatches (36 of 204 lines).
+- **OPEN - BigInt arithmetic through `any`:** `a - b` with two BigInts throws
+  where node computes; a mixed `a - 1` throws with "Cannot convert a BigInt
+  value to a number" instead of node's "Cannot mix..." (only `+` has the right
+  message); and unary `-a` silently answers a *number*.
+- **OPEN - more intrinsics missing as function values**, the same shape fixed
+  for prototype methods in `6f201f27`, `Number` statics in `4141e09e`, `Array`
+  statics in `3fa7a60b` and `eval`/`Function` in `8f5c54c8`: `Buffer` read as a
+  value has no statics (`B.concat` is `undefined`),
+  `ArrayBuffer.prototype.slice` is not a value, and `Symbol.for`,
+  `Symbol.keyFor` and `Symbol.iterator` are missing through the `Symbol` value
+  even though calling `Symbol` itself now works. `typeof Symbol.call` reads
+  `undefined` while the call succeeds -- lists-vs-behaves, inverted.
+- **OPEN - `new String("w")` has no string methods at all** (`.trim()` throws),
+  and a method assigned on `String.prototype` is not honoured.
+- **OPEN - `Reflect.set(255n as any, ...)` answers true where node throws**,
+  because a BigInt primitive and `Object(255n)` are indistinguishable at run
+  time -- the same missing primitive-wrapper subsystem that blocks
+  `f.apply(null, Object("abc"))`.
+- **Noted trade-off:** when `.call` takes the dynamic path for a primitive
+  receiver, the `this` argument is evaluated before the callee expression.
+  Observable only if both have side effects.
