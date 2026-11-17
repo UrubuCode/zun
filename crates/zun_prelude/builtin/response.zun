@@ -1,7 +1,9 @@
 // Nucleus `Response` (Fetch, prelude class).
 //
+//   new Response(body?, { status, statusText, headers }?)
+//   Response.error() / Response.redirect(url, status?)
 //   Response.fromBlob(blob)   build from the `httpFetch` response blob
-//   status, statusText, ok, headers, text(), json()
+//   status, statusText, ok, headers, type, url, redirected, clone(), text(), json()
 //
 // Blob format (from the `net` native): "<status>\n<statusText>\n<headers>\n\n<body>"
 // where <headers> is "Name: Value" lines joined by "\n" (possibly empty). After
@@ -10,45 +12,171 @@
 //
 // Simplifications (documented, not defects):
 //   * The body is held as text (UTF-8, lossy); `text()` and `json()` are
-//     synchronous and return the value directly (the web returns a Promise).
-//     `arrayBuffer`, `blob`, `formData`, streaming `body`, `clone`, `bodyUsed`,
-//     `redirected` and `url` are deferred.
-//   * A public `new Response(body, init)` is deferred; the constructor is the
-//     raw field form `new Response(status, statusText, headers, body)`.
+//     synchronous, re-readable and return the value directly (the web returns
+//     a Promise and consumes the body). Because of that `body`, `bodyUsed`,
+//     `arrayBuffer`, `blob`, `bytes` and `formData` are absent rather than
+//     approximated; a `Blob`, `FormData` or stream body takes the `String()`
+//     path.
+//   * The static `Response.json(data, init?)` is absent: a class cannot yet
+//     declare a static and an instance method of the same name.
 //
 // Also defines the global `fetch(url)` / `fetchWith(...)` free functions here (a
 // free function in `prelude.zun` cannot see prelude classes on the cached-std path).
 //
-// Self-contained over the `zun:core` string/number natives; uses `Headers` and `JSON`.
+// Self-contained over the `zun:core` string/number natives; uses `Headers`,
+// `URL`, `URLSearchParams`, `TextDecoder` and `JSON`.
 
 import { string as resString, number as resNumber, net as resNet } from "zun:core";
 
 class Response {
-    status: number;
-    statusText: string;
-    headers: Headers;
-    body: string;
+    #status: number = 200;
+    #statusText: string = "";
+    #headers: any = null;
+    #text: string = "";
+    #type: string = "default";
+
+    // A rest parameter, so an omitted argument is told apart from an explicit
+    // `null` on every construction path (a reflective construction pads the
+    // parameters it was not given with `null`).
+    constructor(...given: any[]) {
+        const body: any = given[0];
+        const init: any = given[1];
+        if (init !== undefined && init !== null) {
+            if (typeof init !== "object" && typeof init !== "function") {
+                throw new TypeError("undefined: Expected " + String(init) + " to be one of: Null, Undefined, Object.");
+            }
+            if (init.status !== undefined) {
+                const raw: number = Number(init.status);
+                const status: number = raw !== raw ? 0 : (raw < 0 ? Math.ceil(raw) : Math.floor(raw));
+                if (status < 200 || status > 599) {
+                    throw new RangeError("init[\"status\"] must be in the range of 200 to 599, inclusive.");
+                }
+                this.#status = status;
+            }
+            if (init.statusText !== undefined) {
+                const reason: string = String(init.statusText);
+                for (let i = 0; i < reason.length; i++) {
+                    const c = reason.charCodeAt(i);
+                    if (c !== 9 && (c < 32 || c === 127 || c > 255)) {
+                        throw new TypeError("Invalid statusText");
+                    }
+                }
+                this.#statusText = reason;
+            }
+            this.#headers = new Headers(init.headers);
+        } else {
+            this.#headers = new Headers();
+        }
+        if (body !== undefined && body !== null) {
+            const status: number = this.#status;
+            if (status === 204 || status === 205 || status === 304) {
+                throw new TypeError("Response constructor: Invalid response status code " + status);
+            }
+            let implied: any = "text/plain;charset=UTF-8";
+            if (typeof body === "string") {
+                this.#text = body;
+            } else if (body instanceof ArrayBuffer || body instanceof SharedArrayBuffer || ArrayBuffer.isView(body)) {
+                this.#text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(body);
+                implied = null;
+            } else if (body instanceof URLSearchParams) {
+                this.#text = body.toString();
+                implied = "application/x-www-form-urlencoded;charset=UTF-8";
+            } else {
+                this.#text = String(body);
+            }
+            if (implied !== null && !this.#headers.has("content-type")) {
+                this.#headers.append("content-type", implied);
+            }
+        }
+    }
+
+    get type(): string {
+        return this.#type;
+    }
+
+    get url(): string {
+        return "";
+    }
+
+    get redirected(): boolean {
+        return false;
+    }
+
+    get status(): number {
+        return this.#status;
+    }
 
     get ok(): boolean {
-        if (this.status < 200) {
-            return false;
-        }
-        return this.status <= 299;
+        return this.#status >= 200 && this.#status <= 299;
+    }
+
+    get statusText(): string {
+        return this.#statusText;
+    }
+
+    get headers(): any {
+        return this.#headers;
+    }
+
+    clone(): Response {
+        const copy = new Response();
+        copy.#status = this.#status;
+        copy.#statusText = this.#statusText;
+        copy.#headers = new Headers(this.#headers);
+        copy.#text = this.#text;
+        copy.#type = this.#type;
+        return copy;
     }
 
     text(): string {
-        return this.body;
+        return this.#text;
     }
 
     json(): any {
-        return JSON.parse(this.body);
+        return JSON.parse(this.#text);
+    }
+
+    get [Symbol.toStringTag](): string {
+        return "Response";
+    }
+
+    // Fills in a response as received from the network: no status range check
+    // applies there, and the header list is taken as parsed.
+    #receive(status: number, statusText: string, headers: any, text: string, type: string): Response {
+        this.#status = status;
+        this.#statusText = statusText;
+        this.#headers = headers;
+        this.#text = text;
+        this.#type = type;
+        return this;
+    }
+
+    static error(): Response {
+        return new Response().#receive(0, "", new Headers(), "", "error");
+    }
+
+    static redirect(url: any, status: any = 302): Response {
+        const text: string = String(url);
+        let parsed: any = null;
+        try {
+            parsed = new URL(text);
+        } catch (e) {
+            throw new TypeError("Failed to parse URL from " + text);
+        }
+        const code: number = Number(status);
+        if (code !== 301 && code !== 302 && code !== 303 && code !== 307 && code !== 308) {
+            throw new RangeError("Invalid status code " + String(status));
+        }
+        const headers: any = new Headers();
+        headers.append("location", parsed.href);
+        return new Response().#receive(code, "", headers, "", "default");
     }
 
     // Parses an `httpFetch` response blob.
     static fromBlob(blob: string): Response {
         let n: u64 = resString.length(blob);
         if (n == 0) {
-            return new Response(0, "", new Headers(), "");
+            return new Response().#receive(0, "", new Headers(), "", "default");
         }
         let nl1: u64 = resString.indexOf(blob, "\n") as u64;
         let statusNum: number = resNumber.parseFloat(resString.substring(blob, 0, nl1));
@@ -68,7 +196,7 @@ class Response {
             headerText = resString.substring(rest, 0, at);
             body = resString.substring(rest, at + 2, restLen);
         }
-        return new Response(statusNum, statusText, Headers.fromLines(headerText), body);
+        return new Response().#receive(statusNum, statusText, Headers.fromLines(headerText), body, "default");
     }
 }
 

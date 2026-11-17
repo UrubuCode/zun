@@ -199,6 +199,10 @@ class ReadableStream {
         this.pipeTo(transform.writable);
         return transform.readable;
     }
+
+    get [Symbol.toStringTag](): string {
+        return "ReadableStream";
+    }
 }
 
 class WritableStreamDefaultWriter {

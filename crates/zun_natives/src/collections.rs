@@ -678,10 +678,13 @@ pub const MODULE: crate::Module = crate::Module {
         },
         // `new ns.C(...args)` on a dynamic import namespace: construct a class
         // export cross-module. `(namespace, className, argsArray)` — the array
-        // form carries any constructor arity (see `proxyConstruct`).
+        // form carries any constructor arity (see `proxyConstruct`). The fourth
+        // argument is the ordinary `ns.C` member read: the base is only known to
+        // be dynamic at compile time, so when it is not a namespace exporting
+        // that class the runtime constructs through the member value instead.
         NativeFn {
             name: "dynamicConstruct",
-            params: &[Opaque, Str, Array],
+            params: &[Opaque, Str, Array, Opaque],
             ret: Opaque,
             imp: unavailable,
         },

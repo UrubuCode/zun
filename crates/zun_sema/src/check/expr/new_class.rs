@@ -70,6 +70,21 @@ impl Checker<'_> {
                         span: Span::new(class.span.start, class.span.start + base.len() as u32),
                     };
                     let base_expr = self.check_expr(cx, &ast::Expr::Ident(base_name));
+                    // The ordinary member read, for a base that turns out not to
+                    // be a module namespace (see `check_new_dynamic`).
+                    let member_value = self.check_expr(
+                        cx,
+                        &ast::Expr::Field {
+                            object: Box::new(ast::Expr::Ident(base_name)),
+                            field: ast::Name {
+                                span: Span::new(
+                                    class.span.start + dot as u32 + 1,
+                                    class.span.end,
+                                ),
+                            },
+                            span: class.span,
+                        },
+                    );
                     let member_expr = hir::Expr {
                         kind: hir::ExprKind::String(member),
                         ty: Ty::String,
@@ -90,7 +105,7 @@ impl Checker<'_> {
                     return Some(hir::Expr {
                         kind: hir::ExprKind::CallBuiltin {
                             id,
-                            args: vec![base_expr, member_expr, args_array],
+                            args: vec![base_expr, member_expr, args_array, member_value],
                         },
                         ty: Ty::Any,
                         span,

@@ -36,6 +36,11 @@ impl Checker<'_> {
                         ty: Ty::String,
                         span: field.span,
                     };
+                    // The checker cannot tell a module namespace from any other
+                    // dynamic value, so the ordinary member read travels along:
+                    // the runtime constructs through it whenever the base is not
+                    // a namespace exporting that class.
+                    let member_value = self.check_expr(cx, callee);
                     let elements: Vec<Option<hir::Expr>> =
                         args.iter().map(|a| Some(self.check_expr(cx, a))).collect();
                     let args_array = hir::Expr {
@@ -47,7 +52,7 @@ impl Checker<'_> {
                         return hir::Expr {
                             kind: hir::ExprKind::CallBuiltin {
                                 id,
-                                args: vec![base_expr, member_expr, args_array],
+                                args: vec![base_expr, member_expr, args_array, member_value],
                             },
                             ty: Ty::Any,
                             span,

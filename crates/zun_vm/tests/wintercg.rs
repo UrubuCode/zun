@@ -418,3 +418,146 @@ fn fetch_rejects_on_transport_failure() {
     ));
     assert_eq!(out.lines, ["rejected"]);
 }
+
+// --- Blob / File / Request / Response constructors ---
+
+#[test]
+fn blob_concatenates_sources_and_slices() {
+    let out = run(r#"async function main() {
+        const blob: any = new Blob(["abc", new Uint8Array([100, 101]), new Blob(["f"])], { type: "Text/Plain" });
+        console.log(blob.size);
+        console.log(blob.type);
+        console.log(Object.prototype.toString.call(blob));
+        console.log(Object.keys(blob).length);
+        const part: any = blob.slice(1, -1, "x/y");
+        console.log(part.size);
+        console.log(part.type);
+        console.log(part instanceof Blob);
+        console.log(await part.text());
+        console.log((await blob.arrayBuffer()).byteLength);
+        console.log(new Blob().size);
+        console.log((Reflect.construct(Blob, []) as any).size);
+        try {
+            new Blob("abc" as any);
+        } catch (e: any) {
+            console.log(e instanceof TypeError);
+        }
+    }"#);
+    assert_eq!(
+        out.lines,
+        ["6", "text/plain", "[object Blob]", "0", "4", "x/y", "true", "bcde", "6", "0", "0", "true"]
+    );
+}
+
+#[test]
+fn file_is_a_named_blob() {
+    let out = run(r#"function main() {
+        const file: any = new File(["abc"], "a.txt", { type: "text/plain", lastModified: 42 });
+        console.log(file.name);
+        console.log(file.size);
+        console.log(file.type);
+        console.log(file.lastModified);
+        console.log(file instanceof Blob);
+        console.log(Object.prototype.toString.call(file));
+        console.log(file.slice(0, 1) instanceof File);
+    }"#);
+    assert_eq!(
+        out.lines,
+        ["a.txt", "3", "text/plain", "42", "true", "[object File]", "false"]
+    );
+}
+
+#[test]
+fn request_normalizes_and_has_a_one_shot_body() {
+    let out = run(r#"async function main() {
+        const req: any = new Request("https://e.example/a b", { method: "post", body: "hi", headers: { "X-A": "1" } });
+        console.log(req.url);
+        console.log(req.method);
+        console.log(req.headers.get("content-type"));
+        console.log(req.headers.get("x-a"));
+        console.log(req.bodyUsed);
+        const copy: any = req.clone();
+        console.log(await req.text());
+        console.log(req.bodyUsed);
+        console.log(copy.bodyUsed);
+        console.log(await copy.text());
+        try {
+            await req.text();
+        } catch (e: any) {
+            console.log(e instanceof TypeError);
+        }
+        try {
+            new Request("https://e.example/", { body: "x" });
+        } catch (e: any) {
+            console.log(e.message);
+        }
+        try {
+            new Request("nope");
+        } catch (e: any) {
+            console.log(e.message);
+        }
+        const controller = new AbortController();
+        const watched: any = new Request("https://e.example/", { signal: controller.signal });
+        controller.abort();
+        console.log(watched.signal.aborted);
+    }"#);
+    assert_eq!(
+        out.lines,
+        [
+            "https://e.example/a%20b",
+            "POST",
+            "text/plain;charset=UTF-8",
+            "1",
+            "false",
+            "hi",
+            "true",
+            "false",
+            "hi",
+            "true",
+            "Request with GET/HEAD method cannot have body.",
+            "Failed to parse URL from nope",
+            "true"
+        ]
+    );
+}
+
+#[test]
+fn response_has_a_public_constructor() {
+    let out = run(r#"function main() {
+        const empty: any = new Response();
+        console.log(empty.status);
+        console.log(empty.ok);
+        console.log(Object.keys(empty).length);
+        const made: any = new Response("hi", { status: 201, statusText: "Made", headers: { "X-A": "1" } });
+        console.log(made.status);
+        console.log(made.statusText);
+        console.log(made.headers.get("content-type"));
+        console.log(made.headers.get("x-a"));
+        console.log(made.text());
+        console.log(made.clone().text());
+        try {
+            new Response("x", { status: 99 });
+        } catch (e: any) {
+            console.log(e instanceof RangeError);
+        }
+        console.log(Response.error().type);
+        console.log(Response.redirect("https://e.example/x", 301).headers.get("location"));
+    }"#);
+    assert_eq!(
+        out.lines,
+        [
+            "200",
+            "true",
+            "0",
+            "201",
+            "Made",
+            "text/plain;charset=UTF-8",
+            "1",
+            "hi",
+            "hi",
+            "true",
+            "error",
+            "https://e.example/x"
+        ]
+    );
+}

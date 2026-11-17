@@ -93,3 +93,30 @@ fn reflect_construct_applies_field_default() {
     );
     assert_eq!(out, ["1", "7"]);
 }
+
+#[test]
+fn new_on_a_dynamic_member_constructs_through_the_member_value() {
+    // `new holder.Boxed(...)` with a dynamic local as the base lowers to
+    // `dynamicConstruct`, which used to accept only a module namespace and
+    // rejected every other base with a bogus TypeError.
+    let out = run_source(
+        r#"class Boxed { v: number; constructor(v: number) { this.v = v; } double(): number { return this.v * 2; } }
+        function main() {
+            const holder: any = { Boxed: Boxed, nope: 5 };
+            console.log(new holder.Boxed(21).double());
+            const nested: any = { inner: holder };
+            console.log(new nested.inner.Boxed(4).double());
+            try {
+                new holder.nope(1);
+            } catch (e: any) {
+                console.log(e instanceof TypeError);
+            }
+            try {
+                new holder.missing(1);
+            } catch (e: any) {
+                console.log(e instanceof TypeError);
+            }
+        }"#,
+    );
+    assert_eq!(out, ["42", "8", "true", "true"]);
+}

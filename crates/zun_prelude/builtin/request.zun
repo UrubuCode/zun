@@ -1,0 +1,368 @@
+// `Request` (Fetch, prelude class).
+//
+//   new Request(input, init?)   input: an absolute URL (string or `URL`) or
+//                               another Request; init: method, headers, body,
+//                               signal, mode, credentials, cache, redirect,
+//                               referrer, referrerPolicy, integrity, keepalive
+//   url, method, headers, signal, body, bodyUsed, clone(), text(), json(),
+//   arrayBuffer(), blob(), bytes(), and the read-only request attributes
+//
+// The body is one-shot: the first reader marks it used and a second read
+// rejects, as does cloning or re-wrapping a used request.
+//
+// Simplifications (documented, not defects):
+//   * A body is a string, a `Blob`, an `ArrayBuffer`, a view or a
+//     `URLSearchParams`. A `FormData` or `ReadableStream` body is not encoded
+//     (it takes the `String()` path), and `formData()` is absent.
+//   * `body` hands out a fresh single-chunk stream; reading that stream does
+//     not mark the request used.
+//   * `referrer` is kept as given instead of being resolved to a URL.
+//
+// Uses `URL`, `Headers`, `Blob`, `AbortSignal`, `TextEncoder`, `TextDecoder`
+// and `ReadableStream`.
+
+// The media type a body implies, or null when it implies none.
+function __zunBodyType(body: any): any {
+    if (typeof body === "string") {
+        return "text/plain;charset=UTF-8";
+    }
+    if (body instanceof Blob) {
+        return body.type === "" ? null : body.type;
+    }
+    if (body instanceof ArrayBuffer || body instanceof SharedArrayBuffer || ArrayBuffer.isView(body)) {
+        return null;
+    }
+    if (body instanceof URLSearchParams) {
+        return "application/x-www-form-urlencoded;charset=UTF-8";
+    }
+    return "text/plain;charset=UTF-8";
+}
+
+// The stored form of a body: a blob is kept (it is immutable), anything else
+// is copied into bytes now, so later writes to the source never show through.
+function __zunBodyStore(body: any): any {
+    if (body instanceof Blob) {
+        return body;
+    }
+    if (body instanceof ArrayBuffer || body instanceof SharedArrayBuffer) {
+        return new Uint8Array(body).slice();
+    }
+    if (ArrayBuffer.isView(body)) {
+        return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
+    }
+    return new TextEncoder().encode(String(body));
+}
+
+// Checks one enumerated `RequestInit` member and returns it as a string.
+// `allowed` is walked by index: the prelude is also compiled into programs
+// that supply their own `Array` methods, so it leans on none of them.
+function __zunRequestEnum(raw: any, allowed: any): string {
+    const value: string = String(raw);
+    let listed: string = "";
+    for (let i = 0; i < allowed.length; i++) {
+        if (allowed[i] === value) {
+            return value;
+        }
+        listed = listed + (i > 0 ? ", " : "") + allowed[i];
+    }
+    throw new TypeError("undefined: " + value + " is not an accepted type. Expected one of " + listed + ".");
+}
+
+class Request {
+    #url: string = "";
+    #method: string = "GET";
+    #headers: any = null;
+    #signal: any = null;
+    #stored: any = null;
+    #used: boolean = false;
+    #mode: string = "cors";
+    #credentials: string = "same-origin";
+    #cache: string = "default";
+    #redirect: string = "follow";
+    #referrer: string = "about:client";
+    #referrerPolicy: string = "";
+    #integrity: string = "";
+    #keepalive: boolean = false;
+
+    // `input` is required, and an explicit `undefined` is still an input, so
+    // the constructor counts what it was actually given.
+    constructor(...given: any[]) {
+        if (given.length < 1) {
+            throw new TypeError("Request constructor: 1 argument required, but 0 found.");
+        }
+        const input: any = given[0];
+        const init: any = given[1];
+        if (init !== undefined && init !== null && typeof init !== "object" && typeof init !== "function") {
+            throw new TypeError("undefined: Expected " + String(init) + " to be one of: Null, Undefined, Object.");
+        }
+        let inherited: any = null;
+        let upstream: any = null;
+        if (input instanceof Request) {
+            const other: Request = input;
+            this.#url = other.#url;
+            this.#method = other.#method;
+            this.#mode = other.#mode;
+            this.#credentials = other.#credentials;
+            this.#cache = other.#cache;
+            this.#redirect = other.#redirect;
+            this.#referrer = other.#referrer;
+            this.#referrerPolicy = other.#referrerPolicy;
+            this.#integrity = other.#integrity;
+            this.#keepalive = other.#keepalive;
+            inherited = other.#headers;
+            upstream = other.#signal;
+        } else {
+            const text: string = String(input);
+            let parsed: any = null;
+            try {
+                parsed = new URL(text);
+            } catch (e) {
+                throw new TypeError("Failed to parse URL from " + text);
+            }
+            if (parsed.username !== "" || parsed.password !== "") {
+                throw new TypeError("Request cannot be constructed from a URL that includes credentials: " + text);
+            }
+            this.#url = parsed.href;
+        }
+        let bodyInit: any = null;
+        if (init !== undefined && init !== null) {
+            if (init.method !== undefined) {
+                const raw: string = String(init.method);
+                if (!Headers.isToken(raw)) {
+                    throw new TypeError("'" + raw + "' is not a valid HTTP method.");
+                }
+                const upper: string = raw.toUpperCase();
+                if (upper === "CONNECT" || upper === "TRACE" || upper === "TRACK") {
+                    throw new TypeError("'" + raw + "' HTTP method is unsupported.");
+                }
+                if (upper === "DELETE" || upper === "GET" || upper === "HEAD" || upper === "OPTIONS" || upper === "POST" || upper === "PUT") {
+                    this.#method = upper;
+                } else {
+                    this.#method = raw;
+                }
+            }
+            if (init.mode !== undefined) {
+                this.#mode = __zunRequestEnum(init.mode, ["navigate", "same-origin", "no-cors", "cors"]);
+                if (this.#mode === "navigate") {
+                    throw new TypeError("Request constructor: invalid request mode navigate.");
+                }
+            }
+            if (init.credentials !== undefined) {
+                this.#credentials = __zunRequestEnum(init.credentials, ["omit", "same-origin", "include"]);
+            }
+            if (init.cache !== undefined) {
+                this.#cache = __zunRequestEnum(init.cache, ["default", "no-store", "reload", "no-cache", "force-cache", "only-if-cached"]);
+            }
+            if (init.redirect !== undefined) {
+                this.#redirect = __zunRequestEnum(init.redirect, ["follow", "error", "manual"]);
+            }
+            if (init.referrer !== undefined) {
+                this.#referrer = String(init.referrer);
+            }
+            if (init.referrerPolicy !== undefined) {
+                this.#referrerPolicy = __zunRequestEnum(init.referrerPolicy, ["", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url"]);
+            }
+            if (init.integrity !== undefined) {
+                this.#integrity = String(init.integrity);
+            }
+            if (init.keepalive !== undefined) {
+                this.#keepalive = init.keepalive ? true : false;
+            }
+            if (init.signal !== undefined && init.signal !== null) {
+                if (!(init.signal instanceof AbortSignal)) {
+                    throw new TypeError("RequestInit: Expected signal (\"" + String(init.signal) + "\") to be an instance of AbortSignal.");
+                }
+                upstream = init.signal;
+            }
+            if (init.headers !== undefined) {
+                inherited = new Headers(init.headers);
+            }
+            if (init.body !== undefined && init.body !== null) {
+                bodyInit = init.body;
+            }
+        }
+        this.#headers = new Headers(inherited === null ? undefined : inherited);
+        // The request's own signal follows the one it was given.
+        const own: any = new AbortSignal();
+        if (upstream !== null) {
+            const source: any = upstream;
+            if (source.aborted) {
+                own.markAborted(source.reason);
+            } else {
+                source.addEventListener("abort", function (): void {
+                    own.markAborted(source.reason);
+                });
+            }
+        }
+        this.#signal = own;
+        if (bodyInit !== null) {
+            if (this.#method === "GET" || this.#method === "HEAD") {
+                throw new TypeError("Request with GET/HEAD method cannot have body.");
+            }
+            this.#stored = __zunBodyStore(bodyInit);
+            const implied: any = __zunBodyType(bodyInit);
+            if (implied !== null && !this.#headers.has("content-type")) {
+                this.#headers.append("content-type", implied);
+            }
+        } else if (input instanceof Request) {
+            // An inherited body moves: the source request is left used.
+            const donor: Request = input;
+            if (donor.#stored !== null) {
+                if (donor.#used) {
+                    throw new TypeError("Cannot construct a Request with a Request object that has already been used.");
+                }
+                this.#stored = donor.#stored;
+                donor.#used = true;
+            }
+        }
+    }
+
+    get method(): string {
+        return this.#method;
+    }
+
+    get url(): string {
+        return this.#url;
+    }
+
+    get headers(): any {
+        return this.#headers;
+    }
+
+    get destination(): string {
+        return "";
+    }
+
+    get referrer(): string {
+        return this.#referrer;
+    }
+
+    get referrerPolicy(): string {
+        return this.#referrerPolicy;
+    }
+
+    get mode(): string {
+        return this.#mode;
+    }
+
+    get credentials(): string {
+        return this.#credentials;
+    }
+
+    get cache(): string {
+        return this.#cache;
+    }
+
+    get redirect(): string {
+        return this.#redirect;
+    }
+
+    get integrity(): string {
+        return this.#integrity;
+    }
+
+    get keepalive(): boolean {
+        return this.#keepalive;
+    }
+
+    get isReloadNavigation(): boolean {
+        return false;
+    }
+
+    get isHistoryNavigation(): boolean {
+        return false;
+    }
+
+    get signal(): any {
+        return this.#signal;
+    }
+
+    get body(): any {
+        const stored: any = this.#stored;
+        if (stored === null) {
+            return null;
+        }
+        if (stored instanceof Blob) {
+            return stored.stream();
+        }
+        const chunk: any = stored.slice();
+        return new ReadableStream({
+            start(controller: any) {
+                if (chunk.length > 0) {
+                    controller.enqueue(chunk);
+                }
+                controller.close();
+            },
+        });
+    }
+
+    get bodyUsed(): boolean {
+        return this.#used;
+    }
+
+    get duplex(): string {
+        return "half";
+    }
+
+    clone(): Request {
+        if (this.#used) {
+            throw new TypeError("Request.clone: Body has already been consumed.");
+        }
+        // Re-wrapping moves the body, so take it back: a clone shares it.
+        const stored: any = this.#stored;
+        const copy = new Request(this);
+        this.#used = false;
+        copy.#stored = stored;
+        return copy;
+    }
+
+    // The body's bytes, consuming it. A request without a body reads as empty
+    // and is never marked used.
+    #consume(): any {
+        if (this.#used) {
+            return Promise.reject(new TypeError("Body is unusable: Body has already been read"));
+        }
+        const stored: any = this.#stored;
+        if (stored === null) {
+            return Promise.resolve(new Uint8Array(0));
+        }
+        this.#used = true;
+        if (stored instanceof Blob) {
+            return stored.bytes();
+        }
+        return Promise.resolve(stored.slice());
+    }
+
+    blob(): any {
+        const declared: any = this.#headers.get("content-type");
+        return this.#consume().then(function (bytes: any): any {
+            return new Blob([bytes], { type: declared === null ? "" : declared });
+        });
+    }
+
+    arrayBuffer(): any {
+        return this.#consume().then(function (bytes: any): any {
+            return bytes.buffer;
+        });
+    }
+
+    text(): any {
+        return this.#consume().then(function (bytes: any): any {
+            return new TextDecoder().decode(bytes);
+        });
+    }
+
+    json(): any {
+        return this.#consume().then(function (bytes: any): any {
+            return JSON.parse(new TextDecoder().decode(bytes));
+        });
+    }
+
+    bytes(): any {
+        return this.#consume();
+    }
+
+    get [Symbol.toStringTag](): string {
+        return "Request";
+    }
+}

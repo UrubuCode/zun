@@ -117,6 +117,14 @@ pub const HEADERS: &str = include_str!("../builtin/headers.zun");
 /// `httpFetch` blob. Uses [`HEADERS`].
 pub const RESPONSE: &str = include_str!("../builtin/response.zun");
 
+/// The `Blob` and `File` classes (`builtin/blob.zun`): immutable byte strings.
+/// Uses [`TEXT_ENCODER`], [`TEXT_DECODER`] and [`STREAMS`].
+pub const BLOB: &str = include_str!("../builtin/blob.zun");
+
+/// The `Request` class (`builtin/request.zun`): a fetch request record with a
+/// one-shot body. Uses [`URL`], [`HEADERS`], [`BLOB`] and [`ABORT`].
+pub const REQUEST: &str = include_str!("../builtin/request.zun");
+
 /// The `zun:std:*` standard-library class/method sources. Each is a plain Zun
 /// source string that the compiler compiles into the precompiled `zun:std`
 /// module (see `zun_compiler`). They live here so `zun_prelude` owns every
@@ -191,6 +199,8 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     CRYPTO,
     HEADERS,
     RESPONSE,
+    BLOB,
+    REQUEST,
     ASYNC,
     BUILTIN_BASES,
     ATOMICS,

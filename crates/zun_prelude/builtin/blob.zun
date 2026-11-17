@@ -1,0 +1,233 @@
+// `Blob` and `File` (File API, prelude classes).
+//
+//   new Blob(sources?, { type, endings }?)
+//   size, type, slice(start?, end?, contentType?), text(), arrayBuffer(),
+//   bytes(), stream()
+//   new File(fileBits, fileName, { type, endings, lastModified }?)
+//   name, lastModified
+//
+// A blob is an immutable byte string: every source is copied in at
+// construction (an `ArrayBuffer` or a view contributes its bytes, another blob
+// its contents, anything else its `String()` form encoded as UTF-8), so later
+// writes to a source never show through.
+//
+// Simplifications (documented, not defects):
+//   * `stream()` delivers the contents as a single chunk.
+//   * `endings: "native"` rewrites line endings to "\n" on every platform.
+//
+// Uses `TextEncoder`, `TextDecoder` and `ReadableStream`.
+
+// How Node's argument-type errors describe the value they rejected.
+function __zunBlobReceived(value: any): string {
+    if (value === null) {
+        return "null";
+    }
+    if (value === undefined) {
+        return "undefined";
+    }
+    if (typeof value === "function") {
+        return value.name ? "function " + value.name : "function ";
+    }
+    if (typeof value === "object") {
+        const ctor: any = value.constructor;
+        if (ctor !== undefined && ctor !== null && ctor.name) {
+            return "an instance of " + ctor.name;
+        }
+        return "an instance of Object";
+    }
+    if (typeof value === "string") {
+        return "type string ('" + value + "')";
+    }
+    return "type " + typeof value + " (" + String(value) + ")";
+}
+
+// A media type is kept only when it is printable ASCII, and then lower-cased.
+function __zunBlobType(raw: any): string {
+    const text: string = String(raw);
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        if (c < 32 || c > 126) {
+            return "";
+        }
+    }
+    return text.toLowerCase();
+}
+
+// A `slice` bound: relative to the end when negative, clamped to the size.
+function __zunBlobBound(raw: any, size: number, fallback: number): number {
+    if (raw === undefined) {
+        return fallback;
+    }
+    let n: number = Number(raw);
+    if (n !== n) {
+        n = 0;
+    }
+    n = n < 0 ? Math.ceil(n) : Math.floor(n);
+    if (n < 0) {
+        return Math.max(size + n, 0);
+    }
+    return Math.min(n, size);
+}
+
+// Line endings of a string source under `endings: "native"`.
+function __zunBlobNativeEndings(text: string): string {
+    return text.replace(/\r\n|\r|\n/g, "\n");
+}
+
+// The bytes a constructor source other than a blob contributes.
+function __zunBlobSourceBytes(part: any, native: boolean): any {
+    if (part instanceof ArrayBuffer || part instanceof SharedArrayBuffer) {
+        return new Uint8Array(part);
+    }
+    if (ArrayBuffer.isView(part)) {
+        return new Uint8Array(part.buffer, part.byteOffset, part.byteLength);
+    }
+    const text: string = String(part);
+    return new TextEncoder().encode(native ? __zunBlobNativeEndings(text) : text);
+}
+
+class Blob {
+    #bytes: any = null;
+    #type: string = "";
+
+    // A rest parameter, so an omitted argument is told apart from an explicit
+    // `null` on every construction path (a reflective construction pads the
+    // parameters it was not given with `null`).
+    constructor(...given: any[]) {
+        const sources: any = given[0];
+        const options: any = given[1];
+        // Set here, not by a field initializer: a reflective construction runs
+        // the constructor but only literal initializers.
+        this.#bytes = new Uint8Array(0);
+        let native: boolean = false;
+        if (options !== undefined && options !== null) {
+            if (typeof options !== "object" && typeof options !== "function") {
+                throw new TypeError("The \"options\" argument must be a dictionary. Received " + __zunBlobReceived(options));
+            }
+            const endings: any = options.endings;
+            if (endings !== undefined) {
+                const mode: string = String(endings);
+                if (mode !== "transparent" && mode !== "native") {
+                    throw new TypeError("The property 'options.endings' is invalid. Received '" + mode + "'");
+                }
+                native = mode === "native";
+            }
+            if (options.type !== undefined) {
+                this.#type = __zunBlobType(options.type);
+            }
+        }
+        if (sources === undefined) {
+            return;
+        }
+        const sequence: boolean = sources !== null
+            && (typeof sources === "object" || typeof sources === "function")
+            && (Array.isArray(sources) || ArrayBuffer.isView(sources) || typeof sources[Symbol.iterator] === "function" || typeof sources.next === "function");
+        if (!sequence) {
+            throw new TypeError("The \"sources\" argument must be a sequence. Received " + __zunBlobReceived(sources));
+        }
+        const chunks: any = [];
+        let total: number = 0;
+        for (const part of sources) {
+            let piece: any;
+            if (part instanceof Blob) {
+                const other: Blob = part;
+                piece = other.#bytes;
+            } else {
+                piece = __zunBlobSourceBytes(part, native);
+            }
+            chunks.push(piece);
+            total = total + piece.length;
+        }
+        const all: any = new Uint8Array(total);
+        let at: number = 0;
+        for (let i = 0; i < chunks.length; i++) {
+            all.set(chunks[i], at);
+            at = at + chunks[i].length;
+        }
+        this.#bytes = all;
+    }
+
+    get type(): string {
+        return this.#type;
+    }
+
+    get size(): number {
+        return this.#bytes.length;
+    }
+
+    slice(start: any = undefined, end: any = undefined, contentType: any = undefined): Blob {
+        const size: number = this.#bytes.length;
+        const from: number = __zunBlobBound(start, size, 0);
+        const to: number = __zunBlobBound(end, size, size);
+        const out = new Blob();
+        out.#bytes = this.#bytes.slice(from, Math.max(from, to));
+        out.#type = contentType === undefined ? "" : __zunBlobType(contentType);
+        return out;
+    }
+
+    arrayBuffer(): any {
+        return Promise.resolve(this.#bytes.slice().buffer);
+    }
+
+    text(): any {
+        return Promise.resolve(new TextDecoder().decode(this.#bytes));
+    }
+
+    bytes(): any {
+        return Promise.resolve(this.#bytes.slice());
+    }
+
+    stream(): any {
+        const chunk: any = this.#bytes.slice();
+        return new ReadableStream({
+            start(controller: any) {
+                if (chunk.length > 0) {
+                    controller.enqueue(chunk);
+                }
+                controller.close();
+            },
+        });
+    }
+
+    get [Symbol.toStringTag](): string {
+        return "Blob";
+    }
+}
+
+class File extends Blob {
+    #name: string = "";
+    #lastModified: number = 0;
+
+    // Both leading arguments are required, and an explicit `undefined` name is
+    // still a name, so the constructor counts what it was actually given.
+    constructor(...given: any[]) {
+        if (given.length < 2) {
+            throw new TypeError("The \"fileBits\" and \"fileName\" arguments must be specified");
+        }
+        const options: any = given[2];
+        super(given[0], options);
+        this.#name = String(given[1]);
+        let stamp: any = undefined;
+        if (options !== undefined && options !== null) {
+            stamp = options.lastModified;
+        }
+        if (stamp !== undefined) {
+            const n: number = Number(stamp);
+            this.#lastModified = n !== n ? 0 : (n < 0 ? Math.ceil(n) : Math.floor(n));
+        } else {
+            this.#lastModified = Date.now();
+        }
+    }
+
+    get name(): string {
+        return this.#name;
+    }
+
+    get lastModified(): number {
+        return this.#lastModified;
+    }
+
+    get [Symbol.toStringTag](): string {
+        return "File";
+    }
+}

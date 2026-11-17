@@ -243,6 +243,23 @@ impl<'a> Interp<'a> {
                             ));
                         }
                     }
+                    // A symbol key on a class value: a declared static symbol
+                    // method, or a symbol property a script stored on it.
+                    if let Some(token) = descriptor.as_class_descriptor() {
+                        if let Ok(Value::Any(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                        {
+                            if let Some(symbol) = key.as_symbol() {
+                                let user_rid = self.user_class_rid(token);
+                                let bag_token =
+                                    user_rid.map_or(token, |rid| rid | zun_natives::USER_CLASS_FLAG);
+                                let stored = Self::class_expando_peek(bag_token)
+                                    .is_some_and(|bag| Self::bag_has_own_symbol(bag, symbol));
+                                let declared = user_rid
+                                    .is_some_and(|rid| self.class_declares_static_symbol(rid, symbol));
+                                return Ok(Value::Bool(stored || declared));
+                            }
+                        }
+                    }
                 }
                 // A function value owns `name` and `length`, plus the properties
                 // a script stored on it (kept in its expando bag). `prototype`
@@ -259,6 +276,13 @@ impl<'a> Interp<'a> {
                                         heap.dynamic_has_own(bag, &key)
                                     })),
                         ));
+                    }
+                    // A symbol key: only what a script stored on the function.
+                    if let Ok(Value::Any(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
+                        if let Some(symbol) = key.as_symbol() {
+                            let bag = crate::function_expando_bag(handle);
+                            return Ok(Value::Bool(Self::bag_has_own_symbol(bag, symbol)));
+                        }
                     }
                 }
                 let obj =
@@ -1348,5 +1372,48 @@ impl<'a> Interp<'a> {
             }
             _ => Err(RunError::BadToken),
         }
+    }
+}
+
+impl Interp<'_> {
+    /// Whether the property table `bag` carries `symbol` as an own value,
+    /// method or accessor.
+    fn bag_has_own_symbol(bag: zun_gc::Obj, symbol: zun_core::SymbolId) -> bool {
+        zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get_symbol(bag, symbol).is_some()
+                || heap.dynamic_get_symbol_function(bag, symbol).is_some()
+                || heap.dynamic_symbol_getter(bag, symbol).is_some()
+                || heap.dynamic_symbol_setter(bag, symbol).is_some()
+        })
+    }
+
+    /// Whether class `rid` itself declares a static method keyed by `symbol`.
+    /// `class_symbol_methods` also records instance methods and the entries a
+    /// subclass inherits, so the method must be static and must not be the
+    /// very method the base class answers with.
+    fn class_declares_static_symbol(&self, rid: u32, symbol: zun_core::SymbolId) -> bool {
+        let Some(handle) = self.class_symbol_methods.get(&(rid, symbol.get())) else {
+            return false;
+        };
+        let method_rid = handle.method_rid();
+        let Some(def) = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1)) else {
+            return false;
+        };
+        if !def.base.is_null() && def.base.table() == Some(zun_metadata::TableKind::TypeDef) {
+            let inherited = self
+                .class_symbol_methods
+                .get(&(def.base.rid(), symbol.get()))
+                .is_some_and(|base| base.method_rid() == method_rid);
+            if inherited {
+                return false;
+            }
+        }
+        self.module
+            .tables
+            .method_defs
+            .get((method_rid as usize).wrapping_sub(1))
+            .is_some_and(|method| {
+                method.is_static && !self.module.strings.get(method.name).contains("@this")
+            })
     }
 }

@@ -533,6 +533,7 @@ const PLATFORM_CLASSES: &[&str] = &[
     "Response",
     "FormData",
     "Blob",
+    "File",
     "ReadableStream",
     "WritableStream",
     "TransformStream",

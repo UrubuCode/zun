@@ -14,11 +14,29 @@ impl<'a> Interp<'a> {
         match name {
             "dynamicConstruct" => {
                 // `new ns.C(...args)`: construct a class export of a dynamically
-                // imported namespace. `(namespace, className, argsArray)`.
+                // imported namespace. `(namespace, className, argsArray, member)`.
                 let namespace = args.first().ok_or(RunError::BadToken)?.clone();
                 let name = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(name) => name.clone(),
                     _ => return Err(RunError::BadToken),
+                };
+                // The base is only known to be dynamic at compile time. Unless it
+                // really is a namespace exporting `name`, this is an ordinary
+                // `new obj.member(...)`: construct through the member value the
+                // call site already read, exactly as `new (obj.member)(...)`.
+                let exports_class = object(&namespace).is_some_and(|base| {
+                    zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get_module_class(base, &name).is_some()
+                    })
+                });
+                if !exports_class {
+                    let member = args.get(3).ok_or(RunError::BadToken)?.clone();
+                    let list = args.get(2).ok_or(RunError::BadToken)?.clone();
+                    return self.call_managed_collection("proxyConstruct", &[member, list]);
+                }
+                let namespace = match object(&namespace) {
+                    Some(base) => Value::Object(base),
+                    None => namespace,
                 };
                 let array =
                     object(args.get(2).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
