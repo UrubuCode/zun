@@ -70,7 +70,10 @@ impl Checker<'_> {
         };
         // `Object.getOwnPropertyDescriptor(Map, "groupBy")`: a well-known
         // built-in static method is a writable, non-enumerable, configurable
-        // data property.
+        // data property. Only the statics the run time cannot hand out as a
+        // function value are folded here (the folded descriptor carries no
+        // `value`); every other built-in static is answered at run time, with
+        // its real function value.
         if method == "getOwnPropertyDescriptor" && args.len() == 2 {
             if let (ast::Expr::Ident(global), ast::Expr::String { .. }) = (&args[0], &args[1]) {
                 let global_name = self.text(global).to_string();
@@ -81,6 +84,7 @@ impl Checker<'_> {
                 if cx.lookup(&global_name).is_none()
                     && !self.classes_by_name.contains_key(global_name.as_str())
                     && builtin_function_length(&[global_name.as_str(), key.as_str()]).is_some()
+                    && FOLDED_STATIC_DESCRIPTORS.contains(&(global_name.as_str(), key.as_str()))
                 {
                     let flag = |name: &str, value: bool| {
                         decorator_context_entry(
@@ -747,3 +751,16 @@ impl Checker<'_> {
         }
     }
 }
+
+/// Built-in statics whose own-property descriptor is still folded at compile
+/// time, because the run time has no function value to report for them.
+const FOLDED_STATIC_DESCRIPTORS: &[(&str, &str)] = &[
+    ("Map", "groupBy"),
+    ("Promise", "all"),
+    ("Promise", "race"),
+    ("Promise", "allSettled"),
+    ("Promise", "any"),
+    ("Promise", "resolve"),
+    ("Promise", "reject"),
+    ("Promise", "withResolvers"),
+];

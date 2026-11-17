@@ -1161,6 +1161,16 @@ impl Interp<'_> {
                 let (class, js_name, native, count, returns_this) =
                     COLLECTION_METHODS[(k - BUILTIN_COLLECTION_BASE) as usize];
                 let is_map = class == "Map";
+                // An instance of a `Map` / `Set` subclass is a typed object
+                // holding the native collection in its `inner` field: the
+                // built-in method borrowed with `.call` operates on that
+                // collection, and a method that returns `this` returns the
+                // instance.
+                let outer = this_obj;
+                let this_obj = match this_obj {
+                    Some(instance) => Some(self.collection_subclass_inner(instance, is_map)?),
+                    None => None,
+                };
                 let receiver = this_obj
                     .filter(|o| {
                         zun_gc::with_current_heap(|heap| {
@@ -1186,7 +1196,7 @@ impl Interp<'_> {
                 }
                 let result = self.call_managed_collection(native, &call)?;
                 Ok(if returns_this {
-                    Value::Object(receiver)
+                    Value::Object(outer.unwrap_or(receiver))
                 } else {
                     match result {
                         Value::Bool(b) => Value::Bool(b),
@@ -1881,6 +1891,65 @@ impl Interp<'_> {
         false
     }
 
+    /// A store to `Class.name` through a class value: a declared static field
+    /// takes the value in place and a declared `static set name` runs. A static
+    /// getter without a setter refuses the write (silently, as sloppy-mode JS
+    /// does). `Ok(false)` means the class declares no such static member, so
+    /// the caller keeps the value as an own property in the class expando bag.
+    pub(crate) fn class_static_store(
+        &mut self,
+        rid: u32,
+        name: &str,
+        value: &Value,
+    ) -> Result<bool, RunError> {
+        if self.class_static_write(rid, name, value) {
+            return Ok(true);
+        }
+        if let Some((mrid, hidden)) = self.class_static_method(rid, &format!("set_{name}")) {
+            let handle = zun_core::FunctionHandle::new(mrid, None);
+            // The receiving class value rides as the hidden first parameter.
+            let mut call_args = if hidden {
+                vec![Value::Any(zun_core::Any::class_descriptor(
+                    zun_natives::USER_CLASS_FLAG | rid,
+                ))]
+            } else {
+                Vec::new()
+            };
+            call_args.push(unbox_arg(value).unwrap_or_else(|_| value.clone()));
+            self.invoke_function_value(handle, call_args)?;
+            return Ok(true);
+        }
+        Ok(self.class_static_method(rid, &format!("get_{name}")).is_some())
+    }
+
+    /// The native collection behind `object` for a borrowed `Map` / `Set`
+    /// prototype method: `object` itself, or the `inner` collection of an
+    /// instance of a `Map` / `Set` subclass.
+    fn collection_subclass_inner(
+        &mut self,
+        object: zun_gc::Obj,
+        is_map: bool,
+    ) -> Result<zun_gc::Obj, RunError> {
+        let typed = zun_gc::with_current_heap(|heap| {
+            (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
+                && heap.array_len(object).is_none()
+                && heap.map_len(object).is_none()
+                && heap.set_len(object).is_none()
+                && object.type_rid() >= 1
+        });
+        let base = if is_map { "__BuiltinMap" } else { "__BuiltinSet" };
+        if !typed
+            || !self.type_rid_describes_object(object)
+            || !self.class_chain_has_name(object.type_rid(), base)
+        {
+            return Ok(object);
+        }
+        Ok(match self.instance_member_get(object, "inner")? {
+            Some(Value::Object(inner)) => inner,
+            _ => object,
+        })
+    }
+
     /// The `Class.prototype` object a typed class instance inherits from.
     pub(crate) fn instance_class_prototype(&self, object: zun_gc::Obj) -> Option<zun_gc::Obj> {
         let typed = zun_gc::with_current_heap(|heap| {
@@ -2069,6 +2138,15 @@ impl Interp<'_> {
         };
         if zun_gc::with_current_heap(|heap| heap.array_len(obj).is_some()) {
             return self.define_array_property(obj, name, &desc);
+        }
+        // A canonical numeric key of a typed array addresses an element, never
+        // a property of the view's expando table: redefining an element is not
+        // modelled, so the definition is refused whether or not the view has
+        // gained a table.
+        if crate::typed_arrays::element_of(obj).is_some()
+            && crate::typed_dyn::typed_numeric_key(&Value::Str(name.into())).is_some()
+        {
+            return false;
         }
         let current = zun_gc::with_current_heap(|heap| heap.dynamic_descriptor(obj, name));
         let Some(current) = current else {
@@ -2306,13 +2384,114 @@ impl Interp<'_> {
     /// `Reflect.set(target, key, value)`: a boolean success. Honors
     /// writability, extensibility, array integrity, and runs accessor setters.
     pub(crate) fn reflect_set(&mut self, args: &[Value]) -> Result<Value, RunError> {
-        let Some(target) = args.first().and_then(object) else {
-            return Ok(Value::Bool(false));
-        };
         let Some(key) = args.get(1).and_then(prop_key) else {
             return Ok(Value::Bool(false));
         };
         let value_arg = args.get(2).ok_or(RunError::BadToken)?;
+        let first = args.first().ok_or(RunError::BadToken)?;
+        // A class value: a declared static takes the write in place; any other
+        // key is an own property kept in the class's expando bag. A function
+        // value keeps its own properties in its bag too, and its `name` and
+        // `length` are read-only.
+        let class_token = match first {
+            Value::Any(any) => any.as_class_descriptor(),
+            _ => None,
+        };
+        let target = if let Some(token) = class_token {
+            if let (Some(rid), PropKey::Str(name)) = (self.user_class_rid(token), &key) {
+                if self.class_static_store(rid, name, value_arg)? {
+                    return Ok(Value::Bool(true));
+                }
+            }
+            // A constant of a built-in constructor is read-only.
+            if matches!(&key, PropKey::Str(name) if self.builtin_constant_value(token, name).is_some())
+            {
+                return Ok(Value::Bool(false));
+            }
+            Self::class_expando_bag(token)
+        } else if let Ok(Value::Function(handle)) = unbox_arg(first) {
+            // `name` and `length` are read-only, and so are the constants of a
+            // coercion constructor (`Number.MAX_VALUE`).
+            if matches!(&key, PropKey::Str(name) if name == "name"
+                || name == "length"
+                || self.coerce_ctor_constant(handle, name).is_some())
+            {
+                return Ok(Value::Bool(false));
+            }
+            crate::function_expando_bag(handle)
+        } else {
+            let Some(target) = object(first) else {
+                return Ok(Value::Bool(false));
+            };
+            target
+        };
+        // A typed class instance: a declared field or `set` accessor takes the
+        // write; any other key is an expando, which needs the instance's
+        // property table. A Map, Set, RegExp ... gains a table the same way, so
+        // the store lands instead of reporting success and vanishing.
+        let (typed_instance, has_table, is_array, is_typed_array) =
+            zun_gc::with_current_heap(|heap| {
+                let array = heap.array_len(target).is_some();
+                (
+                    (!heap.is_dynamic_object(target) || heap.is_instance_bag(target))
+                        && !array
+                        && target.type_rid() >= 1,
+                    heap.is_dynamic_object(target),
+                    array,
+                    heap.typed_array_element(target).is_some(),
+                )
+            });
+        if typed_instance {
+            if let PropKey::Str(name) = &key {
+                // A frozen instance refuses a write to a declared field.
+                if self.instance_declared_member(target, name) == Some(true)
+                    && zun_gc::with_current_heap(|heap| heap.dynamic_is_frozen(target))
+                {
+                    return Ok(Value::Bool(false));
+                }
+                if self.instance_member_set(target, name, value_arg)
+                    || self.instance_member_setter_call(target, name, value_arg)?
+                {
+                    return Ok(Value::Bool(true));
+                }
+                if let Some(setter) = self.proto_chain_accessor_setter(target, name) {
+                    let Some(setter) = setter else {
+                        return Ok(Value::Bool(false));
+                    };
+                    let arg = unbox_arg(value_arg).unwrap_or_else(|_| value_arg.clone());
+                    self.invoke_function_value(
+                        setter,
+                        self.with_this_arg(setter, target, vec![arg]),
+                    )?;
+                    return Ok(Value::Bool(true));
+                }
+            }
+        }
+        if is_typed_array {
+            // A typed array's `length` is an accessor without a setter. A
+            // canonical numeric key addresses an element: in range it is
+            // written, out of range it is ignored, and either way the set
+            // reports success and never creates an expando.
+            if matches!(&key, PropKey::Str(name) if name == "length") {
+                return Ok(Value::Bool(false));
+            }
+            let key_value = unbox_arg(&args[1]).unwrap_or_else(|_| args[1].clone());
+            if self.typed_view_index_set(target, &key_value, value_arg)? {
+                return Ok(Value::Bool(true));
+            }
+        }
+        if !has_table && !is_array {
+            zun_gc::with_current_heap_mut(|heap| {
+                if heap.proxy_target(target).is_some() {
+                    return;
+                }
+                if typed_instance {
+                    heap.ensure_instance_bag(target);
+                } else {
+                    heap.ensure_dynamic_entry(target);
+                }
+            });
+        }
         // Arrays: elements and `length`.
         let array_info = zun_gc::with_current_heap(|heap| {
             heap.array_len(target)
@@ -2739,6 +2918,33 @@ impl Interp<'_> {
             Some(Ok(Value::Function(handle))) => Some(super::function_expando_bag(handle)),
             _ => None,
         };
+        // A class value keeps the properties scripts stored on it in its
+        // expando bag; a declared static of a user class is dropped from its
+        // slot. `prototype` is not configurable.
+        if let Some(Value::Any(descriptor)) = args.first() {
+            if let Some(token) = descriptor.as_class_descriptor() {
+                let Some(PropKey::Str(name)) = args.get(1).and_then(prop_key) else {
+                    return Ok(Value::Bool(true));
+                };
+                if let Some(bag) = Self::class_expando_peek(token) {
+                    if zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, &name)) {
+                        if !zun_gc::with_current_heap(|heap| heap.dynamic_can_delete(bag, &name)) {
+                            return Err(RunError::Native(format!(
+                                "TypeError: Cannot delete property '{name}' of class"
+                            )));
+                        }
+                        zun_gc::with_current_heap_mut(|heap| heap.dynamic_delete(bag, &name));
+                        return Ok(Value::Bool(true));
+                    }
+                }
+                if name != "prototype" {
+                    if let Some(rid) = self.user_class_rid(token) {
+                        self.class_delete_own(rid, &name);
+                    }
+                }
+                return Ok(Value::Bool(true));
+            }
+        }
         let Some(target) = function_bag.or_else(|| args.first().and_then(object)) else {
             return Ok(Value::Bool(true));
         };
@@ -2829,6 +3035,23 @@ impl Interp<'_> {
                     "TypeError: Cannot freeze array buffer views with elements".into(),
                 ));
             }
+            // The level is recorded on the view's property table, so the
+            // integrity queries and named stores see it; element writes are
+            // unaffected, as the specification requires.
+            zun_gc::with_current_heap_mut(|heap| {
+                heap.ensure_dynamic_entry(obj);
+                match level {
+                    1 => {
+                        heap.dynamic_prevent_extensions(obj);
+                    }
+                    2 => {
+                        heap.dynamic_seal(obj);
+                    }
+                    _ => {
+                        heap.dynamic_freeze(obj);
+                    }
+                }
+            });
             return Ok(true);
         }
         Ok(false)

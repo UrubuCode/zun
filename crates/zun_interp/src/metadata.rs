@@ -380,6 +380,64 @@ impl Interp<'_> {
 }
 
 impl Interp<'_> {
+    /// Whether the typed class instance `object` declares member `name`
+    /// (searching base classes too): `Some(true)` for an instance field,
+    /// `Some(false)` for a `set <name>` accessor, `None` when it declares
+    /// neither or `object` is not a typed class instance.
+    pub(crate) fn instance_declared_member(&self, object: zun_gc::Obj, name: &str) -> Option<bool> {
+        let typed = zun_gc::with_current_heap(|heap| {
+            (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
+                && heap.array_len(object).is_none()
+                && object.type_rid() >= 1
+        });
+        if !typed || !self.type_rid_describes_object(object) {
+            return None;
+        }
+        let mut current = object.type_rid();
+        for _ in 0..64 {
+            if current == 0 {
+                break;
+            }
+            let Some(type_def) = self.module.tables.type_defs.get(current as usize - 1) else {
+                break;
+            };
+            let base = type_def.base;
+            if self
+                .instance_field_map(current)
+                .and_then(|map| map.get(name).copied())
+                .filter(|layout| Self::object_has_slot(object, layout.slot))
+                .is_some()
+            {
+                return Some(true);
+            }
+            if base.is_null() || base.table() != Some(zun_metadata::TableKind::TypeDef) {
+                break;
+            }
+            current = base.rid();
+        }
+        self.instance_method_rid(object, &format!("set_{name}"))
+            .map(|_| false)
+    }
+
+    /// Why a plain assignment to the named property `name` of `object` is
+    /// refused, as the `TypeError` message, or `None` when it may proceed. A
+    /// declared field of a typed class instance stays writable until the
+    /// instance is frozen and a declared setter always runs; every other name
+    /// follows [`crate::integrity::named_store_refusal`].
+    pub(crate) fn member_store_refusal(&self, object: zun_gc::Obj, name: &str) -> Option<String> {
+        match self.instance_declared_member(object, name) {
+            Some(true) => zun_gc::with_current_heap(|heap| heap.dynamic_is_frozen(object)).then(|| {
+                format!(
+                    "TypeError: Cannot assign to read only property '{name}' of object '#<Object>'"
+                )
+            }),
+            Some(false) => None,
+            None => zun_gc::with_current_heap(|heap| {
+                crate::integrity::named_store_refusal(heap, object, name)
+            }),
+        }
+    }
+
     /// Run the `set <name>` accessor a typed class instance declares (searching
     /// base classes too) with `value`, the way a dynamic write must: a declared
     /// accessor takes the assignment, never an expando shadowing it. `Ok(false)`

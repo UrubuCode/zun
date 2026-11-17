@@ -88,6 +88,7 @@ mod string;
 pub use string::normalize_form as string_normalize_form;
 mod promise;
 mod math_late;
+mod object_ext;
 mod realm_define;
 pub use realm_define::NAMESPACE_CLASSES;
 mod view_members;
@@ -378,6 +379,9 @@ pub static MODULES: &[Module] = &[
     // `Math` intrinsics that postdate the frozen `math` group. Appended last so
     // every existing dispatch id stays stable.
     math_late::MODULE,
+    // Object intrinsics that postdate the frozen `collections` group. Appended
+    // last so every existing dispatch id stays stable.
+    object_ext::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

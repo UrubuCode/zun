@@ -1083,7 +1083,7 @@ impl Interp<'_> {
 
 /// The numeric value of a property key that addresses a typed-array element
 /// (a number, or a canonical numeric string), or `None` for an ordinary key.
-fn typed_numeric_key(key: &Value) -> Option<f64> {
+pub(crate) fn typed_numeric_key(key: &Value) -> Option<f64> {
     match key {
         Value::Int(n, _) => Some(*n as f64),
         Value::Float(f, _) => Some(*f),

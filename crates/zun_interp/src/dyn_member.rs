@@ -360,6 +360,17 @@ impl Interp<'_> {
                     && ((token & !zun_natives::USER_CLASS_FLAG) as usize) >= 1
                     && ((token & !zun_natives::USER_CLASS_FLAG) as usize)
                         <= self.module.tables.type_defs.len();
+                // A property a script stored on the class value itself shadows
+                // a declared static method of the same name (a declared static
+                // field is written in place and never reaches the bag).
+                if user_class && name != "prototype" {
+                    if let Some(value) =
+                        Self::class_expando_read_own(token, &Value::Str(name.as_str().into()))
+                    {
+                        stack.push(value);
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 if user_class && name != "prototype" {
                     let rid = token & !zun_natives::USER_CLASS_FLAG;
                     match self.class_static_read(rid, &name) {
@@ -590,10 +601,23 @@ impl Interp<'_> {
                 .as_class_descriptor()
                 .and_then(|t| self.user_class_rid(t))
             {
-                stack.pop();
-                self.class_static_write(rid, &name, &value);
-                stack.push(value);
-                return Ok(ArmFlow::Continue);
+                // A name the class declares no static for becomes an own
+                // property of the class value, kept in its expando bag below.
+                match self.class_static_store(rid, &name, &value) {
+                    Ok(true) => {
+                        stack.pop();
+                        stack.push(value);
+                        return Ok(ArmFlow::Continue);
+                    }
+                    Ok(false) => {}
+                    Err(RunError::Thrown(exception)) => {
+                        if self.route_exception(body, stack, pc, next - size, &exception) {
+                            return Ok(ArmFlow::Continue);
+                        }
+                        return Err(RunError::Thrown(exception));
+                    }
+                    Err(error) => return Err(error),
+                }
             }
         }
         // A Proxy reached through `any`: writes go through its `set` trap.
@@ -630,13 +654,31 @@ impl Interp<'_> {
             // DynamicObject); `LoadDynamic`'s function-slot fallback
             // reads them back as `Value::Function`. Capture names are
             // never accessors, so no accessor lookup happens here.
-            let object = expando_receiver(pop(stack)?).as_object();
-            // An array gets an expando table on first named store.
+            let Some(object) = store_receiver(pop(stack)?) else {
+                // A primitive receiver keeps no own property.
+                stack.push(Value::Function(handle));
+                return Ok(ArmFlow::Next);
+            };
+            // A receiver with no property table yet gets one on its first
+            // named store: an array, a typed class instance (its declared
+            // fields stay in the fixed layout), a Map, Set, RegExp ...
             zun_gc::with_current_heap_mut(|heap| {
-                if heap.array_len(object).is_some() {
+                if heap.is_dynamic_object(object) {
+                    return;
+                }
+                if heap.array_len(object).is_none() && object.type_rid() >= 1 {
+                    heap.ensure_instance_bag(object);
+                } else {
                     heap.ensure_dynamic_entry(object);
                 }
             });
+            // A frozen, sealed or non-extensible object refuses a function
+            // value exactly as it refuses a data value.
+            let refusal =
+                zun_gc::with_current_heap(|heap| integrity::named_store_refusal(heap, object, &name));
+            if let Some(message) = refusal {
+                throw_native_arm!(self, body, stack, pc, next - size, message);
+            }
             zun_gc::with_current_heap_mut(|heap| {
                 if heap.dynamic_get_function(object, &name).is_none() {
                     heap.dynamic_remove(object, &name);
@@ -650,7 +692,25 @@ impl Interp<'_> {
             // here unboxed, e.g. `o.k = 5.0` or `o.k = null`).
             let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
                 .ok_or(RunError::BadToken)?;
-            let object = expando_receiver(pop(stack)?).as_object();
+            let receiver = pop(stack)?;
+            let function_receiver = matches!(receiver, Value::Function(_));
+            let Some(object) = store_receiver(receiver) else {
+                // A primitive receiver keeps no own property.
+                stack.push(value);
+                return Ok(ArmFlow::Next);
+            };
+            // A function's `name` and `length` are read-only, and a typed
+            // array's `length` is an accessor without a setter: the write is
+            // ignored rather than kept as an expando that would then list.
+            let read_only = (function_receiver && matches!(name.as_str(), "name" | "length"))
+                || (name == "length"
+                    && zun_gc::with_current_heap(|heap| {
+                        heap.typed_array_element(object).is_some()
+                    }));
+            if read_only {
+                stack.push(value);
+                return Ok(ArmFlow::Next);
+            }
             // `re.lastIndex = n` on a RegExp reached through `any` writes the
             // real match cursor (the one `test` / `exec` advance and the dynamic
             // read answers from), never an expando of the same name.
@@ -711,25 +771,7 @@ impl Interp<'_> {
                     return Ok(ArmFlow::Continue);
                 }
             }
-            let refusal = zun_gc::with_current_heap(|heap| {
-                if heap.dynamic_is_accessor(object, &name) {
-                    if heap.dynamic_accessor_setter(object, &name).is_none() {
-                        Some(format!("TypeError: Cannot set property {name} of #<Object> which has only a getter"))
-                    } else {
-                        None
-                    }
-                } else if !heap.dynamic_can_set(object, &name) {
-                    if heap.dynamic_has(object, &name) {
-                        Some(format!("TypeError: Cannot assign to read only property '{name}' of object '#<Object>'"))
-                    } else {
-                        Some(format!(
-                            "TypeError: Cannot add property {name}, object is not extensible"
-                        ))
-                    }
-                } else {
-                    None
-                }
-            });
+            let refusal = self.member_store_refusal(object, &name);
             if let Some(message) = refusal {
                 throw_native_arm!(self, body, stack, pc, next - size, message);
             }
@@ -1062,6 +1104,14 @@ impl Interp<'_> {
         // dynamic properties to read: the lookup yields `undefined`.
         if let Value::Any(descriptor) = &object_raw {
             if let Some(token) = descriptor.as_class_descriptor() {
+                // A property a script stored on the class value itself shadows
+                // a declared static method of the same name.
+                if self.user_class_rid(token).is_some() && matches!(key, Value::Str(_)) {
+                    if let Some(value) = Self::class_expando_read_own(token, &key) {
+                        stack.push(value);
+                        return Ok(ArmFlow::Continue);
+                    }
+                }
                 // A static field or method of a user class, read by a computed key.
                 if let (Some(rid), Value::Str(name)) = (self.user_class_rid(token), &key) {
                     match self.class_static_read(rid, name) {
@@ -1487,7 +1537,54 @@ impl Interp<'_> {
         } else {
             key
         };
-        let object = expando_receiver(pop(stack)?).as_object();
+        let receiver = pop(stack)?;
+        // A user class value: a declared static takes the write in place; any
+        // other key becomes an own property kept in the class's expando bag.
+        if let (Value::Any(descriptor), Value::Str(name)) = (&receiver, &key) {
+            if let Some(rid) = descriptor
+                .as_class_descriptor()
+                .and_then(|token| self.user_class_rid(token))
+            {
+                match self.class_static_store(rid, name, &value) {
+                    Ok(true) => {
+                        stack.push(value);
+                        return Ok(ArmFlow::Next);
+                    }
+                    Ok(false) => {}
+                    Err(RunError::Thrown(exception)) => {
+                        if self.route_exception(body, stack, pc, next - size, &exception) {
+                            return Ok(ArmFlow::Continue);
+                        }
+                        return Err(RunError::Thrown(exception));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        let Some(object) = store_receiver(receiver.clone()) else {
+            let concrete = match receiver {
+                Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                    .unwrap_or(Value::Void),
+                other => other,
+            };
+            let kind = match concrete {
+                Value::Null => "null",
+                Value::Void => "undefined",
+                _ => {
+                    // A primitive receiver keeps no own property.
+                    stack.push(value);
+                    return Ok(ArmFlow::Next);
+                }
+            };
+            throw_native_arm!(
+                self,
+                body,
+                stack,
+                pc,
+                next - size,
+                format!("TypeError: Cannot set properties of {kind}")
+            );
+        };
         // A typed array receiver: integer-indexed element write.
         if crate::typed_arrays::element_of(object).is_some() {
             match self.typed_view_index_set(object, &key, &value) {
@@ -1512,6 +1609,9 @@ impl Interp<'_> {
                 Value::Int(..) | Value::Float(..) => None,
                 _ => None,
             };
+            let declared = key_name
+                .as_deref()
+                .and_then(|name| self.instance_declared_member(object, name));
             let refusal = zun_gc::with_current_heap(|heap| {
                 if let Some(len) = heap.array_len(object) {
                     let level = heap.array_integrity(object);
@@ -1530,7 +1630,14 @@ impl Interp<'_> {
                         };
                         return integrity::array_refusal(level, op).map(str::to_owned);
                     }
-                    return None;
+                    // A named (non-index) property of an array obeys the
+                    // array's integrity level like any other own property.
+                    return match key_name.as_deref() {
+                        Some(name) if name != "length" && name.parse::<usize>().is_err() => {
+                            integrity::named_store_refusal(heap, object, name)
+                        }
+                        _ => None,
+                    };
                 }
                 if let Value::Any(key_any) = &key {
                     // A symbol key: an own non-writable data property or
@@ -1549,22 +1656,16 @@ impl Interp<'_> {
                     return None;
                 }
                 let name = key_name.as_deref()?;
-                if heap.dynamic_is_accessor(object, name) {
-                    if heap.dynamic_accessor_setter(object, name).is_none() {
-                        Some(format!("TypeError: Cannot set property {name} of #<Object> which has only a getter"))
-                    } else {
-                        None
-                    }
-                } else if !heap.dynamic_can_set(object, name) {
-                    if heap.dynamic_has(object, name) {
-                        Some(format!("TypeError: Cannot assign to read only property '{name}' of object '#<Object>'"))
-                    } else {
-                        Some(format!(
-                            "TypeError: Cannot add property {name}, object is not extensible"
-                        ))
-                    }
-                } else {
-                    None
+                match declared {
+                    // A declared field of a typed class instance stays writable
+                    // until the instance is frozen; a declared setter always runs.
+                    Some(true) => heap.dynamic_is_frozen(object).then(|| {
+                        format!(
+                            "TypeError: Cannot assign to read only property '{name}' of object '#<Object>'"
+                        )
+                    }),
+                    Some(false) => None,
+                    None => integrity::named_store_refusal(heap, object, name),
                 }
             });
             if let Some(message) = refusal {
@@ -1600,6 +1701,9 @@ impl Interp<'_> {
                     if heap.array_len(object).is_some() || heap.regex_source(object).is_some() {
                         heap.ensure_dynamic_entry(object);
                     }
+                    // A typed class instance, Map, Set ... keeps a symbol-keyed
+                    // property in the table it gains on its first store.
+                    integrity::ensure_property_table(heap, object);
                     if let Some(handle) = fn_value {
                         // A function value rides the symbol-function slot.
                         heap.dynamic_set_symbol_function(object, symbol, handle);
@@ -1615,6 +1719,16 @@ impl Interp<'_> {
                 // A function value rides the object's function slot.
                 let handle = fn_value.expect("function value");
                 zun_gc::with_current_heap_mut(|heap| {
+                    // A receiver with no property table yet gets one: a typed
+                    // class instance keeps its declared fields in the fixed
+                    // layout, a Map, Set or RegExp gains an expando table.
+                    if !heap.is_dynamic_object(object) {
+                        if object.type_rid() >= 1 {
+                            heap.ensure_instance_bag(object);
+                        } else {
+                            heap.ensure_dynamic_entry(object);
+                        }
+                    }
                     if heap.dynamic_get_function(object, key).is_none() {
                         heap.dynamic_remove(object, key);
                     }
@@ -1668,6 +1782,10 @@ impl Interp<'_> {
                             }
                         }
                         heap.ensure_dynamic_entry(object);
+                    } else if !heap.is_dynamic_object(object) {
+                        // A Map, Set, RegExp ...: the write becomes an own
+                        // expando property rather than vanishing.
+                        heap.ensure_dynamic_entry(object);
                     }
                     heap.dynamic_assign(object, key.as_ref().to_owned(), any);
                 });
@@ -1691,6 +1809,19 @@ impl Interp<'_> {
                             heap.array_set(object, index as usize, any);
                         }
                     } else {
+                        // A numeric key on a receiver with no property table yet
+                        // (a typed class instance, a Map ...) is an expando too.
+                        // A typed array never grows an integer-keyed expando: an
+                        // out-of-range element write is ignored.
+                        if !heap.is_dynamic_object(object)
+                            && heap.typed_array_element(object).is_none()
+                        {
+                            if object.type_rid() >= 1 {
+                                heap.ensure_instance_bag(object);
+                            } else {
+                                heap.ensure_dynamic_entry(object);
+                            }
+                        }
                         heap.dynamic_set(object, number_index_key(&key), any);
                     }
                 });

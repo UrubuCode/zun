@@ -23,6 +23,7 @@ fn managed_builtin_name(id: u32) -> Option<&'static str> {
         .or_else(|| managed_error_builtin(id))
         .or_else(|| managed_timers_builtin(id))
         .or_else(|| managed_realm_builtin(id))
+        .or_else(|| managed_object_ext_builtin(id))
         .or_else(|| managed_array_ext_builtin(id))
         .or_else(|| managed_number_builtin(id));
     MANAGED_BUILTIN_CACHE.with(|cache| cache.borrow_mut().insert(id, name));
@@ -696,6 +697,14 @@ pub(crate) fn managed_buffer_builtin(id: u32) -> Option<&'static str> {
     .chain(crate::typed_arrays::NATIVES.iter().copied())
     .find(|&name| zun_natives::resolve("buffer", name).map(|(candidate, _)| candidate) == Some(id))
     .map(|v| v as _)
+}
+
+/// Recognize the `objectExt` intrinsics, serviced on the interpreter floor
+/// because they read the managed heap and can run a script-installed method.
+pub(crate) fn managed_object_ext_builtin(id: u32) -> Option<&'static str> {
+    ["objectProtoCall"].into_iter().find(|&name| {
+        zun_natives::resolve("objectExt", name).map(|(candidate, _)| candidate) == Some(id)
+    })
 }
 
 /// Recognize the `realm` intrinsics (built-in global definitions), serviced on

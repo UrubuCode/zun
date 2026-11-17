@@ -129,10 +129,18 @@ impl<'a> Interp<'a> {
                 if let Some(token) = args.first().and_then(Self::class_token_of) {
                     if let Some(Value::Str(key)) = args.get(1) {
                         let bag = Self::class_expando_bag(token);
-                        let found = zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, key))
+                        // Own: a script-stored property (data, method or accessor),
+                        // a declared static, or a built-in constructor member.
+                        // Inherited: what `Function.prototype` and
+                        // `Object.prototype` supply to every constructor.
+                        let found = zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, key))
                             || self
                                 .user_class_rid(token)
-                                .is_some_and(|rid| self.class_has_own(rid, key));
+                                .is_some_and(|rid| self.class_has_own(rid, key))
+                            || (self.user_class_rid(token).is_none()
+                                && self.builtin_ctor_own_descriptor(token, key).is_some())
+                            || matches!(key.as_ref(), "apply" | "bind" | "call" | "constructor")
+                            || crate::object_proto_mode(key).is_some();
                         return Ok(Value::Bool(found));
                     }
                 }
@@ -163,7 +171,7 @@ impl<'a> Interp<'a> {
                                 "__proto__",
                             ]
                             .contains(&key.as_ref())
-                            || zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, &key));
+                            || zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, &key));
                         return Ok(Value::Bool(hit));
                     }
                 }
@@ -216,18 +224,23 @@ impl<'a> Interp<'a> {
                 if Self::native_chain_has(object, name) {
                     return Ok(Value::Bool(true));
                 }
-                // A dynamic object answers for its whole prototype chain.
-                if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(object)) {
+                // A dynamic object answers for its whole prototype chain. A typed
+                // instance carrying an expando table is not one: its declared
+                // members answer below, after its own expandos.
+                if zun_gc::with_current_heap(|heap| {
+                    heap.is_dynamic_object(object) && !heap.is_instance_bag(object)
+                }) {
                     return self.call_managed_collection("forInHas", args);
                 }
-                let dynamic_hit = zun_gc::with_current_heap(|heap| heap.dynamic_has(object, name));
+                let dynamic_hit =
+                    zun_gc::with_current_heap(|heap| heap.dynamic_has_own(object, name));
                 if dynamic_hit {
                     return Ok(Value::Bool(true));
                 }
                 // A typed class instance: own fields, then methods / accessors
                 // inherited through its class chain, then `constructor`.
                 let typed = zun_gc::with_current_heap(|heap| {
-                    !heap.is_dynamic_object(object)
+                    (!heap.is_dynamic_object(object) || heap.is_instance_bag(object))
                         && heap.array_len(object).is_none()
                         && object.type_rid() >= 1
                 });
@@ -246,10 +259,12 @@ impl<'a> Interp<'a> {
                     if self.error_hidden_own(object).iter().any(|(key, _)| key == &name) {
                         return Ok(Value::Bool(true));
                     }
+                    // Every instance inherits the `Object.prototype` members.
                     let found = self.instance_method_rid(object, &name).is_some()
                         || self
                             .instance_method_rid(object, &format!("get_{name}"))
-                            .is_some();
+                            .is_some()
+                        || crate::object_proto_mode(&name).is_some();
                     return Ok(Value::Bool(found));
                 }
                 Ok(Value::Bool(false))
@@ -271,7 +286,7 @@ impl<'a> Interp<'a> {
                 if let Some(token) = args.first().and_then(Self::class_token_of) {
                     if let Some(Value::Str(key)) = args.get(1) {
                         let bag = Self::class_expando_bag(token);
-                        if zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, key)) {
+                        if zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, key)) {
                             return Ok(Value::Bool(zun_gc::with_current_heap_mut(|heap| {
                                 heap.dynamic_delete(bag, key)
                             })));

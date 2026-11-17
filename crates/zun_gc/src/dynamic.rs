@@ -13,6 +13,16 @@ impl Heap {
             .is_some_and(|properties| properties.get(name).is_some())
     }
 
+    /// Whether `name` is an own string key of any kind: a data value, a
+    /// function slot or an accessor. [`Self::dynamic_has`] answers only for a
+    /// readable data value, so an own-property question (`in`, `hasOwnProperty`,
+    /// a descriptor lookup, `delete`) asks this instead.
+    pub fn dynamic_has_own(&self, object: Obj, name: &str) -> bool {
+        self.dynamic_objects
+            .get(&(object.addr() as usize))
+            .is_some_and(|properties| properties.contains(name))
+    }
+
     pub fn dynamic_get_symbol(
         &self,
         object: Obj,

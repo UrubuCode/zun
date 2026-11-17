@@ -21,7 +21,36 @@ impl<'a> Interp<'a> {
                 // already seen (even a non-enumerable own one) shadows.
                 // A primitive receiver: a string enumerates its character
                 // indices; every other primitive (and null/undefined) has none.
-                let obj = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                // A class value enumerates its enumerable statics, then the
+                // properties scripts stored on it.
+                if let Some(entries) =
+                    self.class_value_entries(args.first().ok_or(RunError::BadToken)?, false)?
+                {
+                    let array = zun_gc::with_current_heap_mut(|heap| {
+                        let array = heap.alloc_array(entries.len());
+                        for (index, (key, _)) in entries.iter().enumerate() {
+                            let item = Value::Str(key.clone().into())
+                                .box_any(heap)
+                                .unwrap_or_else(zun_core::Any::null);
+                            let _ = heap.array_set(array, index, item);
+                        }
+                        array
+                    });
+                    return Ok(Value::Object(array));
+                }
+                let holder = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    // A function or class value enumerates the properties
+                    // scripts stored on it, kept in its expando bag.
+                    Value::Function(handle) => Value::Object(crate::function_expando_bag(handle)),
+                    Value::Any(any) if any.as_class_descriptor().is_some() => {
+                        match any.as_class_descriptor().and_then(Self::class_expando_peek) {
+                            Some(bag) => Value::Object(bag),
+                            None => Value::Any(any),
+                        }
+                    }
+                    other => other,
+                };
+                let obj = match holder {
                     Value::Object(obj) => obj,
                     other => {
                         let count = match &other {
@@ -138,7 +167,12 @@ impl<'a> Interp<'a> {
                     (None, None) => object(args.first().ok_or(RunError::BadToken)?)
                         .ok_or(RunError::BadToken)?,
                 };
-                let entries = self.object_own_entries_impl(obj, false)?;
+                let entries = match self
+                    .class_value_entries(args.first().ok_or(RunError::BadToken)?, false)?
+                {
+                    Some(entries) => entries,
+                    None => self.object_own_entries_impl(obj, false)?,
+                };
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(entries.len());
                     for (index, (key, _)) in entries.iter().enumerate() {
@@ -189,13 +223,21 @@ impl<'a> Interp<'a> {
                     }
                     _ => {}
                 }
-                let obj =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let entries = self.object_own_entries(obj)?;
+                // A function or class value lists the properties scripts
+                // stored on it, kept in its expando bag.
+                let obj = property_holder(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let entries = match self
+                    .class_value_entries(args.first().ok_or(RunError::BadToken)?, true)?
+                {
+                    Some(entries) => entries,
+                    None => self.object_own_entries(obj)?,
+                };
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(entries.len());
                     for (index, (_, value)) in entries.iter().enumerate() {
-                        let item = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                        // A function-valued property travels as its cell.
+                        let item = value.box_any_cell(heap).unwrap_or_else(zun_core::Any::null);
                         let _ = heap.array_set(array, index, item);
                     }
                     array
@@ -240,16 +282,24 @@ impl<'a> Interp<'a> {
                     }
                     _ => {}
                 }
-                let obj =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let entries = self.object_own_entries(obj)?;
+                // A function or class value lists the properties scripts
+                // stored on it, kept in its expando bag.
+                let obj = property_holder(args.first().ok_or(RunError::BadToken)?)
+                    .ok_or(RunError::BadToken)?;
+                let entries = match self
+                    .class_value_entries(args.first().ok_or(RunError::BadToken)?, true)?
+                {
+                    Some(entries) => entries,
+                    None => self.object_own_entries(obj)?,
+                };
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(entries.len());
                     for (index, (key, value)) in entries.iter().enumerate() {
                         let key_any = Value::Str(key.clone().into())
                             .box_any(heap)
                             .unwrap_or_else(zun_core::Any::null);
-                        let value_any = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                        let value_any =
+                            value.box_any_cell(heap).unwrap_or_else(zun_core::Any::null);
                         let pair = heap.alloc_array(2);
                         let _ = heap.array_set(pair, 0, key_any);
                         let _ = heap.array_set(pair, 1, value_any);
@@ -305,26 +355,46 @@ impl<'a> Interp<'a> {
                     }
                     return Ok(Value::Object(target));
                 }
+                // A function or class value contributes the own enumerable
+                // properties scripts stored on it (kept in its expando bag).
+                let source_arg = args.get(1).ok_or(RunError::BadToken)?;
+                let source_bag = match unbox_arg(source_arg) {
+                    Ok(Value::Function(handle)) => Some(crate::function_expando_bag(handle)),
+                    Ok(Value::Any(any)) => any.as_class_descriptor().map(Self::class_expando_bag),
+                    _ => None,
+                };
+                // A class value: its enumerable statics, then what scripts
+                // stored on it.
+                if let Some(entries) = self.class_value_entries(source_arg, true)? {
+                    for (key, value) in entries {
+                        self.assign_store(target, key, value)?;
+                    }
+                    return Ok(Value::Object(target));
+                }
                 // A nullish (or other primitive) source contributes nothing.
-                let Some(source) = object(args.get(1).ok_or(RunError::BadToken)?) else {
+                let Some(source) = source_bag.or_else(|| object(source_arg)) else {
                     return Ok(Value::Object(target));
                 };
-                let dynamic_source =
-                    zun_gc::with_current_heap(|heap| heap.is_dynamic_object(source));
+                // An array or a typed class instance that took an expando has
+                // a property table too, but its elements and declared fields
+                // live outside it: those sources are enumerated whole below.
+                let dynamic_source = zun_gc::with_current_heap(|heap| {
+                    heap.is_dynamic_object(source)
+                        && heap.array_len(source).is_none()
+                        && !heap.is_instance_bag(source)
+                });
                 if dynamic_source {
                     // Enumerable own keys in order; source getters and target
                     // setters run; a refused write is a TypeError (strict mode).
-                    // Methods live in the function slots: copy those first (a data key
-                    // of the same name below still wins).
+                    // String-keyed methods live in the function slots and are
+                    // copied in key order by the loop below, so the target lists
+                    // them where the source does. Symbol-keyed ones go first.
                     let target_is_dynamic =
                         zun_gc::with_current_heap(|heap| heap.is_dynamic_object(target));
                     if target_is_dynamic {
-                        let (named, symbolic) =
+                        let (_, symbolic) =
                             zun_gc::with_current_heap(|heap| heap.dynamic_function_entries(source));
                         zun_gc::with_current_heap_mut(|heap| {
-                            for (name, handle) in named {
-                                heap.dynamic_set_function(target, name, handle);
-                            }
                             for (symbol, handle) in symbolic {
                                 // Only an enumerable own symbol key is copied.
                                 if heap.dynamic_is_symbol_enumerable(source, symbol) {
@@ -336,15 +406,18 @@ impl<'a> Interp<'a> {
                     let keys = zun_gc::with_current_heap(|heap| heap.dynamic_keys(source))
                         .unwrap_or_default();
                     for key in keys {
-                        let (enumerable, getter, is_function) = zun_gc::with_current_heap(|heap| {
+                        let (enumerable, getter, function) = zun_gc::with_current_heap(|heap| {
                             (
                                 heap.dynamic_is_enumerable(source, &key),
                                 heap.dynamic_accessor_getter(source, &key),
-                                heap.dynamic_get_function(source, &key).is_some(),
+                                heap.dynamic_get_function(source, &key),
                             )
                         });
-                        // Function-slot keys were copied above.
-                        if !enumerable || is_function {
+                        if !enumerable {
+                            continue;
+                        }
+                        if let Some(function) = function {
+                            self.assign_store(target, key, Value::Function(function))?;
                             continue;
                         }
                         let boxed = if let Some(getter) = getter {
@@ -358,21 +431,17 @@ impl<'a> Interp<'a> {
                             zun_gc::with_current_heap(|heap| heap.dynamic_get(source, &key))
                                 .unwrap_or_else(zun_core::Any::null)
                         };
-                        let target_dynamic =
-                            zun_gc::with_current_heap(|heap| heap.is_dynamic_object(target));
-                        if !target_dynamic {
-                            // A typed instance target: a declared field takes the
-                            // value, any other key becomes an expando.
-                            let typed = zun_gc::with_current_heap(|heap| {
-                                heap.array_len(target).is_none() && target.type_rid() >= 1
-                            });
-                            if typed && !self.instance_member_set(target, &key, &Value::Any(boxed))
-                            {
-                                zun_gc::with_current_heap_mut(|heap| {
-                                    heap.ensure_instance_bag(target);
-                                    heap.dynamic_set(target, key, boxed);
-                                });
-                            }
+                        // A target whose own properties do not all live in a
+                        // plain property table (a typed class instance, an
+                        // array, a Map ...) takes the copy through the shared
+                        // store: declared field, element, or expando.
+                        let plain_target = zun_gc::with_current_heap(|heap| {
+                            heap.is_dynamic_object(target)
+                                && !heap.is_instance_bag(target)
+                                && heap.array_len(target).is_none()
+                        });
+                        if !plain_target {
+                            self.assign_store(target, key, Value::Any(boxed))?;
                             continue;
                         }
                         let (is_accessor, setter, has, writable, extensible) =
@@ -433,24 +502,12 @@ impl<'a> Interp<'a> {
                     }
                     return Ok(Value::Object(target));
                 }
-                // An array source contributes its indexed elements.
-                if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(source)) {
-                    for index in 0..len {
-                        zun_gc::with_current_heap_mut(|heap| {
-                            if let Some(element) = heap.array_get(source, index) {
-                                heap.dynamic_set(target, index.to_string(), element);
-                            }
-                        });
-                    }
-                    return Ok(Value::Object(target));
-                }
+                // Any other source (an array, a typed class instance, a Map
+                // with expandos ...) contributes its own enumerable entries: an
+                // array's present elements, then its named properties.
                 let entries = self.object_own_entries(source)?;
                 for (key, value) in entries {
-                    let boxed = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
-                        .unwrap_or_else(zun_core::Any::null);
-                    zun_gc::with_current_heap_mut(|heap| {
-                        heap.dynamic_set(target, key, boxed);
-                    });
+                    self.assign_store(target, key, value)?;
                 }
                 Ok(Value::Object(target))
             }
@@ -719,7 +776,13 @@ impl<'a> Interp<'a> {
                 if self.apply_nondynamic_integrity(obj, 3)? {
                     return Ok(Value::Object(obj));
                 }
-                zun_gc::with_current_heap_mut(|heap| heap.dynamic_freeze(obj));
+                // A typed class instance, Map, Set ... has no property table
+                // until something is stored on it: give it one so the level
+                // is recorded and later stores are refused.
+                zun_gc::with_current_heap_mut(|heap| {
+                    crate::integrity::ensure_property_table(heap, obj);
+                    heap.dynamic_freeze(obj)
+                });
                 Ok(Value::Object(obj))
             }
             "objectIsFrozen" => {
@@ -740,10 +803,14 @@ impl<'a> Interp<'a> {
                     return Ok(Value::Bool(len == 0));
                 }
                 let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                // An object with no property table was never frozen (freezing
+                // gives it one), and it can still gain own properties. A proxy
+                // keeps its historical answer: its integrity queries are not
+                // routed through the target here.
                 let frozen = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_frozen(obj))
                 } else {
-                    true
+                    zun_gc::with_current_heap(|heap| heap.proxy_target(obj).is_some())
                 };
                 Ok(Value::Bool(frozen))
             }
@@ -1157,5 +1224,195 @@ impl<'a> Interp<'a> {
             }
             _ => Err(RunError::BadToken),
         }
+    }
+
+    /// `receiver.method(argument)` for an `Object.prototype` reflector
+    /// (`hasOwnProperty`, `propertyIsEnumerable`, `isPrototypeOf`) on a dynamic
+    /// receiver. A function the script installed under that name on the
+    /// receiver or along its prototype chain takes the call, with the receiver
+    /// as `this`; a non-callable own property of that name makes the call a
+    /// TypeError; otherwise the built-in answers.
+    pub(super) fn object_proto_call(&mut self, args: &[Value]) -> Result<Value, RunError> {
+        let receiver_arg = args.first().ok_or(RunError::BadToken)?;
+        let method = match args.get(1).ok_or(RunError::BadToken)? {
+            Value::Str(method) => method.to_string(),
+            _ => return Err(RunError::BadToken),
+        };
+        let argument = args.get(2).ok_or(RunError::BadToken)?;
+        if let Some(receiver) = object(receiver_arg) {
+            let object_prototype = Self::object_prototype_singleton();
+            let mut current = receiver;
+            for _ in 0..256 {
+                if current == object_prototype {
+                    break;
+                }
+                let (function, shadowed, next) = zun_gc::with_current_heap(|heap| {
+                    (
+                        heap.dynamic_get_function(current, &method),
+                        heap.dynamic_has_own(current, &method),
+                        heap.dynamic_prototype(current)
+                            .and_then(|link| link.as_object())
+                            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+                    )
+                });
+                if let Some(function) = function {
+                    // A built-in method value found on a prototype object is
+                    // the built-in itself: let the intrinsic answer.
+                    if function.builtin_method().is_some() {
+                        break;
+                    }
+                    let argument = unbox_arg(argument).unwrap_or_else(|_| argument.clone());
+                    return self.invoke_function_value(
+                        function,
+                        self.with_this_arg(function, receiver, vec![argument]),
+                    );
+                }
+                if shadowed
+                    && zun_gc::with_current_heap(|heap| !heap.dynamic_is_accessor(current, &method))
+                {
+                    return Err(RunError::Native(format!(
+                        "TypeError: {method} is not a function"
+                    )));
+                }
+                match next {
+                    Some(next) => current = next,
+                    None => break,
+                }
+            }
+        }
+        let native = match method.as_str() {
+            "hasOwnProperty" => "objectHasOwn",
+            "propertyIsEnumerable" => "objectPropertyIsEnumerable",
+            _ => "objectIsPrototypeOf",
+        };
+        self.call_managed_collection(native, &[receiver_arg.clone(), argument.clone()])
+    }
+
+    /// Own enumerable string-keyed entries of a class value: the initialised
+    /// static fields a user class declares, in declaration order, then the
+    /// properties scripts stored on the class (kept in its expando bag).
+    /// `Ok(None)` when `value` is not a class value. `read_values` false
+    /// leaves every value `undefined`, as `Object.keys` never reads one.
+    fn class_value_entries(
+        &mut self,
+        value: &Value,
+        read_values: bool,
+    ) -> Result<Option<Vec<(String, Value)>>, RunError> {
+        let token = match unbox_arg(value) {
+            Ok(Value::Any(any)) => any.as_class_descriptor(),
+            _ => None,
+        };
+        let Some(token) = token else {
+            return Ok(None);
+        };
+        let mut out: Vec<(String, Value)> = Vec::new();
+        // A prelude class standing for a namespace object (`JSON`) holds
+        // internal helper statics that are not properties of the namespace.
+        if let Some(rid) = self
+            .user_class_rid(token)
+            .filter(|rid| self.namespace_class_members(*rid).is_none())
+        {
+            let fields: Vec<String> = self
+                .class_own_props(rid)
+                .into_iter()
+                .filter(|(_, own)| matches!(own, crate::property_ops::ClassOwn::Field(..)))
+                .map(|(name, _)| name)
+                .collect();
+            for name in fields {
+                let value = if read_values {
+                    self.class_static_read(rid, &name)?.unwrap_or(Value::Void)
+                } else {
+                    Value::Void
+                };
+                out.push((name, value));
+            }
+        }
+        if let Some(bag) = Self::class_expando_peek(token) {
+            for (key, value) in self.object_own_entries_impl(bag, read_values)? {
+                // A value stored over a static method (`JSON.stringify = fn`)
+                // replaces the value of a property that stays non-enumerable.
+                let over_method = match self.user_class_rid(token) {
+                    Some(rid) => self.class_static_method(rid, &key).is_some(),
+                    None => self.builtin_ctor_own_descriptor(token, &key).is_some(),
+                };
+                if !over_method && !out.iter().any(|(name, _)| name == &key) {
+                    out.push((key, value));
+                }
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// Store one property `Object.assign` (and object spread) copies onto
+    /// `target`. A function value rides the function slot; a typed class
+    /// instance takes a declared field in place and keeps anything else as an
+    /// expando; a receiver with no property table yet gains one, so the copy
+    /// lands instead of vanishing.
+    fn assign_store(
+        &mut self,
+        target: zun_gc::Obj,
+        key: String,
+        value: Value,
+    ) -> Result<(), RunError> {
+        let (dynamic, typed) = zun_gc::with_current_heap(|heap| {
+            (
+                heap.is_dynamic_object(target),
+                (!heap.is_dynamic_object(target) || heap.is_instance_bag(target))
+                    && heap.array_len(target).is_none()
+                    && target.type_rid() >= 1,
+            )
+        });
+        let is_function = matches!(value, Value::Function(_));
+        if typed {
+            if let Some(message) = self.member_store_refusal(target, &key) {
+                return Err(RunError::Native(message));
+            }
+        }
+        if typed && !is_function && self.instance_member_set(target, &key, &value) {
+            return Ok(());
+        }
+        // An array target takes a canonical index as an element.
+        if !is_function {
+            if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(target)) {
+                if let Some(index) = key
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|index| index.to_string() == key && *index < u32::MAX as usize)
+                {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        let boxed = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                        if index >= len {
+                            heap.array_resize(target, index + 1);
+                        }
+                        heap.array_set(target, index, boxed);
+                    });
+                    return Ok(());
+                }
+            }
+        }
+        if !dynamic {
+            zun_gc::with_current_heap_mut(|heap| {
+                if typed {
+                    heap.ensure_instance_bag(target);
+                } else {
+                    heap.ensure_dynamic_entry(target);
+                }
+            });
+        }
+        if let Some(message) = zun_gc::with_current_heap(|heap| {
+            crate::integrity::named_store_refusal(heap, target, &key)
+        }) {
+            return Err(RunError::Native(message));
+        }
+        zun_gc::with_current_heap_mut(|heap| match value {
+            Value::Function(handle) => {
+                heap.dynamic_set_function(target, key, handle);
+            }
+            other => {
+                let boxed = other.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                heap.dynamic_set(target, key, boxed);
+            }
+        });
+        Ok(())
     }
 }

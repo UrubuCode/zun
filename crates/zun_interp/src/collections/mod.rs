@@ -82,6 +82,19 @@ pub(crate) fn object(value: &Value) -> Option<zun_gc::Obj> {
     }
 }
 
+/// The object whose property table holds the own properties scripts stored on
+/// `value`: the object itself, or the expando bag standing for a function or a
+/// class value. `None` for a primitive.
+pub(super) fn property_holder(value: &Value) -> Option<zun_gc::Obj> {
+    if let Some(token) = Interp::class_token_of(value) {
+        return Some(Interp::class_expando_bag(token));
+    }
+    match unbox_arg(value) {
+        Ok(Value::Function(handle)) => Some(crate::function_expando_bag(handle)),
+        _ => object(value),
+    }
+}
+
 /// Box a value into a heap `Any` cell. Promoted from the preamble closure.
 pub(super) fn any(value: &Value) -> Option<zun_core::Any> {
     zun_gc::with_current_heap_mut(|heap| value.box_any_cell(heap))
@@ -669,6 +682,7 @@ impl<'a> Interp<'a> {
             "objectFromEntries" => self.col_object_descriptor(name, args),
             "objectIs" => self.col_object_descriptor(name, args),
             "objectHasOwn" => self.col_object_descriptor(name, args),
+            "objectProtoCall" => self.object_proto_call(args),
             "objectIsPrototypeOf" => self.col_object_descriptor(name, args),
             "objectDefineProperty" | "reflectDefineProperty" => {
                 self.col_object_descriptor(name, args)

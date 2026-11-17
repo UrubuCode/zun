@@ -367,7 +367,17 @@ impl<'a> Interp<'a> {
                         .as_class_descriptor()
                         .and_then(|t| self.user_class_rid(t))
                     {
-                        if let Some((mrid, hidden)) = self.class_static_method(rid, &member) {
+                        // A function a script stored on the class value under
+                        // the same name shadows the declared static method; the
+                        // expando call below takes it.
+                        let shadowed = Self::class_expando_read_own(
+                            rid | zun_natives::USER_CLASS_FLAG,
+                            &Value::Str(member.as_ref().into()),
+                        )
+                        .is_some();
+                        if let Some((mrid, hidden)) =
+                            self.class_static_method(rid, &member).filter(|_| !shadowed)
+                        {
                             let mut call_args = args[2..]
                                 .iter()
                                 .map(|arg| match arg {

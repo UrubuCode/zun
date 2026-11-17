@@ -2065,6 +2065,25 @@ pub(crate) fn expando_receiver(value: Value) -> Value {
     }
 }
 
+/// The heap object a dynamic property store lands on: the object itself, or
+/// the expando bag standing for a function or a class value (user-defined or
+/// built-in). `None` is a primitive receiver, which has nowhere to keep an own
+/// property: the caller drops the store, as sloppy-mode JS does, and must
+/// never unwrap the receiver as an object.
+pub(crate) fn store_receiver(value: Value) -> Option<zun_gc::Obj> {
+    match expando_receiver(value) {
+        Value::Object(object) => Some(object),
+        Value::Any(any) => match any.as_class_descriptor() {
+            Some(token) => Some(Interp::class_expando_bag(token)),
+            None => any
+                .as_object()
+                .filter(|address| *address != 0)
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+        },
+        _ => None,
+    }
+}
+
 impl Interp<'_> {
     /// The function value of the `Object.prototype` method `name` as read off
     /// `object`. Read off `Object.prototype` itself it is the real, unbound

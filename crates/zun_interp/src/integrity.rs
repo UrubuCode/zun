@@ -26,6 +26,65 @@ pub(crate) const LEVEL_NON_EXTENSIBLE: u8 = 1;
 pub(crate) const LEVEL_SEALED: u8 = 2;
 pub(crate) const LEVEL_FROZEN: u8 = 3;
 
+/// Why a plain assignment to the named (non-index) own property `name` of
+/// `object` is refused, as the `TypeError` message, or `None` when the store
+/// may proceed. One answer for every store path (`o.k = v`, `o[k] = v`, a
+/// data or a function value): an accessor without a setter, a read-only
+/// property, or a new key on a non-extensible, sealed or frozen object. An
+/// array carries its integrity level outside its property table, so its level
+/// is consulted too.
+pub(crate) fn named_store_refusal(
+    heap: &zun_gc::Heap,
+    object: zun_gc::Obj,
+    name: &str,
+) -> Option<String> {
+    if heap.dynamic_is_accessor(object, name) {
+        return heap.dynamic_accessor_setter(object, name).is_none().then(|| {
+            format!("TypeError: Cannot set property {name} of #<Object> which has only a getter")
+        });
+    }
+    let exists = heap.dynamic_has_own(object, name);
+    let level = if heap.array_len(object).is_some() {
+        heap.array_integrity(object)
+    } else {
+        0
+    };
+    let refused = !heap.dynamic_can_set(object, name)
+        || if exists {
+            level >= LEVEL_FROZEN
+        } else {
+            level >= LEVEL_NON_EXTENSIBLE
+        };
+    if !refused {
+        return None;
+    }
+    Some(if exists {
+        format!("TypeError: Cannot assign to read only property '{name}' of object '#<Object>'")
+    } else {
+        format!("TypeError: Cannot add property {name}, object is not extensible")
+    })
+}
+
+/// Give `object` a property table when it has none, so an own property or an
+/// integrity level can be recorded on it: a typed class instance keeps its
+/// declared fields in the fixed layout and gains an expando table; a Map, Set,
+/// RegExp ... gains a plain one. An array is left alone (its elements and its
+/// integrity level live in the array storage; it gains a table on its first
+/// named store).
+pub(crate) fn ensure_property_table(heap: &mut zun_gc::Heap, object: zun_gc::Obj) {
+    if heap.is_dynamic_object(object)
+        || heap.array_len(object).is_some()
+        || heap.proxy_target(object).is_some()
+    {
+        return;
+    }
+    if object.type_rid() >= 1 {
+        heap.ensure_instance_bag(object);
+    } else {
+        heap.ensure_dynamic_entry(object);
+    }
+}
+
 /// The `TypeError` message when `level` forbids `op`, or `None` if allowed.
 pub(crate) fn array_refusal(level: u8, op: ArrayOp) -> Option<&'static str> {
     match op {

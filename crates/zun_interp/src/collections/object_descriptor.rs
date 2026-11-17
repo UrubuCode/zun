@@ -221,15 +221,44 @@ impl<'a> Interp<'a> {
                     {
                         if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
                         {
-                            return Ok(Value::Bool(self.class_has_own(rid, &key)));
+                            // A declared static, or a property a script stored
+                            // on the class value (kept in its expando bag).
+                            let stored = Self::class_expando_peek(rid | zun_natives::USER_CLASS_FLAG)
+                                .is_some_and(|bag| {
+                                    zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, &key))
+                                });
+                            return Ok(Value::Bool(stored || self.class_has_own(rid, &key)));
+                        }
+                    }
+                    // A built-in constructor owns its members and whatever a
+                    // script stored on it.
+                    if let Some(token) = descriptor.as_class_descriptor() {
+                        if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                        {
+                            let stored = Self::class_expando_peek(token).is_some_and(|bag| {
+                                zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, &key))
+                            });
+                            return Ok(Value::Bool(
+                                stored || self.builtin_ctor_own_descriptor(token, &key).is_some(),
+                            ));
                         }
                     }
                 }
-                // A function value owns `name` and `length`; `prototype` is only
-                // modelled for constructible functions, which are not tracked here.
-                if let Ok(Value::Function(_)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
+                // A function value owns `name` and `length`, plus the properties
+                // a script stored on it (kept in its expando bag). `prototype`
+                // is excluded: the bag also holds a lazily materialised one for
+                // functions that are not constructors, and constructibility is
+                // not tracked here.
+                if let Ok(Value::Function(handle)) = unbox_arg(args.first().ok_or(RunError::BadToken)?) {
                     if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?) {
-                        return Ok(Value::Bool(matches!(key.as_ref(), "name" | "length")));
+                        let bag = crate::function_expando_bag(handle);
+                        return Ok(Value::Bool(
+                            matches!(key.as_ref(), "name" | "length")
+                                || (key.as_ref() != "prototype"
+                                    && zun_gc::with_current_heap(|heap| {
+                                        heap.dynamic_has_own(bag, &key)
+                                    })),
+                        ));
                     }
                 }
                 let obj =
@@ -250,7 +279,14 @@ impl<'a> Interp<'a> {
                     }
                     other => self.dyn_to_string(&other)?,
                 };
-                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                // An array or a typed class instance that took an expando has a
+                // property table too, but its elements and declared fields live
+                // outside it: those answer through the own-entry walk below.
+                let is_dynamic = zun_gc::with_current_heap(|heap| {
+                    heap.is_dynamic_object(obj)
+                        && !heap.is_instance_bag(obj)
+                        && heap.array_len(obj).is_none()
+                });
                 let has = if is_dynamic {
                     zun_gc::with_current_heap(|heap| {
                         heap.dynamic_has(obj, &key)
@@ -268,6 +304,7 @@ impl<'a> Interp<'a> {
                         .iter()
                         .any(|(name, _)| name == &key)
                         || self.error_hidden_own(obj).iter().any(|(name, _)| name == &key)
+                        || zun_gc::with_current_heap(|heap| heap.dynamic_has_own(obj, &key))
                 };
                 Ok(Value::Bool(has))
             }
@@ -451,7 +488,7 @@ impl<'a> Interp<'a> {
                     let bag = crate::function_expando_bag(handle);
                     return match args.get(1).and_then(crate::property_ops::prop_key) {
                         Some(crate::property_ops::PropKey::Str(key)) => {
-                            if zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, &key)) {
+                            if zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, &key)) {
                                 return Ok(match self.build_descriptor(bag, &key)? {
                                     Some(d) => Value::Object(d),
                                     None => Value::Void,
@@ -497,7 +534,7 @@ impl<'a> Interp<'a> {
                     let bag = Self::class_expando_bag(token);
                     match args.get(1).and_then(crate::property_ops::prop_key) {
                         Some(crate::property_ops::PropKey::Str(key)) => {
-                            if zun_gc::with_current_heap(|heap| heap.dynamic_has(bag, &key)) {
+                            if zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, &key)) {
                                 return Ok(match self.build_descriptor(bag, &key)? {
                                     Some(d) => Value::Object(d),
                                     None => Value::Void,
@@ -932,7 +969,10 @@ impl<'a> Interp<'a> {
                 if self.apply_nondynamic_integrity(obj, 2)? {
                     return Ok(Value::Object(obj));
                 }
-                zun_gc::with_current_heap_mut(|heap| heap.dynamic_seal(obj));
+                zun_gc::with_current_heap_mut(|heap| {
+                    crate::integrity::ensure_property_table(heap, obj);
+                    heap.dynamic_seal(obj)
+                });
                 Ok(Value::Object(obj))
             }
             "objectIsSealed" => {
@@ -950,8 +990,11 @@ impl<'a> Interp<'a> {
                 let sealed = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_sealed(obj))
                 } else {
-                    // A fixed-layout typed object has an immutable shape.
-                    true
+                    // An object with no property table was never sealed
+                    // (sealing gives it one) and can still gain own properties.
+                    // A proxy keeps its historical answer: its integrity
+                    // queries are not routed through the target here.
+                    zun_gc::with_current_heap(|heap| heap.proxy_target(obj).is_some())
                 };
                 Ok(Value::Bool(sealed))
             }
@@ -972,7 +1015,10 @@ impl<'a> Interp<'a> {
                 if self.apply_nondynamic_integrity(obj, 1)? {
                     return Ok(Value::Object(obj));
                 }
-                zun_gc::with_current_heap_mut(|heap| heap.dynamic_prevent_extensions(obj));
+                zun_gc::with_current_heap_mut(|heap| {
+                    crate::integrity::ensure_property_table(heap, obj);
+                    heap.dynamic_prevent_extensions(obj)
+                });
                 Ok(Value::Object(obj))
             }
             "objectIsExtensible" => {
@@ -999,19 +1045,50 @@ impl<'a> Interp<'a> {
                 let extensible = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_extensible(obj))
                 } else {
-                    // Typed objects cannot gain fields.
-                    false
+                    // An object with no property table never had extensions
+                    // prevented: a typed class instance, Map, Set ... takes
+                    // expando properties.
+                    true
                 };
                 Ok(Value::Bool(extensible))
             }
             "objectPropertyIsEnumerable" => {
-                let obj =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let key = match args.get(1).ok_or(RunError::BadToken)? {
                     Value::Str(key) => key.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
-                let is_dynamic = zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj));
+                // A class value: a property a script stored on it answers from
+                // its expando bag; an initialised declared static field is
+                // enumerable too. A function value answers from its bag.
+                let first = args.first().ok_or(RunError::BadToken)?;
+                if let Ok(Value::Any(descriptor)) = unbox_arg(first) {
+                    if let Some(token) = descriptor.as_class_descriptor() {
+                        let stored = Self::class_expando_peek(token).is_some_and(|bag| {
+                            zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(bag, &key))
+                        });
+                        let declared = self.user_class_rid(token).is_some_and(|rid| {
+                            self.class_own_props(rid).iter().any(|(name, own)| {
+                                name == &key
+                                    && matches!(own, crate::property_ops::ClassOwn::Field(..))
+                            })
+                        });
+                        return Ok(Value::Bool(stored || declared));
+                    }
+                }
+                if let Ok(Value::Function(handle)) = unbox_arg(first) {
+                    let bag = crate::function_expando_bag(handle);
+                    return Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_is_enumerable(bag, &key)
+                    })));
+                }
+                let obj = object(first).ok_or(RunError::BadToken)?;
+                // A typed class instance that took an expando still answers for
+                // its declared fields, which live outside its property table.
+                let is_dynamic = zun_gc::with_current_heap(|heap| {
+                    heap.is_dynamic_object(obj)
+                        && !heap.is_instance_bag(obj)
+                        && heap.array_len(obj).is_none()
+                });
                 let enumerable = if is_dynamic {
                     zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(obj, &key))
                 } else {

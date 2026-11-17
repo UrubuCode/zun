@@ -33,6 +33,30 @@ impl Checker<'_> {
             )
         {
             let argument = self.check_expr(cx, &args[0]);
+            // A dynamic receiver may carry its own function under the method
+            // name (`o.hasOwnProperty = () => ...`), which must take the call:
+            // the lookup happens at run time, and the built-in answers only
+            // when the script installed nothing. A typed receiver cannot be
+            // overridden that way and keeps the direct intrinsic.
+            if matches!(receiver.ty, Ty::DynamicObject | Ty::Any) {
+                let Some((id, _)) = zun_natives::resolve("objectExt", "objectProtoCall") else {
+                    self.error(span, "missing Object intrinsic `objectProtoCall`");
+                    return Ok(self.poison(span));
+                };
+                let method_name = hir::Expr {
+                    kind: hir::ExprKind::String(mname.to_string()),
+                    ty: Ty::String,
+                    span,
+                };
+                return Ok(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id,
+                        args: vec![receiver, method_name, argument],
+                    },
+                    ty: Ty::Any,
+                    span,
+                });
+            }
             let (name, ty) = if mname == "hasOwnProperty" {
                 ("objectHasOwn", Ty::Boolean)
             } else if mname == "propertyIsEnumerable" {

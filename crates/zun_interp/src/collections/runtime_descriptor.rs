@@ -81,6 +81,23 @@ impl<'a> Interp<'a> {
                     out.push((index.to_string(), element));
                 }
             }
+            // Named properties a script stored on the view follow its elements.
+            let expandos = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_keys(obj)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|key| heap.dynamic_is_enumerable(obj, key))
+                    .filter_map(|key| {
+                        if let Some(function) = heap.dynamic_get_function(obj, &key) {
+                            return Some((key, Value::Function(function)));
+                        }
+                        heap.dynamic_get(obj, &key)
+                            .and_then(|any| Value::unbox_any(any, heap))
+                            .map(|value| (key, value))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            out.extend(expandos);
             return Ok(out);
         }
         // An array: its present indices (as strings), then enumerable expando
@@ -108,14 +125,8 @@ impl<'a> Interp<'a> {
                     .filter_map(|key| {
                         // A method installed on the array (`arr.join = fn`)
                         // rides in the function slot and is an own property too.
-                        // Listed by `Object.keys`; the value readers (`values`,
-                        // `entries`, `assign`) cannot carry a function here yet.
                         if let Some(function) = heap.dynamic_get_function(obj, &key) {
-                            return if read_values {
-                                None
-                            } else {
-                                Some((key, Value::Function(function)))
-                            };
+                            return Some((key, Value::Function(function)));
                         }
                         heap.dynamic_get(obj, &key)
                             .and_then(|any| Value::unbox_any(any, heap))
@@ -133,11 +144,12 @@ impl<'a> Interp<'a> {
                 .ok_or(RunError::BadToken)?;
             let mut out = Vec::with_capacity(keys.len());
             for key in keys {
-                let (enumerable, getter, data) = zun_gc::with_current_heap(|heap| {
+                let (enumerable, getter, data, function) = zun_gc::with_current_heap(|heap| {
                     (
                         heap.dynamic_is_enumerable(obj, &key),
                         heap.dynamic_accessor_getter(obj, &key),
                         heap.dynamic_get(obj, &key),
+                        heap.dynamic_get_function(obj, &key),
                     )
                 });
                 if !enumerable {
@@ -147,7 +159,11 @@ impl<'a> Interp<'a> {
                     out.push((key, Value::Void));
                     continue;
                 }
-                let value = if let Some(getter) = getter {
+                // A function-valued own property rides in the function slot;
+                // it is an entry like any other, in its insertion position.
+                let value = if let Some(function) = function {
+                    Value::Function(function)
+                } else if let Some(getter) = getter {
                     self.invoke_function_value(getter, self.with_this_arg(getter, obj, Vec::new()))?
                 } else if zun_gc::with_current_heap(|heap| heap.dynamic_is_accessor(obj, &key)) {
                     Value::Void
@@ -248,6 +264,10 @@ impl<'a> Interp<'a> {
                     .into_iter()
                     .filter(|key| heap.dynamic_is_enumerable(obj, key))
                     .filter_map(|key| {
+                        // A function-valued expando rides in the function slot.
+                        if let Some(function) = heap.dynamic_get_function(obj, &key) {
+                            return Some((key, Value::Function(function)));
+                        }
                         heap.dynamic_get(obj, &key)
                             .and_then(|any| Value::unbox_any(any, heap))
                             .map(|value| (key, value))
