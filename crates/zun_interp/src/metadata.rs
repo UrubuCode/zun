@@ -373,6 +373,16 @@ impl Interp<'_> {
                 } else {
                     value
                 };
+                // `null`/`undefined` has no encoding in an unboxed slot, and
+                // writing it anyway aborted the engine (a numeric slot) or
+                // leaked another value (a string slot). Report the store as
+                // unhandled instead: the caller then tries a declared setter
+                // and finally an expando, so a dynamic read answers `null` as
+                // node does. The typed read still sees the old slot -- a layout
+                // divergence, recorded, and strictly better than an abort.
+                if crate::value::unboxed_field_rejects(kind, &value) {
+                    return false;
+                }
                 zun_gc::with_current_heap_mut(|heap| {
                     crate::value::store_field(kind, object, slot, &value, heap);
                 });

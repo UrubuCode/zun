@@ -22,6 +22,25 @@ const ARRAY_READ_ONLY: &[&str] = &[
 ];
 
 impl Interp<'_> {
+    /// A typed field slot cannot hold `null`/`undefined`: name the field and
+    /// the value rather than aborting the engine (see
+    /// `value::unboxed_field_rejects`).
+    pub(crate) fn field_slot_message(&self, field_rid: u32, value: &Value) -> String {
+        let name = self
+            .module
+            .tables
+            .field_defs
+            .get((field_rid as usize).wrapping_sub(1))
+            .map(|field| self.module.strings.get(field.name).to_owned())
+            .unwrap_or_default();
+        let shown = if matches!(value, Value::Null) {
+            "null"
+        } else {
+            "undefined"
+        };
+        format!("TypeError: Cannot store {shown} in the typed field `{name}`")
+    }
+
     /// The source name of a field token, or `None` when the field is
     /// `#private`. A public field addressed on a plain dynamic object is an
     /// ordinary property read or write by that name; a private one is a brand

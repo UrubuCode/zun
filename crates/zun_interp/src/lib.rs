@@ -1660,6 +1660,18 @@ impl Interp<'_> {
                     let kinds: Vec<u8> = (0..field_count as u32)
                         .map(|i| self.field_kind_at(field_start + i))
                         .collect::<Result<_, _>>()?;
+                    // `throw_native!`, not a bare `return Err`: the arm has
+                    // already popped the arguments, and a raw `Err` skips
+                    // `route_exception`, so an in-function `catch` resumed with
+                    // an inconsistent operand stack and the *next* statement
+                    // read garbage -- two of these in one program aborted in
+                    // `as_number` while either alone was fine.
+                    for (i, arg) in args.iter().enumerate() {
+                        if value::unboxed_field_rejects(kinds[i], arg) {
+                            let message = self.field_slot_message(field_start + i as u32, arg);
+                            throw_native!(self, body, stack, pc, next - size, message);
+                        }
+                    }
                     let obj = zun_gc::with_current_heap_mut(|h| {
                         let obj = h.alloc(token.rid(), field_count);
                         for (i, arg) in args.iter().enumerate() {
@@ -1768,9 +1780,15 @@ impl Interp<'_> {
                             };
                             zun_gc::with_current_heap_mut(|h| h.dynamic_set(obj, &name, any));
                         }
-                        None => zun_gc::with_current_heap_mut(|h| {
-                            value::store_field(kind, obj, slot, &value, h);
-                        }),
+                        None => {
+                            if value::unboxed_field_rejects(kind, &value) {
+                                let message = self.field_slot_message(token.rid(), &value);
+                                throw_native!(self, body, stack, pc, next - size, message);
+                            }
+                            zun_gc::with_current_heap_mut(|h| {
+                                value::store_field(kind, obj, slot, &value, h);
+                            })
+                        }
                     }
                     stack.push(value);
                 }

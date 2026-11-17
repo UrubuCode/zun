@@ -341,6 +341,41 @@ pub fn decode_field(kind: u8, slot: u64, heap: &zun_gc::Heap) -> Value {
 
 /// Encode a [`Value`] into a raw field slot for the field's value-type code,
 /// interning strings into the heap as needed.
+/// Whether storing `value` into a field of this `kind` has no representation.
+///
+/// A numeric or boolean field is a raw slot: `null` and `undefined` do not fit
+/// in it, and `encode_field` used to reach `as_number` and **abort the
+/// engine** -- `class U { age: number }` with `new U(null as any)` panicked at
+/// `value.rs:157`. A reference field already has the null encoding, so this
+/// only concerns the unboxed kinds.
+///
+/// Coercing instead (ToNumber: `null` to 0, `undefined` to NaN) was rejected
+/// deliberately: node keeps the field `null`, so a coerced 0 would make
+/// `v !== null` answer the opposite of node with no sign of it. Matching node
+/// would mean widening the slot, which is a layout decision; failing loudly is
+/// the honest behaviour until then.
+pub fn unboxed_field_rejects(kind: u8, value: &Value) -> bool {
+    use zun_il::JitKind;
+    if !matches!(value, Value::Null | Value::Void) {
+        return false;
+    }
+    // Only a *reference* field has a null encoding. A string field does not:
+    // its `_ => 0` fallback meant intern id 0, so `class S { s: string }` with
+    // `new S(null as any)` answered the unrelated string `"Math"` -- a silent
+    // wrong answer that also leaks another value's bytes, the same signature as
+    // the `Reflect.construct` typed-field hole.
+    if kind == FIELD_OBJECT {
+        return false;
+    }
+    if kind == FIELD_STRING {
+        return true;
+    }
+    matches!(
+        JitKind::from_byte(kind),
+        JitKind::Num(_) | JitKind::Bool | JitKind::String
+    )
+}
+
 pub fn encode_field(kind: u8, v: &Value, heap: &mut zun_gc::Heap) -> u64 {
     use zun_il::{JitKind, NumKind};
     match kind {
