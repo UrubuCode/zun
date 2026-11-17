@@ -904,3 +904,41 @@ treat a subagent's "pre-existing limit" as a claim to test, not a fact.**
   missing; and a generator function used as an array callback or through
   `.bind` aborts with "malformed bytecode: parked a frame that is not awaiting
   a promise".
+
+### At the 144 mark (`49dfa830`)
+- **CLOSED - `new base.Member(args)` with `base` a local typed `any`.** Sema
+  lowered it to `dynamicConstruct`, which only handled an `import()` namespace.
+  Recorded as a **reduction lesson**: the symptom read as "fails at module top
+  level", and that framing was wrong in both directions -- a top-level binding
+  is a *local of the module initializer* (so it broke) while the same name read
+  inside a function is a module binding (so it worked), and a function with its
+  own `any` local broke too. When a defect looks positional, check what the
+  binding *is*, not where it sits.
+- **CLOSED - `new Response()` aborted the engine** at `value.rs:157`
+  (`as_number` on `Void`), the same accessor-panic family as the `as_object`
+  pair closed in `6e38aec3` and `529da44a`. The remaining `as_*` accessors in
+  `value.rs` are still worth a sweep.
+- **The prelude must not use typed array methods.** `request.zun` used
+  `string[].indexOf` and broke 48 `zun_interp` tests at once, because those
+  compile programs that supply their own `Array` methods. Use an index loop.
+- **OPEN - dynamic construction does not apply parameter defaults** and pads
+  omitted parameters with `null`: for
+  `class K { constructor(a: any = undefined, b: any = "dflt") {} }`, a
+  `new (K as any-local)()` or `Reflect.construct(K, [])` gives `null|null`
+  where node gives `undefined|dflt`, and non-literal field initializers do not
+  run on that path. This is why the new platform classes all take a rest
+  parameter -- a workaround, not a fix.
+- **OPEN - `Reflect.construct(URL, [...], Tagged)` throws `Invalid URL: null`**,
+  and `Reflect.construct(Headers, [{a:"1"}])` throws "Cannot read properties of
+  undefined (reading 'push')"; the plain two-argument forms and
+  `const U: any = URL; new U(...)` fail identically. Verified on `acb561ce`.
+  It is the next park of `platform-classes-and-helpers` (line 201) and sits in
+  `construct_class_from_descriptor`, next to the receiver gate.
+- **OPEN - a `static` method cannot read a `#private` field** ("only accessible
+  inside its declaring class"), though a static calling a private *instance
+  method* works.
+- **OPEN - prelude class prototype members are non-enumerable** where node has
+  them enumerable, `String(<platform class value>)` prints `[any]`, and
+  `X instanceof Function` is false for a class value (also for `Headers` and
+  `Map`), so the platform classes still differ from node in reflection even
+  where behaviour matches.
