@@ -670,6 +670,21 @@ impl<'a> Interp<'a> {
         }
         let call_args = self.with_this_arg(handle, fresh.get(), values);
         let result = self.invoke_function_value(handle, call_args)?;
+        // `[[Construct]]`: "if Type(result) is Object, return result" -- and a
+        // *function* is an Object, so `function Maker() { return Point }` with
+        // `new Maker()` answers `Point`, not the fresh instance. Only
+        // `Value::Object` was honoured here, so a returned function or class
+        // value was silently discarded and `new (new Maker())(5, 6)` then
+        // failed with "value is not a constructor". A returned primitive,
+        // `null` or `undefined` is ignored, which already worked.
+        if matches!(result, Value::Function(_)) {
+            return Ok(result);
+        }
+        if let Value::Any(any) = &result {
+            if any.as_class_descriptor().is_some() {
+                return Ok(result);
+            }
+        }
         let built = object(&result).unwrap_or_else(|| fresh.get());
         let boxed = zun_gc::with_current_heap_mut(|heap| Value::Object(built).box_any(heap))
             .unwrap_or_else(zun_core::Any::null);
