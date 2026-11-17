@@ -518,6 +518,16 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
+                // A name the realm does not hold yet is a module-level lexical
+                // binding being created: generated global code must not see it.
+                let fresh = zun_gc::with_current_heap_mut(|heap| {
+                    let global = heap.global_object();
+                    heap.dynamic_descriptor(global, &name).is_none()
+                        && heap.dynamic_get_function(global, &name).is_none()
+                });
+                if fresh {
+                    self.global_code.module_bindings.insert(name.clone());
+                }
                 // Function values do not box to `Any`; they ride the global
                 // object's function slot.
                 if let Some(Value::Function(handle)) = args.get(1) {
@@ -637,6 +647,11 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
+                // `typeof name` in generated global code: a module binding is
+                // out of scope there, so it reads as undeclared.
+                if self.hidden_from_global_code(&name) {
+                    return Ok(Value::Void);
+                }
                 let value = zun_gc::with_current_heap_mut(|heap| {
                     let global = heap.global_object();
                     heap.dynamic_get(global, &name)
@@ -657,6 +672,11 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
+                if self.hidden_from_global_code(&name) {
+                    return Err(RunError::Native(format!(
+                        "ReferenceError: {name} is not defined"
+                    )));
+                }
                 let found = zun_gc::with_current_heap_mut(|heap| {
                     let global = heap.global_object();
                     if let Some(any) = heap.dynamic_get(global, &name) {

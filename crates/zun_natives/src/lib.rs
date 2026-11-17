@@ -46,6 +46,7 @@ pub use collection_methods::{
     map_method, set_method, set_operation, CollectionHandling, CollectionMethod, SetOp,
     SET_OP_BOOL_HELPER, SET_OP_SET_HELPER,
 };
+mod codegen;
 mod collections;
 mod managed_methods;
 pub use managed_methods::{managed_method, ManagedMethod, ManagedTy};
@@ -382,6 +383,9 @@ pub static MODULES: &[Module] = &[
     // Object intrinsics that postdate the frozen `collections` group. Appended
     // last so every existing dispatch id stays stable.
     object_ext::MODULE,
+    // Runtime code generation from strings (`indirectEval`). Appended last so
+    // every existing dispatch id stays stable.
+    codegen::MODULE,
 ];
 
 /// `print(value)` — the implicit builtin (no import). Id 0 by construction.

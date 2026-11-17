@@ -14,7 +14,10 @@ pub(super) struct Interp<'a> {
     /// Injected compiler for `new Function`; `None` throws (AOT / jitless).
     pub(super) eval_host: Option<&'a dyn super::EvalHost>,
     /// `new Function` results by source so repeats link (and leak a module copy) once.
-    pub(super) eval_cache: HashMap<String, zun_core::FunctionHandle>,
+    pub(super) eval_cache: HashMap<String, (zun_core::FunctionHandle, bool)>,
+    /// What separates generated global code (`Function`, indirect `eval`) from
+    /// the module that generated it. See [`GlobalCodeScope`].
+    pub(super) global_code: GlobalCodeScope,
     pub(super) gc_interval: u32,
     pub(super) minor_collections: u8,
     pub(super) types: zun_types::TypeSystem,
@@ -1027,5 +1030,37 @@ mod bridge_tests {
 
         assert_eq!(state.pid_by_obj.get(&0x2000), Some(&(live, 22)));
         assert_eq!(state.pid_by_obj.get(&0x1000), None);
+    }
+}
+
+/// The boundary between a module's lexical scope and generated global code.
+///
+/// A module-level `let`/`const`/`var` is mirrored onto the realm global object
+/// so the module's own functions can read it, but it is a *lexical* binding:
+/// code compiled from a string (`Function`, an indirect `eval`) runs in the
+/// global scope and must not see it. Generated methods are always linked after
+/// the module's own, so a method rid at or past the first linked one identifies
+/// generated code, and the names recorded here are hidden from its identifier
+/// lookups.
+#[derive(Debug, Default)]
+pub(super) struct GlobalCodeScope {
+    /// The rid of the first method ever linked from a compiled string.
+    pub(super) first_generated_rid: Option<u32>,
+    /// Module-level bindings created through `globalSet`.
+    pub(super) module_bindings: std::collections::HashSet<String>,
+}
+
+impl Interp<'_> {
+    /// Whether an identifier lookup for `name` issued by the innermost running
+    /// method must skip the realm global's entry: the method is generated
+    /// global code and `name` is one of the module's lexical bindings.
+    pub(super) fn hidden_from_global_code(&self, name: &str) -> bool {
+        let Some(first) = self.global_code.first_generated_rid else {
+            return false;
+        };
+        self.call_stack
+            .last()
+            .is_some_and(|frame| frame.method_rid >= first)
+            && self.global_code.module_bindings.contains(name)
     }
 }

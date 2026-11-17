@@ -75,3 +75,24 @@ fn function_values_compare_by_identity() {
         vec!["true", "false", "false"],
     );
 }
+
+#[test]
+fn static_generator_method_owns_a_prototype() {
+    // A static generator method read as a value rides a function box; its
+    // `.prototype` used to read `undefined` where a free generator function
+    // answered an object. Ordinary static methods still own none.
+    assert_eq!(
+        out(r#"class Bag {
+            static *range(): any { yield 2; }
+            static plainStatic(): number { return 1; }
+        }
+        function* plain(): any { yield 1; }
+        const range: any = Bag.range;
+        console.log(typeof (plain as any).prototype, typeof range.prototype, typeof range["prototype"]);
+        console.log(typeof (Bag.plainStatic as any).prototype);
+        console.log(range.prototype === range.prototype, range.prototype !== (plain as any).prototype);
+        console.log(Object.getPrototypeOf(range.prototype) === Object.getPrototypeOf((plain as any).prototype));
+        console.log([...Bag.range()].join());"#),
+        ["object object object", "undefined", "true true", "true", "2"]
+    );
+}

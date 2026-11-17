@@ -156,7 +156,7 @@ use zun_metadata::TableKind;
 use zun_module::{read_body, Module};
 
 pub use errors::RunError;
-pub use eval::{EvalError, EvalHost, CODEGEN_DISALLOWED};
+pub use eval::{EvalError, EvalHost, Generated, CODEGEN_DISALLOWED};
 pub use hooks::CallHook;
 pub use namespace::{call_namespace_member, materialize_namespace, zun_dynamic_import};
 pub use output::{CaptureOutput, StdoutOutput};
@@ -1329,6 +1329,29 @@ impl Interp<'_> {
                         }
                     }
                     let Value::Function(handle) = function else {
+                        // `Function(p1, ..., body)` reached as a value: calling the
+                        // constructor is identical to constructing it.
+                        if self.is_function_constructor(&function) {
+                            match self.function_from_strings(args) {
+                                Ok(built) => {
+                                    stack.push(Value::Function(built));
+                                    continue;
+                                }
+                                Err(RunError::Thrown(exception)) => {
+                                    if self.route_exception(
+                                        &body,
+                                        stack,
+                                        pc,
+                                        next - size,
+                                        &exception,
+                                    ) {
+                                        continue;
+                                    }
+                                    return Err(RunError::Thrown(exception));
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
                         // Calling a non-callable value is a catchable TypeError.
                         let what = match &function {
                             Value::Void => "undefined",

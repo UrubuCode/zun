@@ -297,22 +297,8 @@ impl Interp<'_> {
                 // other function keeps the generic object text, since no source
                 // text is retained for it.
                 if name == "toString" {
-                    if let Value::Any(any) = &recv {
-                        if let Some(Value::Str(ctor)) = any
-                            .as_class_descriptor()
-                            .and_then(|token| self.builtin_ctor_own_value(token, "name"))
-                        {
-                            return Ok(Value::Str(
-                                format!("function {ctor}() {{ [native code] }}").into(),
-                            ));
-                        }
-                    }
-                    if let Value::Function(handle) = &recv {
-                        if let Some(ctor) = self.coerce_ctor_name(*handle) {
-                            return Ok(Value::Str(
-                                format!("function {ctor}() {{ [native code] }}").into(),
-                            ));
-                        }
+                    if let Some(text) = self.native_function_text(&recv) {
+                        return Ok(Value::Str(text.into()));
                     }
                     if matches!(recv, Value::Function(_) | Value::Any(_)) {
                         return self.call_object_prototype_method("toString", recv, args);

@@ -42,6 +42,7 @@ const INTRINSIC_CTOR_LENGTHS: &[(&str, u32)] = &[
     ("URIError", 1),
     ("AggregateError", 2),
     ("Proxy", 2),
+    ("Function", 1),
     // Web-platform constructors: the specified (WebIDL) length is the count of
     // required arguments, not the declared parameter count of the prelude class.
     ("URL", 1),

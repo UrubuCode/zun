@@ -1499,3 +1499,11 @@ mod tests {
         std::fs::remove_file(path).expect("remove manifest");
     }
 }
+
+/// Rewrite a global-code source handed to an indirect `eval` into a function
+/// body that returns its completion value (see
+/// [`zun_syntax::oxc::eval_function_body`]). An error is either a syntax error
+/// or a source shape that cannot be evaluated faithfully.
+pub fn eval_function_body(source: &str) -> Result<String, String> {
+    zun_syntax::oxc::eval_function_body(source)
+}

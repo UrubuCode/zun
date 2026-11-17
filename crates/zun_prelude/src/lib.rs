@@ -240,6 +240,18 @@ mod tests {
     }
 
     #[test]
+    fn prelude_text_does_not_trip_the_codegen_source_scan() {
+        // The checker treats a program whose source text contains either of
+        // these sequences as one that generates code at run time, and then
+        // mirrors every top-level binding onto the realm global. The prelude
+        // is part of that text, so spelling one here would switch the
+        // conservative path on for every program.
+        let combined = with_prelude("");
+        assert!(!combined.contains(concat!("eval", "(")));
+        assert!(!combined.contains(concat!("Function", "(")));
+    }
+
+    #[test]
     fn fingerprint_is_deterministic_and_nonzero() {
         assert_eq!(fingerprint(), fingerprint());
         assert_ne!(fingerprint(), 0);

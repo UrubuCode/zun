@@ -124,6 +124,11 @@ impl Checker<'_> {
                         span,
                     };
                 }
+                // `eval` read as a value is the indirect-eval function: the
+                // module generates code from strings at run time.
+                if text == "eval" && self.by_name.contains_key("eval") {
+                    self.codegen_sites.push((span.start, span.end));
+                }
                 if let Some(&func) = self.by_name.get(&text) {
                     return hir::Expr {
                         kind: hir::ExprKind::FunctionRef { func },

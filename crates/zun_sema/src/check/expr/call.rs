@@ -11,6 +11,12 @@ impl Checker<'_> {
             unreachable!()
         };
         let name = self.text(callee).to_string();
+        // A call of `eval` that the parser did not fold (anything but a direct
+        // call on an escape-free string literal holding one expression) runs
+        // the indirect-eval function, which generates code at run time.
+        if name == "eval" && cx.lookup("eval").is_none() && self.by_name.contains_key("eval") {
+            self.codegen_sites.push((span.start, span.end));
+        }
         // AST-phase interceptors (name-based sugar and spread lowering).
         if let Some(e) = self.try_call_name_sugar(cx, callee, &name, args, span) {
             return e;

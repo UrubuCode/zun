@@ -104,6 +104,21 @@ function structuredClone(value: any, options: any = undefined): any {
     return cloned;
 }
 
+import { codegen as zunCodegen } from "zun:core";
+
+// `eval` as a function value: called through a comma expression, an alias or
+// `globalThis`. Always the *indirect* form: the source runs as global code. A
+// direct call on a string literal holding one expression is resolved by the
+// compiler in the caller's scope and never reaches this.
+//
+// The space before the parameter list, and the wording above, are deliberate:
+// the checker keeps every module-binding mirror alive when the source text
+// (prelude included) contains the name immediately followed by an opening
+// parenthesis, so this file must not spell that sequence.
+function eval (x: any): any {
+    return zunCodegen.indirectEval(x);
+}
+
 // Base64-encode a binary string (code points 0-255, as in the web `btoa`).
 function btoa(data?: any): string {
     let bytes = globalsBuffer.nodeBufferFromString(String(data), "latin1");

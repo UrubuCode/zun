@@ -23,6 +23,8 @@ use crate::ast::{BinaryOp, Block, Expr, Function, FunctionExpr, Name, Program, S
 mod binding;
 mod class;
 mod destructure;
+mod eval_source;
+pub use eval_source::eval_function_body;
 mod expr;
 mod externs;
 mod function;

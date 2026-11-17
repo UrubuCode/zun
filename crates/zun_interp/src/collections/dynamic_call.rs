@@ -424,6 +424,30 @@ impl<'a> Interp<'a> {
                         return Ok(Value::Any(boxed));
                     }
                 }
+                // The `Function` constructor reached through `any`:
+                // `F.call(thisArg, ...strings)` and `F.apply(thisArg, list)` build
+                // the function exactly like `F(...strings)`; the receiver is unused.
+                if matches!(member.as_ref(), "call" | "apply")
+                    && self.is_function_constructor(&receiver_concrete)
+                {
+                    let strings = if member.as_ref() == "apply" {
+                        match args.get(3).map(unbox_arg).transpose()? {
+                            None | Some(Value::Void) | Some(Value::Null) => Vec::new(),
+                            Some(list) => {
+                                let boxed = self.proto_box(list);
+                                let array = self
+                                    .call_managed_collection("arrayFromArgumentList", &[boxed])?;
+                                match object(&array) {
+                                    Some(array) => self.read_array_values(array)?,
+                                    None => Vec::new(),
+                                }
+                            }
+                        }
+                    } else {
+                        args.get(3..).map(<[Value]>::to_vec).unwrap_or_default()
+                    };
+                    return self.function_from_strings_boxed(strings);
+                }
                 // A static method called through a built-in constructor value
                 // (`const O: any = Object; O.keys(x)`).
                 if let Value::Any(desc) = &receiver_concrete {
@@ -446,8 +470,9 @@ impl<'a> Interp<'a> {
                     && match &receiver_concrete {
                     Value::Any(desc) => desc.as_class_descriptor().is_some(),
                     Value::Function(ctor) => {
-                        self.coerce_ctor_name(*ctor).is_some()
-                            && self.coerce_ctor_static_kind(*ctor, &member).is_none()
+                        (self.coerce_ctor_name(*ctor).is_some()
+                            && self.coerce_ctor_static_kind(*ctor, &member).is_none())
+                            || self.native_global_function_name(*ctor).is_some()
                     }
                     _ => false,
                 };
@@ -713,6 +738,13 @@ impl<'a> Interp<'a> {
                     let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
+                }
+                // The `Function` constructor held as a property (`globalThis.Function(...)`):
+                // calling it is identical to constructing it.
+                if zun_gc::with_current_heap(|heap| heap.dynamic_get(namespace, &member))
+                    .is_some_and(|any| self.is_function_constructor(&Value::Any(any)))
+                {
+                    return self.function_from_strings_boxed(call_args);
                 }
                 // An own non-callable data property on an array (`arr.join = "x"`)
                 // shadows the built-in method of that name: calling it is a

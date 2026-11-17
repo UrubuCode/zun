@@ -614,6 +614,10 @@ impl<'a> Interp<'a> {
             .type_defs
             .iter()
             .any(|def| rid >= def.method_start && rid < def.method_end);
+        // A built-in function global (`eval`) is callable but not a constructor.
+        if self.native_global_function_name(handle).is_some() {
+            return false;
+        }
         if owned_by_class {
             return false;
         }

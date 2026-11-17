@@ -137,7 +137,7 @@ pub use promise::{
 pub use verify_module::{
     verify_loaded_module, verify_method_range, verify_module, ModuleVerifyError,
 };
-pub use zun_interp::{EvalError, EvalHost};
+pub use zun_interp::{EvalError, EvalHost, Generated};
 
 /// Errors from loading or running a module.
 #[derive(Debug)]

@@ -102,7 +102,11 @@ impl<'a> Interp<'a> {
                     None => self.default_object_string(held.get())?,
                 }
             }
-            other => other.display(),
+            // A built-in function value reads as its native-code text.
+            other => match self.native_function_text(&other) {
+                Some(text) => text,
+                None => other.display(),
+            },
         })
     }
 

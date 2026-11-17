@@ -557,7 +557,12 @@ impl<'a> Interp<'a> {
                                 }
                             }
                         }
-                        other => other,
+                        // A built-in function is an object whose primitive is its
+                        // native-code text.
+                        other => match self.native_function_text(&other) {
+                            Some(text) => Value::Str(text.into()),
+                            None => other,
+                        },
                     };
                     prims.push(prim);
                 }
@@ -683,6 +688,7 @@ impl<'a> Interp<'a> {
             "objectIs" => self.col_object_descriptor(name, args),
             "objectHasOwn" => self.col_object_descriptor(name, args),
             "objectProtoCall" => self.object_proto_call(args),
+            "indirectEval" => self.indirect_eval(args),
             "objectIsPrototypeOf" => self.col_object_descriptor(name, args),
             "objectDefineProperty" | "reflectDefineProperty" => {
                 self.col_object_descriptor(name, args)

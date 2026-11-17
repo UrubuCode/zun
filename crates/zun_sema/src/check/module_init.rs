@@ -501,6 +501,7 @@ const PRELUDE_FUNCTION_GLOBALS: &[&str] = &[
 
 /// Prelude functions that are own properties of the global object in Node.
 const PLATFORM_FUNCTIONS: &[&str] = &[
+    "eval",
     "structuredClone",
     "queueMicrotask",
     "setTimeout",

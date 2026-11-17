@@ -22,12 +22,13 @@ const BUILTIN_CTORS: &[&str] = &[
     "Object",
     "Symbol",
     "BigInt",
+    "Function",
 ];
 
 impl<'a> Interp<'a> {
     /// The realm global name of the built-in constructor descriptor `token`
     /// among [`BUILTIN_CTORS`], if it is one of them.
-    pub(super) fn builtin_ctor_global_name(token: u32) -> Option<&'static str> {
+    pub(crate) fn builtin_ctor_global_name(token: u32) -> Option<&'static str> {
         zun_gc::with_current_heap_mut(|heap| {
             let global = heap.global_object();
             BUILTIN_CTORS.iter().copied().find(|name| {
@@ -65,6 +66,11 @@ impl<'a> Interp<'a> {
         array: zun_gc::Obj,
         values: Vec<Value>,
     ) -> Result<Value, RunError> {
+        // `new Function(p1, ..., body)` through the constructor value. The result
+        // is a function, which is returned as is: it does not box into `any`.
+        if name == "Function" {
+            return self.function_from_strings(values).map(Value::Function);
+        }
         let first = values.first().map(unbox_arg).transpose()?;
         let built = match name {
             // The same `__zunArrayCtor` helper `new Array(...)` calls: a single

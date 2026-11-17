@@ -265,6 +265,18 @@ impl Interp<'_> {
                 // Undecorated class: resolve a plain static method straight
                 // from metadata (a hidden-receiver static needs `.call(Class)`).
                 if let Some((mrid, false)) = self.class_static_method(class, &name) {
+                    // A static generator method is a generator function like
+                    // any other: it owns a `prototype`, lists it, and answers
+                    // reflection the way a free `function*` does. It is therefore
+                    // the raw function value a free function read through
+                    // `any` is (`box.any` leaves a callable as it is), rather
+                    // than a `__boxedFn` record, which is a plain object to
+                    // every property operation. An ordinary method keeps the
+                    // record: it is not a constructor and must not grow the
+                    // `prototype` a function value is given.
+                    if self.method_contains_yield(mrid) {
+                        return Ok(Value::Function(zun_core::FunctionHandle::new(mrid, None)));
+                    }
                     return Ok(Self::function_box(zun_core::FunctionHandle::new(
                         mrid, None,
                     )));
