@@ -1383,3 +1383,26 @@ kind of theory that survives probing while being wrong.
 The prelude's `structuredClone` lost its `= undefined` default in the same
 change: a default lowers `length` by JS rules, and node's native declares two
 parameters.
+
+## `function_apply_args` is red for a prelude-less module, and a `.ts` probe cannot see it
+
+Both tests in `crates/zun_vm/tests/function_apply_args.rs` fail with
+`TypeError: number is not a function`: a function value inside an `apply`
+argument array is lost. Confirmed pre-existing by running two binaries, and the
+older one merely could not render the message, which `6ee17919` fixed.
+
+**It does not reproduce through the CLI**, and the reason is the pipeline, not
+the feature. Every shape of it matches node when run as a `.ts` file -- a
+function in an array, `apply`, `call`, spread, and a parameter declared
+`Function` rather than `any`. The test compiles with `zun_sema::check` on bare
+source, while the CLI goes through `zun_compiler`, which calls
+`zun_prelude::with_prelude(source)` first. So the test exercises a
+**prelude-less** module and the CLI never does.
+
+That makes it a real gap for the bare-module configuration the AOT path uses,
+and it means a conformance fixture can never cover it. Reproducing it needs a
+Rust-level test, not a probe; `typed_dyn.rs:570` boxes a view argument with the
+plain `box_any` and `.unwrap_or_else(Any::void)`, which turns a callable into
+`undefined`, and `:1209` drops an unboxable iterator item -- both are the same
+shape as the five result sites fixed in `d3df63e3` and are the first places to
+look.
