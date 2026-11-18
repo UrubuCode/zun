@@ -72,7 +72,11 @@ impl Checker<'_> {
                 .as_ref()
                 .and_then(|name| self.classes_by_name.get(self.text(name)).copied())
                 .or(outer.this_class),
-            is_constructor: false,
+            // An arrow inherits `new.target` lexically, exactly as it inherits
+            // `this`, so an arrow written inside a constructor must answer the
+            // constructing class. A `function` expression has its own, which is
+            // `undefined` unless it is itself `new`ed, so only arrows inherit.
+            is_constructor: function.is_arrow && outer.is_constructor,
             is_module_scope: false,
             finally_depth: 0,
         };
@@ -506,6 +510,13 @@ impl Checker<'_> {
     ) {
         let mut add_name = |name: &ast::Name, mutated: bool| {
             let text = self.text(name);
+            // `new.target` is lowered through `this` (the runtime class of the
+            // receiver), so inside an arrow it is a *use* of the enclosing
+            // `this` even though its text never spells it. Without this the
+            // arrow captured nothing, `cx.lookup("this")` answered `None` in
+            // `check_new_target`, and `new.target` fell through to `undefined`
+            // while the same expression directly in the constructor was right.
+            let text = if text == "new.target" { "this" } else { text };
             if parameters.contains(text) {
                 return;
             }

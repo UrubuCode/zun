@@ -15,12 +15,27 @@ impl Checker<'_> {
         // class when reached through a `super(...)` chain). Everywhere
         // else it is `undefined`.
         if cx.is_constructor {
-            if let Some(this_slot) = cx.lookup("this") {
-                let this_expr = hir::Expr {
-                    ty: cx.locals[this_slot as usize],
-                    kind: hir::ExprKind::Local(this_slot),
+            // `this` is a local in the constructor itself and a *capture* in an
+            // arrow written inside it. `cx.lookup` only answers for locals, so
+            // reading it through the capture is what lets the arrow inherit
+            // `new.target` the way the language says it does.
+            let this_expr = match cx.lookup("this") {
+                Some(slot) => Some(hir::Expr {
+                    ty: cx.locals[slot as usize],
+                    kind: hir::ExprKind::Local(slot),
                     span,
-                };
+                }),
+                None => cx.captures.get("this").map(|capture| hir::Expr {
+                    kind: hir::ExprKind::CaptureLoad {
+                        environment_slot: capture.environment_slot,
+                        ty: capture.ty,
+                        mode: capture.mode,
+                    },
+                    ty: capture.ty,
+                    span,
+                }),
+            };
+            if let Some(this_expr) = this_expr {
                 let boxed = hir::Expr {
                     kind: hir::ExprKind::BoxAny {
                         value: Box::new(this_expr),
