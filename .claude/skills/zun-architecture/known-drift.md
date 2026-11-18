@@ -1234,3 +1234,24 @@ when nothing observable can change the answer, and a relinkable prototype can.
 Any other `Ty::Instance`-based fold deserves the same question. It is also a
 reminder that the typed and `any` paths must agree: two answers for one object
 is the shape to look for.
+
+## Rank fixtures by first diverging line, not by matching lines
+
+The matching-line metric says how close a fixture's *output* is. It does not
+say which blocker runs first, and that is what decides what to fix.
+
+Acting on total matches, five `tests/classes/` fixtures looked like one shared
+site: 308 of node's lines, matching 57, all dense with class expressions, all
+plausibly blocked by a method of a class-in-a-function not seeing enclosing
+locals. That subsystem was built (`cc7f0aab`) -- correct, by reference, with
+six new tests -- and it **moved zero fixtures**, with stdout byte-identical on
+all 169. Each of the five stops earlier on something else: `super` in a
+closure, constructor arity, `Dog.bind`, a typed `number` field refusing `null`,
+and private names in a lowered class.
+
+Use `diff <zun> <node> | grep -m1 '^[0-9]'` per failing fixture -- the first
+diverging line over node's total. That ranking put
+`class-private-brands-and-statics` at line 32 of 34, the nearest flip in the
+suite, which no matching-line ordering surfaced. Both metrics have a use:
+first-divergence picks the target, matching lines measure whether the fix
+helped.
