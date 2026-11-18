@@ -1662,3 +1662,37 @@ plausibly laying a field out as `FIELD_ANY` when any write to it can come from
 an `any`-typed path, which the call-site cast makes a non-local decision. That
 is a layout/subsystem choice: read the `.docs-dotnet/` area on boxing and
 nullable value types before inventing one.
+
+## `fn-kinds`: the line that gates 60 others is `new` on a bound function
+
+`fn-kinds-prototype-and-construction` prints 56 of node's 121 lines and then
+**aborts** at line 181:
+
+    const partial = new ((Pair as any).bind(bad, 10))(20);
+
+`TypeError: undefined is not a function`. Everything after that line is
+unreachable, so the ~60 remaining differences are not 60 separate bugs -- they
+are behind this one. Sizing before building is what showed it: intrinsic
+per-kind function prototypes, the obvious next piece, would fix about six lines
+and leave the abort in place.
+
+Two distinct gaps, both measured against node:
+
+* **`new` on a bound function.** `(C).bind(null, 5)` calls fine
+  (`typeof` is `function`), but `new b()` dies with `Cannot set properties
+  of ...` where node builds the instance. A bound function's `[[Construct]]`
+  must allocate with the *target's* prototype and run the target with the bound
+  arguments prepended.
+* **`.bind` on a class value.** `typeof (K as any).bind` is `undefined` where
+  node says `function`, so a class cannot be bound at all.
+
+The infrastructure is already there and should be reused rather than rebuilt:
+`FunctionHandle::is_bound()`, a record carrying `__target` and `__args`, and
+`unwrap_bound_chain` in `runtime_class_proxy.rs`, which the *call* path already
+uses. What is missing is the construct path honouring the same chain.
+
+Careful: `construct_class_from_descriptor` is one of the six protected
+receiver-gate sites. It takes a class descriptor *token*, not a function handle,
+so a bound function reaches construction somewhere else; find that dispatcher by
+instrumenting rather than by reading, and do not alter the gate's receiver
+decision while adding the bound unwrap.
