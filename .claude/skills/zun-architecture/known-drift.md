@@ -1357,3 +1357,38 @@ The next attempt therefore starts by finding **which path compiles an arrow
 assigned inside a constructor** -- not `closures.rs`, on this evidence -- and
 whether it has any way to reach `this`. Do not touch `check_new_target` or the
 capture walk again until that is answered.
+
+### `new.target` in an arrow: a working workaround, and what it proves
+
+    class C {
+      v: any;
+      constructor() {
+        const nt: any = new.target;              // correct here
+        this.v = (): string => nt.name;          // answers "C" -- CORRECT
+      }
+    }
+
+Reading `new.target` into a local in the constructor and capturing the local
+works. So the capture machinery is sound and the arrow lowering is sound; only
+a *direct* `new.target` inside the arrow fails, and it fails identically for an
+expression body (`() => new.target.name`) and a block body
+(`() => { return new.target.name }`). A `function (this: any)` expression
+assigned in a constructor is also fine.
+
+That makes the shape of the fix clear: inside an arrow, `new.target` must be
+lowered as a use of the enclosing `this`, so the capture set has to include
+`this` when the arrow mentions `new.target` -- `check_new_target` needs both
+`cx.is_constructor` (inheritable, verified) and `cx.lookup("this")`, and the
+second is what is missing because an arrow whose only free name is
+`new.target` captures nothing.
+
+Still unexplained, and the one thing to trace next: `analyze_closure_captures`
+walks the arrow's body and its `ast::Expr::Ident` arm calls `add_name`, yet a
+trace of every name it saw while compiling such an arrow printed only prelude
+names -- neither `this` nor `new.target`. Since captures demonstrably work for
+an ordinary local (`nt` above), the walk does run; find why that particular
+`Ident` does not reach it.
+
+Until then the workaround above is the thing to reach for, and it is worth
+knowing it exists: the engine is not missing `new.target` in a constructor, only
+its lexical inheritance into an arrow.
