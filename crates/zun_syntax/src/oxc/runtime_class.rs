@@ -9,7 +9,12 @@
 //!   layout to inherit from, and `super` must reach whatever the value is;
 //! * a class expression used **as a value inside a function**
 //!   (`return class { ... }`) -- each call must produce its own constructor
-//!   and prototype, and its members close over the function's locals.
+//!   and prototype, and its members close over the function's locals;
+//! * a class in any position inside a function whose members mention a
+//!   binding of an enclosing function (see `class_capture`) -- a static
+//!   TypeDef has no environment, so only a closure can read or write that
+//!   binding, and it must share it by reference with the function's other
+//!   closures.
 //!
 //! Such a class is lowered here, at the syntax boundary, to the closure form
 //! the dynamic object model already supports: the constructor is a function
@@ -40,10 +45,18 @@ pub(super) enum ClassSite {
 
 /// The source extent of a function being converted, for scope questions that
 /// the adapter answers textually.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct FunctionScope {
     params: (u32, u32),
     whole: (u32, u32),
+    /// The names the function binds at run time (see `class_capture`), plus
+    /// the classes lowered inside it so far.
+    bindings: Vec<String>,
+    /// The names of the classes written in the function (static unless also
+    /// in `lowered`).
+    classes: Vec<String>,
+    /// The names bound to a lowered class in the function so far.
+    lowered: Vec<String>,
 }
 
 /// What `super` and `new.target` mean inside the run-time class member being
@@ -115,14 +128,19 @@ impl Drop for FrameGuard {
 /// fresh `this` / `super` context (taking the frames queued for it, if it is
 /// a run-time class member); an arrow inherits its enclosing one.
 pub(super) fn enter_function(
-    params: oxc_span::Span,
+    params: &oxc_ast::ast::FormalParameters<'_>,
+    body: Option<&oxc_ast::ast::FunctionBody<'_>>,
     whole: oxc_span::Span,
     is_arrow: bool,
 ) -> FrameGuard {
+    let names = super::class_capture::function_bindings(params, body);
     FUNCTION_SCOPES.with(|scopes| {
         scopes.borrow_mut().push(FunctionScope {
-            params: (params.start, params.end),
+            params: (params.span.start, params.span.end),
             whole: (whole.start, whole.end),
+            bindings: names.bindings,
+            classes: names.classes,
+            lowered: Vec::new(),
         })
     });
     if !is_arrow {
@@ -229,6 +247,13 @@ fn let_any(name: Name, init: Expr, span: Span) -> Stmt {
         init,
         span,
     }
+}
+
+/// The placeholder binding of a lowered class declaration that an earlier
+/// statement of its block mentions: `let Name: any = undefined`, assigned
+/// where the class is declared.
+pub(super) fn predeclared_class_binding(name: Name, span: Span) -> Stmt {
+    let_any(name, undefined(span), span)
 }
 
 /// The home object of the member being converted: the base's prototype for
@@ -458,6 +483,9 @@ fn is_known_class_name(source: &str, name: &str) -> bool {
 fn identifier_is_runtime_value(source: &str, name: &str, at: u32) -> bool {
     let scopes = FUNCTION_SCOPES.with(|scopes| scopes.borrow().clone());
     for scope in scopes.iter().rev() {
+        if scope.bindings.iter().any(|binding| binding == name) {
+            return true;
+        }
         let params = source
             .get(scope.params.0 as usize..scope.params.1 as usize)
             .unwrap_or_default();
@@ -552,7 +580,65 @@ pub(super) fn wants_runtime_class(
     if heritage_is_dynamic(source, class) {
         return true;
     }
-    site == ClassSite::Value && FUNCTION_SCOPES.with(|scopes| !scopes.borrow().is_empty())
+    if FUNCTION_SCOPES.with(|scopes| scopes.borrow().is_empty()) {
+        return false;
+    }
+    site == ClassSite::Value || captures_enclosing_binding(source, class)
+}
+
+/// Whether a member of the class mentions a binding of an enclosing function.
+/// A static TypeDef has no environment, so such a class is only correct as a
+/// run-time value, whose members are closures over that environment.
+fn captures_enclosing_binding(source: &str, class: &oxc_ast::ast::Class<'_>) -> bool {
+    let names: Vec<String> = FUNCTION_SCOPES.with(|scopes| {
+        scopes
+            .borrow()
+            .iter()
+            .flat_map(|scope| scope.bindings.iter().cloned())
+            .collect()
+    });
+    let body = source
+        .get(class.body.span.start as usize..class.body.span.end as usize)
+        .unwrap_or_default();
+    super::class_capture::body_mentions_binding(body, &names)
+}
+
+/// Record that `name` is bound to a lowered class in the function being
+/// converted: unlike a static class name it is a run-time binding, so a later
+/// class that mentions it (or extends it) must be lowered too.
+pub(super) fn register_runtime_binding(name: &str) {
+    FUNCTION_SCOPES.with(|scopes| {
+        if let Some(scope) = scopes.borrow_mut().last_mut() {
+            if !scope.lowered.iter().any(|lowered| lowered == name) {
+                scope.bindings.push(name.to_string());
+                scope.lowered.push(name.to_string());
+            }
+        }
+    });
+}
+
+/// Whether `name`, read at the node being converted, is a binding that holds
+/// a lowered class -- so `new name()` constructs that *value* and a type
+/// annotation naming it is `any`. Decided lexically, innermost function
+/// first, because the checker resolves a class name program-wide: a static
+/// class of the same name anywhere else in the program would otherwise be
+/// constructed in its place.
+pub(super) fn names_runtime_class(name: &str) -> bool {
+    FUNCTION_SCOPES.with(|scopes| {
+        for scope in scopes.borrow().iter().rev() {
+            if scope.lowered.iter().any(|lowered| lowered == name) {
+                return true;
+            }
+            // Shadowed by a static class or an ordinary binding of a nearer
+            // function.
+            if scope.classes.iter().any(|class| class == name)
+                || scope.bindings.iter().any(|binding| binding == name)
+            {
+                return false;
+            }
+        }
+        false
+    })
 }
 
 /// The property key of a class member as an expression.

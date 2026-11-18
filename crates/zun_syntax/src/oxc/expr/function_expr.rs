@@ -82,6 +82,14 @@ pub(super) fn convert_class_expression(
         super::super::runtime_class::ClassSite::Value
     };
     if super::super::runtime_class::wants_runtime_class(source, class_expression, site) {
+        // The binding this class initializes now holds a run-time value.
+        if let Some(binding) = hint {
+            super::super::runtime_class::register_runtime_binding(
+                source
+                    .get(binding.start as usize..binding.end as usize)
+                    .unwrap_or_default(),
+            );
+        }
         let name = match (class_expression.id.as_ref(), hint) {
             (Some(id), _) => id.name.to_string(),
             (None, Some(binding)) => source

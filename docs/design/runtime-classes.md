@@ -115,11 +115,74 @@ Decided at the syntax boundary (`wants_runtime_class`):
   declared `: typeof Name`; and a heritage identifier that is a parameter or
   local of an enclosing function, or a module binding that is not a class;
 - a **class expression used as a value inside a function** (returned, passed,
-  stored) -- evaluated once per call.
+  stored) -- evaluated once per call;
+- a **class in any position inside a function whose body mentions a binding
+  of an enclosing function** -- a declaration, a class bound by a declarator
+  (`const C = class {}`), a class constructed in place. See "Capture" below.
 
-A class declaration, a class bound by a declarator (`const C = class {}`) and a
-class constructed in place stay static unless their base is a run-time value.
-A lowered class declaration is bound like a `let`.
+A class declaration, a class bound by a declarator and a class constructed in
+place stay static otherwise: a local class that captures nothing keeps its
+typed layout. A lowered class declaration is bound like a `let`.
+
+### Capture: a method sees the enclosing function's locals, by reference
+
+```ts
+function mut(): any { let n = 1; class K { read() { return n } } const k = new K(); n = 99; return k.read() }  // 99
+function shared(): any[] { let c = 0; class C { inc() { return ++c } } return [new C(), () => c] }
+const [o, peek] = shared(); o.inc(); o.inc(); peek()                                                            // 2
+```
+
+The sharing is observable, so a copy taken when the class is evaluated is
+wrong. Nothing new was built for it: the lowered members are function values,
+so the ordinary capture analysis gives them the enclosing environment
+(`MakeClosure` over the `NewDynamic` environment, `StoreDynamic` captures) --
+the same cell an arrow of that scope holds. There is no capture slot on the
+class or on its instances, so nothing shows up in `Object.keys`,
+`getOwnPropertyNames`, `in` or a descriptor.
+
+What had to be decided is *routing*: which classes take that path
+(`crates/zun_syntax/src/oxc/class_capture.rs`).
+
+- **The bindings of a function** are collected from its AST when the function
+  is entered: parameters (destructured and rest included), `var` / `let` /
+  `const` at any block depth, nested function declarations and catch
+  parameters -- not descending into nested functions. A binding initialized
+  by a class expression is a static class name, not a run-time binding, until
+  that class is itself lowered.
+- **The class body is scanned as tokens** for one of those names, discarding
+  the positions where a name is certainly not a variable reference: after `.`
+  (not `...`), as a `key:` in an object literal, parameter list or member
+  declaration, and as a member name at class-body level outside a field
+  initializer. Strings and comments are skipped; template holes are scanned.
+- The scan errs **towards lowering**. A false positive (a method parameter
+  that shadows an enclosing local, say) costs the typed layout of one class;
+  a false negative would be a `ReferenceError`. The front end has no scope
+  analysis of its own to do better with; the checker cannot make the decision
+  because by then the class is already hoisted.
+- **Lowering propagates.** A lowered class name is a run-time binding of its
+  function, so a class that mentions it or extends it is lowered too. The
+  sibling classes of a block are settled to a fixpoint before any is
+  converted (`predeclare_forward_classes`), so the order they are written in
+  does not matter.
+
+Two consequences of a lowered class being a `let` rather than a program-wide
+name are handled at the syntax boundary:
+
+- **A closure written before the declaration.** JavaScript binds a class from
+  the top of its block; a closure only captures a binding that exists when it
+  is created. When an earlier statement of the block mentions the class, the
+  binding is pre-declared (`let K: any = undefined`) at the top of the block
+  and the declaration becomes an assignment -- the pattern forward-referenced
+  function declarations already use.
+- **A static class of the same name elsewhere.** The checker resolves
+  `new Name()`, `x instanceof Name` and a type annotation `: Name` against the
+  program-wide class table *before* local bindings, ignoring where the class
+  is visible. With a static `class K` in any other function, `new K()` on the
+  lowered `K` constructed the other class, silently. So a name that lexically
+  resolves to a lowered class (`names_runtime_class`, innermost function
+  first, shadowed by a nearer static class or ordinary binding) converts
+  `new K()` to a dynamic `new` on the binding, `x instanceof K` to a test
+  against the binding's value (`K as any`), and erases `: K` to `any`.
 
 A class the closure form cannot express -- `#private` members, decorators,
 parameter properties, `accessor` fields -- **keeps the static path**, with its
@@ -151,11 +214,37 @@ compile).
 
 Each of these fails loudly unless marked otherwise.
 
-- **A class declared (or bound by a declarator) inside a function still
-  captures nothing.** `function f(p) { class K { m() { return p } } ... }`
-  throws `p is not defined`, as before. Only class *expressions used as
-  values* are lowered; widening the rule would move typed local classes onto
-  the dynamic path, which is a performance decision, not a correctness one.
+- **A capturing class that cannot be lowered still captures nothing.**
+  `function f(p) { class K { #x = 1; m() { return this.#x + p } } ... }`
+  throws `p is not defined`: `#private` members, decorators, parameter
+  properties and `accessor` fields keep the static path (see above), and a
+  static method has no environment. This is the remaining half of the capture
+  gap; see "Next: private names in a lowered class".
+- **No temporal dead zone.** A pre-declared class binding holds `undefined`
+  until its declaration runs, so `new K()` written *before* a capturing
+  `class K` in straight-line code throws a `TypeError` (not a constructor)
+  where JavaScript throws a `ReferenceError`. A static local class does not
+  throw at all there. Both wait for TDZ support.
+- **A binding declared after the class.** `class K { m() { return later } }
+  const later = 3;` throws `later is not defined`. It is not specific to
+  classes -- `const f = () => later; const later = 3; f()` fails the same
+  way -- a closure only captures bindings that exist when it is created.
+- **Block granularity.** Bindings and lowered names are tracked per function,
+  not per block: two classes of one name in sibling blocks of one function,
+  one capturing and one not, are both treated as the lowered one by `new`.
+- **The checker's own shadowing bug is only routed around for lowered
+  classes.** Any other local named like a class declared anywhere in the
+  program is still ignored by `new`: `const K: any = function () {...};
+  new K()` constructs a static `class K` from another function. The fix
+  belongs in `check_new` (a visible local must win over the class table).
+  Routing *every* local through the dynamic `new` at the syntax boundary was
+  measured and rejected: it fixes that program but breaks
+  `tests/misc-platform/platform-classes-and-helpers.ts` (a local function
+  used as a constructor takes a different path through a dynamic `new`).
+- **Nested local classes of one name panic the checker** (`classes.rs`,
+  `declared[&raw]`: no entry) when both stay static:
+  `function f() { class K {} function g() { class K {} } }`. Predates this
+  work; it is not reached when the outer one is lowered.
 - **A `Proxy` as a base** (`class X extends new Proxy(C, {})`) throws
   `Class extends value does not have valid prototype property undefined`: a
   proxy over a class value answers `undefined` for every member read, and
@@ -173,3 +262,59 @@ Each of these fails loudly unless marked otherwise.
   setter of the same name on the base's prototype is called. A class
   constructor called with a receiver that looks like a fresh object
   (`C.call({})`) is not refused.
+
+## Next: private names in a lowered class
+
+The capture rule stops at `lowering_supported`. The shape that matters is in
+`tests/classes/class-private-brands-and-statics.ts`:
+
+```ts
+class Outer {
+  #n = "outer";
+  makeInner(): any {
+    const self = this;
+    class Inner {
+      #m = "inner";
+      both() { return this.#m + "/" + self.#n; }     // captures `self`
+      static innerBrand(o: any) { return #m in o; }
+      static outerBrand(o: any) { return #n in o; }
+    }
+    return Inner;
+  }
+}
+```
+
+`Inner` captures, so it must be a closure; it also declares `#m`, so today it
+is not lowered. Two designs were considered.
+
+1. **An environment slot on a static class.** Keep `Inner` typed and give its
+   methods a hidden environment (a per-evaluation class record holding the
+   environment, reached from `this`). This is the "closure-carrying method
+   kind" the first section rejects: a format change with interpreter and JIT
+   halves, a hidden slot that reflection must be taught to skip, and static
+   methods (no `this`) still need the per-evaluation class value. It also
+   leaves identity per evaluation unsolved for the same class.
+2. **Private names in the closure form** (recommended). A private name is
+   per-evaluation state exactly like a capture, so it lowers to a binding of
+   the class factory:
+   - each `#name` of the class becomes a factory-local `WeakMap` (fields) or
+     a `WeakSet` brand plus a closure (methods, accessors); statics use the
+     constructor itself as the only key;
+   - `obj.#x` becomes `__zunPrivateGet(map, obj)`, which throws the
+     `TypeError` a missing brand throws; writes, compound assignment and
+     `++` go through a matching setter helper; `#x in obj` is `map.has(obj)`;
+   - field initializers add to the maps in declaration order inside the
+     existing initializer function, so a brand is visible exactly when the
+     field is defined (`super()` returning another object brands *that*).
+   The front end needs a stack of "private names of the lowered classes being
+   converted", consulted where private member expressions, private `in` and
+   private assignment targets are converted; a name not on the stack (the
+   `#n` of the static `Outer` above) is left untouched for the checker, which
+   already resolves an outer class's private name inside a nested function.
+   No format change, no hidden slot, nothing for reflection to hide: a
+   `WeakMap` in a closure is invisible by construction.
+
+Decorators, parameter properties and `accessor` fields are independent of
+this and smaller: parameter properties are assignments at the head of the
+lowered constructor; `accessor` is a private field plus a getter/setter pair,
+so it follows from (2).

@@ -56,6 +56,11 @@ pub(super) fn convert_type_annotation(
     {
         return Ok(None);
     }
+    // A name bound to a lowered class is a value, not a static type: it must
+    // not resolve to a static class that shares the name elsewhere.
+    if !is_array && super::runtime_class::names_runtime_class(type_text) {
+        return Ok(None);
+    }
     let name_start = start + type_start;
     Ok(Some(crate::ast::TypeAnnotation {
         name: Name {

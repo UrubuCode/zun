@@ -417,6 +417,29 @@ pub(super) fn convert_new_expression(
     for argument in &new_expression.arguments {
         args.push(convert_argument(source, argument)?);
     }
+    // A name bound to a lowered class constructs the value that binding
+    // holds, never a static class that happens to share the name.
+    {
+        let mut peeled = &new_expression.callee;
+        loop {
+            match peeled {
+                Expression::ParenthesizedExpression(inner) => peeled = &inner.expression,
+                Expression::TSAsExpression(inner) => peeled = &inner.expression,
+                _ => break,
+            }
+        }
+        if let Expression::Identifier(identifier) = peeled {
+            if super::super::runtime_class::names_runtime_class(identifier.name.as_str()) {
+                return Ok(Expr::NewDynamic {
+                    callee: Box::new(Expr::Ident(Name {
+                        span: span(identifier.span),
+                    })),
+                    args,
+                    span: span(new_expression.span),
+                });
+            }
+        }
+    }
     // A bare identifier constructor resolves a named class; any other
     // callee (`new ns.Ctor()`, `new (expr)()`) becomes a dynamic new on
     // the evaluated callee expression.

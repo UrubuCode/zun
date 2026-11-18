@@ -29,10 +29,29 @@ pub(super) fn convert_binary(
         BinaryOperator::In => BinaryOp::In,
         BinaryOperator::Instanceof => BinaryOp::Instanceof,
     };
+    let lhs = convert_expression(source, &binary.left)?;
+    let mut rhs = convert_expression(source, &binary.right)?;
+    // `x instanceof Name` with `Name` bound to a lowered class tests against
+    // the value that binding holds: the checker reads a bare identifier as a
+    // class name first, and a cast (`Name as any`) as a run-time value.
+    if let (BinaryOperator::Instanceof, Expression::Identifier(identifier)) =
+        (binary.operator, &binary.right)
+    {
+        if super::super::runtime_class::names_runtime_class(identifier.name.as_str()) {
+            rhs = Expr::Cast {
+                expr: Box::new(rhs),
+                ty: crate::ast::TypeAnnotation {
+                    name: crate::ast::synthetic_ident("any"),
+                    is_array: false,
+                },
+                span: span(identifier.span),
+            };
+        }
+    }
     Ok(Expr::Binary {
         op,
-        lhs: Box::new(convert_expression(source, &binary.left)?),
-        rhs: Box::new(convert_expression(source, &binary.right)?),
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
         span: span(binary.span),
     })
 }

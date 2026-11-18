@@ -700,7 +700,7 @@ fn build_method_function(
     // The method body uses the unified statement converter so
     // class methods support the same statement surface as any
     // other function body.
-    let _scope = enter_function(method.value.params.span, method.value.span, false);
+    let _scope = enter_function(&method.value.params, Some(body), method.value.span, false);
     let mut method_prologue = Vec::new();
     let mut params = Vec::with_capacity(method.value.params.items.len());
     for parameter in &method.value.params.items {

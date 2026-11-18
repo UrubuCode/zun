@@ -17,6 +17,7 @@ pub(super) fn convert_statement_list(
     let ordered = hoist_function_declarations(source, body);
     let forward_names = forward_declared_names(source, &ordered);
     predeclare_forward_functions(source, &ordered, &forward_names, &mut statements)?;
+    let forward_classes = predeclare_forward_classes(source, &ordered, &mut statements);
     let mut prev_start = statements.len();
     for statement in ordered.iter().copied() {
         flush_prelude(&mut statements, prev_start);
@@ -106,7 +107,13 @@ pub(super) fn convert_statement_list(
                 convert_function_declaration(source, function, &forward_names, &mut statements)?;
             }
             Statement::ClassDeclaration(class_declaration) => {
-                convert_class_statement(source, class_declaration, scope, &mut statements)?;
+                convert_class_statement(
+                    source,
+                    class_declaration,
+                    scope,
+                    &forward_classes,
+                    &mut statements,
+                )?;
             }
             other => {
                 let dbg = format!("{other:?}");
@@ -428,6 +435,69 @@ fn convert_function_declaration(
     Ok(())
 }
 
+/// JS binds a class declaration from the top of its block, so a closure
+/// written before the declaration may name it (and call it afterwards). A
+/// lowered class is a `let` at its declaration, which such a closure would
+/// not capture: the binding is pre-declared here and the declaration becomes
+/// an assignment (the pattern `predeclare_forward_functions` uses). Returns
+/// the pre-declared names.
+///
+/// The pass also settles *which* sibling classes are lowered before any is
+/// converted, to a fixpoint: a class that mentions a lowered sibling declared
+/// after it is a capture too.
+fn predeclare_forward_classes(
+    source: &str,
+    ordered: &[&Statement<'_>],
+    statements: &mut Vec<Stmt>,
+) -> std::collections::HashSet<String> {
+    let mut lowered: Vec<bool> = vec![false; ordered.len()];
+    loop {
+        let mut changed = false;
+        for (index, statement) in ordered.iter().copied().enumerate() {
+            let Statement::ClassDeclaration(class_declaration) = statement else {
+                continue;
+            };
+            let Some(id) = class_declaration.id.as_ref() else {
+                continue;
+            };
+            if !lowered[index]
+                && wants_runtime_class(source, class_declaration, ClassSite::Declaration)
+            {
+                lowered[index] = true;
+                changed = true;
+                register_runtime_binding(id.name.as_str());
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut forward = std::collections::HashSet::new();
+    for (index, statement) in ordered.iter().copied().enumerate() {
+        let Statement::ClassDeclaration(class_declaration) = statement else {
+            continue;
+        };
+        let Some(id) = class_declaration.id.as_ref().filter(|_| lowered[index]) else {
+            continue;
+        };
+        let mentioned_earlier = ordered[..index].iter().any(|earlier| {
+            let span = earlier.span();
+            source
+                .get(span.start as usize..span.end as usize)
+                .is_some_and(|text| contains_word(text, id.name.as_str()))
+        });
+        if mentioned_earlier && forward.insert(id.name.to_string()) {
+            statements.push(predeclared_class_binding(
+                Name {
+                    span: Span::new(id.span.start, id.span.end),
+                },
+                Span::new(class_declaration.span.start, class_declaration.span.end),
+            ));
+        }
+    }
+    forward
+}
+
 /// A block-local / nested named class declaration is hoisted to the program's
 /// class list (Zun classes are program-global); its name binds through
 /// `classes_by_name` in sema, so no statement is emitted here.
@@ -435,13 +505,30 @@ fn convert_class_statement(
     source: &str,
     class_declaration: &oxc_ast::ast::Class<'_>,
     scope: Span,
+    forward_classes: &std::collections::HashSet<String>,
     statements: &mut Vec<Stmt>,
 ) -> Result<(), String> {
-    // A class over a run-time base is a value: it is lowered in place and
+    // A class that is a run-time value (its base is one, or its members
+    // capture the enclosing function's bindings) is lowered in place and
     // bound like a `let` (see `runtime_class`).
     if let Some(id) = class_declaration.id.as_ref() {
         if wants_runtime_class(source, class_declaration, ClassSite::Declaration) {
             let whole = Span::new(class_declaration.span.start, class_declaration.span.end);
+            register_runtime_binding(id.name.as_str());
+            if forward_classes.contains(id.name.as_str()) {
+                statements.push(Stmt::Expr(Expr::Assign {
+                    target: Name {
+                        span: Span::new(id.span.start, id.span.end),
+                    },
+                    value: Box::new(convert_runtime_class(
+                        source,
+                        class_declaration,
+                        id.name.as_str(),
+                    )?),
+                    span: whole,
+                }));
+                return Ok(());
+            }
             statements.push(Stmt::Let {
                 name: Name {
                     span: Span::new(id.span.start, id.span.end),
