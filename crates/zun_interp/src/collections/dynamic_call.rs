@@ -871,7 +871,7 @@ impl<'a> Interp<'a> {
                         }
                     }
                     let result = self.invoke_function_value(handle, call_args)?;
-                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any_cell(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
                 }
@@ -888,7 +888,7 @@ impl<'a> Interp<'a> {
                         .and_then(|any| self.callable_ctor_handle(&Value::Any(any)))
                 {
                     let result = self.invoke_function_value(handle, call_args)?;
-                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any_cell(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
                 }
@@ -927,7 +927,7 @@ impl<'a> Interp<'a> {
                         native,
                         &[Value::Object(namespace), Value::Str(input.into())],
                     )?;
-                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any_cell(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
                 }
@@ -1256,7 +1256,7 @@ impl<'a> Interp<'a> {
                         Ok(result) => {
                             let result =
                                 self.apply_species(species_receiver.get(), &member, result)?;
-                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                            let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any_cell(heap))
                                 .unwrap_or_else(zun_core::Any::null);
                             return Ok(Value::Any(boxed));
                         }
@@ -1425,7 +1425,7 @@ impl<'a> Interp<'a> {
                         call_args,
                         &mut *self.output,
                     )?;
-                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any_cell(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
                 }
