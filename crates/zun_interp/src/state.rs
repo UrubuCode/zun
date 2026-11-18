@@ -431,6 +431,50 @@ impl<'a> Interp<'a> {
         }
     }
 
+    /// Hand the side tables to the collector for an interval in which this
+    /// interpreter is parked and code it does not control may collect: a JIT
+    /// body's allocation slow path, or a bridged callee running on a nested
+    /// `Interp` over the same heap.
+    ///
+    /// Neither collector knows this interpreter. Its own `collect` is the only
+    /// caller of [`Self::append_parked_roots`], so without this a pending
+    /// reaction's promises and callbacks were reclaimed under it, and the ones
+    /// that survived through another root moved while the reaction table and
+    /// the promise→id bridge kept the old addresses. A promise settled at its
+    /// new address then woke a fresh scheduler id nothing waited on, and the
+    /// rest of the chain never ran - with a clean exit.
+    ///
+    /// The tables are read only if a collection actually happens, so parking
+    /// costs the same however many reactions are pending.
+    ///
+    /// The interpreter must not be touched until the returned scope drops: the
+    /// collector reaches it through the pointer registered here.
+    pub(super) fn park_side_tables(&mut self) -> zun_gc::ExternalRootScope {
+        unsafe fn append(owner: *mut (), roots: &mut Vec<Obj>) {
+            let interp = unsafe { &*(owner as *const Interp<'_>) };
+            interp.append_parked_roots(roots);
+        }
+        unsafe fn rewrite(owner: *mut (), relocation: &zun_gc::RelocationMap) {
+            let interp = unsafe { &mut *(owner as *mut Interp<'_>) };
+            for frame in [interp.suspended.as_mut(), interp.resume_frame.as_mut()]
+                .into_iter()
+                .flatten()
+            {
+                frame.rewrite_managed_references(relocation);
+            }
+            if let Some(value) = interp.yielded.as_mut() {
+                value.rewrite_managed_reference(relocation);
+            }
+            interp.rewrite_parked_frames(relocation);
+        }
+        // SAFETY: the pointer is derived from the exclusive borrow and the
+        // caller leaves the interpreter alone until the scope drops, so the
+        // collector's accesses through it are the only ones in that interval.
+        unsafe {
+            zun_gc::ExternalRootScope::enter(self as *mut Self as *mut (), append, rewrite)
+        }
+    }
+
     /// Park an `await`-suspended frame on the scheduler and store it in the
     /// frame side table, returning its continuation id. The scheduler holds only
     /// the id; this table owns the frame (and its roots).

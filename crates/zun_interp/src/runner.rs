@@ -1007,7 +1007,12 @@ impl Interp<'_> {
                 unsafe { frame.append_roots(&mut native_roots) };
             }
             let native_roots_array = zun_gc::RootArray::from_objects(native_roots);
+            // The side tables (pending reactions, parked frames, timers) are as
+            // invisible to that collection as the caller chain is; `self` is not
+            // touched again until the scope drops.
+            let side_tables = self.park_side_tables();
             let outcome = hook.try_call(method_rid, &args);
+            drop(side_tables);
             // The JIT body may have re-entered the interpreter (a bridged call runs
             // on a nested `Interp` that knows nothing of this chain) and a
             // collection there evacuates. The registry rewrote the addresses it

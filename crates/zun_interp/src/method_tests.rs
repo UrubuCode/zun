@@ -4377,6 +4377,28 @@ fn caller_frame_survives_a_collection_inside_a_bridged_callee() {
     );
 }
 
+#[test]
+fn pending_reactions_survive_a_collection_inside_a_bridged_callee() {
+    // The second `then` is a reaction waiting on the first `then`'s promise,
+    // and while the first callback runs it lives only in the interpreter's
+    // reaction table. `allocate` runs on a nested interpreter that evacuates
+    // many times and has never heard of that table: unless the parked
+    // interpreter publishes it and writes the moved addresses back (the
+    // promise→id bridge included), the adopted promise settles a scheduler id
+    // nothing waits on and "second" is never printed - with a clean exit.
+    let module = zun_compiler::compile(
+        "class Box { value: int; } function allocate(): int { let i: u64 = 0; while (i < 40000) { let garbage = new Box(1); i = i + 1; } return 0; } function mkp(p: number): any { return Promise.resolve(p).then((v: number) => \"a,\" + v); } function main(): int { mkp(5).then((v: any) => { allocate(); console.log(\"first\", v); return mkp(6); }).then((v: any) => console.log(\"second\", v)); return 0; }",
+    )
+    .expect("compile bridged promise chain");
+    let hook = BridgingHook {
+        module: &module,
+        target_rid: method_rid_named(&module, "allocate"),
+    };
+    let mut output = CaptureOutput::default();
+    run_with(&module, &mut output, Some(&hook)).expect("run bridged promise chain");
+    assert_eq!(output.lines, ["first a,5", "second a,6"]);
+}
+
 /// `call`/`apply` on an `any`-typed function value must bind `this` (when the
 /// function declares one) without shifting the arguments of a function that
 /// does not. A method's vtable slot is not proof of a class member: every

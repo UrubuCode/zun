@@ -32,6 +32,9 @@ thread_local! {
     /// `ROOT_ARRAYS` because these slots are owned by their guard and written
     /// through a pointer derived from an `UnsafeCell`.
     static ROOTED_SLOTS: RefCell<Vec<*mut usize>> = const { RefCell::new(Vec::new()) };
+    /// Owners registered by live [`ExternalRootScope`]s.
+    static EXTERNAL_ROOTS: RefCell<Vec<(usize, *mut (), ExternalRootAppend, ExternalRootRewrite)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 fn next_root_id() -> usize {
@@ -270,6 +273,61 @@ impl<T: RootCarrier> Drop for Rooted<T> {
     }
 }
 
+/// Reports an owner's managed references into a root set.
+pub type ExternalRootAppend = unsafe fn(owner: *mut (), roots: &mut Vec<Obj>);
+/// Rewrites an owner's managed references after relocation.
+pub type ExternalRootRewrite = unsafe fn(owner: *mut (), relocation: &RelocationMap);
+
+/// A root owner the collector calls back into, for references that live in
+/// tables too large to copy into a [`RootArray`] on every native call.
+///
+/// An interpreter parked under a JIT body owns side tables (pending promise
+/// reactions, parked frames, timers) that a collection started by that body,
+/// or by a nested interpreter it bridged into, cannot see. Copying them into
+/// the registry for every call would cost a pass over all of them per call;
+/// this registers one pointer instead and the tables are read only when a
+/// collection actually runs.
+///
+/// Every collection path reaches the owner, because it rides the two entry
+/// points they all share: [`append_native_roots`] and [`rewrite_native_roots`].
+///
+/// Drops in any order; the registry is keyed by id, not a stack.
+#[derive(Debug)]
+pub struct ExternalRootScope {
+    id: usize,
+    /// The registry is thread-local; see [`RootArray`].
+    _not_send: PhantomData<*const ()>,
+}
+
+impl ExternalRootScope {
+    /// Register `owner` until the returned scope drops.
+    ///
+    /// # Safety
+    /// `owner` must stay valid for `append` to read and `rewrite` to write
+    /// until the scope drops, and nothing else may access it in that interval:
+    /// the registrant is parked, having derived `owner` from its exclusive
+    /// borrow, and resumes using that borrow only after dropping the scope.
+    /// Neither function may touch the heap or this registry.
+    pub unsafe fn enter(
+        owner: *mut (),
+        append: ExternalRootAppend,
+        rewrite: ExternalRootRewrite,
+    ) -> Self {
+        let id = next_root_id();
+        EXTERNAL_ROOTS.with(|owners| owners.borrow_mut().push((id, owner, append, rewrite)));
+        Self {
+            id,
+            _not_send: PhantomData,
+        }
+    }
+}
+
+impl Drop for ExternalRootScope {
+    fn drop(&mut self) {
+        EXTERNAL_ROOTS.with(|owners| owners.borrow_mut().retain(|(id, ..)| *id != self.id));
+    }
+}
+
 /// Root a managed reference for the rest of the enclosing scope:
 /// `root!(callback = callback);` then `callback.get()` after anything that can
 /// collect.
@@ -307,6 +365,12 @@ pub fn append_native_roots(roots: &mut Vec<Obj>) {
             if address != 0 {
                 roots.push(unsafe { Obj::from_addr(address as *mut u64) });
             }
+        }
+    });
+    EXTERNAL_ROOTS.with(|owners| {
+        for &(_, owner, append, _) in owners.borrow().iter() {
+            // SAFETY: the scope's contract keeps `owner` valid and unaliased.
+            unsafe { append(owner, roots) };
         }
     });
 }
@@ -347,6 +411,12 @@ pub unsafe fn rewrite_native_roots(relocation: &RelocationMap) -> usize {
                     rewritten += 1;
                 }
             }
+        }
+    });
+    EXTERNAL_ROOTS.with(|owners| {
+        for &(_, owner, _, rewrite) in owners.borrow().iter() {
+            // SAFETY: the scope's contract keeps `owner` valid and unaliased.
+            unsafe { rewrite(owner, relocation) };
         }
     });
     rewritten
@@ -398,5 +468,39 @@ mod tests {
         let mut roots = Vec::new();
         append_native_roots(&mut roots);
         assert!(roots.is_empty());
+    }
+
+    #[test]
+    fn an_external_owner_is_reported_and_rewritten_until_its_scope_drops() {
+        // The owner stands in for a parked interpreter's side tables: the
+        // collector must see its reference and write the new address back
+        // through the registered pointer, and stop doing both once it resumes.
+        unsafe fn append(owner: *mut (), roots: &mut Vec<Obj>) {
+            roots.push(unsafe { *(owner as *const Obj) });
+        }
+        unsafe fn rewrite(owner: *mut (), relocation: &RelocationMap) {
+            let slot = owner as *mut Obj;
+            unsafe { *slot = relocation.relocate(*slot) };
+        }
+        let mut held = obj(0x1000);
+        let mut relocation = RelocationMap::new();
+        relocation.insert(obj(0x1000), obj(0x2000));
+        {
+            let owner = std::ptr::from_mut(&mut held).cast::<()>();
+            let _scope = unsafe { super::ExternalRootScope::enter(owner, append, rewrite) };
+            let mut roots = Vec::new();
+            append_native_roots(&mut roots);
+            assert_eq!(roots, vec![obj(0x1000)]);
+            unsafe { rewrite_native_roots(&relocation) };
+        }
+        assert_eq!(held, obj(0x2000));
+
+        let mut roots = Vec::new();
+        append_native_roots(&mut roots);
+        assert!(roots.is_empty());
+        let mut back = RelocationMap::new();
+        back.insert(obj(0x2000), obj(0x3000));
+        unsafe { rewrite_native_roots(&back) };
+        assert_eq!(held, obj(0x2000));
     }
 }
