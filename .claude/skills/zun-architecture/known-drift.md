@@ -1567,3 +1567,10 @@ the central lookup used throughout the checker. Keying by name *and* staticness
 means auditing all of them; a prefix on the static key is the smaller shape but
 still touches every reader that expects a plain name. It is a refactor, not a
 patch, and it should not be started at the tail of a long run.
+
+The reason is sharper than the site count: the lookup contract is "find the
+func by name, *then* ask `signatures[func].is_static`" -- that check appears at
+`field.rs:29`, `:209`, `:268`, `:530` and in several call paths, all *after*
+the name resolution. One name therefore admits exactly one method by
+construction, and making both kinds coexist changes what a lookup returns, not
+just how a key is spelled.
