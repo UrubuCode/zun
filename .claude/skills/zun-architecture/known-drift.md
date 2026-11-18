@@ -1348,74 +1348,38 @@ from the receiver. Note also that node has no `__classDesc` at all, so zun
 answering a function for `a.constructor.__classDesc` is itself a small
 divergence on an internal name.
 
-## `fn.length` of a prelude function answers 0, and a nearby string literal can change it
 
-    console.log("structuredClone=" + structuredClone.length);  // 2  -- node's answer
-    console.log("structuredClone" + structuredClone.length);   // 0
-    console.log("sc=" + structuredClone.length);               // 0
-    console.log("xxxxxxxxxxxxxxxx=" + structuredClone.length); // 0  (same length, other letters)
-    console.log("structuredClone =" + structuredClone.length); // 2
-    console.log("structuredClone=x" + structuredClone.length); // 2
+## `fn.length` subtracted an `any` parameter, and two wrong theories on the way
 
-The real behaviour is **0**. It answers correctly only when a string literal in
-the same expression contains that function's name followed by `=` (a space
-before the `=` is allowed, and trailing text is allowed). Padding a different
-label to the same byte length does not help, so this is not a span or offset
-confusion -- something is scanning source text for `name=`. The prelude has
-precedent for exactly this kind of scan: `check/expr/literal.rs` decides
-`closure_takes_this` by looking for `this` in a function's source text, and
-`closures.rs` takes a `closure_self_name`.
+Fixed in `82dfb2ac`. `Signature::optional_count` treats a trailing parameter as
+omittable when it has a default **or when its type is `Ty::Any`**, which is
+right for arity and wrong for `Function.prototype.length`, which was computed
+by subtracting it. `queueMicrotask(callback: any)` therefore answered `0`
+against node's `1`. A new `default_count` counts only real defaults and the
+length computation uses that.
 
-It affects every prelude function value the same way -- `structuredClone`,
-`encodeURIComponent`, `queueMicrotask`, `setTimeout` -- while a true builtin
-such as `parseInt` answers correctly. It is why
-`misc-platform/timers-microtasks-and-errors` prints
-`setTimeout_length=false` and `queueMicrotask_length=0`.
+**Two notes I wrote in this file while chasing it were wrong, and the way they
+were wrong is the useful part.** The symptom looked impossible: `fn.length`
+seemed to depend on surrounding source text --
+`"structuredClone=" + structuredClone.length` answered 2 while
+`"x=" + structuredClone.length` answered 0, a literal with a mismatched name
+did nothing, and the same literal *broke* `fn.name` in the opposite direction.
+From that I theorised first a source-text scan (there is precedent:
+`closure_takes_this` really does scan text) and then an interned id used as an
+index (there is precedent too: the `"Math"` leak was intern id 0 read as a
+handle). Both theories were coherent, had precedent, and were false.
 
-**This corrects `8de84375`'s commit message**, which attributed the variation
-to reachability pruning deciding whether the prelude function is emitted. That
-was wrong: a reference alone changes nothing, and the deciding factor is the
-text of an unrelated string literal. The earlier "all five match node exactly"
-reading came from a probe whose labels happened to be the function names.
+What ended it was one instrumented build printing the signature the fold
+actually used: `func=9 name="structuredClone" params=2 opt=2` -- two parameters,
+one default, two subtracted. The context-dependence was a red herring
+throughout and disappeared with the fix.
 
-**Measurement note.** Two probes with identical `.length` reads in identical
-order, differing only in label text, gave different answers; before noticing
-that, the difference was briefly attributed to how many reads the expression
-made. When a result changes between probes, diff the probes before theorising
--- and re-run the earlier one against the *current* binary, because comparing
-outputs captured from two different builds invents mechanisms that do not
-exist.
+So: when a symptom looks impossible, the cost of instrumenting the computation
+is one build, and it beats any number of probes that only vary the input. Probes
+narrow *what* changes the answer; they cannot show *which* code produced it, and
+a plausible mechanism with precedent elsewhere in the codebase is exactly the
+kind of theory that survives probing while being wrong.
 
-### The same bug moves `name` the other way, which names the mechanism
-
-Fully characterised, and it is not a text scan after all:
-
-| expression | zun | node |
-|---|---|---|
-| `"structuredClone=" + structuredClone.length` | 2 | 2 |
-| `"x=" + structuredClone.length` | **0** | 2 |
-| `"structuredClone=" + structuredClone.name` | **""** | `structuredClone` |
-| `"x=" + structuredClone.name` | `structuredClone` | `structuredClone` |
-| `"queueMicrotask=" + structuredClone.length` | **0** | 2 |
-
-The literal must contain the **same** name as the function being read,
-followed by `=` (a space before it is fine, trailing text is fine). A
-mismatched name does nothing, a comment with the same text does nothing, and a
-real assignment does nothing -- so the file is not being scanned. And the
-matching literal **fixes** `length` while it **breaks** `name`, in opposite
-directions, which a text heuristic would not do.
-
-Two reads of one function value disagreeing in opposite directions as a string
-literal is added is the signature of an **interned-string id being used as an
-index**: adding a literal shifts the ids, and a lookup lands on a different
-entry. That is the same family as the `"Math"` leak (intern id 0 read as a
-string handle), which this run traced to `encode_field`'s string arms.
-
-So the next step is to instrument the `name`/`length` resolution for a function
-value -- the `name == "length"` and `name == "name"` branches in
-`collections/runtime_iter.rs`, which compute `length` from
-`body.param_count` minus hidden parameters and read `name` from
-`method_defs` -- and print the rid and the interned name actually used, for the
-two probes above. The rid is the thing to watch; `typeof` is unaffected, and
-calling the function works, so the function value itself is fine and only this
-metadata lookup is wrong.
+The prelude's `structuredClone` lost its `= undefined` default in the same
+change: a default lowers `length` by JS rules, and node's native declares two
+parameters.
