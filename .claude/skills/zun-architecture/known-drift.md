@@ -1336,3 +1336,24 @@ traces, so the next attempt should start here rather than repeat it:
 Everything else in the area matches node: `new.target` directly in a
 constructor, in a plain function called with and without `new`, and in an arrow
 inside a plain function.
+
+### `new.target` in an arrow: the fact the first two attempts were missing
+
+Established afterwards, and it invalidates both of those attempts rather than
+refining them. The AST is not the problem: `zun_syntax`'s
+`Expression::NewTarget` emits `Expr::Ident(Name { span })` whose span covers
+the source text `new.target`, so `self.text(name)` does answer `"new.target"`
+(a run-time class constructor takes a separate path, `__zunNewTarget`).
+
+The problem is that **the arrow never reaches the capture walk at all**. A
+trace printing every name `closures.rs::add_name` sees while compiling
+`class D { v: any; constructor() { this.v = (): string => new.target.name } }`
+printed seven names, all from the prelude, and neither `this` nor
+`new.target` among them. So `collect_captures` is not running for an arrow
+written inside a constructor, which is why inheriting `is_constructor` and
+why rewriting `add_name` both changed nothing: neither site executes.
+
+The next attempt therefore starts by finding **which path compiles an arrow
+assigned inside a constructor** -- not `closures.rs`, on this evidence -- and
+whether it has any way to reach `this`. Do not touch `check_new_target` or the
+capture walk again until that is answered.
