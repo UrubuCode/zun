@@ -1483,7 +1483,7 @@ impl Interp<'_> {
                 .tables
                 .field_defs
                 .get((frid as usize).wrapping_sub(1))
-                .is_some_and(|f| f.is_static && self.module.strings.get(f.name) == name);
+                .is_some_and(|f| f.is_static && !name.starts_with('#') && self.module.strings.get(f.name) == name);
             if matches {
                 zun_gc::with_current_heap_mut(|heap| heap.static_remove(rid, frid));
             }
@@ -1524,7 +1524,7 @@ impl Interp<'_> {
                 else {
                     continue;
                 };
-                if f.is_static && self.module.strings.get(f.name) == name {
+                if f.is_static && !name.starts_with('#') && self.module.strings.get(f.name) == name {
                     let hit = zun_gc::with_current_heap(|heap| {
                         if let Some(any) = heap.static_get(r, frid) {
                             let value = Value::unbox_any(any, heap).unwrap_or(Value::Void);
@@ -1682,7 +1682,7 @@ impl Interp<'_> {
                 continue;
             };
             if field.is_static
-                && self.module.strings.get(field.name) == name
+                && !name.starts_with('#') && self.module.strings.get(field.name) == name
                 && zun_gc::with_current_heap(|heap| {
                     heap.static_get(rid, frid).is_some()
                         || heap.static_get_function(rid, frid).is_some()
@@ -1743,7 +1743,7 @@ impl Interp<'_> {
                 else {
                     continue;
                 };
-                if field.is_static && self.module.strings.get(field.name) == name {
+                if field.is_static && !name.starts_with('#') && self.module.strings.get(field.name) == name {
                     let kind = field.kind;
                     let value = zun_gc::with_current_heap(|heap| {
                         if let Some(any) = heap.static_get(r, frid) {
@@ -1901,7 +1901,7 @@ impl Interp<'_> {
                 else {
                     continue;
                 };
-                if !(field.is_static && self.module.strings.get(field.name) == name) {
+                if !(field.is_static && !name.starts_with('#') && self.module.strings.get(field.name) == name) {
                     continue;
                 }
                 let initialized = zun_gc::with_current_heap(|heap| {
@@ -3147,6 +3147,11 @@ impl Interp<'_> {
                 continue;
             };
             if !field.is_static {
+                continue;
+            }
+            // A `#private` static is not a property: no reflection surface
+            // may list it.
+            if field.is_private {
                 continue;
             }
             // A `static { ... }` block is lowered to a synthetic field named by its

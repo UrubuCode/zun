@@ -16,6 +16,36 @@ impl Checker<'_> {
         else {
             unreachable!()
         };
+        // `receiver.#staticMethod(...)` through anything but the class's own
+        // name: a static private lives only on its declaring class, so the
+        // receiver is brand-checked at run time before the call.
+        if self.text(method).starts_with('#') {
+            let mut peeled = receiver.as_ref();
+            while let ast::Expr::Cast { expr, .. } = peeled {
+                peeled = expr;
+            }
+            let by_name = matches!(
+                peeled,
+                ast::Expr::Ident(name) if cx.lookup(self.text(name)).is_none()
+                    && self.classes_by_name.contains_key(self.text(name))
+            );
+            if !by_name {
+                if let Some((owner, true)) =
+                    self.private_owner_at(cx.this_class, span.start, self.text(method))
+                {
+                    if let Some(expr) = self.branded_static_private(
+                        cx,
+                        owner,
+                        receiver,
+                        method,
+                        PrivateUse::Call(args),
+                        span,
+                    ) {
+                        return expr;
+                    }
+                }
+            }
+        }
         // AST-phase interceptors (the `.call`/`.apply` prototype forms,
         // identifier-receiver namespace statics, and the static-regex fast
         // path), in their original order (see `mcall_statics.rs`).

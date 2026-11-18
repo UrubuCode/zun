@@ -29,12 +29,12 @@ impl Checker<'_> {
         if !matches!(object.ty, Ty::Any | Ty::DynamicObject) {
             return object;
         }
-        let Some(class) = cx.this_class else {
+        // The private name is lexical: the innermost enclosing class that
+        // declares it, which for a nested class may be an outer one.
+        let Some((class, false)) = self.private_owner_at(cx.this_class, object.span.start, name)
+        else {
             return object;
         };
-        if self.private_field_of(class, name).is_none() && !self.has_private_member(class, name) {
-            return object;
-        }
         let span = object.span;
         hir::Expr {
             kind: hir::ExprKind::Convert {

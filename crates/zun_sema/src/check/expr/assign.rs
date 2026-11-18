@@ -440,6 +440,22 @@ impl Checker<'_> {
                     }
                 }
             }
+            // `receiver.#static = v` through anything but the class's own
+            // name: the same run-time brand check as the read.
+            if let Some((owner, true)) =
+                self.private_owner_at(cx.this_class, span.start, self.text(field))
+            {
+                if let Some(expr) = self.branded_static_private(
+                    cx,
+                    owner,
+                    private_object,
+                    field,
+                    PrivateUse::Write(value),
+                    span,
+                ) {
+                    return expr;
+                }
+            }
             let peeled_object = Box::new(self.peel_this_cast(cx, private_object));
             let private_object = &peeled_object;
             let checked_object = self.check_expr(cx, private_object);
@@ -453,7 +469,12 @@ impl Checker<'_> {
                 self.error(span, "private fields require an instance receiver");
                 return self.poison(span);
             };
-            if cx.this_class != Some(class) {
+            if cx.this_class != Some(class)
+                && self
+                    .private_owner_at(cx.this_class, span.start, &name)
+                    .map(|(owner, _)| owner)
+                    != Some(class)
+            {
                 self.error(
                     field.span,
                     "private field is only accessible inside its declaring class",

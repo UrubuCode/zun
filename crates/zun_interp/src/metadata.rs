@@ -238,6 +238,15 @@ impl<'a> Interp<'a> {
             if field.is_static {
                 continue;
             }
+            // A private never answers to its internal name. Source cannot
+            // name a typed slot with a leading `#`, so `obj["#C##x"]` must
+            // fall through to the expando path the way node treats an
+            // ordinary property -- before this, it READ and WROTE the
+            // private field (42 where node says undefined), while `in` and
+            // every listing correctly denied it: works-and-does-not-list.
+            if field.is_private || self.module.strings.get(field.name).starts_with('#') {
+                continue;
+            }
             let Some(layout) = self.types.get_field(field_rid) else {
                 continue;
             };

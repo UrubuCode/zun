@@ -67,6 +67,7 @@ mod stmt;
 use arities::*;
 use ast_scan::*;
 use builtins::typed_array::data_view_accessor;
+use class_layout::PrivateUse;
 use decorators::decorator_context_entry;
 use numeric_literals::{coerce_numeric_literal, unify_numeric_literal};
 #[path = "../types.rs"]
@@ -475,6 +476,8 @@ const NATIVE_SHELL_LOCAL: &str = " native#shell";
 struct ClassInfo {
     /// Byte offset where the class declaration starts.
     span_start: u32,
+    /// Byte offset just past the end of the class declaration.
+    span_end: u32,
     /// Declared in a nested block or function body: its static initializers run
     /// at the declaration-site marker rather than in the module body.
     local: bool,

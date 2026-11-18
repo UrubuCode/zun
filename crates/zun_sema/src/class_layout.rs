@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::Checker;
+use super::{Checker, FunctionCx};
 use crate::hir;
 use crate::hir::Ty;
+use zun_syntax::ast;
+use zun_common::Span;
 
 impl<'a> Checker<'a> {
     /// The full field layout of a class: inherited fields first (base's full
@@ -166,5 +168,197 @@ impl<'a> Checker<'a> {
                 None => return class,
             }
         }
+    }
+}
+
+/// What a `receiver.#name` expression does with the private member.
+pub(super) enum PrivateUse<'a> {
+    /// `receiver.#name`
+    Read,
+    /// `receiver.#name = value`
+    Write(&'a ast::Expr),
+    /// `receiver.#name(args)`
+    Call(&'a [ast::Expr]),
+}
+
+impl Checker<'_> {
+    /// Whether `class` itself declares the private name `name` (a field, a
+    /// method or an accessor), and if so whether that member is static.
+    pub(super) fn declares_private(&self, class: u32, name: &str) -> Option<bool> {
+        let owner = self
+            .classes_by_name
+            .iter()
+            .find_map(|(owner, &index)| (index == class).then_some(owner.as_str()))?;
+        let internal = format!("#{owner}#{name}");
+        if let Some((_, _, is_static, _)) = self.classes[class as usize]
+            .own_fields
+            .iter()
+            .find(|(field, _, _, _)| *field == internal)
+        {
+            return Some(*is_static);
+        }
+        let methods = self.methods_by_class.get(class as usize)?;
+        [
+            name.to_string(),
+            format!("get_{name}"),
+            format!("set_{name}"),
+        ]
+        .iter()
+        .find_map(|key| methods.get(key))
+        .map(|&func| self.signatures[func as usize].is_static)
+    }
+
+    /// The class a private name used at byte offset `pos` resolves to, and
+    /// whether the member is static. Private names are lexical: the innermost
+    /// class whose body encloses the use and that declares the name wins, so a
+    /// nested class sees the names of the classes around it.
+    pub(super) fn private_owner_at(
+        &self,
+        this_class: Option<u32>,
+        pos: u32,
+        name: &str,
+    ) -> Option<(u32, bool)> {
+        for class in [this_class, self.cur_static_class].into_iter().flatten() {
+            if let Some(is_static) = self.declares_private(class, name) {
+                return Some((class, is_static));
+            }
+        }
+        let mut enclosing: Vec<u32> = (0..self.classes.len() as u32)
+            .filter(|&class| {
+                let info = &self.classes[class as usize];
+                info.span_start <= pos && pos < info.span_end
+            })
+            .collect();
+        enclosing.sort_by_key(|&class| std::cmp::Reverse(self.classes[class as usize].span_start));
+        enclosing.into_iter().find_map(|class| {
+            self.declares_private(class, name)
+                .map(|is_static| (class, is_static))
+        })
+    }
+
+    /// `receiver.#name` where `#name` is a *static* private of `owner` and the
+    /// receiver is not the class's own name (`this.#x` in a static method, a
+    /// class held in a variable). A static private lives only on the class that
+    /// declares it, so the receiver is compared with that class at run time and
+    /// anything else - a subclass included - throws a TypeError before the slot
+    /// is touched.
+    pub(super) fn branded_static_private(
+        &mut self,
+        cx: &mut FunctionCx,
+        owner: u32,
+        receiver: &ast::Expr,
+        field: &ast::Name,
+        usage: PrivateUse<'_>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let owner_name = self
+            .classes_by_name
+            .iter()
+            .find_map(|(name, &index)| (index == owner).then(|| name.clone()))?;
+        let class_ident = ast::synthetic_ident(&owner_name);
+        // The class name must still mean the class here, or the by-name access
+        // below would not be the declaring class's slot.
+        if cx.lookup(&owner_name).is_some()
+            || self.classes_by_name.get(self.text(&class_ident)).copied() != Some(owner)
+        {
+            return None;
+        }
+        // A write evaluates the receiver, then the stored value, and only then
+        // checks the brand, so both are computed into temporaries first. A
+        // literal has no effect to order and keeps its literal typing.
+        let is_literal = |expr: &ast::Expr| {
+            matches!(
+                expr,
+                ast::Expr::Number { .. } | ast::Expr::String { .. } | ast::Expr::Bool { .. }
+            )
+        };
+        let mut prelude: Vec<hir::Expr> = Vec::new();
+        let mut receiver = receiver.clone();
+        let mut value = match usage {
+            PrivateUse::Write(value) => Some(value.clone()),
+            _ => None,
+        };
+        if value.as_ref().is_some_and(|value| !is_literal(value)) {
+            for operand in [Some(&mut receiver), value.as_mut()].into_iter().flatten() {
+                let checked = self.check_expr(cx, operand);
+                let ty = checked.ty;
+                if ty.is_error() {
+                    return Some(checked);
+                }
+                let (slot, tmp) = self.synthetic_local(cx, ty);
+                prelude.push(hir::Expr {
+                    kind: hir::ExprKind::Assign {
+                        slot,
+                        value: Box::new(checked),
+                    },
+                    ty,
+                    span,
+                });
+                *operand = ast::Expr::Ident(tmp);
+            }
+        }
+        let condition = self.check_condition(
+            cx,
+            &ast::Expr::Binary {
+                op: ast::BinaryOp::Eq,
+                lhs: Box::new(receiver),
+                rhs: Box::new(ast::Expr::Ident(class_ident)),
+                span,
+            },
+        );
+        let by_name = ast::Expr::PrivateField {
+            object: Box::new(ast::Expr::Ident(class_ident)),
+            field: *field,
+            span,
+        };
+        let access = match (usage, value) {
+            (PrivateUse::Call(args), _) => ast::Expr::MethodCall {
+                receiver: Box::new(ast::Expr::Ident(class_ident)),
+                method: *field,
+                args: args.to_vec(),
+                span,
+            },
+            (_, Some(value)) => ast::Expr::FieldAssign {
+                object: Box::new(by_name),
+                field: *field,
+                value: Box::new(value),
+                span,
+            },
+            _ => by_name,
+        };
+        let when_true = self.check_expr(cx, &access);
+        let ty = when_true.ty;
+        let thrown = self.runtime_type_error(cx, span);
+        let when_false = if ty == Ty::Any || ty.is_error() {
+            thrown
+        } else {
+            hir::Expr {
+                kind: hir::ExprKind::Convert {
+                    value: Box::new(thrown),
+                },
+                ty,
+                span,
+            }
+        };
+        let mut result = hir::Expr {
+            kind: hir::ExprKind::Conditional {
+                condition: Box::new(condition),
+                when_true: Box::new(when_true),
+                when_false: Box::new(when_false),
+            },
+            ty,
+            span,
+        };
+        for effect in prelude.into_iter().rev() {
+            result = hir::Expr {
+                kind: hir::ExprKind::Sequence {
+                    effect: Box::new(effect),
+                    value: Box::new(result),
+                },
+                ty,
+                span,
+            };
+        }
+        Some(result)
     }
 }

@@ -59,7 +59,27 @@ impl Checker<'_> {
                             span,
                         };
                     }
+                    // A static private accessor or method read by the class's
+                    // own name: an ordinary static member under its `#` name.
+                    if self.declares_private(class_index, self.text(field)) == Some(true) {
+                        let fallback = ast::Expr::Field {
+                            object: ast_object,
+                            field: *field,
+                            span,
+                        };
+                        return self.check_expr(cx, &fallback);
+                    }
                 }
+            }
+        }
+        // `receiver.#static` through anything but the class's own name: the
+        // receiver must be the declaring class itself, checked at run time.
+        if let Some((owner, true)) =
+            self.private_owner_at(cx.this_class, span.start, self.text(field))
+        {
+            if let Some(expr) = self.branded_static_private(cx, owner, object, field, PrivateUse::Read, span)
+            {
+                return expr;
             }
         }
         let object = self.check_expr(cx, object);
@@ -87,7 +107,12 @@ impl Checker<'_> {
             self.error(span, "private fields require an instance receiver");
             return self.poison(span);
         };
-        if cx.this_class != Some(class) {
+        if cx.this_class != Some(class)
+            && self
+                .private_owner_at(cx.this_class, span.start, &name)
+                .map(|(owner, _)| owner)
+                != Some(class)
+        {
             self.error(
                 field.span,
                 "private field is only accessible inside its declaring class",
