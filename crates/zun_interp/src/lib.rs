@@ -1699,6 +1699,17 @@ impl Interp<'_> {
                         Some(obj) => obj,
                         None => return Err(self.field_receiver_error(token, &receiver, false)),
                     };
+                    // A private field only answers to a receiver that carries
+                    // its brand. See `private_field_brand_ok`: without this a
+                    // prototype swap reinterpreted another class's slot bits.
+                    if self.field_rid_is_private(token.rid())
+                        && !self.private_field_brand_ok(token.rid(), obj)
+                    {
+                        let message = "TypeError: Cannot read a private member \
+                                       from an object whose class did not declare it"
+                            .to_string();
+                        throw_native!(self, body, stack, pc, next - size, message);
+                    }
                     // A dynamic object never carries a class's fixed fields
                     // (a private-brand mismatch): TypeError, not a bad read.
                     // An *instance bag* is the exception: a typed instance that
@@ -1763,6 +1774,15 @@ impl Interp<'_> {
                         Some(obj) => obj,
                         None => return Err(self.field_receiver_error(token, &receiver, true)),
                     };
+                    // Same brand gate as the read path.
+                    if self.field_rid_is_private(token.rid())
+                        && !self.private_field_brand_ok(token.rid(), obj)
+                    {
+                        let message = "TypeError: Cannot write a private member \
+                                       to an object whose class did not declare it"
+                            .to_string();
+                        throw_native!(self, body, stack, pc, next - size, message);
+                    }
                     // The mirror of the load side: writing a class's fixed slot
                     // into a plain dynamic object would scribble on whatever
                     // that object keeps there, so a public field stores by

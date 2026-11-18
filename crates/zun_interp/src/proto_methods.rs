@@ -25,6 +25,60 @@ impl Interp<'_> {
     /// A typed field slot cannot hold `null`/`undefined`: name the field and
     /// the value rather than aborting the engine (see
     /// `value::unboxed_field_rejects`).
+    /// Whether `object` carries the brand for a **private** field, i.e. its
+    /// class chain actually reaches the type that declares the field.
+    ///
+    /// Without this, a prototype swap was **type confusion**, not merely a
+    /// wrong answer. `class Money { #amount: number }` and
+    /// `class Label { #text: string }`, then
+    /// `Object.setPrototypeOf(money, Label.prototype)` and `money.read()`:
+    /// dispatch correctly follows the swapped prototype into `Label.read`,
+    /// whose `LoadField` then read slot 0 of a *Money* object as a string,
+    /// interpreting the bits of the float `1234.5` as an intern id and
+    /// answering the unrelated live string `"Math"`. A larger float indexes
+    /// out of range. Reachable from ordinary JS, no `any` needed.
+    ///
+    /// The dynamic-object guard at the use site does not cover it: a typed
+    /// instance of the *wrong* class is not a dynamic object. Privates are
+    /// installed by the declaring constructor, so a subclass instance does
+    /// carry them, which is why this walks the base chain instead of
+    /// comparing one rid.
+    pub(crate) fn private_field_brand_ok(&self, field_rid: u32, object: zun_gc::Obj) -> bool {
+        let Some(owner) = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .position(|ty| ty.field_start <= field_rid && field_rid < ty.field_end)
+            .map(|index| index as u32 + 1)
+        else {
+            return true;
+        };
+        let mut current = object.type_rid();
+        for _ in 0..64 {
+            if current == 0 {
+                return false;
+            }
+            if current == owner {
+                return true;
+            }
+            let Some(type_def) = self.module.tables.type_defs.get(current as usize - 1) else {
+                return false;
+            };
+            current = type_def.base.rid();
+        }
+        false
+    }
+
+    /// Whether the field this token names is declared private.
+    pub(crate) fn field_rid_is_private(&self, field_rid: u32) -> bool {
+        self.module
+            .tables
+            .field_defs
+            .get((field_rid as usize).wrapping_sub(1))
+            .is_some_and(|field| field.is_private)
+    }
+
     pub(crate) fn field_slot_message(&self, field_rid: u32, value: &Value) -> String {
         let name = self
             .module
