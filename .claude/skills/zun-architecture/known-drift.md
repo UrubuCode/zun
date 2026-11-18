@@ -1300,95 +1300,50 @@ boundary" was true and beside the point, because the variant itself is
 observable. A side channel keyed by the object's address carries the text and
 leaves the value alone.
 
-## `new.target` inside an arrow answers `undefined` (diagnosed, not fixed)
 
-    class D {
-      direct: string;
-      viaArrow: any;
-      constructor() {
-        this.direct = new.target.name;                 // "D" / "SubD" -- correct
-        this.viaArrow = (): string => new.target.name; // "undefined" -- node: "D" / "SubD"
-      }
-    }
+## `new.target`: fixed for arrows, and one case left that exposes the lowering
 
-An arrow inherits `this`, `arguments`, `super` and `new.target` lexically, so
-both lines must answer the constructing class. Attempted and **reverted** --
-nothing is left in the tree -- but the diagnosis is solid and cost three
-traces, so the next attempt should start here rather than repeat it:
+`40136d9b` made an arrow inside a constructor inherit `new.target`, which the
+language requires and which needed three separate gaps closed: `closures.rs`
+zeroing `is_constructor` for every closure (only an arrow inherits it -- a
+`function` expression has its own), the capture walk never recording a use of
+`this` because `new.target`'s text does not spell it, and `check_new_target`
+resolving `this` with `cx.lookup`, which answers for **locals only** while in
+an arrow `this` is a capture.
 
-- `check_new_target` (`zun_sema/src/check/expr/ident.rs`) needs **two**
-  conditions: `cx.is_constructor`, and `cx.lookup("this")` to resolve. It
-  lowers to `this.constructor.__classDesc`.
-- `closures.rs` sets `is_constructor: false` for every closure. Inheriting it
-  for arrows (`function.is_arrow && outer.is_constructor`) **works** -- a trace
-  confirmed `is_arrow=true outer_ctor=true inherited=true`, and
-  `check_new_target` then reported `is_ctor=true`.
-- The remaining blocker is the second condition: inside the arrow
-  `cx.lookup("this")` answers `None`. An arrow reaches `this` through the
-  *capture* set, which is built by walking the body for free identifiers -- and
-  `new.target` never spells `this`, so no capture is created.
-- Making `add_name` treat the text `"new.target"` as a use of `"this"` did
-  **not** help, so `new.target` is not reaching that walk as an `ast::Expr::Ident`
-  with that text. **Find how the AST actually represents it first** (note
-  `check_new_target` matches `ast::Expr::Ident(_)`, and `zun_syntax`'s
-  `expr/mod.rs` has a `runtime_new_target` path) rather than guessing again.
+**Method note, because the first three attempts were wasted.** Two of those
+three pieces had been written and thrown away: one was verified by trace to
+fire and reverted anyway when the whole did not work, and the other was
+inserted at a line that earlier reverts had moved out of `add_name`, so it
+never ran -- and that silence was written into this file as "the arrow never
+reaches the capture walk", which was false. A trace printing the source text of
+every closure the walk analyses disproved it in one run. In a codebase this
+size a one-line placement slip can invalidate an otherwise correct diagnosis;
+confirm the instrumented line is reached before drawing a conclusion from its
+silence, and do not discard a piece that was verified to work just because the
+composite still fails.
 
-Everything else in the area matches node: `new.target` directly in a
-constructor, in a plain function called with and without `new`, and in an arrow
-inside a plain function.
+### The remaining case, and what it reveals
 
-### `new.target` in an arrow: the fact the first two attempts were missing
+`Reflect.construct(P, [], S)` then calling such an arrow answers `undefined`
+where node answers `S`; `new S()` is correct. The mechanism is an inconsistency
+inside the engine rather than a `Reflect` semantics gap:
 
-Established afterwards, and it invalidates both of those attempts rather than
-refining them. The AST is not the problem: `zun_syntax`'s
-`Expression::NewTarget` emits `Expr::Ident(Name { span })` whose span covers
-the source text `new.target`, so `self.text(name)` does answer `"new.target"`
-(a run-time class constructor takes a separate path, `__zunNewTarget`).
+    const a: any = new S();
+    const b: any = Reflect.construct(P, [], S);
+    a.constructor === b.constructor        // true
+    typeof a.constructor.__classDesc       // "function"
+    typeof b.constructor.__classDesc       // "undefined"
 
-The problem is that **the arrow never reaches the capture walk at all**. A
-trace printing every name `closures.rs::add_name` sees while compiling
-`class D { v: any; constructor() { this.v = (): string => new.target.name } }`
-printed seven names, all from the prelude, and neither `this` nor
-`new.target` among them. So `collect_captures` is not running for an arrow
-written inside a constructor, which is why inheriting `is_constructor` and
-why rewriting `add_name` both changed nothing: neither site executes.
+The same value answers a property read two different ways depending on the
+receiver expression it came through, so `this.constructor.__classDesc` is not
+really two property reads: the class is being resolved from the **instance**
+(its `type_rid`), not from the constructor value. An object built with an
+explicit newTarget is allocated from `P`'s layout with `S.prototype`, so that
+resolution has nothing to answer with.
 
-The next attempt therefore starts by finding **which path compiles an arrow
-assigned inside a constructor** -- not `closures.rs`, on this evidence -- and
-whether it has any way to reach `this`. Do not touch `check_new_target` or the
-capture walk again until that is answered.
-
-### `new.target` in an arrow: a working workaround, and what it proves
-
-    class C {
-      v: any;
-      constructor() {
-        const nt: any = new.target;              // correct here
-        this.v = (): string => nt.name;          // answers "C" -- CORRECT
-      }
-    }
-
-Reading `new.target` into a local in the constructor and capturing the local
-works. So the capture machinery is sound and the arrow lowering is sound; only
-a *direct* `new.target` inside the arrow fails, and it fails identically for an
-expression body (`() => new.target.name`) and a block body
-(`() => { return new.target.name }`). A `function (this: any)` expression
-assigned in a constructor is also fine.
-
-That makes the shape of the fix clear: inside an arrow, `new.target` must be
-lowered as a use of the enclosing `this`, so the capture set has to include
-`this` when the arrow mentions `new.target` -- `check_new_target` needs both
-`cx.is_constructor` (inheritable, verified) and `cx.lookup("this")`, and the
-second is what is missing because an arrow whose only free name is
-`new.target` captures nothing.
-
-Still unexplained, and the one thing to trace next: `analyze_closure_captures`
-walks the arrow's body and its `ast::Expr::Ident` arm calls `add_name`, yet a
-trace of every name it saw while compiling such an arrow printed only prelude
-names -- neither `this` nor `new.target`. Since captures demonstrably work for
-an ordinary local (`nt` above), the walk does run; find why that particular
-`Ident` does not reach it.
-
-Until then the workaround above is the thing to reach for, and it is worth
-knowing it exists: the engine is not missing `new.target` in a constructor, only
-its lexical inheritance into an arrow.
+`new.target` is a property of the *construction*, not of the instance, so the
+real fix is to thread the newTarget through construction rather than recover it
+from the receiver. Note also that node has no `__classDesc` at all, so zun
+answering a function for `a.constructor.__classDesc` is itself a small
+divergence on an internal name.
