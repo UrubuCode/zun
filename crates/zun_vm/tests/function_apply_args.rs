@@ -17,10 +17,18 @@ fn run_source(src: &str) -> Vec<String> {
     out.lines
 }
 
+/// `apply` carries a function value through its argument array.
+///
+/// The receiver is declared with `this:`. Both tests here used to take it in
+/// their first ordinary parameter, which is what the receiver gate corrected:
+/// a free function receives `this` only when it declares one, so
+/// `g.apply(null, [dbl, 4.0])` passes `dbl` as the *first* argument, exactly
+/// as node does. Asserting the old shape made these reds that no conformance
+/// fixture could explain -- node throws `f is not a function` for it.
 #[test]
 fn apply_passes_a_function_in_the_args_array() {
     let out = run_source(
-        "function g(t: any, f: Function, x: number): number { return (f(x)) as number; }\n\
+        "function g(this: any, f: Function, x: number): number { return (f(x)) as number; }\n\
          function dbl(n: number): number { return n * 2.0; }\n\
          function main() {\n\
             print((g.apply(null, [dbl, 4.0])) as number);\n\
@@ -36,7 +44,7 @@ fn apply_round_trips_a_closure_through_the_args_array() {
          function main() {\n\
             let k: number = 10.0;\n\
             let cb = (n) => (n as number) + k;\n\
-            print((g.apply(1.0, [cb, 2.0])) as number);\n\
+            print((g.apply(null, [1.0, cb, 2.0])) as number);\n\
          }",
     );
     assert_eq!(out, ["13"]);

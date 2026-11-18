@@ -1384,25 +1384,33 @@ The prelude's `structuredClone` lost its `= undefined` default in the same
 change: a default lowers `length` by JS rules, and node's native declares two
 parameters.
 
-## `function_apply_args` is red for a prelude-less module, and a `.ts` probe cannot see it
 
-Both tests in `crates/zun_vm/tests/function_apply_args.rs` fail with
-`TypeError: number is not a function`: a function value inside an `apply`
-argument array is lost. Confirmed pre-existing by running two binaries, and the
-older one merely could not render the message, which `6ee17919` fixed.
+## `function_apply_args` was a stale test, not an engine gap
 
-**It does not reproduce through the CLI**, and the reason is the pipeline, not
-the feature. Every shape of it matches node when run as a `.ts` file -- a
-function in an array, `apply`, `call`, spread, and a parameter declared
-`Function` rather than `any`. The test compiles with `zun_sema::check` on bare
-source, while the CLI goes through `zun_compiler`, which calls
-`zun_prelude::with_prelude(source)` first. So the test exercises a
-**prelude-less** module and the CLI never does.
+Both tests in `crates/zun_vm/tests/function_apply_args.rs` asserted a call
+shape **node rejects**, and are fixed in place. They read
 
-That makes it a real gap for the bare-module configuration the AOT path uses,
-and it means a conformance fixture can never cover it. Reproducing it needs a
-Rust-level test, not a probe; `typed_dyn.rs:570` boxes a view argument with the
-plain `box_any` and `.unwrap_or_else(Any::void)`, which turns a callable into
-`undefined`, and `:1209` drops an unboxable iterator item -- both are the same
-shape as the five result sites fixed in `d3df63e3` and are the first places to
-look.
+    g.apply(1.0, [cb, 2.0])      // expecting a=1.0, f=cb, x=2.0
+
+which only works if `apply`'s `thisArg` fills the first ordinary parameter.
+That is the convention the receiver gate deliberately removed: a free function
+takes `this` only when it declares one. node answers
+`TypeError: f is not a function` for that source, so zun throwing was correct
+all along -- the expectation was wrong. One test now declares
+`function g(this: any, f: Function, x: number)`, the other passes all three
+arguments in the array; both forms were checked against node, and both pass.
+
+**I wrote a note here claiming it was a real prelude-less gap and named two
+`typed_dyn.rs` sites to look at.** That was wrong on both counts. The
+prelude-less observation was true but irrelevant -- the test compiles without
+the prelude, which is why no `.ts` probe reproduced it, and I took "cannot
+reproduce through the CLI" as evidence of a configuration-specific gap instead
+of asking whether the assertion itself was right. I then changed those two
+sites to `box_any_cell` on the strength of that note; the tests stayed red, the
+169-fixture stdout was byte-identical, and the probes already matched node, so
+the edits were reverted rather than carried on faith.
+
+The lesson is narrow and worth keeping: **before hunting for the code that
+makes a test fail, check what node says about the test's own source.** A red
+test is a claim about behaviour, and the claim can be the broken part --
+especially one written before an intentional semantic change.
