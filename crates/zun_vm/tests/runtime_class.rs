@@ -457,3 +457,233 @@ fn a_lowered_class_is_not_confused_with_a_static_class_of_the_same_name() {
         ]
     );
 }
+
+// Private names of a run-time class (`zun_syntax`'s `runtime_private`): a
+// private member is per-evaluation state held in the class factory, never on
+// the instance, the class or the prototype. Every expected line is node's.
+
+#[test]
+fn a_private_field_does_not_stop_a_capture_being_by_reference() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+function mut(): any { let n = 1; class K { #tag = "k"; read(): string { return this.#tag + n } } const k = new K(); n = 99; return k.read() }
+t("mut", mut); t("mut", mut)
+function shared(): any[] { let c = 0; class C { #step = 1; inc(): number { c += this.#step; return c } } return [new C(), () => c] }
+t("shared", () => { const [o, peek] = shared(); return [o.inc(), o.inc(), peek()].join(",") })
+t("shared", () => { const [o, peek] = shared(); return [o.inc(), o.inc(), peek()].join(",") })
+"##);
+    let expected: &[&str] = &[
+        r##"mut k99"##,
+        r##"mut k99"##,
+        r##"shared 1,2,2"##,
+        r##"shared 1,2,2"##,
+    ];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn every_private_member_kind_lowers_with_a_capture() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+function kinds(seed: number): any {
+  class M {
+    #f: number = seed;
+    #g: number;
+    static #count = 0;
+    static #made: any[] = [];
+    constructor(g: number) { this.#g = g; M.#count++; M.#made.push(g) }
+    #helper(x: number): number { return x + this.#f + seed }
+    get #acc(): number { return this.#f * 2 }
+    set #acc(v: number) { this.#f = v / 2 }
+    static #smeth(x: number): number { return x + M.#count }
+    static get #sacc(): string { return "s" + M.#count }
+    run(): string {
+      const a = this.#helper(1);
+      this.#f += 10;
+      this.#g++;
+      const pre = this.#g++;
+      this.#g **= 2;
+      const b = this.#acc;
+      this.#acc = 100;
+      this.#f ||= 7;
+      this.#f ??= 8;
+      const fn = this.#helper;
+      return [a, this.#f, this.#g, pre, b, fn.call(this, 0), M.#smeth(1), M.#sacc, M.#made.join("+"), M.#count].join(",")
+    }
+    static has(o: any): string { return [#f in o, #g in o, #helper in o, #acc in o, #count in o, #smeth in o].join("") }
+    static count(): number { return M.#count }
+  }
+  const m = new M(3); new M(4);
+  return m.run() + " " + M.has(m) + " " + M.has({}) + " " + M.has(M) + " " + M.count()
+}
+t("kinds", () => kinds(5)); t("kinds", () => kinds(5))
+"##);
+    let expected: &[&str] = &[
+        r##"kinds 11,50,25,4,30,55,3,s2,3+4,2 truetruetruetruefalsefalse falsefalsefalsefalsefalsefalse falsefalsefalsefalsetruetrue 2"##,
+        r##"kinds 11,50,25,4,30,55,3,s2,3+4,2 truetruetruetruefalsefalse falsefalsefalsefalsefalsefalse falsefalsefalsefalsetruetrue 2"##,
+    ];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn a_private_brand_is_per_evaluation_and_follows_the_object_not_its_prototype() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+function mk(tag: string): any { return class B { #x = tag; static is(o: any): boolean { return #x in o } static get(o: any): string { return o.#x } getX(): string { return this.#x } } }
+t("brand", () => { const A = mk("a"), B = mk("b"); const a = new A(), b = new B(); const moved = new A(); Object.setPrototypeOf(moved, null); const fake = Object.create(A.prototype);
+  const out: any[] = [A.is(a), A.is(b), B.is(b), B.is(a), A.is(moved), A.is(fake), A.is({}), A.is(A), A.get(a), B.get(b)];
+  for (const f of [() => A.get(b), () => A.get(fake), () => A.is(5), () => A.is(null), () => A.is("s"), () => a.getX.call({}), () => a.getX.call(b), () => A.get(undefined)]) { try { out.push(f()) } catch (e: any) { out.push(e.constructor.name + ":" + e.message) } }
+  return out.join(" | ") })
+t("brand2", () => { const A = mk("a"); return A.is(new A()) + "," + A.get(new A()) })
+"##);
+    let expected: &[&str] = &[
+        r##"brand true | false | true | false | true | false | false | false | a | b | TypeError:Cannot read private member #x from an object whose class did not declare it | TypeError:Cannot read private member #x from an object whose class did not declare it | TypeError:Cannot use 'in' operator to search for '#x' in 5 | TypeError:Cannot use 'in' operator to search for '#x' in null | TypeError:Cannot use 'in' operator to search for '#x' in s | TypeError:Cannot read private member #x from an object whose class did not declare it | TypeError:Cannot read private member #x from an object whose class did not declare it | TypeError:Cannot read properties of undefined (reading '#x')"##,
+        r##"brand2 true,a"##,
+    ];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn a_static_private_does_not_answer_to_a_subclass() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+function stat(p: number): any {
+  class S { static #secret = p; static read(): number { return this.#secret } static viaName(): number { return S.#secret } static #hid(): number { return p + 1 } static invoke(): number { return this.#hid() } static set(v: number): void { this.#secret = v } }
+  class T extends S {}
+  const out: any[] = [S.read(), S.viaName(), T.viaName(), S.invoke()];
+  for (const f of [() => T.read(), () => T.invoke(), () => T.set(1), () => S.read.call({}), () => S.read.call(T)]) { try { out.push(f()) } catch (e: any) { out.push(e.constructor.name + ":" + e.message) } }
+  S.set(50); out.push(S.read());
+  return out.join(" | ")
+}
+t("stat", () => stat(7)); t("stat", () => stat(8))
+"##);
+    let expected: &[&str] = &[
+        r##"stat 7 | 7 | 7 | 8 | TypeError:Cannot read private member #secret from an object whose class did not declare it | TypeError:Receiver must be class S | TypeError:Cannot write private member #secret to an object whose class did not declare it | TypeError:Cannot read private member #secret from an object whose class did not declare it | TypeError:Cannot read private member #secret from an object whose class did not declare it | 50"##,
+        r##"stat 8 | 8 | 8 | 9 | TypeError:Cannot read private member #secret from an object whose class did not declare it | TypeError:Receiver must be class S | TypeError:Cannot write private member #secret to an object whose class did not declare it | TypeError:Cannot read private member #secret from an object whose class did not declare it | TypeError:Cannot read private member #secret from an object whose class did not declare it | 50"##,
+    ];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn a_private_member_refuses_a_receiver_without_its_brand() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+function wrong(p: number): any {
+  class W { #v = p; #m(): number { return p } get #a(): number { return p } set #s(v: number) { }
+    static probe(o: any): string { const out: string[] = []; for (const f of [() => o.#v, () => { o.#v = 1 }, () => o.#m(), () => typeof o.#m, () => { (o as any).#m = 1 }, () => o.#a, () => { o.#a = 1 }, () => o.#s, () => { o.#s = 1 }, () => { o.#v++ }]) { try { out.push(String(f())) } catch (e: any) { out.push(e.constructor.name + ":" + e.message) } } return out.join(" | ") } }
+  return W.probe({}) + " || " + W.probe(new W())
+}
+t("wrong", () => wrong(3)); t("wrong", () => wrong(3))
+"##);
+    let expected: &[&str] = &[
+        r##"wrong TypeError:Cannot read private member #v from an object whose class did not declare it | TypeError:Cannot write private member #v to an object whose class did not declare it | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Cannot read private member #v from an object whose class did not declare it || 3 | undefined | 3 | function | TypeError:Private method '#m' is not writable | 3 | TypeError:'#a' was defined without a setter | TypeError:'#s' was defined without a getter | undefined | undefined"##,
+        r##"wrong TypeError:Cannot read private member #v from an object whose class did not declare it | TypeError:Cannot write private member #v to an object whose class did not declare it | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Receiver must be an instance of class W | TypeError:Cannot read private member #v from an object whose class did not declare it || 3 | undefined | 3 | function | TypeError:Private method '#m' is not writable | 3 | TypeError:'#a' was defined without a setter | TypeError:'#s' was defined without a getter | undefined | undefined"##,
+    ];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn a_private_member_is_invisible_to_reflection() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+function refl(p: number): any {
+  class R { #a = p; #b = 2; pub = 1; static #s = 3; static sp = 4; #m(): number { return p } get #g(): number { return 1 } static #sm(): number { return p } use(): number { return this.#a + this.#b + this.#m() + this.#g + R.#s + R.#sm() } }
+  const r = new R(); r.use();
+  const names: string[] = []; for (const k in r) names.push(k);
+  const snames: string[] = []; for (const k in R) snames.push(k);
+  return [
+    JSON.stringify(Object.getOwnPropertyNames(r)), JSON.stringify(Object.keys(r)), Object.getOwnPropertySymbols(r).length, JSON.stringify(Reflect.ownKeys(r)), JSON.stringify(r), names.join("+"),
+    JSON.stringify(Object.getOwnPropertyNames(R).sort()), JSON.stringify(Object.keys(R)), snames.join("+"),
+    JSON.stringify(Object.getOwnPropertyNames(R.prototype).sort()), JSON.stringify(Object.keys(R.prototype)), Object.getOwnPropertySymbols(R.prototype).length, JSON.stringify(Reflect.ownKeys(R.prototype)),
+    "#a" in r, "a" in r, "#m" in r, "#s" in R, "s" in R, "#m" in R.prototype, "m" in R.prototype,
+    Object.getOwnPropertyDescriptor(r, "#a"), Object.getOwnPropertyDescriptor(r, "a"), Object.getOwnPropertyDescriptor(R, "#s"), Object.getOwnPropertyDescriptor(R.prototype, "#m"),
+    (r as any)["#a"], (r as any).a, (R as any)["#s"], JSON.stringify(Object.entries(r)), JSON.stringify({ ...r }), JSON.stringify(Object.assign({}, r)), r.use(),
+  ].join(" ")
+}
+t("refl", () => refl(1)); t("refl", () => refl(1))
+"##);
+    let expected: &[&str] = &[
+        r##"refl ["pub"] ["pub"] 0 ["pub"] {"pub":1} pub ["length","name","prototype","sp"] ["sp"] sp ["constructor","use"] [] 0 ["constructor","use"] false false false false false false false        [["pub",1]] {"pub":1} {"pub":1} 9"##,
+        r##"refl ["pub"] ["pub"] 0 ["pub"] {"pub":1} pub ["length","name","prototype","sp"] ["sp"] sp ["constructor","use"] [] 0 ["constructor","use"] false false false false false false false        [["pub",1]] {"pub":1} {"pub":1} 9"##,
+    ];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn an_inner_run_time_class_reads_the_outer_static_class_private() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+class Outer {
+  #n: string = "outer";
+  makeInner(): any {
+    const self = this;
+    class Inner {
+      #m: string = "inner";
+      both(): string { return this.#m + "/" + self.#n }
+      static innerBrand(o: any): boolean { return #m in o }
+      static outerBrand(o: any): boolean { return #n in o }
+    }
+    return Inner;
+  }
+  static outerBrand(o: any): boolean { return #n in o }
+}
+t("nested", () => { const outer = new Outer(); const I: any = outer.makeInner(); const inner = new I(); const J: any = new Outer().makeInner();
+  return [inner.both(), I.innerBrand(inner), I.innerBrand(outer), I.outerBrand(inner), I.outerBrand(outer), Outer.outerBrand(inner), Outer.outerBrand(outer), J.innerBrand(inner), J.innerBrand(new J()), Object.keys(inner).length, Object.keys(outer).length].join(",") })
+t("nested", () => { const outer = new Outer(); const I: any = outer.makeInner(); return new I().both() })
+"##);
+    let expected: &[&str] = &[
+        r##"nested inner/outer,true,false,false,true,false,true,false,true,0,0"##,
+        r##"nested inner/outer"##,
+    ];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn a_derived_run_time_class_brands_what_super_returns() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+function derived(Base: any, p: number): any {
+  class D extends Base { #d = p; #dm(): number { return this.#d + 1 } constructor(a: number) { super(a); this.#d += a } get d(): number { return this.#dm() } static is(o: any): boolean { return #d in o } }
+  return D
+}
+class PlainBase { a: number; constructor(a: number) { this.a = a } }
+t("derived", () => { const D = derived(PlainBase, 10); const d = new D(5); return [d.d, d.a, D.is(d), D.is(new PlainBase(1)), d instanceof PlainBase, Object.keys(d).join("+")].join(",") })
+t("derived", () => { const D = derived(PlainBase, 20); const d = new D(5); return [d.d, d.a, D.is(d)].join(",") })
+function twice(): any { class E { constructor(o: any) { return o } } class F extends E { #g = 2; constructor(o: any) { super(o) } static is(o: any): boolean { return #g in o } } const o = {}; new F(o); const out: any[] = [F.is(o)]; try { new F(o); out.push("no-throw") } catch (e: any) { out.push(e.constructor.name + ":" + e.message) } return out.join(",") }
+t("twice", twice); t("twice", twice)
+"##);
+    let expected: &[&str] = &[
+        r##"derived 16,5,true,false,true,a"##,
+        r##"derived 26,5,true"##,
+        r##"twice true,TypeError:Cannot initialize #g twice on the same object"##,
+        r##"twice true,TypeError:Cannot initialize #g twice on the same object"##,
+    ];
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn private_members_hold_in_a_hot_loop() {
+    let out = run(r##"function t(label: string, f: () => any) { try { console.log(label, f()) } catch (e: any) { console.log(label, "THREW", e && e.constructor && e.constructor.name, e && e.message) } }
+function mut(): any { let n = 1; class K { #tag = "k"; read(): string { return this.#tag + n } } const k = new K(); n = 99; return k.read() }
+function mk(tag: string): any { return class B { #x = tag; static is(o: any): boolean { return #x in o } static get(o: any): string { return o.#x } getX(): string { return this.#x } } }
+class Outer {
+  #n: string = "outer";
+  makeInner(): any {
+    const self = this;
+    class Inner {
+      #m: string = "inner";
+      both(): string { return this.#m + "/" + self.#n }
+      static innerBrand(o: any): boolean { return #m in o }
+      static outerBrand(o: any): boolean { return #n in o }
+    }
+    return Inner;
+  }
+  static outerBrand(o: any): boolean { return #n in o }
+}
+function hot(): any { let total = 0; class H { #n = 0; add(x: number): number { this.#n += x; total += x; return this.#n } get n(): number { return this.#n } static is(o: any): boolean { return #n in o } } const h = new H(); for (let i = 0; i < 5000; i++) { h.add(1); if (!H.is(h)) return "lost" } return total + ":" + h.n }
+t("hot", hot); t("hot", hot)
+let acc = 0; for (let i = 0; i < 5000; i++) { const A = mk("t" + (i % 3)); const a = new A(); if (A.is(a) && !A.is({})) acc += A.get(a).length } console.log("hot-mk", acc)
+let acc2 = 0; for (let i = 0; i < 5000; i++) { acc2 += mut().length } console.log("hot-mut", acc2)
+let acc3 = 0; for (let i = 0; i < 5000; i++) { const I: any = new Outer().makeInner(); acc3 += new I().both().length } console.log("hot-nested", acc3)
+"##);
+    let expected: &[&str] = &[
+        r##"hot 5000:5000"##,
+        r##"hot 5000:5000"##,
+        r##"hot-mk 10000"##,
+        r##"hot-mut 15000"##,
+        r##"hot-nested 55000"##,
+    ];
+    assert_eq!(out, expected);
+}

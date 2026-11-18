@@ -69,6 +69,9 @@ pub(super) fn convert_class_declaration(
             class_declaration.span.start,
             class_declaration.span.end,
         ));
+    // Inside this class its private names are the checker's, even when an
+    // enclosing run-time class declares the same name.
+    let _privates = shadow_private_names(names.iter().map(|(name, _)| name.as_str()));
     PRIVATE_SCOPES.with(|scopes| scopes.borrow_mut().push((id_span, names)));
     // A static class's members have the ordinary `this` and leave `super` to
     // the checker, even when the class sits inside a run-time class member.

@@ -184,3 +184,125 @@ function __zunClassCallCheck(cls: any, allocated: any): void {
         throw new TypeError("Class constructor " + name + " cannot be invoked without 'new'");
     }
 }
+
+// Private names of a run-time class.
+//
+// A private name is per-evaluation state, exactly like a captured local, so
+// the front end lowers it to bindings of the class factory (see
+// `zun_syntax`'s `runtime_private`): nothing is stored on the instance, the
+// class or the prototype, so no reflection surface can observe it.
+//
+// Every reference goes through one of the helpers below with the same
+// leading arguments:
+//
+//   kind   0 instance field     guard = the field's WeakMap   store = guard
+//          1 static field       guard = the class             store = the statics bag
+//          2 instance method    guard = the brand WeakMap     store = the functions bag
+//          3 static method      guard = the class             store = the functions bag
+//          4 instance accessor  guard = the brand WeakMap     store = the functions bag
+//          5 static accessor    guard = the class             store = the functions bag
+//
+// An odd kind is static: its brand is identity with the declaring class (a
+// subclass does not carry it). An even kind is branded by membership in the
+// WeakMap, which is what `#x in obj` answers.
+
+// A fresh store for one instance private field, or for the instance brand.
+function __zunPrivStore(): any {
+    return new WeakMap();
+}
+
+function __zunPrivBranded(kind: number, guard: any, obj: any): boolean {
+    if (kind % 2 === 1) {
+        return obj === guard;
+    }
+    if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) {
+        return false;
+    }
+    return guard.has(obj);
+}
+
+function __zunPrivRefuse(kind: number, write: boolean, key: string, cls: any, obj: any): void {
+    if (obj === null || obj === undefined) {
+        if (write) {
+            throw new TypeError("Cannot set properties of " + String(obj) + " (setting '#" + key + "')");
+        }
+        throw new TypeError("Cannot read properties of " + String(obj) + " (reading '#" + key + "')");
+    }
+    if (kind < 2) {
+        if (write) {
+            throw new TypeError("Cannot write private member #" + key + " to an object whose class did not declare it");
+        }
+        throw new TypeError("Cannot read private member #" + key + " from an object whose class did not declare it");
+    }
+    const shown: string = cls.name === "" ? "anonymous" : cls.name;
+    if (kind % 2 === 1) {
+        throw new TypeError("Receiver must be class " + shown);
+    }
+    throw new TypeError("Receiver must be an instance of class " + shown);
+}
+
+// `obj.#key`
+function __zunPrivRead(kind: number, guard: any, obj: any, store: any, key: string, cls: any): any {
+    if (!__zunPrivBranded(kind, guard, obj)) {
+        __zunPrivRefuse(kind, false, key, cls, obj);
+    }
+    if (kind === 0) {
+        return store.get(obj);
+    }
+    if (kind < 4) {
+        return store[key];
+    }
+    const getter: any = store["g:" + key];
+    if (getter === undefined) {
+        throw new TypeError("'#" + key + "' was defined without a getter");
+    }
+    return getter.call(obj);
+}
+
+// `obj.#key = value`
+function __zunPrivWrite(kind: number, guard: any, obj: any, store: any, key: string, cls: any, value: any): any {
+    if (!__zunPrivBranded(kind, guard, obj)) {
+        __zunPrivRefuse(kind, true, key, cls, obj);
+    }
+    if (kind === 0) {
+        store.set(obj, value);
+    } else if (kind === 1) {
+        store[key] = value;
+    } else if (kind < 4) {
+        throw new TypeError("Private method '#" + key + "' is not writable");
+    } else {
+        const setter: any = store["s:" + key];
+        if (setter === undefined) {
+            throw new TypeError("'#" + key + "' was defined without a setter");
+        }
+        setter.call(obj, value);
+    }
+    return value;
+}
+
+// `obj.#key(...args)`: the member is read first, then called on `obj`.
+function __zunPrivCall(kind: number, guard: any, obj: any, store: any, key: string, cls: any, args: any[]): any {
+    const callee: any = __zunPrivRead(kind, guard, obj, store, key, cls);
+    if (typeof callee !== "function") {
+        throw new TypeError("#" + key + " is not a function");
+    }
+    return callee.apply(obj, args);
+}
+
+// `#key in obj`
+function __zunPrivIn(kind: number, guard: any, obj: any, key: string): boolean {
+    if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) {
+        throw new TypeError("Cannot use 'in' operator to search for '#" + key + "' in " + String(obj));
+    }
+    return __zunPrivBranded(kind, guard, obj);
+}
+
+// Define an instance private field (or add the instance brand) on a freshly
+// constructed object. A second definition is the TypeError a constructor
+// returning an already-initialized object raises.
+function __zunPrivDefine(store: any, obj: any, value: any, key: string): void {
+    if (store.has(obj)) {
+        throw new TypeError("Cannot initialize " + (key === "" ? "private methods of class" : "#" + key) + " twice on the same object");
+    }
+    store.set(obj, value);
+}

@@ -11,11 +11,17 @@ pub(super) enum MemberRef<'a, 'b> {
 pub(super) enum MemberStore {
     Field { object: Expr, field: Name },
     Index { object: Expr, index: Expr },
+    /// A private member of a run-time class (see `runtime_private`).
+    Private {
+        object: Expr,
+        slot: super::super::runtime_private::PrivateSlot,
+    },
 }
 
 impl MemberStore {
     pub(super) fn build(&self, value: Expr, span: Span) -> Expr {
         match self {
+            MemberStore::Private { object, slot } => slot.write(object.clone(), value, span),
             MemberStore::Field { object, field } => Expr::FieldAssign {
                 object: Box::new(object.clone()),
                 field: *field,
@@ -114,6 +120,17 @@ pub(super) fn decompose_member(
                     span: span(m.span),
                 },
                 MemberStore::Index { object, index },
+            )
+        }
+        MemberRef::Private(m)
+            if super::super::runtime_private::runtime_private(m.field.name.as_str()).is_some() =>
+        {
+            let slot = super::super::runtime_private::runtime_private(m.field.name.as_str())
+                .expect("checked by the guard");
+            (
+                binds,
+                slot.read(object.clone(), span(m.span)),
+                MemberStore::Private { object, slot },
             )
         }
         MemberRef::Private(m) => {
@@ -231,6 +248,13 @@ pub(super) fn convert_private_in(
     // `instanceof`, which follows the prototype chain) or `obj === Class`
     // (static members).
     let name = private_in.left.name.to_string();
+    // A private name of a run-time class is branded by its own store.
+    if let Some(slot) = super::super::runtime_private::runtime_private(&name) {
+        return Ok(slot.has(
+            convert_expression(source, &private_in.right)?,
+            span(private_in.span),
+        ));
+    }
     let found = PRIVATE_SCOPES.with(|scopes| {
         scopes
             .borrow()
@@ -317,6 +341,13 @@ pub(super) fn convert_private_field(
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     if member.optional {
         return Err("OXC adapter does not support optional private members yet".into());
+    }
+    if let Some(slot) = super::super::runtime_private::runtime_private(member.field.name.as_str())
+    {
+        return Ok(slot.read(
+            convert_expression(source, &member.object)?,
+            span(member.span),
+        ));
     }
     Ok(Expr::PrivateField {
         object: Box::new(convert_expression(source, &member.object)?),

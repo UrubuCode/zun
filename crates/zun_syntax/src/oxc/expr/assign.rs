@@ -118,6 +118,17 @@ fn compound_read(
             index: Box::new(convert_expression(source, &member.expression)?),
             span: span(member.span),
         },
+        AssignmentTarget::PrivateFieldExpression(member)
+            if super::super::runtime_private::runtime_private(member.field.name.as_str())
+                .is_some() =>
+        {
+            super::super::runtime_private::runtime_private(member.field.name.as_str())
+                .expect("checked by the guard")
+                .read(
+                    convert_expression(source, &member.object)?,
+                    span(member.span),
+                )
+        }
         AssignmentTarget::PrivateFieldExpression(member) => Expr::PrivateField {
             object: Box::new(convert_expression(source, &member.object)?),
             field: Name {
@@ -210,6 +221,20 @@ fn store_assignment_value(
             value,
             span: span(assignment.span),
         }),
+        AssignmentTarget::PrivateFieldExpression(member)
+            if super::super::runtime_private::runtime_private(member.field.name.as_str())
+                .is_some() =>
+        {
+            Ok(
+                super::super::runtime_private::runtime_private(member.field.name.as_str())
+                    .expect("checked by the guard")
+                    .write(
+                        convert_expression(source, &member.object)?,
+                        *value,
+                        span(assignment.span),
+                    ),
+            )
+        }
         // Sema lowers a private store from `FieldAssign` over a
         // `PrivateField` target (the shape the hand parser emits).
         AssignmentTarget::PrivateFieldExpression(member) => Ok(Expr::FieldAssign {

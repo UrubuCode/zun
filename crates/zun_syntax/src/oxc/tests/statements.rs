@@ -570,11 +570,17 @@ fn a_class_expression_used_as_a_value_in_a_function_is_lowered_in_place() {
 
 #[test]
 fn a_class_the_closure_form_cannot_express_keeps_the_static_path() {
-    // `#private` members need the static class's lexical knowledge, so the
-    // class is hoisted as before (and keeps the checker's diagnostics).
+    // Parameter properties are not lowered, so the class is hoisted as
+    // before (and keeps the checker's diagnostics).
+    assert_eq!(
+        hoisted_and_lets("function make() { return class { constructor(public x: number) {} }; }"),
+        (1, 0)
+    );
+    // `#private` members are per-evaluation state like a capture: they lower
+    // to bindings of the class factory (see `runtime_private`).
     assert_eq!(
         hoisted_and_lets("function make() { return class { #secret = 1; read() { return this.#secret; } }; }"),
-        (1, 0)
+        (0, 0)
     );
     // A base named nowhere else in the program is not a value either: the
     // checker reports the unknown base class.

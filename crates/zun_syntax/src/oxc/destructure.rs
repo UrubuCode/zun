@@ -47,6 +47,13 @@ pub(super) fn store_into_target(
             value,
             span: whole,
         }),
+        AssignmentTarget::PrivateFieldExpression(member)
+            if runtime_private(member.field.name.as_str()).is_some() =>
+        {
+            Ok(runtime_private(member.field.name.as_str())
+                .expect("checked by the guard")
+                .write(convert_expression(source, &member.object)?, *value, whole))
+        }
         AssignmentTarget::PrivateFieldExpression(member) => Ok(Expr::FieldAssign {
             object: Box::new(Expr::PrivateField {
                 object: Box::new(convert_expression(source, &member.object)?),

@@ -231,6 +231,21 @@ pub(super) fn convert_call(
         // `this.#m(args)`: a private method is an ordinary vtable
         // method whose name keeps the `#` (so it cannot collide with a
         // public member).
+        // A private member of a run-time class is read from its store (with
+        // the brand check) and called on the receiver.
+        Expression::PrivateFieldExpression(member)
+            if !member.optional
+                && super::super::runtime_private::runtime_private(member.field.name.as_str())
+                    .is_some() =>
+        {
+            let slot = super::super::runtime_private::runtime_private(member.field.name.as_str())
+                .expect("checked by the guard");
+            Ok(slot.call(
+                convert_expression(source, &member.object)?,
+                args,
+                span(call.span),
+            ))
+        }
         Expression::PrivateFieldExpression(member) if !member.optional => Ok(Expr::MethodCall {
             receiver: Box::new(convert_expression(source, &member.object)?),
             method: Name {

@@ -25,9 +25,10 @@
 //! `super(...)`, descriptors). No type is invented at run time and nothing
 //! crosses the compile/run boundary except ordinary IL.
 //!
-//! Members that need per-class static knowledge (`#private` names,
-//! decorators, parameter properties) are not lowered; a class using them
-//! keeps the static path, including its diagnostics.
+//! `#private` members lower to bindings of the same factory (see
+//! `runtime_private`). Members that need per-class static knowledge
+//! (decorators, parameter properties, `accessor` fields) are not lowered; a
+//! class using them keeps the static path, including its diagnostics.
 
 use super::*;
 
@@ -549,7 +550,6 @@ fn lowering_supported(class: &oxc_ast::ast::Class<'_>) -> bool {
     class.body.body.iter().all(|element| match element {
         ClassElement::MethodDefinition(method) => {
             method.decorators.is_empty()
-                && !matches!(method.key, PropertyKey::PrivateIdentifier(_))
                 && !(method.kind == MethodDefinitionKind::Constructor
                     && method
                         .value
@@ -558,10 +558,7 @@ fn lowering_supported(class: &oxc_ast::ast::Class<'_>) -> bool {
                         .iter()
                         .any(|parameter| parameter.accessibility.is_some() || parameter.readonly))
         }
-        ClassElement::PropertyDefinition(property) => {
-            property.decorators.is_empty()
-                && !matches!(property.key, PropertyKey::PrivateIdentifier(_))
-        }
+        ClassElement::PropertyDefinition(property) => property.decorators.is_empty(),
         ClassElement::StaticBlock(_) | ClassElement::TSIndexSignature(_) => true,
         ClassElement::AccessorProperty(_) => false,
     })
@@ -686,15 +683,22 @@ pub(super) fn convert_runtime_class(
     if let Some(id) = class.id.as_ref() {
         IMMUTABLE_SELF_NAMES.with(|names| names.borrow_mut().push(id.name.to_string()));
     }
-    let members = convert_members(
-        source,
-        class,
-        class_binding,
-        init_binding,
-        this_binding,
-        has_base,
-        whole,
-    );
+    // The class's private names are visible to its members only (and to the
+    // classes nested in them).
+    let privates = PrivateMembers::collect(class, class_binding, unique, whole);
+    let members = {
+        let _privates = privates.enter();
+        convert_members(
+            source,
+            class,
+            &privates,
+            class_binding,
+            init_binding,
+            this_binding,
+            has_base,
+            whole,
+        )
+    };
     if class.id.is_some() {
         IMMUTABLE_SELF_NAMES.with(|names| names.borrow_mut().pop());
     }
@@ -785,6 +789,7 @@ struct LoweredMembers {
 fn convert_members(
     source: &str,
     class: &oxc_ast::ast::Class<'_>,
+    privates: &PrivateMembers,
     class_binding: Name,
     init_binding: Name,
     this_binding: Name,
@@ -804,8 +809,12 @@ fn convert_members(
         is_static: true,
         ..instance_home
     };
-    let mut before_constructor = Vec::new();
+    // The private stores exist before any member closure is created.
+    let mut before_constructor = privates.declarations.clone();
     let mut after_constructor = Vec::new();
+    // Private methods and accessors, installed ahead of every other member:
+    // a static initializer may already call them.
+    let mut private_functions = Vec::new();
     let mut field_statements = Vec::new();
     let mut constructor_method = None;
 
@@ -824,7 +833,14 @@ fn convert_members(
                     constructor_method = Some(method);
                     continue;
                 }
-                let key = member_key(source, &method.key, method.computed)?;
+                let private_name = match &method.key {
+                    PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.as_str()),
+                    _ => None,
+                };
+                let key = match private_name {
+                    Some(_) => undefined(span(method.span)),
+                    None => member_key(source, &method.key, method.computed)?,
+                };
                 let home = if method.r#static {
                     static_home
                 } else {
@@ -836,6 +852,15 @@ fn convert_members(
                 NEXT_RUNTIME_SUPER.with(|next| next.set(Some(home)));
                 let function = convert_oxc_function(source, &method.value);
                 NEXT_RUNTIME_SUPER.with(|next| next.set(None));
+                if let Some(name) = private_name {
+                    private_functions.push(privates.define_function(
+                        name,
+                        method.kind,
+                        function?,
+                        span(method.span),
+                    ));
+                    continue;
+                }
                 let target = if method.r#static {
                     Expr::Ident(class_binding)
                 } else {
@@ -861,6 +886,25 @@ fn convert_members(
                     continue;
                 }
                 let at = span(property.span);
+                if let PropertyKey::PrivateIdentifier(identifier) = &property.key {
+                    let name = identifier.name.as_str();
+                    let _context = push_super_context(Some(class_binding), property.r#static);
+                    let _frames = if property.r#static {
+                        enter_member_frames(Some(class_binding), Some(static_home))
+                    } else {
+                        enter_member_frames(None, Some(instance_home))
+                    };
+                    let value = match property.value.as_ref() {
+                        Some(expression) => convert_expression(source, expression)?,
+                        None => undefined(at),
+                    };
+                    if property.r#static {
+                        after_constructor.push(privates.define_static(name, value, at));
+                    } else {
+                        field_statements.push(privates.define_field(name, ident("this"), value, at));
+                    }
+                    continue;
+                }
                 let key = member_key(source, &property.key, property.computed)?;
                 if property.r#static {
                     // A static initializer runs with `this` bound to the class.
@@ -928,6 +972,12 @@ fn convert_members(
         }
     }
 
+    after_constructor.splice(0..0, private_functions);
+    // The brand of the private methods precedes the fields, whose
+    // initializers may call them.
+    if let Some(brand) = privates.brand_instance(ident("this"), whole) {
+        field_statements.insert(0, brand);
+    }
     let has_fields = !field_statements.is_empty();
     if has_fields {
         let initializer = Expr::Function(FunctionExpr {

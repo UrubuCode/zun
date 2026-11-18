@@ -184,8 +184,8 @@ name are handled at the syntax boundary:
   `new K()` to a dynamic `new` on the binding, `x instanceof K` to a test
   against the binding's value (`K as any`), and erases `: K` to `any`.
 
-A class the closure form cannot express -- `#private` members, decorators,
-parameter properties, `accessor` fields -- **keeps the static path**, with its
+A class the closure form cannot express -- decorators, parameter properties,
+`accessor` fields -- **keeps the static path**, with its
 existing diagnostics (including "`super` is not supported in a class whose base
 class is a run-time value").
 
@@ -215,11 +215,22 @@ compile).
 Each of these fails loudly unless marked otherwise.
 
 - **A capturing class that cannot be lowered still captures nothing.**
-  `function f(p) { class K { #x = 1; m() { return this.#x + p } } ... }`
-  throws `p is not defined`: `#private` members, decorators, parameter
-  properties and `accessor` fields keep the static path (see above), and a
-  static method has no environment. This is the remaining half of the capture
-  gap; see "Next: private names in a lowered class".
+  `function f(p) { class K { constructor(public x: number) {} m() { return p } } }`
+  throws `p is not defined`: decorators, parameter properties and `accessor`
+  fields keep the static path (see above), and a static method has no
+  environment.
+- **A function value returned by a method called on a dynamic receiver is
+  lost.** `const o: any = { fn() { return function () {} } }; typeof o.fn()`
+  answers `object`, and calling the result throws `null is not a function`.
+  It predates run-time classes (the object literal alone shows it) but every
+  lowered class is a dynamic receiver, so `class K { handler() { return () =>
+  p } }` and a method that returns a class (`return Inner`) answer
+  `undefined`. Returning the function inside an object or an array works.
+  This is the most damaging open gap for lowered classes; it belongs in the
+  dynamic call path, not in the lowering.
+- **A static member named `call` (or `apply` / `bind`)** on a run-time class
+  is shadowed by `Function.prototype`'s: `C.call()` invokes the constructor
+  and throws `Class constructor C cannot be invoked without 'new'`.
 - **No temporal dead zone.** A pre-declared class binding holds `undefined`
   until its declaration runs, so `new K()` written *before* a capturing
   `class K` in straight-line code throws a `TypeError` (not a constructor)
@@ -241,16 +252,20 @@ Each of these fails loudly unless marked otherwise.
   measured and rejected: it fixes that program but breaks
   `tests/misc-platform/platform-classes-and-helpers.ts` (a local function
   used as a constructor takes a different path through a dynamic `new`).
-- **Nested local classes of one name panic the checker** (`classes.rs`,
-  `declared[&raw]`: no entry) when both stay static:
-  `function f() { class K {} function g() { class K {} } }`. Predates this
-  work; it is not reached when the outer one is lowered.
 - **A `Proxy` as a base** (`class X extends new Proxy(C, {})`) throws
   `Class extends value does not have valid prototype property undefined`: a
   proxy over a class value answers `undefined` for every member read, and
   `Reflect.construct(proxy, ...)` rejects it. Both predate this work.
-- **`#private` members and decorators in a run-time class**: the class keeps
-  the static path (see above).
+- **Decorators, parameter properties and `accessor` fields in a run-time
+  class**: the class keeps the static path (see above). Parameter properties
+  are assignments at the head of the lowered constructor; `accessor` is a
+  private field plus a getter/setter pair, so it follows from the private
+  lowering below. Neither is done.
+- **`obj?.#x`** in a run-time class is a compile error (as it is in a static
+  one).
+- **Private error messages on the static path differ from node's** (a static
+  private read on a subclass says `undefined is not a function`); the lowered
+  path uses node's wording.
 - **Typed fields of a static base reject values of the wrong type.**
   `new Mixed("Bob", null)` over `class User { age: number }` aborts in the
   typed field store (`value.rs:157`). The same program without any run-time
@@ -263,10 +278,8 @@ Each of these fails loudly unless marked otherwise.
   constructor called with a receiver that looks like a fresh object
   (`C.call({})`) is not refused.
 
-## Next: private names in a lowered class
 
-The capture rule stops at `lowering_supported`. The shape that matters is in
-`tests/classes/class-private-brands-and-statics.ts`:
+## Private names of a run-time class
 
 ```ts
 class Outer {
@@ -284,37 +297,90 @@ class Outer {
 }
 ```
 
-`Inner` captures, so it must be a closure; it also declares `#m`, so today it
-is not lowered. Two designs were considered.
+`Inner` captures, so it must be a closure; it also declares `#m`. Two designs
+were considered.
 
 1. **An environment slot on a static class.** Keep `Inner` typed and give its
-   methods a hidden environment (a per-evaluation class record holding the
-   environment, reached from `this`). This is the "closure-carrying method
-   kind" the first section rejects: a format change with interpreter and JIT
+   methods a hidden environment. This is the "closure-carrying method kind"
+   the first section rejects: a format change with interpreter and JIT
    halves, a hidden slot that reflection must be taught to skip, and static
-   methods (no `this`) still need the per-evaluation class value. It also
-   leaves identity per evaluation unsolved for the same class.
-2. **Private names in the closure form** (recommended). A private name is
-   per-evaluation state exactly like a capture, so it lowers to a binding of
-   the class factory:
-   - each `#name` of the class becomes a factory-local `WeakMap` (fields) or
-     a `WeakSet` brand plus a closure (methods, accessors); statics use the
-     constructor itself as the only key;
-   - `obj.#x` becomes `__zunPrivateGet(map, obj)`, which throws the
-     `TypeError` a missing brand throws; writes, compound assignment and
-     `++` go through a matching setter helper; `#x in obj` is `map.has(obj)`;
-   - field initializers add to the maps in declaration order inside the
-     existing initializer function, so a brand is visible exactly when the
-     field is defined (`super()` returning another object brands *that*).
-   The front end needs a stack of "private names of the lowered classes being
-   converted", consulted where private member expressions, private `in` and
-   private assignment targets are converted; a name not on the stack (the
-   `#n` of the static `Outer` above) is left untouched for the checker, which
-   already resolves an outer class's private name inside a nested function.
-   No format change, no hidden slot, nothing for reflection to hide: a
-   `WeakMap` in a closure is invisible by construction.
+   methods (no `this`) still need a per-evaluation class value. It also
+   leaves identity per evaluation unsolved.
+2. **Private names in the closure form** (implemented). A private name is
+   per-evaluation state exactly like a capture, so it lowers to bindings of
+   the class factory. No format change, no opcode, no hidden slot.
 
-Decorators, parameter properties and `accessor` fields are independent of
-this and smaller: parameter properties are assignments at the head of the
-lowered constructor; `accessor` is a private field plus a getter/setter pair,
-so it follows from (2).
+### The lowered form
+
+`crates/zun_syntax/src/oxc/runtime_private.rs` gives each private name of a
+lowered class a *slot*; the prelude helpers (`__zunPriv*` in
+`builtin/runtime_class.zun`) do the brand check and the access.
+
+| Member | Where it lives | Brand |
+|---|---|---|
+| instance field `#x` | its own `WeakMap`, instance -> value | membership in that map |
+| instance method / getter / setter | a functions bag (`{}`) of closures | one `WeakMap` per class, filled before the fields |
+| static field | a statics bag (`{}`) | identity with the class |
+| static method / getter / setter | the functions bag | identity with the class |
+
+```ts
+(() => {
+  const W = __zunPrivStore();                        // #m
+  const I = function () { __zunPrivDefine(W, this, "inner", "m"); };
+  C = function () { ...; I.call(this); };
+  __zunClassMethod(C.prototype, "both", function () {
+    return __zunPrivRead(0, W, this, W, "m", C) + "/" + self.#n;   // `#n` is Outer's
+  });
+  __zunClassStatic... innerBrand: function (o) { return __zunPrivIn(0, W, o, "m"); }
+})()
+```
+
+- **References.** `o.#x` is `__zunPrivRead`, `o.#x = v` (and the compound,
+  logical and `++` forms, through the existing once-only decomposition of the
+  target) is `__zunPrivWrite`, `o.#x(args)` is `__zunPrivCall` (read, then
+  call on `o`), `#x in o` is `__zunPrivIn`. All take the same leading
+  arguments, `(kind, guard, o, store, key, class)`; `kind` selects the row of
+  the table above and its low bit says "static".
+- **Brands.** `#x in o` answers membership in the store, so it follows the
+  *object*: still true after `Object.setPrototypeOf(o, null)`, false for
+  `Object.create(C.prototype)`, false for an instance of another evaluation
+  of the same class text, and a `TypeError` for a primitive. The static
+  path's `hasPrivateBrand` (the type chain) is not involved and is unchanged
+  for static classes. A static private is branded by `o === C`, so a
+  subclass receiver is refused.
+- **Errors.** A wrong receiver gets node's `TypeError`: `Cannot read private
+  member #x from an object whose class did not declare it` (fields),
+  `Receiver must be an instance of class C` / `Receiver must be class C`
+  (methods and accessors), `'#x' was defined without a getter|setter`,
+  `Private method '#x' is not writable`, `Cannot initialize #x twice on the
+  same object` (a base constructor returning an already-branded object).
+- **Reflection.** Nothing is stored on the instance, the class or the
+  prototype, so `getOwnPropertyNames`, `keys`, `getOwnPropertySymbols`,
+  `Reflect.ownKeys`, descriptors, `in`, `for..in`, `JSON.stringify`, spread
+  and `Object.assign` have nothing to find. A frozen instance still takes
+  private writes, as in JavaScript.
+- **Order.** The stores are declared before any member closure is created (a
+  closure only captures a binding that exists) and never reassigned. Private
+  methods are installed ahead of every other member, so a static initializer
+  can call them. An instance is branded for its private methods before its
+  fields are defined, in declaration order, inside the existing
+  field-initializer function -- so in a derived class the brand lands on
+  whatever `super(...)` returned.
+
+### Lexical scope
+
+A private name resolves to the innermost class that declares it. The front
+end keeps a stack of frames mirroring the class nesting of the node being
+converted: a lowered class pushes its slots, a static class pushes its names
+as *shadows*. A reference whose innermost frame is a slot is lowered; any
+other reference (the `#n` of the static `Outer` above, or a name a nested
+static class redeclares) is left untouched for the checker, which already
+resolves an outer static class's private name inside a nested function.
+
+### What changed in routing
+
+`lowering_supported` no longer excludes `#private` members, so a class with
+them is lowered under the same three rules as any other: a run-time base, a
+class expression used as a value inside a function, or a capture. A class
+with private members that meets none of them is still a static class with a
+typed layout and type-chain brands.
