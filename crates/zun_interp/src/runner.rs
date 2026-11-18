@@ -888,16 +888,26 @@ impl Interp<'_> {
         }
         let unnoticed = self.async_state.promises.take_unnoticed_rejections();
         for pid in unnoticed {
-            // Reverse the promise→id bridge to find the heap cell.
-            let addr = self
+            // Reverse the promise->id bridge to find the heap cell. The hash
+            // must be checked exactly as `bridged_pid` checks it on the
+            // forward lookup: nothing roots these addresses, and an entry for
+            // a promise that did not survive a collection is still in the map,
+            // so matching on the id alone could read a *reused* cell as a
+            // promise. That is how this engine produced leaked interned
+            // strings elsewhere in this run.
+            let found = self
                 .async_state
                 .pid_by_obj
                 .iter()
-                .find_map(|(&addr, &(bridged, _))| (bridged == pid).then_some(addr));
-            let message = match addr {
-                Some(addr) => {
+                .find_map(|(&addr, &(bridged, hash))| (bridged == pid).then_some((addr, hash)));
+            let message = match found {
+                Some((addr, hash)) => {
                     let promise = unsafe { zun_gc::Obj::from_addr(addr as *mut u64) };
-                    zun_gc::with_current_heap(|heap| heap.promise_error(promise))
+                    Some(promise)
+                        .filter(|promise| promise.identity_hash() == hash)
+                        .and_then(|promise| {
+                            zun_gc::with_current_heap(|heap| heap.promise_error(promise))
+                        })
                         .unwrap_or_else(|| "Promise rejected".into())
                 }
                 None => "Promise rejected".into(),
