@@ -118,6 +118,29 @@ class EventTarget {
         }
         let boxed: any = etCollections.functionBox(listener);
         this.entries.push(new ListenerEntry(type, capture, this.onceOf(options), false, false, boxed, null));
+        // An `AbortSignal` in `options` removes the listener when it aborts --
+        // and an already-aborted one means it was never really added. Ignoring
+        // the option left the listener firing after the abort.
+        this.signalOf(options, type, capture, listener);
+    }
+
+    // Wires `options.signal` to removal, or removes at once if it has already
+    // aborted. Kept separate so the object-listener form can reuse it.
+    signalOf(options: any, type: string, capture: boolean, listener: Function): void {
+        if (options === null || options === undefined || typeof options !== "object") {
+            return;
+        }
+        const signal: any = options.signal;
+        if (signal === null || signal === undefined) {
+            return;
+        }
+        if (signal.aborted === true) {
+            this.removeEventListener(type, listener, options);
+            return;
+        }
+        signal.addEventListener("abort", (): void => {
+            this.removeEventListener(type, listener, options);
+        });
     }
 
     addEventListenerObject(type: string, listener: any, options: any = null): void {

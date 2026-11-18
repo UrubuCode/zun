@@ -19,11 +19,13 @@
 //   * `throwIfAborted` throws an `Error("AbortError: <reason>")` (only `Error`
 //     values can be thrown), not the raw reason.
 
-class AbortSignal {
+// Extends `EventTarget` rather than delegating to one: `signal instanceof
+// EventTarget` must be true, and `event.currentTarget` inside a listener must
+// be the signal, which a held-and-forwarded inner target can never report.
+class AbortSignal extends EventTarget {
     aborted: boolean = false;
     // `undefined` before an abort, as node reports it -- not `null`.
     reason: any = undefined;
-    target: EventTarget = new EventTarget();
 
     // `onabort` is an event-handler property: assigning replaces the previous
     // handler but keeps the position it was first registered in, so it fires
@@ -42,28 +44,13 @@ class AbortSignal {
         this.onabortHandler = value;
         if (!this.onabortRegistered) {
             this.onabortRegistered = true;
-            this.target.addEventListener("abort", (event: any): void => {
+            this.addEventListener("abort", (event: any): void => {
                 const handler: any = this.onabortHandler;
                 if (handler !== null && handler !== undefined) {
                     handler(event);
                 }
             });
         }
-    }
-
-    // `options` is forwarded: `EventTarget` already accepts it, and without the
-    // third parameter here `addEventListener(type, fn, { once: true })` was a
-    // compile error on a signal.
-    addEventListener(type: string, listener: Function, options: any = null): void {
-        this.target.addEventListener(type, listener, options);
-    }
-
-    removeEventListener(type: string, listener: Function, options: any = null): void {
-        this.target.removeEventListener(type, listener, options);
-    }
-
-    dispatchEvent(event: Event): boolean {
-        return this.target.dispatchEvent(event);
     }
 
     // `throwIfAborted` throws the reason **itself**, not a copy: the fixture
@@ -90,13 +77,40 @@ class AbortSignal {
         } else {
             this.reason = reason;
         }
-        this.target.dispatchEvent(new Event("abort"));
+        this.dispatchEvent(new Event("abort"));
     }
 
     static abort(reason: any): AbortSignal {
         let signal = new AbortSignal();
         signal.markAborted(reason);
         return signal;
+    }
+
+    // `AbortSignal.any(signals)`: aborts as soon as any input does, with that
+    // input's reason. An input already aborted at call time settles the result
+    // immediately -- which is why a listener attached afterwards never runs --
+    // and `markAborted` being idempotent is what makes a later abort a no-op.
+    static any(signals: any): AbortSignal {
+        const result: AbortSignal = new AbortSignal();
+        const list: any[] = [...signals];
+        let index: number = 0;
+        while (index < list.length) {
+            const early: any = list[index];
+            if (early.aborted) {
+                result.markAborted(early.reason);
+                return result;
+            }
+            index = index + 1;
+        }
+        index = 0;
+        while (index < list.length) {
+            const source: any = list[index];
+            source.addEventListener("abort", (): void => {
+                result.markAborted(source.reason);
+            });
+            index = index + 1;
+        }
+        return result;
     }
 }
 
