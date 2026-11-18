@@ -1455,6 +1455,36 @@ impl<'a> Interp<'a> {
                             return Ok(Value::Any(boxed));
                         }
                     }
+                    // A callable *property* -- not a method -- reached as a
+                    // member call. `class A { f: any }` holding an arrow was
+                    // readable (`const g = a.f; g()`) and callable through
+                    // `a.f.call(..)`, but `a.f()` on an `any` receiver came
+                    // here and threw `f is not a function` while `typeof a.f`
+                    // answered `"function"`: lists-and-does-not-call, the
+                    // mirror of the shape this engine keeps producing. A
+                    // function in an `any` field is stored as a cell, which
+                    // `unbox_any` resolves, so reading the property and
+                    // invoking it is all that was missing.
+                    let property = self
+                        .instance_member_get(namespace, &member)?
+                        .or_else(|| {
+                            zun_gc::with_current_heap(|heap| heap.dynamic_get(namespace, &member))
+                                .and_then(|any| {
+                                    zun_gc::with_current_heap(|heap| {
+                                        Value::unbox_any(any, heap)
+                                    })
+                                })
+                        });
+                    if let Some(handle) =
+                        property.as_ref().and_then(super::callback_handle)
+                    {
+                        let result = self.invoke_function_value(handle, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| {
+                            result.box_any_cell(heap)
+                        })
+                        .unwrap_or_else(zun_core::Any::null);
+                        return Ok(Value::Any(boxed));
+                    }
                     // Neither a method nor a namespace export: the member is
                     // missing or not callable.
                     if OPTIONAL_PROBE.with(|flag| flag.get()) {
