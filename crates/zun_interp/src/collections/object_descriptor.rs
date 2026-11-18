@@ -1254,7 +1254,17 @@ impl<'a> Interp<'a> {
             "objectToStringTag" => {
                 // `Object.prototype.toString.call(value)`: the builtin tag, or a
                 // string `[Symbol.toStringTag]` own/inherited property.
+                // A function stored in a container comes back as a function
+                // *cell* (an object that holds the handle), and the cell was
+                // observable here: `typeof` unboxes it and says "function"
+                // while this branded it `Object`, so
+                // `Object.prototype.toString.call(arr[0])` answered
+                // `[object Object]` where node answers `[object Function]`.
+                // The same unboxing the dynamic member read uses.
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let value = zun_gc::with_current_heap(|heap| {
+                    crate::collections::unbox_function_box(value, heap)
+                });
                 let tag: String = match &value {
                     Value::Void => "Undefined".into(),
                     Value::Null => "Null".into(),
