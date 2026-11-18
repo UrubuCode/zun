@@ -1347,3 +1347,41 @@ real fix is to thread the newTarget through construction rather than recover it
 from the receiver. Note also that node has no `__classDesc` at all, so zun
 answering a function for `a.constructor.__classDesc` is itself a small
 divergence on an internal name.
+
+## `fn.length` of a prelude function answers 0, and a nearby string literal can change it
+
+    console.log("structuredClone=" + structuredClone.length);  // 2  -- node's answer
+    console.log("structuredClone" + structuredClone.length);   // 0
+    console.log("sc=" + structuredClone.length);               // 0
+    console.log("xxxxxxxxxxxxxxxx=" + structuredClone.length); // 0  (same length, other letters)
+    console.log("structuredClone =" + structuredClone.length); // 2
+    console.log("structuredClone=x" + structuredClone.length); // 2
+
+The real behaviour is **0**. It answers correctly only when a string literal in
+the same expression contains that function's name followed by `=` (a space
+before the `=` is allowed, and trailing text is allowed). Padding a different
+label to the same byte length does not help, so this is not a span or offset
+confusion -- something is scanning source text for `name=`. The prelude has
+precedent for exactly this kind of scan: `check/expr/literal.rs` decides
+`closure_takes_this` by looking for `this` in a function's source text, and
+`closures.rs` takes a `closure_self_name`.
+
+It affects every prelude function value the same way -- `structuredClone`,
+`encodeURIComponent`, `queueMicrotask`, `setTimeout` -- while a true builtin
+such as `parseInt` answers correctly. It is why
+`misc-platform/timers-microtasks-and-errors` prints
+`setTimeout_length=false` and `queueMicrotask_length=0`.
+
+**This corrects `8de84375`'s commit message**, which attributed the variation
+to reachability pruning deciding whether the prelude function is emitted. That
+was wrong: a reference alone changes nothing, and the deciding factor is the
+text of an unrelated string literal. The earlier "all five match node exactly"
+reading came from a probe whose labels happened to be the function names.
+
+**Measurement note.** Two probes with identical `.length` reads in identical
+order, differing only in label text, gave different answers; before noticing
+that, the difference was briefly attributed to how many reads the expression
+made. When a result changes between probes, diff the probes before theorising
+-- and re-run the earlier one against the *current* binary, because comparing
+outputs captured from two different builds invents mechanisms that do not
+exist.
