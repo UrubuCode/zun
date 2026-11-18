@@ -564,7 +564,21 @@ impl<'a> Interp<'a> {
                                 zun_gc::root!(held = obj);
                                 match self.ordinary_to_primitive(obj, "default")? {
                                     Some(prim) => prim,
-                                    None => Value::Str(self.default_object_string(held.get())?.into()),
+                                    // A regexp's primitive is `/source/flags`,
+                                    // through the one canonical assembly. The
+                                    // ordinary path cannot find its `toString`,
+                                    // so without this `"x" + /a/g` answered
+                                    // `"x[object Object]"`. It is consulted
+                                    // *after* `ordinary_to_primitive` so a
+                                    // user-defined `toString` still wins.
+                                    None => match zun_gc::with_current_heap(|heap| {
+                                        regex_to_string(heap, held.get())
+                                    }) {
+                                        Some(text) => Value::Str(text.into()),
+                                        None => Value::Str(
+                                            self.default_object_string(held.get())?.into(),
+                                        ),
+                                    },
                                 }
                             }
                         }

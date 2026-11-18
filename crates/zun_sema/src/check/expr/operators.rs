@@ -317,6 +317,12 @@ impl Checker<'_> {
                     || t == Ty::Array
                     || t == Ty::Void
                     || t == Ty::Symbol
+                    // A `RegExp` reaches `addAny` like any other object, so
+                    // `"x" + /a\/b/gi` concatenates its source through
+                    // ToPrimitive. Its absence here sent the expression to the
+                    // strict rule in `binary.rs`, which rejected it outright --
+                    // one compile error standing in front of 161 fixture lines.
+                    || t == Ty::RegExp
                     || matches!(t, Ty::Int(_) | Ty::Float(_) | Ty::BufferView(_) | Ty::Buffer)
             };
             let numeric_ty = |t: Ty| t.is_int() || t.is_float();
