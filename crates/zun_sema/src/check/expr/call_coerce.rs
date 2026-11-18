@@ -141,10 +141,9 @@ impl Checker<'_> {
             if arg.ty.is_error() {
                 return Some(self.poison(span));
             }
-            // A value already typed `boolean` is its own truthiness.
-            if arg.ty == Ty::Boolean {
-                return Some(arg);
-            }
+            // NOT elided, same reason as `String(x)`/`Number(x)`: a
+            // `boolean`-typed operand can hold anything once an `as any` is in
+            // play, and the truthiness of a non-boolean is not itself.
             let Some((id, _)) = zun_natives::resolve("boolean", "booleanCoerce") else {
                 self.error(span, "missing Boolean intrinsic `booleanCoerce`");
                 return Some(self.poison(span));
@@ -240,10 +239,10 @@ impl Checker<'_> {
             if arg.ty.is_error() {
                 return Some(self.poison(span));
             }
-            // A value already typed `number`/`float` is its own ToNumber.
-            if arg.ty == Ty::F64 {
-                return Some(arg);
-            }
+            // NOT elided, for the same reason `String(x)` is not: "already a
+            // number" is a static claim an `as any` can falsify, and this one
+            // **aborted the engine** -- `Number(v)` reached `as_number` on a
+            // `Str` and panicked where node answers 7.
             let Some((id, _)) = zun_natives::resolve("collections", "numberCoerce") else {
                 self.error(span, "missing `numberCoerce` intrinsic");
                 return Some(self.poison(span));

@@ -451,17 +451,16 @@ impl CallHook for JitHook<'_> {
         // collection while this JIT frame is active.
         let _roots = zun_gc::RootArray::from_objects(native_roots);
         let heap = zun_gc::current_heap_ptr()?;
-        // An argument with no representation for its packed kind stays on Tier
-        // 0, where the interpreter raises the TypeError. `pack_value` reaches
-        // `as_number`/`as_int` for a numeric kind, so a `null` or `undefined`
-        // here **aborted the engine** -- and only once the method had warmed
-        // up, so the same call threw cleanly the first time and killed the
-        // process the second. The interpreter is the always-correct fallback
-        // and the two tiers must agree; declining is what keeps that true.
-        if args.iter().zip(kinds).any(|(v, &k)| {
-            matches!(v, Value::Null | Value::Void)
-                && matches!(k, JitKind::Num(_) | JitKind::String)
-        }) {
+        // An argument whose shape does not fit its packed kind stays on Tier 0,
+        // where the interpreter does the right thing. `pack_value` reads the
+        // operand through `as_number`/`as_int`/`as_object`, which **abort the
+        // engine** on a mismatch -- and only once the method has warmed up, so
+        // the same call behaved the first time and killed the process later.
+        // The interpreter is the always-correct fallback and the two tiers must
+        // agree, so this declines on the *representation*, not on a list of
+        // offending values: the earlier version named only `null`/`undefined`
+        // and a `Str` passed to a numeric parameter still aborted.
+        if args.iter().zip(kinds).any(|(v, &k)| !packs_into(v, k)) {
             return None;
         }
         let packed: Vec<u64> = args
@@ -511,14 +510,7 @@ impl CallHook for JitHook<'_> {
         // Refuse (without caching) if a local does not hold a value of its
         // declared scalar kind, e.g. a not-yet-initialized slot: unpacking it
         // back would silently change its type.
-        let kind_matches = |v: &Value, k: JitKind| match (v, k) {
-            (Value::Bool(_), JitKind::Bool) => true,
-            (Value::Object(_), JitKind::Object | JitKind::Array) => true,
-            (Value::Float(_, n), JitKind::Num(m)) => *n == m && matches!(m, NumKind::F64 | NumKind::F32),
-            (Value::Int(_, n), JitKind::Num(m)) => *n == m && !matches!(m, NumKind::F64 | NumKind::F32),
-            _ => false,
-        };
-        if !locals.iter().zip(kinds).all(|(v, &k)| kind_matches(v, k)) {
+        if !locals.iter().zip(kinds).all(|(v, &k)| packs_into(v, k)) {
             return None;
         }
         let heap = zun_gc::current_heap_ptr()?;
@@ -615,6 +607,28 @@ impl CallHook for JitHook<'_> {
 }
 
 /// Marshal a `Value` into a packed `u64` for parameter kind `k`.
+/// Whether `value` can be packed into a JIT slot of this `kind` without
+/// changing it.
+///
+/// One copy for both entry points. `try_call` had its own list of offending
+/// values (`null`/`undefined`) and still aborted on a `Str` passed to a numeric
+/// parameter, while `try_loop_osr` already asked the question the right way --
+/// about the representation. The strict `NumKind` match is the OSR behaviour
+/// and is kept: a value of the wrong numeric width would come back changed.
+pub(crate) fn packs_into(value: &Value, kind: JitKind) -> bool {
+    match (value, kind) {
+        (Value::Bool(_), JitKind::Bool) => true,
+        (Value::Str(_), JitKind::String) => true,
+        (Value::Object(_) | Value::Null | Value::Void, JitKind::Object | JitKind::Array) => true,
+        (Value::Float(_, n), JitKind::Num(m)) => {
+            *n == m && matches!(m, NumKind::F64 | NumKind::F32)
+        }
+        (Value::Int(_, n), JitKind::Num(m)) => *n == m && !matches!(m, NumKind::F64 | NumKind::F32),
+        (_, JitKind::Function | JitKind::Other) => true,
+        _ => false,
+    }
+}
+
 pub(crate) fn pack_value(v: &Value, k: JitKind, heap: &mut zun_gc::Heap) -> u64 {
     match k {
         JitKind::Num(NumKind::F64) => v.as_number().to_bits(),
