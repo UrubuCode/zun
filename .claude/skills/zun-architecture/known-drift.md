@@ -1515,3 +1515,30 @@ error and could not be caught; `RunError::Native` was not enough either, since
 the message reached the driver instead of the enclosing `try` -- it has to go
 through `throw_native!` at the arm. **Expect to clear a diagnostic and find a
 divergence behind it, and treat "it compiles now" as the halfway point.**
+
+## A built-in instance's method is not a first-class value
+
+    const wm: any = new WeakMap();
+    wm.get            // undefined -- node: a function
+    wm.get.length     // TypeError: Cannot read properties of undefined
+
+The same for `Map`, `WeakMap` and `FinalizationRegistry`, and it is a
+**two-layer** gap, which is what makes it a subsystem rather than a patch:
+
+- sema rejects `fr.register` outright with
+  `type FinalizationRegistry has no fields` -- the dynamic-read escape in
+  `check/expr/field.rs` (~line 668) that covers these built-in types is gated on
+  `fname == "constructor"` and nothing else.
+- the runtime does not produce the value either: casting through `any` gets
+  past sema and still answers `undefined`, so routing sema alone would only
+  move the failure. `classMethodBox` boxes a *user* class's method; the
+  built-in prelude classes have no equivalent reachable from a member read.
+
+This is what blocks `finalization-registry-surface` (81 node lines) at its
+line 22, together with `Reflect.ownKeys(fr)` being refused at compile time with
+`` `Reflect` target must be an object ``. Calling the methods works -- only
+reading one as a value does not.
+
+Worth knowing before starting: the fix has to land in both layers at once, and
+a probe through `any` is the cheap way to tell which layers a gap spans. Here
+it turned a one-line sema change into a correctly scoped "no".
