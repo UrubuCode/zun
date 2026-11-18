@@ -211,9 +211,30 @@ pub(crate) fn bin_float(
     let b = pop(stack)?;
     let a = pop(stack)?;
     let kind = a.float_kind();
-    let result = value::round_float(f(a.as_number(), b.as_number()), kind);
+    let result = value::round_float(to_number(&a), kind);
+    let result = value::round_float(f(result, to_number(&b)), kind);
     stack.push(Value::Float(result, kind));
     Ok(())
+}
+
+/// ToNumber for a primitive, for the typed arithmetic opcodes.
+///
+/// `as_number()` asserted instead, and **aborted the engine** when a slot the
+/// compiler had proved numeric held something else -- which one `as any` at a
+/// call site is enough to arrange. The typed opcodes are chosen because sema
+/// proved both operands are numbers; when that proof is broken at run time,
+/// ToNumber is what `-`, `*`, `/`, `%`, `Math.min` and `Math.max` do in JS
+/// anyway. `+` is the exception and is handled at its own arm, since it
+/// concatenates with a string.
+pub(crate) fn to_number(value: &Value) -> f64 {
+    match value {
+        Value::Float(n, _) => *n,
+        Value::Int(n, _) => *n as f64,
+        Value::Bool(b) => f64::from(u8::from(*b)),
+        Value::Str(text) => crate::collections::js_string_to_number(text),
+        Value::Null => 0.0,
+        _ => f64::NAN,
+    }
 }
 
 pub(crate) fn un_float(stack: &mut Vec<Value>, f: impl Fn(f64) -> f64) -> Result<(), RunError> {

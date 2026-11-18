@@ -922,7 +922,32 @@ impl Interp<'_> {
                     let top = stack.last().cloned().ok_or_else(underflow)?;
                     stack.push(top);
                 }
-                Opcode::AddF64 => bin_float(stack, |a, b| a + b)?,
+                // `+` concatenates when either operand is a string, even in a
+                // slot the compiler typed `number`: `(f as any)("7", 1)` must
+                // answer `"71"` as node does, not `8`. Every other typed
+                // arithmetic opcode runs ToNumber, which `bin_float` now does.
+                Opcode::AddF64 => {
+                    let stringy = stack
+                        .iter()
+                        .rev()
+                        .take(2)
+                        .any(|value| matches!(value, Value::Str(_)));
+                    if stringy {
+                        let b = pop(stack)?;
+                        let a = pop(stack)?;
+                        let text = |value: &Value| -> zun_core::ZStr {
+                            match value {
+                                Value::Str(s) => s.clone(),
+                                other => other.display().into(),
+                            }
+                        };
+                        stack.push(Value::Str(
+                            zun_core::wtf16::concat(&text(&a), &text(&b)).into(),
+                        ));
+                    } else {
+                        bin_float(stack, |a, b| a + b)?;
+                    }
+                }
                 Opcode::SubF64 => bin_float(stack, |a, b| a - b)?,
                 Opcode::MulF64 => bin_float(stack, |a, b| a * b)?,
                 Opcode::DivF64 => bin_float(stack, |a, b| a / b)?,
