@@ -327,3 +327,37 @@ function encodeURIComponent(value?: any): string {
 function decodeURIComponent(value?: any): string {
     return uriString.decodeURIComponent(String(value));
 }
+
+import { timers as coreTimers } from "zun:core";
+
+// First-class forms of the timer and microtask functions, exactly as
+// `encodeURIComponent` above: a direct call is lowered to the intrinsic by the
+// checker, but the *value* was missing, so `globalThis.setTimeout` answered
+// `undefined` and a bare reference was a `ReferenceError` -- while calling them
+// worked. `module_init.rs`'s `PLATFORM_FUNCTIONS` loop installs a global only
+// for a name the prelude defines, and these were natives with no prelude form.
+function queueMicrotask(callback: any): void {
+    coreTimers.queueMicrotask(callback);
+}
+
+function setTimeout(callback: any, delay?: any, ...args: any[]): any {
+    if (args.length === 0) {
+        return coreTimers.setTimeout(callback, Number(delay === undefined ? 0 : delay));
+    }
+    return coreTimers.setTimeoutArgs(callback, Number(delay === undefined ? 0 : delay), args);
+}
+
+function setInterval(callback: any, delay?: any, ...args: any[]): any {
+    if (args.length === 0) {
+        return coreTimers.setInterval(callback, Number(delay === undefined ? 0 : delay));
+    }
+    return coreTimers.setIntervalArgs(callback, Number(delay === undefined ? 0 : delay), args);
+}
+
+function clearTimeout(handle: any): void {
+    coreTimers.clearTimeout(Number(handle === undefined ? 0 : handle));
+}
+
+function clearInterval(handle: any): void {
+    coreTimers.clearInterval(Number(handle === undefined ? 0 : handle));
+}
