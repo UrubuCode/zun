@@ -22,6 +22,40 @@ pub enum RunError {
 /// object, the text for a string. A bare `Object(Obj(0x...))` tells whoever
 /// reads the process's stderr nothing at all, and the heap is reachable from
 /// here through its thread-local accessor.
+thread_local! {
+    /// The last thrown object's rendered text, keyed by its address.
+    ///
+    /// `Display` for [`RunError::Thrown`] needs the heap to build
+    /// `name: message`, and the driver prints after execution ends, when the
+    /// `HeapScope` has dropped -- so eight conformance fixtures reported a bare
+    /// `Object(Obj(0x...))` and could not be diagnosed at all. The text is
+    /// therefore rendered at the interpreter's terminal boundary, while the
+    /// heap is alive, and left here for `Display` to find.
+    ///
+    /// It is a side channel rather than a different `RunError` variant on
+    /// purpose: collapsing `Thrown` into `Native` is observable, and four
+    /// tests match on `Thrown(..)` -- `finally_runs_before_an_unhandled_rethrow`
+    /// and `import_dynamic_il_rejects_unknown_modules` among them. Keyed by
+    /// address so a stale entry cannot be attributed to a different throw.
+    static THROWN_TEXT: std::cell::RefCell<Option<(usize, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Remember `text` as the rendered form of the thrown object at `address`.
+pub fn remember_thrown_text(address: usize, text: String) {
+    THROWN_TEXT.with(|slot| *slot.borrow_mut() = Some((address, text)));
+}
+
+/// The remembered text for `address`, if it is the one most recently rendered.
+fn remembered_thrown_text(address: usize) -> Option<String> {
+    THROWN_TEXT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .filter(|(remembered, _)| *remembered == address)
+            .map(|(_, text)| text.clone())
+    })
+}
+
 fn thrown_text(value: &Value) -> Option<String> {
     match value {
         Value::Str(text) => Some(text.to_string()),
@@ -33,10 +67,12 @@ fn thrown_text(value: &Value) -> Option<String> {
                     .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
                 _ => None,
             }?;
-            // The heap must still be registered here. It usually is NOT at
-            // `Display` time -- the driver prints after execution ends and the
-            // `HeapScope` has dropped -- which is why `RunError::materialize_thrown`
-            // renders the text at the interpreter's terminal boundary instead.
+            // The remembered text first: at `Display` time the heap is usually
+            // gone, and it was rendered at the interpreter boundary precisely
+            // for this moment.
+            if let Some(text) = remembered_thrown_text(object.addr() as usize) {
+                return Some(text);
+            }
             let heap = zun_gc::current_heap_ptr()?;
             let heap = unsafe { &*heap };
             {
@@ -115,39 +151,6 @@ impl core::fmt::Display for RunError {
 }
 
 impl RunError {
-    /// Render a thrown value's `name: message` **while the heap is still
-    /// registered**, so the text survives to printing time.
-    ///
-    /// `Display` for [`RunError::Thrown`] reads the heap, but the driver prints
-    /// the error once execution is over, by which point the `HeapScope` has
-    /// dropped and `current_heap_ptr` answers `None`. Every uncaught thrown
-    /// object therefore printed as `Object(Obj(0x...))`, which made three
-    /// conformance fixtures impossible to diagnose. Two earlier attempts at
-    /// this looked for the wrong thing -- the escaping path, and the catch
-    /// handling -- because the failure is not *where* the error travels but
-    /// *when* it is formatted. One env-gated trace in `thrown_text` named the
-    /// branch (`no heap registered`) in a single run.
-    ///
-    /// Called only from `Interp::annotate_error`, whose every caller is a
-    /// `return Err(..)` at a terminal boundary in `runner.rs`: the heap is
-    /// alive there and the error can no longer be caught, so collapsing the
-    /// variant cannot change any catch decision. `Native` displays its string
-    /// verbatim, so the output is exactly what `Thrown` would have printed had
-    /// the heap still been there.
-    pub fn materialize_thrown(self) -> Self {
-        match &self {
-            // Only a value whose text needs the heap. A `Value::Str` already
-            // displays correctly without one, and collapsing it would change
-            // the variant a caller can observe -- `import_dynamic_il_rejects_unknown_modules`
-            // matches `Thrown(Value::Str(..))` and caught exactly that.
-            RunError::Thrown(value @ (Value::Object(_) | Value::Any(_))) => match thrown_text(value) {
-                Some(text) => RunError::Native(format!("unhandled exception: {text}")),
-                None => self,
-            },
-            _ => self,
-        }
-    }
-
     pub(crate) fn annotate(self, module: &zun_module::Module, method_rid: u32, pc: u32) -> Self {
         if matches!(
             self,

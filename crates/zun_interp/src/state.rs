@@ -260,8 +260,58 @@ pub(super) struct CallFrame {
 }
 
 impl<'a> Interp<'a> {
+    /// `name: message` of a thrown **typed** object, read from its fields.
+    ///
+    /// The eight fixtures that printed a bare `Object(Obj(0x...))` all throw a
+    /// typed class instance -- an `Error` subclass the compiler laid out with
+    /// fixed slots. A trace showed `dyn=false`, no error side-table entry, and
+    /// no dynamic `name`, `message` or prototype, so every lookup in
+    /// `errors::thrown_text` necessarily failed: that function is handed only a
+    /// `&Heap` and cannot reach the metadata saying which slot holds `name`.
+    /// `Interp` can, so the typed case is resolved here and `annotate_error`
+    /// prefers it.
+    pub(super) fn thrown_object_text(&self, object: zun_gc::Obj) -> Option<String> {
+        let field = |key: &str| -> Option<String> {
+            let layout = self
+                .instance_field_map(object.type_rid())?
+                .get(key)
+                .copied()?;
+            if !Self::object_has_slot(object, layout.slot) {
+                return None;
+            }
+            match zun_gc::with_current_heap(|heap| {
+                crate::value::load_field(layout.kind, object, layout.slot, heap)
+            }) {
+                Value::Str(text) => Some(text.to_string()),
+                _ => None,
+            }
+        };
+        // A class that declares neither field still names itself, which beats
+        // printing a heap address.
+        let declared = self
+            .module
+            .tables
+            .type_defs
+            .get((object.type_rid() as usize).wrapping_sub(1))
+            .map(|type_def| self.module.strings.get(type_def.name).to_owned())
+            .filter(|name| !name.is_empty());
+        let name = field("name").or(declared)?;
+        match field("message") {
+            Some(message) if !message.is_empty() => Some(format!("{name}: {message}")),
+            _ => Some(name),
+        }
+    }
+
     pub(super) fn annotate_error(&self, error: super::RunError) -> super::RunError {
-        let error = error.materialize_thrown();
+        // Render a thrown typed instance here, where the heap is alive, and
+        // leave the text for `Display` to find. The variant is deliberately
+        // left alone: collapsing `Thrown` into `Native` is observable, and
+        // four tests match on it.
+        if let super::RunError::Thrown(Value::Object(object)) = &error {
+            if let Some(text) = self.thrown_object_text(*object) {
+                super::errors::remember_thrown_text(object.addr() as usize, text);
+            }
+        }
         match self.active_frame {
             Some((method, pc)) => error.annotate(self.module, method, pc),
             None => error,

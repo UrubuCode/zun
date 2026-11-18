@@ -268,7 +268,7 @@ impl<'a> Interp<'a> {
     /// the object's own storage. Reading past it answered a neighbour's bytes as
     /// a string handle - with released memory poisoned, an out-of-bounds index
     /// into the string table - and writing past it corrupted the next object.
-    fn object_has_slot(object: zun_gc::Obj, slot: usize) -> bool {
+    pub(crate) fn object_has_slot(object: zun_gc::Obj, slot: usize) -> bool {
         zun_gc::with_current_heap(|heap| heap.field_count(object)).is_some_and(|count| slot < count)
     }
 
