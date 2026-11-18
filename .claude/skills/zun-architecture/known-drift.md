@@ -1255,3 +1255,47 @@ diverging line over node's total. That ranking put
 suite, which no matching-line ordering surfaced. Both metrics have a use:
 first-divergence picks the target, matching lines measure whether the fix
 helped.
+
+## The eight opaque fixtures, and what they actually throw
+
+Until `6ee17919` eight fixtures died printing `unhandled exception:
+Object(Obj(0x...))`, so none of them could be diagnosed. The cause was that a
+thrown `Error` **subclass** is a typed class instance -- fixed slots, so its
+`name` and `message` are typed fields -- while `errors::thrown_text` is handed
+only a `&Heap` and cannot reach the metadata that says which slot holds
+`name`. `Interp::thrown_object_text` reads them through `instance_field_map`;
+the text is rendered at the interpreter's terminal boundary, where the heap is
+still registered, and remembered by object address for `Display`.
+
+Their real first blockers, which is where work on them should start:
+
+| fixture | throws |
+|---|---|
+| `class-expressions` | `TypeError: bind is not a function` |
+| `class-mixins` | `TypeError: Cannot store null in the typed field` |
+| `fn-kinds-prototype` | `TypeError: reportOwn is not a function` |
+| `globalthis` | `ReferenceError: queueMicrotask is not defined` |
+| `timers-microtasks` | `ReferenceError: setTimeout is not defined` |
+| `proxy-trap-surface` | `TypeError: invalid argument to built-in function` |
+| `unicode-sets-v` | `SyntaxError: Invalid regular expression: invalid escape` |
+| `symbol-wellknown` | `TypeError: Cannot read properties of undefined` |
+
+`class-expressions` is narrower than it looks: `bind`, `call` and `apply` are
+**undefined on a class value** while they work on a plain function, and
+`Dog.name`, `Dog.length` and `Dog.prototype.speak.bind(..)` all work. The gate
+in `dynamic_call.rs` tests for `Value::Function`, which a class value is not.
+Making it work needs bound-constructor semantics -- `new` on the bound result
+must construct -- so it is not a one-liner, and the fixture needs roughly seven
+further fixes past it.
+
+**Two process lessons from this one bug, which took three attempts.**
+Instrument, one env-gated trace per round: the first two attempts were reverted
+for guessing, and each trace produced exactly one fact -- the failure is *when*
+the value is formatted, not *where* the error travels; then that the boundary
+hook is reached with the heap alive and still fails; then that the value is
+typed, not dynamic. And **do not collapse an error variant to carry
+information**: two versions turned `Thrown` into `Native` once the text was
+known, and four tests match on `Thrown(..)`. "Nothing catches past this
+boundary" was true and beside the point, because the variant itself is
+observable. A side channel keyed by the object's address carries the text and
+leaves the value alone.
