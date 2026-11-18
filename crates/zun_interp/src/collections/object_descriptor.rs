@@ -1087,8 +1087,20 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(obj))
             }
             "objectIsExtensible" => {
-                // A primitive is never extensible (ECMAScript).
-                let arg = args.first().ok_or(RunError::BadToken)?;
+                // A primitive is never extensible (ECMAScript) -- but a
+                // function is an *object*, so it is extensible, and
+                // `Object.freeze(f)` must be able to take that away. A
+                // function used to fall into the primitive path below and
+                // answer `false` where node answers `true`. Its expando bag is
+                // the dynamic object that carries both facts, so route to it.
+                let raw = args.first().ok_or(RunError::BadToken)?;
+                let routed = match unbox_arg(raw)? {
+                    Value::Function(handle) => {
+                        Value::Object(crate::function_expando_bag(handle))
+                    }
+                    other => other,
+                };
+                let arg = &routed;
                 let Some(proxy) = object(arg) else {
                     return Ok(Value::Bool(false));
                 };

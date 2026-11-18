@@ -788,12 +788,31 @@ impl<'a> Interp<'a> {
             "objectFreeze" => {
                 // `Object.freeze(primitive)` is the identity (non-objects have
                 // no properties to freeze), returning the argument unchanged.
-                let arg = args.first().ok_or(RunError::BadToken)?;
-                let Some(obj) = object(arg) else {
-                    return Ok(arg.clone());
+                //
+                // A function is **not** a primitive: freezing one has to
+                // record the level, and its expando bag is where
+                // `objectIsExtensible` reads it from, so route to the bag and
+                // return the function itself -- `Object.freeze(f) === f`.
+                // Before this, freezing a function silently did nothing and
+                // `Object.isExtensible(f)` still answered `true`.
+                let raw = args.first().ok_or(RunError::BadToken)?;
+                let callable = match unbox_arg(raw)? {
+                    Value::Function(handle) => Some(handle),
+                    _ => None,
+                };
+                let routed = match callable {
+                    Some(handle) => Value::Object(crate::function_expando_bag(handle)),
+                    None => raw.clone(),
+                };
+                let answer = |obj: zun_gc::Obj| match callable {
+                    Some(handle) => Value::Function(handle),
+                    None => Value::Object(obj),
+                };
+                let Some(obj) = object(&routed) else {
+                    return Ok(raw.clone());
                 };
                 if self.apply_nondynamic_integrity(obj, 3)? {
-                    return Ok(Value::Object(obj));
+                    return Ok(answer(obj));
                 }
                 // A typed class instance, Map, Set ... has no property table
                 // until something is stored on it: give it one so the level
@@ -802,7 +821,7 @@ impl<'a> Interp<'a> {
                     crate::integrity::ensure_property_table(heap, obj);
                     heap.dynamic_freeze(obj)
                 });
-                Ok(Value::Object(obj))
+                Ok(answer(obj))
             }
             "objectIsFrozen" => {
                 // A primitive is always "frozen" (ECMAScript); otherwise a
