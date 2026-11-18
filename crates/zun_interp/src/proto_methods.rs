@@ -87,10 +87,16 @@ impl Interp<'_> {
             .get((field_rid as usize).wrapping_sub(1))
             .map(|field| self.module.strings.get(field.name).to_owned())
             .unwrap_or_default();
-        let shown = if matches!(value, Value::Null) {
-            "null"
-        } else {
-            "undefined"
+        // Name what was actually offered: a string slot now refuses every
+        // non-string, so "undefined" for a number would misdescribe it.
+        let shown = match value {
+            Value::Null => "null".to_owned(),
+            Value::Void => "undefined".to_owned(),
+            Value::Bool(_) => "a boolean".to_owned(),
+            Value::Int(..) | Value::Float(..) => "a number".to_owned(),
+            Value::Str(_) => "a string".to_owned(),
+            Value::Function(_) => "a function".to_owned(),
+            _ => "that value".to_owned(),
         };
         format!("TypeError: Cannot store {shown} in the typed field `{name}`")
     }

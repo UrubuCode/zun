@@ -356,6 +356,17 @@ pub fn decode_field(kind: u8, slot: u64, heap: &zun_gc::Heap) -> Value {
 /// the honest behaviour until then.
 pub fn unboxed_field_rejects(kind: u8, value: &Value) -> bool {
     use zun_il::JitKind;
+    // A **string** slot rejects every non-string, not only `null`/`undefined`.
+    // Its `_ => 0` fallback means intern id 0, so `class K { s: string }` with
+    // `new (K as any)(7).s` answered the unrelated live string `"Math"` where
+    // node answers `7` -- a silent wrong answer that also hands back another
+    // value's bytes. Reachable from ordinary JS through `any`, and seen four
+    // times in one conformance run before being traced to this line.
+    let string_slot =
+        kind == FIELD_STRING || matches!(JitKind::from_byte(kind), JitKind::String);
+    if string_slot {
+        return !matches!(value, Value::Str(_));
+    }
     if !matches!(value, Value::Null | Value::Void) {
         return false;
     }

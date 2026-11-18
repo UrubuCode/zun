@@ -232,12 +232,15 @@ function __zunDomExceptionCode(name: string): number {
 // WHATWG `DOMException(message = "", name = "Error")`: an `Error` whose `name`
 // is the second argument and whose `code` is the legacy numeric code of that name.
 class DOMException extends Error {
-    constructor(message?: string, name?: string) {
-        super(message === undefined ? "" : message);
+    constructor(message: any = undefined, name: any = undefined) {
+        // `String(..)` must see an `any`: declared `string`, the compiler treats
+        // the coercion as identity, and a caller passing a number through
+        // `as any` then offered a non-string to a `string` slot.
+        super(message === undefined ? "" : String(message));
         // The name lives in the record's `nameOverride` slot, WITHOUT the
         // `hasName` flag: an assigned `name` would be an own enumerable property,
         // while a DOMException `name` is an inherited accessor.
-        this.nameOverride = name === undefined ? "Error" : name;
+        this.nameOverride = name === undefined ? "Error" : String(name);
     }
 
     get errorName(): string {

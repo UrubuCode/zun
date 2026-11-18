@@ -18,10 +18,6 @@ pub enum RunError {
     Suspended,
 }
 
-/// The readable form of a thrown value: `TypeError: message` for an error
-/// object, the text for a string. A bare `Object(Obj(0x...))` tells whoever
-/// reads the process's stderr nothing at all, and the heap is reachable from
-/// here through its thread-local accessor.
 thread_local! {
     /// The last thrown object's rendered text, keyed by its address.
     ///
@@ -55,6 +51,9 @@ fn remembered_thrown_text(address: usize) -> Option<String> {
             .map(|(_, text)| text.clone())
     })
 }
+/// The readable form of a thrown value: `TypeError: message` for an error
+/// object, the text for a string. A bare `Object(Obj(0x...))` tells whoever
+/// reads the process's stderr nothing at all.
 
 fn thrown_text(value: &Value) -> Option<String> {
     match value {
