@@ -227,16 +227,36 @@ impl Checker<'_> {
                 } else {
                     name
                 };
+                // Computed before `params` is moved into the signature.
+                let optional_count = {
+                    let hidden = params.len().saturating_sub(m.params.len());
+                    let mut count = 0;
+                    for (index, p) in m.params.iter().enumerate().rev() {
+                        if p.is_rest {
+                            continue;
+                        }
+                        if p.default_value.is_some() || params.get(index + hidden) == Some(&Ty::Any)
+                        {
+                            count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    count
+                };
                 self.signatures.push(Signature {
                     name,
                     params,
                     return_ty,
-                    optional_count: m
-                        .params
-                        .iter()
-                        .rev()
-                        .take_while(|p| p.default_value.is_some())
-                        .count(),
+                    // Trailing defaulted parameters, and trailing dynamic
+                    // (`any`) ones -- the same permissiveness the free-function
+                    // path has, because JS requires no argument at any arity.
+                    // Without the `any` clause an inherited
+                    // `constructor(first: any, second: any, ...rest: any[])`
+                    // reported `expects at least 2 fixed argument(s)` for
+                    // `new Level4("only")`, which node accepts. `params` carries
+                    // the hidden receiver first, so the type lookup is offset.
+                    optional_count,
                     default_count: m
                         .params
                         .iter()
