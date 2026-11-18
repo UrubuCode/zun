@@ -1719,3 +1719,19 @@ instance and prepending `__args`, and **not** in the gate's receiver decision.
 Identify that builtin the same way -- by instrumenting -- before editing; a
 plain read of the construct helpers is what sent two earlier attempts in this
 session down invented mechanisms.
+
+#### Two construct paths that are NOT the one `new b()` takes
+
+Tried and reverted, so the next attempt does not repeat it: unwrapping the bound
+chain at the `construct_ordinary_function(handle, handle, values)` call in
+`reflect.rs` (~line 564) changes nothing. `new b()` does not go through it --
+the instrumented path above runs through `call_managed_collection` into
+`construct_class_from_descriptor` instead. `Reflect.construct(b, [])` is also
+still wrong after that edit (it answers an instance whose field is `null`
+instead of `5`), so that call site is not the lever for either form.
+
+So the dispatcher to repair is the **builtin** between `call_builtin` and
+`construct_class_from_descriptor`, and the useful next step is to instrument
+*which* managed collection entry that is -- `call_managed_collection` is called
+twice in the trace, so print the name it is given. `function_is_constructor`
+already answers `true` for a bound handle, so the gate is not what rejects it.
