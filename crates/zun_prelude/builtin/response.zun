@@ -34,6 +34,10 @@ class Response {
     #headers: any = null;
     #text: string = "";
     #type: string = "default";
+    // A body that is present but empty (`new Response("")`) is still a body,
+    // so `body` cannot be derived from `#text` being empty.
+    #hasBody: boolean = false;
+    #used: boolean = false;
 
     // A rest parameter, so an omitted argument is told apart from an explicit
     // `null` on every construction path (a reflective construction pads the
@@ -68,6 +72,7 @@ class Response {
             this.#headers = new Headers();
         }
         if (body !== undefined && body !== null) {
+            this.#hasBody = true;
             const status: number = this.#status;
             if (status === 204 || status === 205 || status === 304) {
                 throw new TypeError("Response constructor: Invalid response status code " + status);
@@ -124,16 +129,59 @@ class Response {
         copy.#statusText = this.#statusText;
         copy.#headers = new Headers(this.#headers);
         copy.#text = this.#text;
+        copy.#hasBody = this.#hasBody;
         copy.#type = this.#type;
         return copy;
     }
 
+    // The body mixin. A reader marks the body used and a second read of any
+    // kind is a `TypeError`, which is what `bodyUsed` exists to report; a
+    // `clone()` copy starts unused. `body` mirrors `Request.body`: `null` when
+    // there is no body, otherwise a one-chunk `ReadableStream`.
+    get bodyUsed(): boolean {
+        return this.#used;
+    }
+
+    get body(): any {
+        if (!this.#hasBody) {
+            return null;
+        }
+        const chunk: string = this.#text;
+        return new ReadableStream({
+            start(controller: any) {
+                if (chunk.length > 0) {
+                    controller.enqueue(new TextEncoder().encode(chunk));
+                }
+                controller.close();
+            },
+        });
+    }
+
+    #consume(): void {
+        if (this.#used) {
+            throw new TypeError("Body is unusable: Body has already been read");
+        }
+        this.#used = true;
+    }
+
     text(): string {
+        this.#consume();
         return this.#text;
     }
 
     json(): any {
+        this.#consume();
         return JSON.parse(this.#text);
+    }
+
+    arrayBuffer(): any {
+        this.#consume();
+        return new TextEncoder().encode(this.#text).buffer;
+    }
+
+    blob(): any {
+        this.#consume();
+        return new Blob([this.#text], { type: this.#headers.get("content-type") ?? "" });
     }
 
     get [Symbol.toStringTag](): string {
