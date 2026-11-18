@@ -1542,3 +1542,28 @@ reading one as a value does not.
 Worth knowing before starting: the fix has to land in both layers at once, and
 a probe through `any` is the cheap way to tell which layers a gap spans. Here
 it turned a one-line sema change into a correctly scoped "no".
+
+## A static and an instance method cannot share a name
+
+    class Response {
+      json(): any { ... }           // instance
+      static json(value: any) { ... } // `duplicate method 'json'`
+    }
+
+In JS these share nothing but spelling. In sema they collide because
+`methods_by_class: Vec<HashMap<String, u32>>` is keyed by the plain name and
+**one** `insert` (`check/signatures.rs:219`) registers both kinds, so the
+second declaration reports a duplicate.
+
+This is the single remaining blocker of `blob-file-response-body` (109 node
+lines): `Response.json(value)` is a static the spec requires and the instance
+`json()` already owns the name. The body mixin that fixture also needed --
+`bodyUsed`, `body`, `arrayBuffer()`, `blob()` -- landed in `5a5a577d`, taking
+it from 14 diagnostics to these 3.
+
+**Scope before starting:** the collision comes from one `insert`, but
+`methods_by_class` is read at **11 sites**, and `class_layout.rs::method_of` is
+the central lookup used throughout the checker. Keying by name *and* staticness
+means auditing all of them; a prefix on the static key is the smaller shape but
+still touches every reader that expects a plain name. It is a refactor, not a
+patch, and it should not be started at the tail of a long run.
