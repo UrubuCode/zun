@@ -88,6 +88,20 @@ impl<'a> Interp<'a> {
         if own.is_some() {
             return Ok(own);
         }
+        // `Function.prototype` owns no `constructor`, so the walk below reached
+        // `Object.prototype`'s and answered `Object`: `f.constructor.name` was
+        // `"Object"` and `Function.prototype.constructor === Function` was
+        // false, where node answers `Function` and true. The `Function` global
+        // is the class descriptor the registry owns, so read it off the global
+        // object rather than rebuilding it here.
+        if object == Self::function_prototype_singleton() {
+            if let Some(found) = zun_gc::with_current_heap_mut(|heap| {
+                let global = heap.global_object();
+                heap.dynamic_get(global, "Function")
+            }) {
+                return Ok(Some(Value::Any(found)));
+            }
+        }
         if !linked {
             return Ok(None);
         }
