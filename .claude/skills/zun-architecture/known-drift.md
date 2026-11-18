@@ -1129,3 +1129,39 @@ what the work taught and what it left open.
   callable-and-brand` 0 of 285: four compile errors unrelated to classes
   (`new Proxy(..)()` called directly, `this.#shared` in a static method), and
   with those patched out it stops on line 3 inside the Proxy surface.
+
+## An abort on the second call is a tiering symptom
+
+A typed field that cannot hold `null` threw a clean TypeError the first time and
+**aborted the process the second**. Three sites were repaired for it
+(`c0659585`, `06b2b159`): `NewObj` field init and `StoreField` in
+`zun_interp/src/lib.rs`, the dynamic store in `metadata.rs`, and the predicate
+`value::unboxed_field_rejects`.
+
+What matters is not the fix but how the site was found. Two hypotheses were
+wrong, each with a rebuild: that a bare `return Err` skipped `route_exception`,
+then that throwing after `pop_n` left the operand stack short. Both looked at
+the interpreter. One temporary backtrace behind an env var named the real
+caller in a single run: `zun_vm::jit_hook::JitHook::try_call`. The method had
+warmed up, so the second call went to Tier 1, and the JIT's argument packing
+reaches `as_number`/`as_int` directly -- the interpreter-side guard was never
+consulted because the call never entered the interpreter.
+
+**Rule: when a wrong answer or abort appears only on the second or later call of
+the same code, suspect tiering before anything else, and check whether the Tier
+1 path bypasses the check you just added.** A JIT path that aborts where Tier 0
+throws violates the invariant that the interpreter is the always-correct
+fallback; `try_call` now declines an argument it cannot represent so the call
+stays on Tier 0. Any guard added to an interpreter arm needs the same question
+asked of `jit_hook.rs`.
+
+Two further notes from the same run. A string field's `_ => 0` fallback meant
+intern id 0, so `class S { s: string }` with `new S(null as any)` answered the
+unrelated live string `"Math"` -- a silent wrong answer that leaked another
+value's bytes, and it was live inside a **passing** fixture
+(`classes-errors/error-types-and-subclassing`, 97 of 102 matching lines, now
+98). Only a *reference* field has a null encoding. And coercion was rejected on
+purpose: ToNumber would turn `null` into 0, which flips
+`Object.values(this).every(v => v !== null)` to the opposite of node's answer
+with nothing to show for it. Matching node needs the slot widened to hold
+`null`, which is a layout decision and still open.
