@@ -1696,3 +1696,26 @@ receiver-gate sites. It takes a class descriptor *token*, not a function handle,
 so a bound function reaches construction somewhere else; find that dispatcher by
 instrumenting rather than by reading, and do not alter the gate's receiver
 decision while adding the bound unwrap.
+
+### Where `new` on a bound function actually lands (instrumented, not read)
+
+Tracing the thrown store (`Cannot set properties of null (setting 'a')`) from
+`dyn_member.rs:627` -- not the similar message at `:1667`, which never fires
+here -- gives the path:
+
+    run_method_with -> call_inner -> builtins::call_builtin
+      -> call_managed_collection (x2) -> construct_class_from_descriptor
+      -> class_expando_bag -> view_read -> call_inner -> call
+
+So the construct of a bound function is dispatched by a **builtin**, and it does
+reach `construct_class_from_descriptor` -- one of the six protected
+receiver-gate sites. The failure is a member store with `this` bound to the
+`thisArg` that `bind` captured (`null`), instead of a fresh instance:
+ECMAScript's `[[Construct]]` for a bound function **discards** the bound `this`
+and constructs the target.
+
+So the repair is in the builtin that dispatches it, giving the target a fresh
+instance and prepending `__args`, and **not** in the gate's receiver decision.
+Identify that builtin the same way -- by instrumenting -- before editing; a
+plain read of the construct helpers is what sent two earlier attempts in this
+session down invented mechanisms.
