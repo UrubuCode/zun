@@ -1010,8 +1010,21 @@ impl Interp<'_> {
                         other => other,
                     };
                     let (a, b) = (unbox(a), unbox(b));
+                    // `display()`, not `as_str()`: a statically `string`-typed
+                    // operand can hold a non-string at run time (a caller's
+                    // `as any`), and asserting on it **aborted the engine** --
+                    // `function f(s?: string) { return "" + s }` called as
+                    // `(f as any)(5)` panicked where node answers `"5"`.
+                    // `display()` is ToString for every primitive, which is
+                    // what the concatenation needs anyway.
+                    let text = |value: &Value| -> zun_core::ZStr {
+                        match value {
+                            Value::Str(s) => s.clone(),
+                            other => other.display().into(),
+                        }
+                    };
                     stack.push(Value::Str(
-                        zun_core::wtf16::concat(a.as_str(), b.as_str()).into(),
+                        zun_core::wtf16::concat(&text(&a), &text(&b)).into(),
                     ));
                 }
                 Opcode::CmpEq => cmp(stack, true)?,
