@@ -1574,3 +1574,32 @@ func by name, *then* ask `signatures[func].is_static`" -- that check appears at
 the name resolution. One name therefore admits exactly one method by
 construction, and making both kinds coexist changes what a lookup returns, not
 just how a key is spelled.
+
+## `arguments.length` in a constructor reports the padded count
+
+    class D { n: number; constructor(a: any, b: any) { this.n = arguments.length } }
+    new D("x").n      // node 1, zun 2
+
+A free function is correct: `call_dispatch.rs` threads the real pre-padding
+count through the last argument with the `setCallArgc` intrinsic, gated on
+`arguments_functions` -- a set filled only from `program.functions`, by
+spotting the injected `let arguments` prologue.
+
+**Mirroring that for constructors was attempted and reverted**, because the
+real count is not available where the padding happens. A trace at all three
+`pad_default_args` sites in `construct.rs` showed `new D("x")` and
+`new D("x", "y")` both arriving at the same site with `call_args.len() == 2`:
+the arguments are already normalised to the parameter count before that point,
+so there is nothing left to record. Registering class methods in
+`arguments_functions` is necessary but not sufficient, and both edits were
+dropped rather than carried.
+
+The fix has to capture the count earlier, where the call's own argument list is
+still intact. Worth knowing before trying: the three padding sites are not the
+place, and a trace there is what proves it.
+
+This became reachable with `907a5624`, which stopped rejecting
+`new L1("only")` on an inherited `constructor(first: any, second: any, ...rest)`
+-- legal JS that had been a compile error. The padded count is the cost of that
+change and is why `class-constructors-and-new-target`'s `count=` lines still
+diverge.
