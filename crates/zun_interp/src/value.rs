@@ -306,6 +306,16 @@ pub fn store_field(
         }
         return;
     }
+    // A typed slot takes the value a dynamic carrier holds, not the carrier:
+    // the dynamic store path (`instance_member_set`) already unboxes, while
+    // this one did not, so a top-level `const` number reaching a class field
+    // **aborted the engine** with `expected float, found Any(tag: Float)`
+    // (issue #130). Unboxing here keeps the two store paths in step.
+    let unboxed = match value {
+        Value::Any(any) => zun_gc::with_current_heap(|h| Value::unbox_any(*any, h)),
+        _ => None,
+    };
+    let value = unboxed.as_ref().unwrap_or(value);
     let raw = encode_field(kind, value, heap);
     // An array field is a managed reference too, so it needs the old-to-young
     // write barrier as much as an object field does.
