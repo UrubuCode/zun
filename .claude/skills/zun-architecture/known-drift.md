@@ -1165,3 +1165,44 @@ purpose: ToNumber would turn `null` into 0, which flips
 `Object.values(this).every(v => v !== null)` to the opposite of node's answer
 with nothing to show for it. Matching node needs the slot widened to hold
 `null`, which is a layout decision and still open.
+
+## A brand is the type chain; `instanceof` is the prototype chain
+
+Confusing the two was a memory-safety hole (`803ce8f3`). A private field access
+checked neither, so:
+
+    class Money { #amount: number = 1234.5; read() { return this.#amount } }
+    class Label { #text: string = "hi";     read() { return this.#text } }
+    const m: any = new Money();
+    Object.setPrototypeOf(m, Label.prototype);
+    m.read();   // node: TypeError.  zun: the string "Math".
+
+Dispatch correctly followed the swapped prototype into `Label.read`, whose
+`LoadField` read slot 0 of a *Money* object **as a string**, interpreting the
+bits of the float `1234.5` as an intern id. A larger float indexes out of
+range. `setPrototypeOf` is enough to reach it -- no `any` beyond the cast.
+`private_field_brand_ok` now walks the receiver's base chain for the type that
+declares the field, and `LoadField`/`StoreField` consult it. The pre-existing
+dynamic-object guard at those sites does not cover this, because a typed
+instance of the *wrong* class is not a dynamic object.
+
+**The two predicates, and which is which.** `instanceof` must follow the
+**prototype** chain, and `instanceofClass`
+(`collections/object_descriptor.rs`) is right to do so for a typed instance. A
+**brand** -- `#x in o`, and any private member access -- must follow the
+**type** chain (`types.is_assignable`, or the base walk above), because the
+brand is installed on the instance by the declaring constructor and a prototype
+swap cannot move it. Anything that answers a brand question with a prototype
+walk is wrong in both directions at once: it says false after
+`Object.setPrototypeOf` where node says true, and true for
+`Object.create(C.prototype)` where node says false.
+
+**Method note.** The fixture that led here could not have found it: its two
+classes both declare `#balance: number`, so reading the wrong object's slot
+answers plausibly and the only symptom was `10` instead of `TypeError`. It took
+a probe whose two classes differ in *type* to turn a wrong answer into a
+visible leak. When a wrong answer involves a slot, write the probe so the two
+layouts disagree -- otherwise type confusion looks like arithmetic. This was
+the third `"Math"` of the 153 run, after the string field slot and
+`newtarget-arrow`; that string is what intern id 0 resolves to, so **`"Math"`
+appearing anywhere unexpected means raw bits were read as a string handle.**
