@@ -21,34 +21,75 @@
 
 class AbortSignal {
     aborted: boolean = false;
-    reason: any = null;
+    // `undefined` before an abort, as node reports it -- not `null`.
+    reason: any = undefined;
     target: EventTarget = new EventTarget();
 
-    addEventListener(type: string, listener: Function): void {
-        this.target.addEventListener(type, listener);
+    // `onabort` is an event-handler property: assigning replaces the previous
+    // handler but keeps the position it was first registered in, so it fires
+    // between the listeners added before and after it. Assigning `null` clears
+    // it. The backing listener is registered once, on first assignment, and
+    // reads the current handler when it fires -- which is what gives
+    // replacement its position-preserving behaviour.
+    onabortHandler: any = null;
+    onabortRegistered: boolean = false;
+
+    get onabort(): any {
+        return this.onabortHandler;
     }
 
-    removeEventListener(type: string, listener: Function): void {
-        this.target.removeEventListener(type, listener);
+    set onabort(value: any) {
+        this.onabortHandler = value;
+        if (!this.onabortRegistered) {
+            this.onabortRegistered = true;
+            this.target.addEventListener("abort", (event: any): void => {
+                const handler: any = this.onabortHandler;
+                if (handler !== null && handler !== undefined) {
+                    handler(event);
+                }
+            });
+        }
+    }
+
+    // `options` is forwarded: `EventTarget` already accepts it, and without the
+    // third parameter here `addEventListener(type, fn, { once: true })` was a
+    // compile error on a signal.
+    addEventListener(type: string, listener: Function, options: any = null): void {
+        this.target.addEventListener(type, listener, options);
+    }
+
+    removeEventListener(type: string, listener: Function, options: any = null): void {
+        this.target.removeEventListener(type, listener, options);
     }
 
     dispatchEvent(event: Event): boolean {
         return this.target.dispatchEvent(event);
     }
 
+    // `throwIfAborted` throws the reason **itself**, not a copy: the fixture
+    // asserts `thrown === signal.reason`, and a fresh `Error` fails that and
+    // carries the wrong `name`.
     throwIfAborted(): void {
         if (this.aborted) {
-            throw new Error("AbortError: " + String(this.reason));
+            throw this.reason;
         }
     }
 
     // Marks the signal aborted (once) and fires its "abort" event.
+    //
+    // An absent reason becomes the spec's `AbortError` `DOMException`, so
+    // `signal.reason.name` is `"AbortError"` and the reason is an `Error`.
+    // It used to stay `null`, and reading `.name` off it threw.
     markAborted(reason: any): void {
         if (this.aborted) {
             return;
         }
         this.aborted = true;
-        this.reason = reason;
+        if (reason === undefined) {
+            this.reason = new DOMException("This operation was aborted", "AbortError");
+        } else {
+            this.reason = reason;
+        }
         this.target.dispatchEvent(new Event("abort"));
     }
 
@@ -62,7 +103,10 @@ class AbortSignal {
 class AbortController {
     signal: AbortSignal = new AbortSignal();
 
-    abort(reason: any = null): void {
+    // The default is `undefined`, not `null`: `markAborted` turns an absent
+    // reason into the spec's `AbortError` `DOMException`, and `null` is a
+    // reason the caller can legitimately pass.
+    abort(reason: any = undefined): void {
         this.signal.markAborted(reason);
     }
 }
