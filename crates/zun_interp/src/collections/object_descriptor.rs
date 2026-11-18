@@ -930,22 +930,52 @@ impl<'a> Interp<'a> {
             "reflectOwnKeys" => {
                 // Own string keys followed by own symbol keys. A proxy's
                 // `ownKeys` trap result is returned as is.
+                // `Reflect.ownKeys(primitive)` is a `TypeError`. The old
+                // `object(..)` resolution rejected primitives as a side effect
+                // of reading the symbol side; routing symbols through the
+                // intrinsic lost that, and a string answered `0|1|length`.
+                // Functions and class values are *not* primitives and must pass.
+                let argument = args
+                    .first()
+                    .map(|arg| unbox_arg(arg))
+                    .transpose()?
+                    .unwrap_or(Value::Void);
+                if matches!(
+                    argument,
+                    Value::Int(..)
+                        | Value::Float(..)
+                        | Value::Bool(_)
+                        | Value::Str(_)
+                        | Value::Null
+                        | Value::Void
+                ) {
+                    return Err(RunError::BadToken);
+                }
                 let names = self.call_managed_collection("objectGetOwnPropertyNames", args)?;
                 let Value::Object(names_array) = names else {
                     return Ok(names);
                 };
-                let target =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(target));
-                if symbols.is_empty() {
+                // The symbol side goes through the symbols intrinsic rather
+                // than reading `dynamic_symbol_keys` off a heap object. That
+                // intrinsic already knows the cases this one kept rejecting --
+                // a class value and a function value are not heap objects, so
+                // `Reflect.ownKeys(K)` threw while
+                // `Object.getOwnPropertySymbols(K)` answered correctly. One
+                // source of truth for "what symbol keys does this have".
+                let symbol_array =
+                    self.call_managed_collection("objectGetOwnPropertySymbols", args)?;
+                let Value::Object(symbol_array) = symbol_array else {
                     return Ok(Value::Object(names_array));
-                }
-                // Keep-alive: `array_insert` can grow (allocate) the names array while it is read.
+                };
                 zun_gc::root!(names_array = names_array);
+                zun_gc::root!(symbol_array = symbol_array);
                 zun_gc::with_current_heap_mut(|heap| {
-                    for symbol in symbols {
-                        let end = heap.array_len(names_array.get()).unwrap_or(0);
-                        heap.array_insert(names_array.get(), end, zun_core::Any::symbol(symbol));
+                    let count = heap.array_len(symbol_array.get()).unwrap_or(0);
+                    for index in 0..count {
+                        if let Some(symbol) = heap.array_get(symbol_array.get(), index) {
+                            let end = heap.array_len(names_array.get()).unwrap_or(0);
+                            heap.array_insert(names_array.get(), end, symbol);
+                        }
                     }
                 });
                 Ok(Value::Object(names_array.get()))
@@ -971,6 +1001,17 @@ impl<'a> Interp<'a> {
                         });
                         return Ok(Value::Object(array));
                     }
+                }
+                // A function value is not a heap object, and has no own symbol
+                // keys: node answers an empty array where this used to reject
+                // the argument outright.
+                if matches!(
+                    args.first().map(|arg| unbox_arg(arg)),
+                    Some(Ok(Value::Function(_)))
+                ) || matches!(args.first(), Some(Value::Function(_)))
+                {
+                    let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
+                    return Ok(Value::Object(array));
                 }
                 let obj =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
