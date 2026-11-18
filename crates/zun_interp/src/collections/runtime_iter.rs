@@ -1111,19 +1111,6 @@ impl<'a> Interp<'a> {
         handle: zun_core::FunctionHandle,
         name: &str,
     ) -> Option<Value> {
-        if std::env::var("ZUN_TRACE_FNMETA").is_ok() {
-            eprintln!(
-                "FM ask={name} rid={} env={} settler={} name_str={:?}",
-                handle.method_rid(),
-                handle.environment().is_some(),
-                self.settler_of(handle).is_some(),
-                self.module
-                    .tables
-                    .method_defs
-                    .get((handle.method_rid() as usize).wrapping_sub(1))
-                    .map(|m| self.module.strings.get(m.name))
-            );
-        }
         // A promise resolving function (`resolve` / `reject`): length 1, empty name.
         if self.settler_of(handle).is_some() {
             return Some(if name == "name" {

@@ -13,6 +13,28 @@
 use crate::check::*;
 
 impl Checker<'_> {
+    /// Whether `func` is a class **instance** method, whose signature carries
+    /// the receiver as a hidden first parameter.
+    ///
+    /// `receiver_funcs` only covers a free function's explicit `this: T`, and
+    /// an ordinary instance method gets no `@this` marker, so the length fold
+    /// subtracted nothing and `k.m.length` answered one more than node for
+    /// every method read off an instance. The runtime path asks the same
+    /// question as `method_rid_is_instance_method`; this is its compile-time
+    /// twin.
+    fn is_instance_method(&self, func: u32) -> bool {
+        if self
+            .signatures
+            .get(func as usize)
+            .is_some_and(|signature| signature.is_static)
+        {
+            return false;
+        }
+        self.methods_by_class
+            .iter()
+            .any(|methods| methods.values().any(|&candidate| candidate == func))
+    }
+
     /// Built-in metadata reads folded to literals before the receiver is
     /// checked: `Function.prototype.<m>`, `[].indexOf.length`, the
     /// `<Builtin>.<fn>.length`/`.name` chains, and `Math.<fn>.length`/`.name`.
@@ -865,7 +887,10 @@ impl Checker<'_> {
                     signature
                         .params
                         .len()
-                        .saturating_sub(usize::from(self.receiver_funcs.contains(&func)))
+                        .saturating_sub(usize::from(
+                            self.receiver_funcs.contains(&func)
+                                || self.is_instance_method(func),
+                        ))
                         // `default_count`, not `optional_count`: the latter also
                         // treats a trailing `any` parameter as omittable, which is
                         // right for arity and wrong here -- an `any` parameter still
