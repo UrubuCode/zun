@@ -674,6 +674,10 @@ pub enum BinaryOp {
     In,
     /// `instanceof` — class/prototype membership test.
     Instanceof,
+    /// `#x in obj` for an instance private: the brand check. The right operand
+    /// is `Class["#x"]`: the declaring class and the private name. The answer
+    /// follows the object's run-time type, never its prototype chain.
+    HasBrand,
 }
 
 /// A unary operator.

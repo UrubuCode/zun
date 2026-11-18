@@ -25,6 +25,7 @@ fn managed_builtin_name(id: u32) -> Option<&'static str> {
         .or_else(|| managed_realm_builtin(id))
         .or_else(|| managed_object_ext_builtin(id))
         .or_else(|| managed_codegen_builtin(id))
+        .or_else(|| managed_brand_builtin(id))
         .or_else(|| managed_array_ext_builtin(id))
         .or_else(|| managed_number_builtin(id));
     MANAGED_BUILTIN_CACHE.with(|cache| cache.borrow_mut().insert(id, name));
@@ -733,4 +734,12 @@ pub(crate) fn managed_codegen_builtin(id: u32) -> Option<&'static str> {
     ["indirectEval"]
         .into_iter()
         .find(|&name| zun_natives::resolve("codegen", name).map(|(candidate, _)| candidate) == Some(id))
+}
+
+/// Recognize the `brand` intrinsics, serviced on the interpreter floor because
+/// they read the operand's run-time type from the managed heap.
+pub(crate) fn managed_brand_builtin(id: u32) -> Option<&'static str> {
+    ["hasPrivateBrand"]
+        .into_iter()
+        .find(|&name| zun_natives::resolve("brand", name).map(|(candidate, _)| candidate) == Some(id))
 }

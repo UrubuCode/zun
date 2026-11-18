@@ -46,6 +46,7 @@ pub use collection_methods::{
     map_method, set_method, set_operation, CollectionHandling, CollectionMethod, SetOp,
     SET_OP_BOOL_HELPER, SET_OP_SET_HELPER,
 };
+mod brand;
 mod codegen;
 mod collections;
 mod managed_methods;
@@ -389,6 +390,9 @@ pub static MODULES: &[Module] = &[
     // Runtime code generation from strings (`indirectEval`). Appended last so
     // every existing dispatch id stays stable.
     codegen::MODULE,
+    // The private-name brand check (`#x in obj`). Appended last so every
+    // existing dispatch id stays stable.
+    brand::MODULE,
     // `Buffer` intrinsics that postdate the `nodeBuffer` group. Appended last so
     // every existing dispatch id stays stable.
 ];

@@ -495,6 +495,71 @@ impl Checker<'_> {
         }
     }
 
+    /// Lower `#x in value` for an instance private declared by a class. The
+    /// right operand arrives as `Class["#x"]` (see `BinaryOp::HasBrand`). The
+    /// brand is installed on the instance by the declaring class's constructor,
+    /// so the answer follows the operand's run-time *type*, never its prototype
+    /// chain: it survives `Object.setPrototypeOf`, and `Object.create(C.prototype)`
+    /// has none. This is why it is not `instanceof`. It always lowers to the
+    /// `hasPrivateBrand` intrinsic, passing the declaring class's metadata
+    /// TypeDef rid and the private name (for the TypeError a non-object operand
+    /// raises); nothing is folded, so the operand is evaluated exactly once.
+    ///
+    /// A class with no compile-time layout (a run-time class value) has no
+    /// TypeDef to test against and keeps the older `instanceof` lowering.
+    pub(in crate::check) fn check_has_brand_operator(
+        &mut self,
+        cx: &mut FunctionCx,
+        value: &ast::Expr,
+        brand: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let (class, private_name) = match brand {
+            ast::Expr::Index { object, index, .. } => match index.as_ref() {
+                ast::Expr::String { value, .. } => (object.as_ref(), value.clone()),
+                _ => (object.as_ref(), String::new()),
+            },
+            other => (other, String::new()),
+        };
+        let target = match class {
+            ast::Expr::Ident(class_name) => {
+                self.classes_by_name.get(self.text(class_name)).copied()
+            }
+            _ => None,
+        };
+        let Some(target) = target else {
+            return self.check_instanceof_operator(cx, value, class, span);
+        };
+        let value = self.check_expr(cx, value);
+        if value.ty.is_error() {
+            return self.poison(span);
+        }
+        let Some((id, _)) = zun_natives::resolve_name("hasPrivateBrand") else {
+            self.error(span, "missing `hasPrivateBrand` intrinsic".to_string());
+            return self.poison(span);
+        };
+        // The rid is `target + 1`, as for `instanceofClass`: `emit_types` emits
+        // one TypeDef per class in order.
+        let class_rid = hir::Expr {
+            kind: hir::ExprKind::Number((target + 1) as f64),
+            ty: Ty::Int(IntKind::U32),
+            span,
+        };
+        let private_name = hir::Expr {
+            kind: hir::ExprKind::String(private_name),
+            ty: Ty::String,
+            span,
+        };
+        hir::Expr {
+            kind: hir::ExprKind::CallBuiltin {
+                id,
+                args: vec![Self::box_to_any(value), class_rid, private_name],
+            },
+            ty: Ty::Boolean,
+            span,
+        }
+    }
+
     pub(in crate::check) fn check_instanceof_operator(
         &mut self,
         cx: &mut FunctionCx,

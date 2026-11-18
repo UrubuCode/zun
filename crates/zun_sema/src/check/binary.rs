@@ -154,7 +154,7 @@ impl Checker<'_> {
             }
             // `in`/`instanceof` are intercepted and lowered before reaching
             // here; this arm only satisfies exhaustiveness.
-            In | Instanceof => Ty::Boolean,
+            In | Instanceof | HasBrand => Ty::Boolean,
         }
     }
 }

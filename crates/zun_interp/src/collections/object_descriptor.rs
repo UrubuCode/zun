@@ -1379,6 +1379,60 @@ impl<'a> Interp<'a> {
                 };
                 Ok(Value::Bool(found))
             }
+            "hasPrivateBrand" => {
+                // `#x in value` for an instance private. The second argument is
+                // the declaring class's metadata TypeDef rid, the third the
+                // private's name. A brand is installed on the instance by that
+                // class's constructor, so the answer is the operand's run-time
+                // *type* chain and nothing else: unlike `instanceofClass` above
+                // it never consults the prototype chain, so a relinked instance
+                // keeps its brand and `Object.create(C.prototype)` has none.
+                // Any other object answers false; a primitive operand is the
+                // TypeError `in` raises for a non-object.
+                let class_rid = match args.get(1).ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let primitive = match unbox_arg(args.first().ok_or(RunError::BadToken)?)? {
+                    Value::Object(obj) => {
+                        match zun_gc::with_current_heap(|heap| {
+                            heap.bigint_value(obj).map(|big| big.to_string())
+                        }) {
+                            Some(big) => big,
+                            // `instance_class_prototype` is the "is a typed
+                            // class instance" test: it rejects dynamic objects,
+                            // arrays, and core objects (a Promise, say) whose
+                            // core type id merely aliases a module TypeDef rid.
+                            None => {
+                                return Ok(Value::Bool(
+                                    self.instance_class_prototype(obj).is_some()
+                                        && self.types.is_assignable(obj.type_rid(), class_rid),
+                                ));
+                            }
+                        }
+                    }
+                    Value::Any(any) => match any.as_symbol() {
+                        Some(symbol) => zun_gc::with_current_heap(|heap| {
+                            format!(
+                                "Symbol({})",
+                                heap.symbol_description(symbol).unwrap_or_default()
+                            )
+                        }),
+                        // Any other dynamic value that is not a primitive.
+                        None => return Ok(Value::Bool(false)),
+                    },
+                    Value::Function(_) => return Ok(Value::Bool(false)),
+                    other => other.display(),
+                };
+                let private_name = match args.get(2) {
+                    Some(Value::Str(name)) => name.to_string(),
+                    _ => String::new(),
+                };
+                Err(RunError::Native(format!(
+                    "TypeError: Cannot use 'in' operator to search for '{private_name}' in {primitive}"
+                )))
+            }
             // Binary ser/de PRIMITIVE (NUCLEUS #27). `serialize` inspects the
             // raw operand (so a function value is rejected cleanly, not boxed
             // away); `deserialize` reads a byte view and rebuilds the graph.

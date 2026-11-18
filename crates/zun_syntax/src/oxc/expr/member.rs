@@ -226,8 +226,10 @@ pub(super) fn convert_private_in(
 ) -> Result<Expr, String> {
     let span = |span: oxc_span::Span| Span::new(span.start, span.end);
     // `#x in obj` is a brand check: resolve `#x` to the innermost
-    // lexical class declaring it, then test `obj instanceof Class`
-    // (instance members) or `obj === Class` (static members).
+    // lexical class declaring it, then test the brand of that class
+    // (instance members; the brand lives on the instance, so this is not
+    // `instanceof`, which follows the prototype chain) or `obj === Class`
+    // (static members).
     let name = private_in.left.name.to_string();
     let found = PRIVATE_SCOPES.with(|scopes| {
         scopes
@@ -246,14 +248,28 @@ pub(super) fn convert_private_in(
             "OXC adapter: unknown private name `#{name}` in brand check"
         ));
     };
+    let class = Expr::Ident(Name { span: class_span });
     Ok(Expr::Binary {
         op: if is_static {
             BinaryOp::Eq
         } else {
-            BinaryOp::Instanceof
+            BinaryOp::HasBrand
         },
         lhs: Box::new(convert_expression(source, &private_in.right)?),
-        rhs: Box::new(Expr::Ident(Name { span: class_span })),
+        // A brand check carries the private name beside its declaring class
+        // (as `Class["#x"]`), for the TypeError a non-object operand raises.
+        rhs: Box::new(if is_static {
+            class
+        } else {
+            Expr::Index {
+                object: Box::new(class),
+                index: Box::new(Expr::String {
+                    value: format!("#{name}"),
+                    span: span(private_in.left.span),
+                }),
+                span: span(private_in.span),
+            }
+        }),
         span: span(private_in.span),
     })
 }

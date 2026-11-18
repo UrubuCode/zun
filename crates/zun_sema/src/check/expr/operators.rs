@@ -83,6 +83,9 @@ impl Checker<'_> {
         if let ast::BinaryOp::Instanceof = op {
             return self.check_instanceof_operator(cx, lhs, rhs, span);
         }
+        if let ast::BinaryOp::HasBrand = op {
+            return self.check_has_brand_operator(cx, lhs, rhs, span);
+        }
         // The `x++`/`x--` desugar (`x = x ± 1`) carries a numeric literal
         // whose span equals the whole expression's; on a BigInt operand
         // that literal is `1n`.

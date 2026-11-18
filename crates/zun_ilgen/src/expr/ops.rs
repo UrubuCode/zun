@@ -147,7 +147,7 @@ impl<'a, 'b> FnLowerer<'a, 'b> {
             BinaryOp::And | BinaryOp::Or | BinaryOp::Nullish => {
                 unreachable!("logical operators lower through branches")
             }
-            BinaryOp::In | BinaryOp::Instanceof => {
+            BinaryOp::In | BinaryOp::Instanceof | BinaryOp::HasBrand => {
                 unreachable!("`in`/`instanceof` are lowered in sema")
             }
         };

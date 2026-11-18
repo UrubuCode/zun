@@ -719,6 +719,7 @@ impl<'a> Interp<'a> {
             "typeofAny" => self.col_object_descriptor(name, args),
             "objectToStringTag" => self.col_object_descriptor(name, args),
             "instanceofClass" => self.col_object_descriptor(name, args),
+            "hasPrivateBrand" => self.col_object_descriptor(name, args),
             "serialize" => self.col_object_descriptor(name, args),
             "deserialize" => self.col_object_descriptor(name, args),
             _ => Err(RunError::BadToken),
