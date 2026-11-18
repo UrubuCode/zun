@@ -261,6 +261,7 @@ pub(super) struct CallFrame {
 
 impl<'a> Interp<'a> {
     pub(super) fn annotate_error(&self, error: super::RunError) -> super::RunError {
+        let error = error.materialize_thrown();
         match self.active_frame {
             Some((method, pc)) => error.annotate(self.module, method, pc),
             None => error,

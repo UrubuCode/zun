@@ -33,9 +33,10 @@ fn thrown_text(value: &Value) -> Option<String> {
                     .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
                 _ => None,
             }?;
-            // The message may be formatted after the heap scope has been left
-            // (the driver prints the error once execution is over), so this
-            // asks for the heap instead of assuming one is registered.
+            // The heap must still be registered here. It usually is NOT at
+            // `Display` time -- the driver prints after execution ends and the
+            // `HeapScope` has dropped -- which is why `RunError::materialize_thrown`
+            // renders the text at the interpreter's terminal boundary instead.
             let heap = zun_gc::current_heap_ptr()?;
             let heap = unsafe { &*heap };
             {
@@ -59,20 +60,40 @@ fn thrown_text(value: &Value) -> Option<String> {
     }
 }
 
-/// A string-valued dynamic property, for an error whose `name`/`message` were
-/// set as ordinary properties rather than through the error side table.
-fn dynamic_text(heap: &zun_gc::Heap, object: zun_gc::Obj, key: &str) -> Option<String> {
+/// A string-valued dynamic property set directly on this object.
+fn own_dynamic_text(heap: &zun_gc::Heap, object: zun_gc::Obj, key: &str) -> Option<String> {
     let handle = heap.dynamic_get(object, key)?.as_string()?;
     Some(heap.try_string(handle)?.to_string())
 }
+/// A string-valued property, searched along the prototype chain.
+///
+/// Own-only was not enough: an `Error` subclass carries `name` on its
+/// prototype, so the lookup answered `None`, `thrown_text` gave up on its `?`,
+/// and eight fixtures printed a bare `Object(Obj(0x...))` instead of the error.
+fn dynamic_text(heap: &zun_gc::Heap, object: zun_gc::Obj, key: &str) -> Option<String> {
+    let mut current = Some(object);
+    for _ in 0..32 {
+        let object = current?;
+        if let Some(text) = own_dynamic_text(heap, object, key) {
+            return Some(text);
+        }
+        current = heap
+            .dynamic_prototype(object)
+            .and_then(|any| any.as_object())
+            .filter(|address| *address != 0)
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) });
+    }
+    None
+}
+
 
 impl core::fmt::Display for RunError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             RunError::NoEntryPoint => write!(f, "module has no entry point"),
-            RunError::BadToken => write!(f, "call did not resolve to a method"),
             RunError::Malformed(m) => write!(f, "malformed bytecode: {m}"),
             RunError::Native(m) => write!(f, "{m}"),
+            RunError::BadToken => write!(f, "call did not resolve to a method"),
             RunError::Thrown(value) => match thrown_text(value) {
                 Some(text) => write!(f, "unhandled exception: {text}"),
                 None => write!(f, "unhandled exception: {value:?}"),
@@ -94,6 +115,39 @@ impl core::fmt::Display for RunError {
 }
 
 impl RunError {
+    /// Render a thrown value's `name: message` **while the heap is still
+    /// registered**, so the text survives to printing time.
+    ///
+    /// `Display` for [`RunError::Thrown`] reads the heap, but the driver prints
+    /// the error once execution is over, by which point the `HeapScope` has
+    /// dropped and `current_heap_ptr` answers `None`. Every uncaught thrown
+    /// object therefore printed as `Object(Obj(0x...))`, which made three
+    /// conformance fixtures impossible to diagnose. Two earlier attempts at
+    /// this looked for the wrong thing -- the escaping path, and the catch
+    /// handling -- because the failure is not *where* the error travels but
+    /// *when* it is formatted. One env-gated trace in `thrown_text` named the
+    /// branch (`no heap registered`) in a single run.
+    ///
+    /// Called only from `Interp::annotate_error`, whose every caller is a
+    /// `return Err(..)` at a terminal boundary in `runner.rs`: the heap is
+    /// alive there and the error can no longer be caught, so collapsing the
+    /// variant cannot change any catch decision. `Native` displays its string
+    /// verbatim, so the output is exactly what `Thrown` would have printed had
+    /// the heap still been there.
+    pub fn materialize_thrown(self) -> Self {
+        match &self {
+            // Only a value whose text needs the heap. A `Value::Str` already
+            // displays correctly without one, and collapsing it would change
+            // the variant a caller can observe -- `import_dynamic_il_rejects_unknown_modules`
+            // matches `Thrown(Value::Str(..))` and caught exactly that.
+            RunError::Thrown(value @ (Value::Object(_) | Value::Any(_))) => match thrown_text(value) {
+                Some(text) => RunError::Native(format!("unhandled exception: {text}")),
+                None => self,
+            },
+            _ => self,
+        }
+    }
+
     pub(crate) fn annotate(self, module: &zun_module::Module, method_rid: u32, pc: u32) -> Self {
         if matches!(
             self,
