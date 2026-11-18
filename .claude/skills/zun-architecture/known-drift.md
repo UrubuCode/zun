@@ -1735,3 +1735,38 @@ So the dispatcher to repair is the **builtin** between `call_builtin` and
 *which* managed collection entry that is -- `call_managed_collection` is called
 twice in the trace, so print the name it is given. `function_is_constructor`
 already answers `true` for a bound handle, so the gate is not what rejects it.
+
+### `.bind` on a class: the design, and the obstacle it runs into
+
+With `new` on a bound function fixed (`fe3c8605`), the one remaining blocker
+between `fn-kinds-prototype-and-construction` and ~60 lines is that a class
+cannot be bound: `typeof (K as any).bind` is `undefined`, and so are `call` and
+`apply`, while `K.name` and `K.length` answer correctly. The fixture binds
+`Pair`, a class.
+
+Why the obvious shape does not just work, worked out but not attempted:
+
+* `bind` is handled in `dynamic_call.rs` only when the receiver is
+  `Value::Function(handle)`. A class value is `Value::Any(descriptor)`, so it
+  never reaches that arm; the class-descriptor member read in
+  `dyn_member.rs` (~line 407) answers `name`/`length` and, as its own comment
+  says, yields `undefined` for everything else.
+* A bound record stores `__target`, and `unwrap_bound_chain`
+  (`runtime_class_proxy.rs:370`) **requires** it to be a function:
+  `dynamic_get_function(record, "__target").ok_or(RunError::BadToken)`. A class
+  is a token, not a handle, so binding one means either carrying a token in that
+  record (and teaching the shared unwrap to tolerate a record without
+  `__target`, which the *call* path also walks) or storing the class's
+  constructor handle from `class_constructor(rid)`.
+* The constructor-handle route then trips `function_is_constructor`, which
+  answers **false** for any method owned by a class (`owned_by_class`), so
+  `proxyConstruct` would reject it; and constructing it with
+  `construct_ordinary_function` would allocate a plain dynamic object instead of
+  the class's typed layout, so the bound branch would have to route to
+  `construct_class_from_descriptor(token, values)` instead -- next to a
+  protected receiver-gate site.
+
+So this is a change to the bound-record representation touching a helper the
+call path shares, not a local fix. Ground it before coding, and instrument the
+call path's use of the record first: every attempt in this session that read the
+code and deduced the path was wrong, and the one that printed a name was right.
