@@ -274,12 +274,36 @@ impl<'a> Interp<'a> {
                     // A bound function is a constructor only when its target
                     // is one: binding an arrow (or a method shorthand) does
                     // not make it constructible.
-                    if handle.is_bound() {
-                        let (target, _) = self.unwrap_bound_chain(handle, Vec::new())?;
+                    //
+                    // The unwrap's result used to be discarded (`let (target,
+                    // _)`), validating the target and then constructing the
+                    // *bound* handle with unprepended arguments. A bound
+                    // function's `[[Construct]]` discards the `thisArg` that
+                    // `bind` captured and constructs the target with the bound
+                    // arguments in front, so `new (C.bind(null, 5))()` has to
+                    // build an instance of `C`; before this the target ran with
+                    // `this` bound to `null` and the first field store threw
+                    // `Cannot set properties of null`. The prototype comes from
+                    // the target too.
+                    let (handle, values) = if handle.is_bound() {
+                        let (target, prepended) = self.unwrap_bound_chain(handle, values)?;
                         if self.is_arrow_closure(target) || self.is_method_closure(target) {
                             return Err(self.proto_type_error("value is not a constructor"));
                         }
-                    }
+                        // `unwrap_bound_chain` serves the *call* path, where the
+                        // bound `thisArg` occupies the receiver slot, so it comes
+                        // back as the first value. Construction supplies its own
+                        // fresh receiver, so that leading entry is dropped --
+                        // keeping it made the target read the `thisArg` as its
+                        // first parameter (`a` was `null`, not `5`).
+                        let mut rest = prepended;
+                        if !rest.is_empty() {
+                            rest.remove(0);
+                        }
+                        (target, rest)
+                    } else {
+                        (handle, values)
+                    };
                     return self.construct_ordinary_function(handle, handle, values);
                 }
                 let proxy = args.first().and_then(object);
