@@ -1385,3 +1385,37 @@ made. When a result changes between probes, diff the probes before theorising
 -- and re-run the earlier one against the *current* binary, because comparing
 outputs captured from two different builds invents mechanisms that do not
 exist.
+
+### The same bug moves `name` the other way, which names the mechanism
+
+Fully characterised, and it is not a text scan after all:
+
+| expression | zun | node |
+|---|---|---|
+| `"structuredClone=" + structuredClone.length` | 2 | 2 |
+| `"x=" + structuredClone.length` | **0** | 2 |
+| `"structuredClone=" + structuredClone.name` | **""** | `structuredClone` |
+| `"x=" + structuredClone.name` | `structuredClone` | `structuredClone` |
+| `"queueMicrotask=" + structuredClone.length` | **0** | 2 |
+
+The literal must contain the **same** name as the function being read,
+followed by `=` (a space before it is fine, trailing text is fine). A
+mismatched name does nothing, a comment with the same text does nothing, and a
+real assignment does nothing -- so the file is not being scanned. And the
+matching literal **fixes** `length` while it **breaks** `name`, in opposite
+directions, which a text heuristic would not do.
+
+Two reads of one function value disagreeing in opposite directions as a string
+literal is added is the signature of an **interned-string id being used as an
+index**: adding a literal shifts the ids, and a lookup lands on a different
+entry. That is the same family as the `"Math"` leak (intern id 0 read as a
+string handle), which this run traced to `encode_field`'s string arms.
+
+So the next step is to instrument the `name`/`length` resolution for a function
+value -- the `name == "length"` and `name == "name"` branches in
+`collections/runtime_iter.rs`, which compute `length` from
+`body.param_count` minus hidden parameters and read `name` from
+`method_defs` -- and print the rid and the interned name actually used, for the
+two probes above. The rid is the thing to watch; `typeof` is unaffected, and
+calling the function works, so the function value itself is fine and only this
+metadata lookup is wrong.
