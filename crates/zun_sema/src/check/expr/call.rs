@@ -936,7 +936,12 @@ impl Checker<'_> {
         }
         // A dynamic (`any`) callee is invoked through the counted
         // dynamic-call form, which accepts any argument count.
-        if matches!(callee.ty, Ty::Any | Ty::DynamicObject) {
+        // `Ty::Proxy` joins the dynamic callees: a proxy over a function is
+        // callable, and its `apply` trap runs. Calling one through a variable
+        // (whose type is `any`) already worked, so only the direct form
+        // `new Proxy(f, {})()` was rejected -- a callee-shape restriction, not
+        // anything about proxies.
+        if matches!(callee.ty, Ty::Any | Ty::DynamicObject | Ty::Proxy) {
             let args: Vec<hir::Expr> = args
                 .iter()
                 .map(|argument| self.check_expr(cx, argument))

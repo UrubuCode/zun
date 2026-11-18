@@ -197,7 +197,7 @@ impl<'a> Interp<'a> {
                         callback,
                         vec![Value::Object(target), this_arg, Value::Object(array)],
                     )?;
-                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any_cell(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
                 }
@@ -212,14 +212,21 @@ impl<'a> Interp<'a> {
                 // spread arguments. The `thisArg` is not prepended (a callable
                 // proxy called directly, `proxy(...args)`, forwards exactly its
                 // arguments to the target).
-                let handle = zun_gc::with_current_heap(|heap| {
+                // A proxy whose target is not callable is a `TypeError`, as it
+                // is for a plain object: `new Proxy({}, {})()` answered a bare
+                // `BadToken`, which is not a JS error and so could not be
+                // caught at all.
+                let Some(handle) = zun_gc::with_current_heap(|heap| {
                     heap.dynamic_get_function(target, "__boxedFn")
-                })
-                .ok_or(RunError::BadToken)?;
+                }) else {
+                    return Err(RunError::Native(
+                        "TypeError: proxy target is not a function".into(),
+                    ));
+                };
                 let _ = &this_arg;
                 let spread = self.read_array_values(array)?;
                 let result = self.invoke_function_value(handle, spread)?;
-                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any_cell(heap))
                     .unwrap_or_else(zun_core::Any::null);
                 Ok(Value::Any(boxed))
             }
@@ -314,7 +321,7 @@ impl<'a> Interp<'a> {
                             Value::Any(descriptor),
                         ],
                     )?;
-                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any(heap))
+                    let boxed = zun_gc::with_current_heap_mut(|heap| result.box_any_cell(heap))
                         .unwrap_or_else(zun_core::Any::null);
                     return Ok(Value::Any(boxed));
                 }

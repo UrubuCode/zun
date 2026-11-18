@@ -1364,6 +1364,14 @@ impl Interp<'_> {
                                     }
                                     return Err(RunError::Thrown(exception));
                                 }
+                                // A `Native` error from the trap path carries a
+                                // JS error message; route it so it is catchable
+                                // rather than ending the process. Without this,
+                                // `new Proxy({}, {})()` reported a TypeError
+                                // that no `try` could see.
+                                Err(RunError::Native(message)) => {
+                                    throw_native!(self, body, stack, pc, next - size, message);
+                                }
                                 Err(error) => return Err(error),
                             }
                         }
