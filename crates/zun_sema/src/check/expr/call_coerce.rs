@@ -178,10 +178,14 @@ impl Checker<'_> {
             if arg.ty.is_error() {
                 return Some(self.poison(span));
             }
-            // A value already typed `string` is its own ToString.
-            if arg.ty == Ty::String {
-                return Some(arg);
-            }
+            // NOT elided for a `string`-typed operand. "Already a string" is a
+            // static claim an `as any` at the call site can falsify, and the
+            // elision then let a number travel on wearing a `string` type:
+            // `function t(v: any) { return String(v) }` called with a
+            // `string`-typed local holding `5` returned `5`, not `"5"`, and the
+            // value went on to leak an interned string from a `string` field
+            // slot and to abort the engine in concatenation. `stringCoerce`
+            // always runs; it is a no-op for a value that really is a string.
             let Some((id, _)) = zun_natives::resolve("collections", "stringCoerce") else {
                 self.error(span, "missing `stringCoerce` intrinsic");
                 return Some(self.poison(span));
