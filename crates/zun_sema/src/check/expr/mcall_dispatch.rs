@@ -174,6 +174,7 @@ impl Checker<'_> {
             params: param_tys.clone(),
             return_ty,
             optional_count,
+            default_count: 0,
             rest_param: self.signatures[func as usize].rest_param,
             is_generator: self.signatures[func as usize].is_generator,
             is_static: false,

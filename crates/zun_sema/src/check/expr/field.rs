@@ -813,8 +813,17 @@ impl Checker<'_> {
             }
             // A dynamic function value may be a bound function (`f.bind(..)`),
             // a closure or a function with a script-defined `name`: only the
-            // runtime knows which, so the read is not folded.
-            if func == hir::DYNAMIC_FUNCTION && (fname == "name" || fname == "length") {
+            // runtime knows which, so the read is not folded. The predicate and
+            // reducer sentinels are just as unknown, and folding them answered
+            // `0`/`""` -- which is why `structuredClone.length` answered 0 while
+            // the same read in an expression that also held the literal
+            // `"structuredClone="` answered node's 2: the two contexts give the
+            // identifier different sentinels, and only one of them deferred.
+            if matches!(
+                func,
+                hir::DYNAMIC_FUNCTION | hir::DYNAMIC_PREDICATE | hir::DYNAMIC_REDUCER
+            ) && (fname == "name" || fname == "length")
+            {
                 return Err(object);
             }
             if fname == "name" {
@@ -857,7 +866,12 @@ impl Checker<'_> {
                         .params
                         .len()
                         .saturating_sub(usize::from(self.receiver_funcs.contains(&func)))
-                        .saturating_sub(signature.optional_count)
+                        // `default_count`, not `optional_count`: the latter also
+                        // treats a trailing `any` parameter as omittable, which is
+                        // right for arity and wrong here -- an `any` parameter still
+                        // counts toward `Function.prototype.length`, and subtracting
+                        // it answered `queueMicrotask.length === 0` where node says 1.
+                        .saturating_sub(signature.default_count)
                         .saturating_sub(rest)
                 };
                 return Ok(hir::Expr {

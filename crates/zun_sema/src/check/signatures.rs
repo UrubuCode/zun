@@ -110,6 +110,13 @@ impl Checker<'_> {
                 // Trailing defaulted parameters, and trailing dynamic (`any`) ones —
                 // JS lets any argument be omitted, which reads as `undefined`.
                 optional_count,
+                default_count: f
+                    .params
+                    .iter()
+                    .rev()
+                    .filter(|p| !p.is_rest)
+                    .take_while(|p| p.default_value.is_some())
+                    .count(),
                 rest_param: f
                     .params
                     .iter()
@@ -230,6 +237,13 @@ impl Checker<'_> {
                         .rev()
                         .take_while(|p| p.default_value.is_some())
                         .count(),
+                    default_count: m
+                        .params
+                        .iter()
+                        .rev()
+                        .filter(|p| !p.is_rest)
+                        .take_while(|p| p.default_value.is_some())
+                        .count(),
                     rest_param: m
                         .params
                         .iter()
@@ -291,6 +305,14 @@ impl Checker<'_> {
                         .params
                         .iter()
                         .rev()
+                        .take_while(|p| p.default_value.is_some())
+                        .count(),
+                    default_count: sm
+                        .function
+                        .params
+                        .iter()
+                        .rev()
+                        .filter(|p| !p.is_rest)
                         .take_while(|p| p.default_value.is_some())
                         .count(),
                     rest_param: sm

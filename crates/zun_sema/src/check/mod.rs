@@ -460,6 +460,14 @@ struct Signature {
     params: Vec<Ty>,
     return_ty: Ty,
     optional_count: usize,
+    /// Trailing parameters with an actual default value.
+    ///
+    /// Distinct from `optional_count`, which also treats a trailing `any`
+    /// parameter as omittable for arity purposes. `Function.prototype.length`
+    /// counts parameters before the first default, and an `any` parameter
+    /// still counts -- using `optional_count` for it answered
+    /// `queueMicrotask.length === 0` where node says 1.
+    default_count: usize,
     rest_param: Option<usize>,
     is_generator: bool,
     is_static: bool,

@@ -200,6 +200,7 @@ impl Checker<'_> {
                 params: param_tys.clone(),
                 return_ty,
                 optional_count,
+                    default_count: 0,
                 rest_param: self.signatures[func as usize]
                     .rest_param
                     .map(|index| index - hidden),
@@ -258,6 +259,7 @@ impl Checker<'_> {
             // as `undefined`.
             let sig = Signature {
                 optional_count: param_tys.len(),
+                default_count: 0,
                 ..sig
             };
             if args.len() > param_tys.len() {

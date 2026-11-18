@@ -709,6 +709,7 @@ impl Checker<'_> {
                             params: param_tys.clone(),
                             return_ty,
                             optional_count,
+                        default_count: 0,
                             rest_param: None,
                             is_generator: false,
                             is_static: true,

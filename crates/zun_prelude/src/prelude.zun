@@ -68,7 +68,10 @@ import { serialize as serdeSerialize, deserialize as serdeDeserialize, nodeBuffe
 // references round-trip. `options.transfer` lists ArrayBuffers to move: each
 // must be an attached, distinct ArrayBuffer (else a `DataCloneError`), and is
 // detached once the clone has been built, so a failed clone leaves them intact.
-function structuredClone(value: any, options: any = undefined): any {
+// No default on `options`: a default lowers `Function.prototype.length`, and
+// node reports `structuredClone.length === 2`. The body already treats an
+// absent argument as `undefined`.
+function structuredClone(value: any, options: any): any {
     let transfer: any = undefined;
     if (options !== undefined && options !== null) {
         transfer = options.transfer;
