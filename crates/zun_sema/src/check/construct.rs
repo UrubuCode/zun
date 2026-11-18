@@ -106,14 +106,34 @@ impl Checker<'_> {
         } else {
             None
         };
-        let Some(this_slot) = native_shell.or_else(|| cx.lookup("this")) else {
-            self.error(span, "`super` is not supported inside a closure");
-            return self.poison(span);
-        };
-        let this_expr = hir::Expr {
-            ty: cx.locals[this_slot as usize],
-            kind: hir::ExprKind::Local(this_slot),
-            span,
+        // `this` is a local in the method itself and a *capture* in a closure
+        // written inside it. `cx.lookup` only answers for locals, so reading it
+        // through the capture is what lets a closure reach `super` -- the same
+        // two-way read `check_new_target` uses, and for the same reason: both
+        // are lowered through the receiver. Without it an arrow that named
+        // `super` was rejected as "not supported inside a closure" while the
+        // identical call directly in the method compiled.
+        let this_expr = match native_shell.or_else(|| cx.lookup("this")) {
+            Some(this_slot) => hir::Expr {
+                ty: cx.locals[this_slot as usize],
+                kind: hir::ExprKind::Local(this_slot),
+                span,
+            },
+            None => match cx.captures.get("this") {
+                Some(capture) => hir::Expr {
+                    kind: hir::ExprKind::CaptureLoad {
+                        environment_slot: capture.environment_slot,
+                        ty: capture.ty,
+                        mode: capture.mode,
+                    },
+                    ty: capture.ty,
+                    span,
+                },
+                None => {
+                    self.error(span, "`super` is not supported inside a closure");
+                    return self.poison(span);
+                }
+            },
         };
         let (mname, mspan) = match method {
             Some(m) => (self.text(m).to_string(), m.span),

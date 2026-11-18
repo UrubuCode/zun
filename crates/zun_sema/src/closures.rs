@@ -516,7 +516,16 @@ impl Checker<'_> {
             // arrow captured nothing, `cx.lookup("this")` answered `None` in
             // `check_new_target`, and `new.target` fell through to `undefined`
             // while the same expression directly in the constructor was right.
-            let text = if text == "new.target" { "this" } else { text };
+            // `new.target` and `super` are both lowered through `this` -- the
+            // receiver's runtime class, and its home object -- so each is a
+            // *use* of the enclosing `this` even though neither text spells
+            // it. A closure whose only free name was one of them captured
+            // nothing, and the reader then found no `this`.
+            let text = if text == "new.target" || text == "super" {
+                "this"
+            } else {
+                text
+            };
             if parameters.contains(text) {
                 return;
             }
