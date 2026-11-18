@@ -1603,3 +1603,32 @@ This became reachable with `907a5624`, which stopped rejecting
 -- legal JS that had been a compile error. The padded count is the cost of that
 change and is why `class-constructors-and-new-target`'s `count=` lines still
 diverge.
+
+## Measure conformance with `scripts/tests_check.sh`, not an exit-code loop
+
+The project's script is the criterion: a fixture **passes** only when
+`zun_out == bun_out` and bun and node agree. It runs all 169 in ~32s with 8
+parallel jobs -- *faster* than a sequential loop -- and separates `pass`,
+`zun_diverge` and `zun runtime error`.
+
+**A loop that checks only the exit code measures "did not crash".** One was
+used for a whole run here and reported 155/169 while the real figure was
+**88/169**: 39 of those "passes" exited 0 with stdout that differs from node.
+Every `1xx/169` number recorded before 2026-11-18 is that weaker metric,
+including the 135 and 152 marks, so they are not comparable to a
+`tests_check.sh` figure and the conformance history has to be re-read with that
+in mind.
+
+Two habits worth keeping:
+
+- **No-regression check:** copy an older binary over
+  `target/release/zun.exe` and re-run the script. `117aca8e` gives 87 pass / 15
+  runtime errors against `bd237a2e`'s 88 / 14, which is how a session's own
+  work was separated from inherited state.
+- **Per-fixture matching lines are still useful**, but only as a *within-fixture*
+  progress signal against a fresh node capture -- never as a pass count.
+
+The lesson underneath: the instrument was never validated against the project's
+own script, and a plausible number went unquestioned for an entire run because
+it moved in the right direction. Check what a metric actually asserts before
+optimising it.
