@@ -1206,3 +1206,31 @@ layouts disagree -- otherwise type confusion looks like arithmetic. This was
 the third `"Math"` of the 153 run, after the string field slot and
 `newtarget-arrow`; that string is what intern id 0 resolves to, so **`"Math"`
 appearing anywhere unexpected means raw bits were read as a string handle.**
+
+## Two `instanceof` bugs, and one is a fold the run time can contradict
+
+Both surfaced while probing the brand work (`3b09567f`) and both were confirmed
+pre-existing by running a parent binary, not by reading the code. Neither is
+fixed.
+
+    class Base { x: number = 1 }
+    const a: any = new Base();
+    Object.setPrototypeOf(a, null);
+    a instanceof Base          // zun: true.  node: false.
+
+    const b: Base = new Base();
+    Object.setPrototypeOf(b as any, Decoy.prototype);
+    b instanceof Base          // zun: true.  node: false.
+    (b as any) instanceof Base // zun: false -- correct.
+
+The first looks like `instance_class_prototype` falling back to the class
+prototype when the relink is `null`.
+
+**The second is the serious one.** Sema folds `instanceof` to a constant when
+the operand's static type is `Ty::Instance`, and `Object.setPrototypeOf` can
+then make the run time disagree with the fold -- the same object reached
+through `any` answers correctly, which is the signature. A fold is only sound
+when nothing observable can change the answer, and a relinkable prototype can.
+Any other `Ty::Instance`-based fold deserves the same question. It is also a
+reminder that the typed and `any` paths must agree: two answers for one object
+is the shape to look for.
