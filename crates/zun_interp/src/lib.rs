@@ -1656,22 +1656,27 @@ impl Interp<'_> {
                     self.poll_gc(stack, locals, parent);
                     let token = operand_token(&instr.operand);
                     let (field_start, field_count) = self.type_field_range(token)?;
-                    let args = pop_n(stack, field_count)?;
                     let kinds: Vec<u8> = (0..field_count as u32)
                         .map(|i| self.field_kind_at(field_start + i))
                         .collect::<Result<_, _>>()?;
-                    // `throw_native!`, not a bare `return Err`: the arm has
-                    // already popped the arguments, and a raw `Err` skips
-                    // `route_exception`, so an in-function `catch` resumed with
-                    // an inconsistent operand stack and the *next* statement
-                    // read garbage -- two of these in one program aborted in
-                    // `as_number` while either alone was fine.
-                    for (i, arg) in args.iter().enumerate() {
-                        if value::unboxed_field_rejects(kinds[i], arg) {
-                            let message = self.field_slot_message(field_start + i as u32, arg);
-                            throw_native!(self, body, stack, pc, next - size, message);
-                        }
+                    // Validate by *peeking*, before `pop_n`. Throwing after the
+                    // pop left the operand stack shorter than the handler's
+                    // recorded depth, so a `catch` resumed on a short stack and
+                    // the *next* construction read a stale slot: two of these
+                    // in one program aborted in `as_number` while either alone
+                    // threw cleanly. `throw_native!` restores the stack to the
+                    // handler, not the values this arm already consumed.
+                    let base = stack.len().checked_sub(field_count).ok_or(RunError::BadToken)?;
+                    if let Some((offset, value)) = stack[base..]
+                        .iter()
+                        .enumerate()
+                        .find(|(i, value)| value::unboxed_field_rejects(kinds[*i], value))
+                        .map(|(i, value)| (i as u32, value.clone()))
+                    {
+                        let message = self.field_slot_message(field_start + offset, &value);
+                        throw_native!(self, body, stack, pc, next - size, message);
                     }
+                    let args = pop_n(stack, field_count)?;
                     let obj = zun_gc::with_current_heap_mut(|h| {
                         let obj = h.alloc(token.rid(), field_count);
                         for (i, arg) in args.iter().enumerate() {

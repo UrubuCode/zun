@@ -451,6 +451,19 @@ impl CallHook for JitHook<'_> {
         // collection while this JIT frame is active.
         let _roots = zun_gc::RootArray::from_objects(native_roots);
         let heap = zun_gc::current_heap_ptr()?;
+        // An argument with no representation for its packed kind stays on Tier
+        // 0, where the interpreter raises the TypeError. `pack_value` reaches
+        // `as_number`/`as_int` for a numeric kind, so a `null` or `undefined`
+        // here **aborted the engine** -- and only once the method had warmed
+        // up, so the same call threw cleanly the first time and killed the
+        // process the second. The interpreter is the always-correct fallback
+        // and the two tiers must agree; declining is what keeps that true.
+        if args.iter().zip(kinds).any(|(v, &k)| {
+            matches!(v, Value::Null | Value::Void)
+                && matches!(k, JitKind::Num(_) | JitKind::String)
+        }) {
+            return None;
+        }
         let packed: Vec<u64> = args
             .iter()
             .zip(kinds)
