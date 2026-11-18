@@ -893,12 +893,24 @@ pub(super) fn stringify_any(any: zun_core::Any, heap: &zun_gc::Heap) -> Option<S
 
 /// Unbox an argument to its concrete value (an `Any` carrier is unwrapped).
 pub(super) fn unbox_arg(value: &Value) -> Result<Value, RunError> {
-    match value {
-        Value::Any(any) => {
-            zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)).ok_or(RunError::BadToken)
-        }
-        other => Ok(other.clone()),
-    }
+    let concrete = match value {
+        Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+            .ok_or(RunError::BadToken)?,
+        other => other.clone(),
+    };
+    // Also unwrap a function *cell*. A function stored in a container comes
+    // back as an object holding the handle, and that cell was visible to every
+    // native that inspects an argument: `Object.getOwnPropertyNames(f)` and
+    // `Object.keys(f)` answered `["__boxedFn"]`, leaking the internal slot
+    // name to user code, while `"length" in f`,
+    // `getOwnPropertyDescriptor(f, "length")`,
+    // `getPrototypeOf(f) === Function.prototype` and `f instanceof Function`
+    // all answered for the cell instead of the function. The cell carries a
+    // callable through `any`-typed storage; it is never a value the language
+    // should show.
+    Ok(zun_gc::with_current_heap(|heap| {
+        unbox_function_box(concrete, heap)
+    }))
 }
 
 /// ECMAScript truthiness for a callback result (unboxing an `Any` carrier
