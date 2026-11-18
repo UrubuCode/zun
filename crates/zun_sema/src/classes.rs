@@ -40,12 +40,22 @@ impl<'a> Checker<'a> {
         // inside that declaration's scope. An unscoped duplicate is still an
         // error below.
         let mut declared: HashMap<String, u32> = HashMap::new();
-        for c in &program.classes {
-            *declared.entry(self.text(&c.name).to_string()).or_insert(0) += 1;
+        // Resolve every name BEFORE the loop below mutates `scoped_class_names`:
+        // `text` consults that map, so handling the first `K` made the second
+        // `K` resolve to `K#0` -- a key `declared` never had -- and indexing a
+        // `HashMap` panicked. `function f() { class K {} function g() { class K {} } }`
+        // aborted the compiler with "no entry found for key".
+        let raw_names: Vec<String> = program
+            .classes
+            .iter()
+            .map(|c| self.text(&c.name).to_string())
+            .collect();
+        for raw in &raw_names {
+            *declared.entry(raw.clone()).or_insert(0) += 1;
         }
         for (index, c) in program.classes.iter().enumerate() {
-            let raw = self.text(&c.name).to_string();
-            if declared[&raw] > 1 {
+            let raw = raw_names[index].clone();
+            if declared.get(&raw).copied().unwrap_or(0) > 1 {
                 if let Some(scope) = c.scope {
                     self.scoped_class_names
                         .entry(raw.clone())
