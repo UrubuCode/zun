@@ -1632,3 +1632,33 @@ The lesson underneath: the instrument was never validated against the project's
 own script, and a plausible number went unquestioned for an entire run because
 it moved in the right direction. Check what a metric actually asserts before
 optimising it.
+
+## A typed primitive slot has no null, and coercing is the wrong way out
+
+`class-mixins-builtins-and-heritage` stops at
+
+    const bob = new RichUser("Bob", null as any);   // age: number
+    console.log("validate-null=" + bob.validate());
+
+with `TypeError: Cannot store null in the typed field 'age'` -- 1 line against
+node's 59. A float slot has no null bit pattern, while JS stores the null
+happily, and the `any` cast sits at the *call* site where the layout decision
+cannot see it.
+
+**Do not reach for a coercion at the typed boundary.** It looks free and it is
+not: the mixin's validator is
+
+    validate(): boolean {
+      return Object.values(this as any).every((v) => v !== null && v !== undefined);
+    }
+
+so it **observes the null directly**. Turning null into `0` makes
+`validate-null` print `true` where node prints `false` -- the fixture would pass
+while answering wrongly, which is the "more wrong" failure mode. Checking what
+the fixture observes before choosing the fix is what caught this.
+
+A faithful fix needs a null representation for typed primitive fields -- most
+plausibly laying a field out as `FIELD_ANY` when any write to it can come from
+an `any`-typed path, which the call-site cast makes a non-local decision. That
+is a layout/subsystem choice: read the `.docs-dotnet/` area on boxing and
+nullable value types before inventing one.
