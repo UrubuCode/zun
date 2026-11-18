@@ -1447,3 +1447,41 @@ not satisfy the shape either.
 `get [Symbol.toStringTag]()` on the class *does* work and landed:
 `Object.prototype.toString.call(new DOMException())` now answers
 `[object DOMException]`.
+
+## The typed-value family: one premise, six sites, found by chasing `"Math"`
+
+A `string`/`number`/`boolean`-typed binding can hold anything once an `as any`
+reaches it, and every site that trusted the static type failed differently.
+Each was fixed where it stood; the premise is untouched and is a soundness
+decision, not a defect at any one site.
+
+| site | symptom | commit |
+|---|---|---|
+| `String(x)` elided for a `Ty::String` operand | a number travelled on wearing a `string` type | `83a99227` |
+| `Number(x)`/`Boolean(x)` elided likewise | engine abort | `bf7fc33e` |
+| JIT argument packing (`jit_hook::try_call`) | abort, but only after the method warmed up | `bf7fc33e` |
+| `encode_field`'s string slot | handed back an unrelated interned string | `222d1d67` |
+| string concatenation (`as_str`) | engine abort | `f2671ce6` |
+| typed arithmetic (`bin_float`) | engine abort | `5985c2db` |
+
+**Not one of these changed a single fixture's output.** The conformance suite
+never exercises a value that violates its static type, which is why the family
+survived, and why it only surfaced when an unexplained `"Math"` in a *passing*
+fixture was chased rather than written off.
+
+Three method notes worth keeping:
+
+- **Fix the premise's sites by representation, not by a list of values.** The
+  first JIT guard named `null` and `undefined`; a `Str` in a numeric parameter
+  still aborted. Asking "does this value fit this kind" is one predicate, and
+  writing it turned up that `try_loop_osr` already had the same question as a
+  local closure -- so it became one shared `packs_into` rather than a third copy.
+- **Coercion is not always the answer.** `+` with a string operand concatenates
+  even in a slot the compiler typed `number` (`(ops as any)("7", 2)` is
+  `"72,5"`, not `8`), while `-`, `*`, `/`, `%`, `min` and `max` do run ToNumber.
+  Reaching for ToNumber everywhere would have been plausible and wrong, and no
+  fixture would have caught it.
+- **A symptom can be a leak, an abort, or a quiet wrong answer depending only
+  on which site reads the value next.** When one is fixed, look for the others
+  before concluding the class is closed -- `222d1d67` and `f2671ce6` were both
+  believed to be the whole bug at the time.
