@@ -254,4 +254,10 @@ class DOMException extends Error {
     get code(): number {
         return __zunDomExceptionCode(this.nameOverride);
     }
+
+    // `Object.prototype.toString.call(new DOMException())` is
+    // `[object DOMException]`, not `[object Error]`.
+    get [Symbol.toStringTag](): string {
+        return "DOMException";
+    }
 }

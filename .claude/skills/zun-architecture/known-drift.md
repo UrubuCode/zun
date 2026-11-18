@@ -1414,3 +1414,36 @@ The lesson is narrow and worth keeping: **before hunting for the code that
 makes a test fail, check what node says about the test's own source.** A red
 test is a claim about behaviour, and the claim can be the broken part --
 especially one written before an intentional semantic change.
+
+## Prelude top-level statements run AFTER the user's synchronous code
+
+`zun_prelude::with_prelude` concatenates the prelude **after** the user source
+("the user's text comes first so its byte offsets are unchanged"), and a
+top-level statement in a prelude file therefore executes after the user's
+top-level code. Measured:
+
+    console.log("sync=" + DOMException.ABORT_ERR);                       // undefined
+    queueMicrotask(() => console.log("micro=" + DOMException.ABORT_ERR)); // 20
+    setTimeout(() => console.log("timer=" + DOMException.ABORT_ERR), 0);  // 20
+
+with an installer at the end of `builtin/error.zun` calling
+`Object.defineProperty` for each constant. `realm.zun:20`'s `global.set(..)`
+does not notice because a global is consulted lazily, long after init.
+
+**So the prelude cannot install anything the user's synchronous code reads.**
+Declarations are fine -- they are collected at compile time -- but any
+side-effecting setup is too late. A built-in that needs data properties
+present from the first statement needs them as class members or engine-side,
+not as a prelude `defineProperty` call.
+
+That is why `DOMException`'s legacy numeric constants
+(`INDEX_SIZE_ERR` = 1 ... `DATA_CLONE_ERR` = 25, own properties of both the
+constructor and the prototype, `w:false e:true c:false`) are still missing:
+the installer was written, verified to work from user code, found to run too
+late, and removed rather than carried. Class `static` fields would be visible
+in time but are non-enumerable and would not land on the prototype, so they do
+not satisfy the shape either.
+
+`get [Symbol.toStringTag]()` on the class *does* work and landed:
+`Object.prototype.toString.call(new DOMException())` now answers
+`[object DOMException]`.
