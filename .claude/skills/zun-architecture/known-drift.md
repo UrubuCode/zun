@@ -1485,3 +1485,33 @@ Three method notes worth keeping:
   on which site reads the value next.** When one is fixed, look for the others
   before concluding the class is closed -- `222d1d67` and `f2671ce6` were both
   believed to be the whole bug at the time.
+
+## Pick targets by distinct compile diagnostics, not by line count
+
+Counting *distinct* `[SEM` messages per non-compiling fixture found three
+fixtures each held back by a single blocker, worth hundreds of node lines:
+
+| fixture | distinct | total | blocker |
+|---|---|---|---|
+| `abortsignal-abort-ordering` | 2 | 10 | `onabort` missing; `addEventListener` not forwarding `options` |
+| `regexp-object-protocols` | 1 | 1 | `+` rejecting a `RegExp` operand |
+| `proxy-constructor-callable-and-brand` | 1 | 3 | a `Ty::Proxy` callee not lowering to an indirect call |
+
+The first went **0 to 53 of 53, a true pass**. No line-count ordering
+surfaced any of them: a fixture stuck at zero looks equally expensive whether
+it has one blocker or six.
+
+Filter with `grep "\[SEM"`. A plain `grep error:` also matches
+`zun: runtime error:`, which inflated several fixtures and briefly made
+compiling ones look like they had compile errors.
+
+**Two of the three then needed a second fix, because clearing the diagnostic
+exposed a wrong answer.** Routing `RegExp` to `addAny` made `"x" + /a/g`
+compile and answer `"x[object Object]"` -- worse than the compile error -- until
+`addAny` was pointed at `regex_to_string`, which the file already documents as
+"the one assembly every stringification path goes through". Allowing a `Proxy`
+callee exposed a non-callable target answering `BadToken`, which is not a JS
+error and could not be caught; `RunError::Native` was not enough either, since
+the message reached the driver instead of the enclosing `try` -- it has to go
+through `throw_native!` at the arm. **Expect to clear a diagnostic and find a
+divergence behind it, and treat "it compiles now" as the halfway point.**
