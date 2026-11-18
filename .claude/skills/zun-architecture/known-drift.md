@@ -1299,3 +1299,40 @@ known, and four tests match on `Thrown(..)`. "Nothing catches past this
 boundary" was true and beside the point, because the variant itself is
 observable. A side channel keyed by the object's address carries the text and
 leaves the value alone.
+
+## `new.target` inside an arrow answers `undefined` (diagnosed, not fixed)
+
+    class D {
+      direct: string;
+      viaArrow: any;
+      constructor() {
+        this.direct = new.target.name;                 // "D" / "SubD" -- correct
+        this.viaArrow = (): string => new.target.name; // "undefined" -- node: "D" / "SubD"
+      }
+    }
+
+An arrow inherits `this`, `arguments`, `super` and `new.target` lexically, so
+both lines must answer the constructing class. Attempted and **reverted** --
+nothing is left in the tree -- but the diagnosis is solid and cost three
+traces, so the next attempt should start here rather than repeat it:
+
+- `check_new_target` (`zun_sema/src/check/expr/ident.rs`) needs **two**
+  conditions: `cx.is_constructor`, and `cx.lookup("this")` to resolve. It
+  lowers to `this.constructor.__classDesc`.
+- `closures.rs` sets `is_constructor: false` for every closure. Inheriting it
+  for arrows (`function.is_arrow && outer.is_constructor`) **works** -- a trace
+  confirmed `is_arrow=true outer_ctor=true inherited=true`, and
+  `check_new_target` then reported `is_ctor=true`.
+- The remaining blocker is the second condition: inside the arrow
+  `cx.lookup("this")` answers `None`. An arrow reaches `this` through the
+  *capture* set, which is built by walking the body for free identifiers -- and
+  `new.target` never spells `this`, so no capture is created.
+- Making `add_name` treat the text `"new.target"` as a use of `"this"` did
+  **not** help, so `new.target` is not reaching that walk as an `ast::Expr::Ident`
+  with that text. **Find how the AST actually represents it first** (note
+  `check_new_target` matches `ast::Expr::Ident(_)`, and `zun_syntax`'s
+  `expr/mod.rs` has a `runtime_new_target` path) rather than guessing again.
+
+Everything else in the area matches node: `new.target` directly in a
+constructor, in a plain function called with and without `new`, and in an arrow
+inside a plain function.
