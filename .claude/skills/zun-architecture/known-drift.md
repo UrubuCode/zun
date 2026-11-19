@@ -1770,3 +1770,31 @@ So this is a change to the bound-record representation touching a helper the
 call path shares, not a local fix. Ground it before coding, and instrument the
 call path's use of the record first: every attempt in this session that read the
 code and deduced the path was wrong, and the one that printed a name was right.
+
+### `fn-kinds`' real blocker: `.bind` **inline** in a `new` callee is never lowered
+
+Isolated after the class-bind work, which turned out to be the wrong target --
+the fixture's `Pair` is a `function`, not a class.
+
+    const viaVar: any = (Pair as any).bind(bad, 10);
+    new viaVar(20).sum()                       // works, matches node
+    new ((Pair as any).bind(bad, 10))(20)      // TypeError: undefined is not a function
+
+It is specific to `.bind` in that position, not to `new` over a call:
+`new (getCtor())(7)` and `new (arr[0])(8)` both work. Tracing the name each
+`call_managed_collection` receives shows **`functionBind` never runs** for the
+inline form, so the expression does not reach the interpreter's bind arm at all.
+
+That makes it a **sema/lowering** gap, a different layer from everything else in
+this family: when the callee of `new` is directly a member call, the inner
+`.bind(...)` is not lowered as a dynamic member call. Instrument the sema
+lowering of a `new` whose callee is a call expression; do not look for it in
+`zun_interp`.
+
+This is the one line standing between `fn-kinds-prototype-and-construction`'s 56
+printed lines and node's 121 -- everything after it in the fixture is
+unreachable.
+
+Corrected while doing this: the earlier note claiming `function_is_constructor`
+rejects a bound class member was **wrong**. `if handle.is_bound() { return
+true; }` returns early, before the `owned_by_class` check.
