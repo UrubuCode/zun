@@ -1894,3 +1894,42 @@ before adding one, then a predicate reading `@async` gives both missing
 behaviours: `new` on an async function throwing (it constructs today, on the
 parent binary too), and an async function owning no `prototype` while a
 generator does.
+
+## `===` is intransitive around `String`/`Number`/`Boolean`, and the two-step fix is not enough
+
+Measured, with the IL as the witness:
+
+    Boolean.prototype.constructor === globalThis.Boolean   // true
+    Boolean === Boolean                                    // true
+    Boolean.prototype.constructor === Boolean              // FALSE
+
+The disassembly of the failing form shows why -- the right-hand `Boolean`
+lowers to `ldftn MethodDef[n]`, a reference to the `__coerceBoolean` helper,
+while the left side reads the realm's native global:
+
+    lddyn "Boolean" / lddyn "prototype" / lddyn "constructor"
+    ldftn MethodDef[16]
+    cmp.eq
+
+It is deliberate: `check/expr/ident.rs` lowers `String`/`Number`/`Boolean` read
+as values to `FunctionRef { __coerce* }`, *before* the realm-descriptor branch
+that would give the global, so that `xs.map(String)` works.
+
+**Tried and reverted, so it is not tried again:** deleting that branch does fix
+identity (`Boolean === globalThis.Boolean` and the `.constructor` round-trip
+both become true), and it breaks `xs.map(String)`. Extending
+`callable_ctor_handle` in `eval.rs` -- which already maps a descriptor token to
+a free-function rid, today only for `Symbol`/`__zunSymbolCall` -- to resolve the
+three coerce descriptors is **not sufficient**: `Array.prototype.map` rejects
+the descriptor argument before any callable resolution is reached, with
+`TypeError: invalid argument to built-in function`.
+
+So the real cost is descriptor-callability in the callback-argument validation
+of every native that takes one, not two sites. Until that is done, the
+`__coerce*` lowering is the right trade: `xs.map(String)` is far more common
+than `Boolean === globalThis.Boolean`. One fixture line depends on it
+(`boolean-coercion-and-equality`'s `prototype_constructor_identity`).
+
+Note the shape, because it recurs: `as any` on the receiver, or binding the read
+to a variable, routes around the fold and answers correctly -- so a probe
+written with `as any` shows no bug at all.
