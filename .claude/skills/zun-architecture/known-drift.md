@@ -1798,3 +1798,33 @@ unreachable.
 Corrected while doing this: the earlier note claiming `function_is_constructor`
 rejects a bound class member was **wrong**. `if handle.is_bound() { return
 true; }` returns early, before the `owned_by_class` check.
+
+#### The IL proves it: the inline `new` callee is lowered to `const.undef`
+
+`zun disasm` on the two forms is the instrument for this (not a native tracer:
+the working `bind` goes through the interpreter's own member-call arm via
+`col_function`, so it never appears in a `call_builtin` trace, and comparing
+those traces is inconclusive).
+
+Inline (`new ((C as any).bind(null, 9))()`):
+
+    0015: const.f64 0
+    001E: pop
+    001F: const.undef
+    0020: call.indirect.n 0
+
+Through a variable (`const v = (C as any).bind(null, 9); new v()`):
+
+    0015: ldftn MethodDef[1]
+    001A: const.i32 2
+    001F: newarray          ; the bound-argument array
+    ...
+
+So sema evaluates the inline callee **for effect only** -- a `const.f64 0` that
+is immediately popped -- and then emits `const.undef` as the thing to construct,
+which is why the runtime says `undefined is not a function` and why no bind
+native ever runs. The repair is in the lowering of a `new` whose callee is a
+member call on an `any`-typed receiver; `check_new_dynamic` is the entry, and
+the `const.f64 0` suggests the member read is going through the function-property
+fold path (`check/expr/field.rs`, the `name`/`length` folds) rather than being
+checked as a call.
