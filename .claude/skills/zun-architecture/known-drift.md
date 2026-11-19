@@ -2217,3 +2217,35 @@ instrument is `check/expr/field.rs`'s `X.prototype.<m>` resolution -- the same
 file that folds `.name`/`.length` and holds the `refs[1] == "prototype"`
 checks -- to see what value `String.prototype.valueOf` resolves to before the
 general `.call` applies it.
+
+## A named function expression loses its name
+
+`function-identity-recursion-and-hof` is three lines out and two of them are
+one cause: `const f = function fact(n) {...}; f.name` answers `""` (node:
+`"fact"`), and so does `holder.method.name` for a named method shorthand.
+
+The name is **discarded at closure creation**: `zun disasm` shows the
+expression compiled as `<closure@10#2>`. The AST does carry it --
+`ast::Function` has `pub name: Name` -- and `closures.rs` simply does not use
+it when building `format!("<closure@{}{unique}{method}{rest_suffix}>", …)`.
+
+The static fold cannot help: a closure's value type is the
+`DYNAMIC_FUNCTION` sentinel, so `check/expr/field.rs` takes its
+`String::new()` branch and never looks at a signature. Only the **runtime**
+reader can answer, and it reads the method's recorded name -- which is why
+carrying the given name in that string is the route.
+
+Two format hazards to measure first, both load-bearing:
+
+* the closure-copy dedup compares `c.name.starts_with("<closure@{span}")` and
+  slices `c.name[("<closure@".len())..]`, so inserting a name right after the
+  span may break the comparison;
+* the kind markers are matched with `contains` (`@arrow`, `@method`, `@rest`,
+  `@this`, and the `@async`/`@generator` added in `71d6ce0e`) and stripped as
+  **ordered suffixes**, so a name appended at the end would have to join that
+  strip order -- see the four stripping sites listed under the `@async` route.
+
+The fixture's third line is separate: `function d(x = typeof d)` must see `d`
+in the parameter scope (`"function"`, not `"undefined"`) -- the same
+"own binding visible inside its own default" shape as `super`/`new.target` in
+a closure.
