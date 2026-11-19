@@ -940,6 +940,28 @@ impl Interp<'_> {
     }
 
     #[inline(always)]
+    /// The stable index of a well-known symbol by name, mirroring the fold in
+    /// `zun_sema`'s `check/expr/field.rs`. The two must stay in step: the fold
+    /// answers a literal key at compile time and this answers a computed one.
+    pub(crate) fn well_known_symbol_index(name: &str) -> Option<u64> {
+        Some(match name {
+            "iterator" => 0,
+            "asyncIterator" => 1,
+            "hasInstance" => 2,
+            "toPrimitive" => 3,
+            "toStringTag" => 4,
+            "match" => 5,
+            "replace" => 6,
+            "search" => 7,
+            "split" => 8,
+            "species" => 9,
+            "isConcatSpreadable" => 10,
+            "unscopables" => 11,
+            "matchAll" => 12,
+            _ => return None,
+        })
+    }
+
     pub(super) fn op_load_dynamic_value(
         &mut self,
         stack: &mut Vec<Value>,
@@ -978,6 +1000,26 @@ impl Interp<'_> {
         };
         let receiver = pop(stack)?;
         // `Number["isInteger"]` / `Number["EPSILON"]` on the coercion function value.
+        // A well-known symbol read with a **computed** key: `Symbol[n]` where
+        // `n` is a variable answered `undefined`, while `Symbol.iterator` and
+        // `Symbol["iterator"]` both work because sema folds a literal key.
+        // Nothing answered at run time, and this is the computed-key arm
+        // (`lddyn.value`) such a read takes.
+        if let Value::Str(name) = &key {
+            let descriptor = match &receiver {
+                Value::Any(any) => any.as_class_descriptor(),
+                _ => None,
+            };
+            if descriptor
+                .is_some_and(|token| Self::builtin_ctor_global_name(token) == Some("Symbol"))
+            {
+                if let Some(index) = Self::well_known_symbol_index(name) {
+                    let id = zun_core::SymbolId::from_raw(index);
+                    stack.push(Value::Any(zun_core::Any::symbol(id)));
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         if let Value::Str(name) = &key {
             let callee = match &receiver {
                 Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)),

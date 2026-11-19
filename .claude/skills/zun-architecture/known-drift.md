@@ -2141,3 +2141,37 @@ Also measured on the way, so it is not re-tried: the over-read in
 `array-copy-and-slice-methods` is **not** this static-vs-dynamic split --
 `Array.prototype.slice.call(proxy, …)` reads 3 elements in both the direct and
 the variable form.
+
+## `symbol-wellknown` was at 0 lines because `Symbol[n]` needs a computed-key read
+
+The fixture printed **nothing** (0 of node's 443 lines) and the cause was one
+expression: its first loop does `const sym = (Symbol as any)[n]` over the
+thirteen well-known names, and that answered `undefined`, so
+`sym.description` threw.
+
+The shape is the recurring one: `Symbol.iterator` and `Symbol["iterator"]`
+*both* work, because sema folds a literal key (`check/expr/field.rs` holds the
+name-to-index table); only a **variable** key fails, because it compiles to
+`lddyn.value` and nothing answered there. Fixed by resolving the same table in
+the computed-key arm (`op_load_dynamic_value`), with the index table extracted
+into `well_known_symbol_index` so the two copies stay in step. The first
+attempt went into the string-keyed arm (`op_load_dynamic`) and did nothing --
+the IL diff is what showed which opcode the read uses.
+
+**0 -> 12 lines.** The next blocker is that the well-known symbols are not
+*real* own properties of `Symbol`: they are synthesized per read, so
+
+    Object.defineProperty(Symbol, "iterator", { value: 1 })
+
+**succeeds** (node throws, the property being non-configurable and
+non-writable), writing an expando that then corrupts later reads -- which is
+how the fixture reached an *unhandled* TypeError later. `{writable: true}` and
+`{get(){}}` already throw, so only the value case is wrong.
+
+Materializing the thirteen as real own properties with
+`writable: false, enumerable: false, configurable: false` would fix the
+redefine rules, `getOwnPropertyDescriptor`, `hasOwnProperty` and
+`Reflect.ownKeys` together, and is probably most of the remaining 431 lines. It
+needs an init-time site holding both the `Symbol` class value and the symbol
+values: note the prelude is not one today -- no prelude file imports the
+`collections` core module where `symbolWellKnown` lives.
