@@ -1989,3 +1989,28 @@ what it resolves for a Set prototype, then route the three string names to the
 same answer -- per spec `Set.prototype.values`, `.keys` and `@@iterator` are
 *the same function*, so making them identical is the correct fix and not a
 workaround.
+
+## `Array.prototype.slice.call(arrayLike, …)` reads elements before coercing
+
+`array-copy-and-slice-methods` is one line from passing:
+`elementsRead` is 3 where node says 0. A Proxy counts element reads, then
+`slice` is called with a `start` whose `valueOf` throws -- per spec the
+coercion happens before any element is read, so nothing should have been read.
+
+Traced (`eprintln` of each native's name in `call_builtin`): the generic path
+runs `proxyNew`, then **`arrayFromArrayLike`**, then `arraySliceRange`. The
+lowering in `check/expr/mcall_statics.rs` builds
+
+    Sequence { effect: tmp = arrayFromArrayLike(x), value: tmp.slice(args…) }
+
+so the whole array-like is materialized before the arguments are touched. The
+same cause makes the non-throwing case over-read: `slice.call(proxy3, 1)` reads
+3 elements where node reads 2.
+
+**Hoisting the arguments is not enough**, which is why this is not a quick fix:
+the `valueOf` only runs when the argument is *coerced*, so the throw stays late
+unless the hoist coerces too -- and that lowering is shared by every borrowed
+array method, including `filter`/`map`, whose arguments are callbacks and must
+not be coerced to numbers. A correct fix needs per-method argument-coercion
+knowledge, or a generic `slice` that reads only the selected range instead of
+materializing through `arrayFromArrayLike`.
