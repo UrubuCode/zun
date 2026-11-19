@@ -388,6 +388,26 @@ impl<'a> Interp<'a> {
                 if let Ok(Value::Function(handle)) =
                     unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
                 {
+                    // A bound function has no own `prototype`, and
+                    // `instanceof` follows `[[BoundTargetFunction]]`: the test
+                    // is against the target. Without this,
+                    // `new B() instanceof B` was false where node says true,
+                    // even though `instanceof` the target already worked.
+                    let handle = if handle.is_bound() {
+                        self.unwrap_bound_chain(handle, Vec::new())?.0
+                    } else {
+                        handle
+                    };
+                    // A bound function has no own `prototype`, and
+                    // `instanceof` follows `[[BoundTargetFunction]]`: the test
+                    // is against the target. Without this,
+                    // `new B() instanceof B` was false where node says true,
+                    // even though `instanceof` the target already worked.
+                    let handle = if handle.is_bound() {
+                        self.unwrap_bound_chain(handle, Vec::new())?.0
+                    } else {
+                        handle
+                    };
                     // A function's own `[Symbol.hasInstance]` decides membership
                     // before the prototype-chain walk.
                     let bag = crate::function_expando_bag(handle);
