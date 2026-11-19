@@ -576,9 +576,26 @@ impl<'a> Interp<'a> {
                 }
                 // `Function.prototype.bind` on a function value reached through
                 // `any`: `[thisArg, ...partial]` becomes the bound arguments.
-                if let Value::Function(handle) = &receiver_concrete {
-                    if member.as_ref() == "bind" {
-                        let target = *handle;
+                // Also a class value. A class is `Value::Any(descriptor)` and
+                // never `Value::Function`, so it never reached this arm and
+                // `typeof (K as any).bind` was `undefined`. Binding one targets
+                // its constructor method: `is_bound()` makes
+                // `function_is_constructor` answer true by an early return,
+                // before the `owned_by_class` check that would otherwise reject
+                // a class member.
+                if member.as_ref() == "bind" {
+                    let bind_target = match &receiver_concrete {
+                        Value::Function(handle) => Some(*handle),
+                        Value::Any(any) => any
+                            .as_class_descriptor()
+                            .filter(|token| token & zun_natives::USER_CLASS_FLAG != 0)
+                            .and_then(|token| {
+                                self.class_constructor(token & !zun_natives::USER_CLASS_FLAG)
+                            })
+                            .map(|rid| zun_core::FunctionHandle::new(rid, None)),
+                        _ => None,
+                    };
+                    if let Some(target) = bind_target {
                         let unboxed = args[2..]
                             .iter()
                             .map(|arg| match arg {

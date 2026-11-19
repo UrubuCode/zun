@@ -300,6 +300,23 @@ impl<'a> Interp<'a> {
                         if !rest.is_empty() {
                             rest.remove(0);
                         }
+                        // A bound **class**: the target is its constructor
+                        // method, and that has to be constructed through the
+                        // class descriptor so the instance gets the class's
+                        // typed layout. Run as an ordinary function it got a
+                        // plain dynamic object and the first field store threw.
+                        let rid = target.method_rid();
+                        let owner = self
+                            .module
+                            .tables
+                            .type_defs
+                            .iter()
+                            .position(|def| rid >= def.method_start && rid < def.method_end);
+                        if let Some(index) = owner {
+                            let token =
+                                zun_natives::USER_CLASS_FLAG | (index as u32 + 1);
+                            return self.construct_class_from_descriptor(token, rest);
+                        }
                         (target, rest)
                     } else {
                         (handle, values)
