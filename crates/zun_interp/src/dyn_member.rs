@@ -1948,6 +1948,22 @@ impl Interp<'_> {
     }
 
     /// Whether `handle` is an arrow function (its closure name carries `@arrow`).
+    /// Whether `handle` owns a `prototype` key, which is node's shape: a plain
+    /// function and a generator do; an arrow, an async function and a method
+    /// shorthand do not. The exclusions are explicit because
+    /// `function_is_constructor` does not reject an arrow (that rejection lives
+    /// in the construct path) and it *does* reject a generator, which owns one.
+    pub(crate) fn function_owns_prototype(&self, handle: zun_core::FunctionHandle) -> bool {
+        // A **bound** function owns no `prototype`: `function_is_constructor`
+        // answers true for one by an early return, so exclude it here.
+        !handle.is_bound()
+            && !self.is_arrow_closure(handle)
+            && !self.is_method_closure(handle)
+            && (self.is_generator_function(handle)
+                || (self.function_is_constructor(handle)
+                    && !self.is_async_function(handle)))
+    }
+
     /// Whether `handle` is a `function*` (its declared name carries the
     /// `@generator` marker). Needed beside `method_yields` because a generator
     /// with no `yield` in its body is invisible to that scan.

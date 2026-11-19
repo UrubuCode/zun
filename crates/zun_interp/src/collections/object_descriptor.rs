@@ -213,6 +213,21 @@ impl<'a> Interp<'a> {
             }
             "objectHasOwn" => {
                 // A user class value owns its statics (not its bases').
+                // A function value: `prototype` is an own key of a plain
+                // function and a generator, which `objectGetOwnPropertyNames`
+                // reports through the same predicate. Without this branch the
+                // receiver fell through to the expando bag, which holds no
+                // `prototype` until something constructs, so
+                // `hasOwnProperty.call(f, "prototype")` disagreed with
+                // `getOwnPropertyNames(f)`.
+                if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
+                    if let Ok(Value::Str(key)) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)
+                    {
+                        if key.as_ref() == "prototype" {
+                            return Ok(Value::Bool(self.function_owns_prototype(handle)));
+                        }
+                    }
+                }
                 if let Ok(Value::Any(descriptor)) = unbox_arg(args.first().ok_or(RunError::BadToken)?)
                 {
                     if let Some(rid) = descriptor
@@ -852,6 +867,11 @@ impl<'a> Interp<'a> {
                 if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
                     let bag = crate::function_expando_bag(handle);
                     let mut names = vec!["length".to_owned(), "name".to_owned()];
+                    // A constructible function owns `prototype` too; the
+                    // predicate carries node's shape and the reasons.
+                    if self.function_owns_prototype(handle) {
+                        names.push("prototype".to_owned());
+                    }
                     if self.coerce_ctor_name(handle).is_some() {
                         // A constructor owns `prototype`, then its statics, then
                         // its constants (the specification's own-key order).
