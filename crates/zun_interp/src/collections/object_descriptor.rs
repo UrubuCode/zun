@@ -8,7 +8,7 @@ use super::*;
 impl<'a> Interp<'a> {
     /// Whether a realm class descriptor stands for an ECMAScript namespace object
     /// (`JSON`, `Atomics`) that the prelude models as a class of statics.
-    fn descriptor_is_namespace(&self, token: u32) -> bool {
+    pub(crate) fn descriptor_is_namespace(&self, token: u32) -> bool {
         if token & zun_natives::USER_CLASS_FLAG == 0 {
             return false;
         }

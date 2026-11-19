@@ -237,6 +237,14 @@ impl<'a> Interp<'a> {
                 // A builtin buffer constructor value (`new ctor(...)` with a
                 // typed array / ArrayBuffer / DataView descriptor in `ctor`).
                 if let Some(token) = args.first().and_then(Self::class_token_of) {
+                    // A namespace is not a constructor: `new Math()` and
+                    // `new JSON()` built `[object Math]` / `[object Object]`
+                    // where node throws a TypeError. The prelude models a
+                    // namespace as a class of statics, so it reached the class
+                    // construct path like any other descriptor.
+                    if self.descriptor_is_namespace(token) {
+                        return Err(self.proto_type_error("value is not a constructor"));
+                    }
                     if token & zun_natives::USER_CLASS_FLAG == 0 {
                         let array = object(args.get(1).ok_or(RunError::BadToken)?)
                             .ok_or(RunError::BadToken)?;

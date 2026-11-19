@@ -1024,6 +1024,28 @@ pub(super) fn strict_equals(left: &Value, right: &Value, zero_aware: bool) -> bo
 /// ECMAScript `SameValue`: like `===` but `NaN` equals `NaN` and `+0` differs
 /// from `-0`. Numbers compare by IEEE-754 bit pattern after the `NaN` check.
 pub(super) fn same_value(left: &Value, right: &Value) -> bool {
+    // Two BigInts are the same value when their digits are, which is what
+    // `===` already answers through `bigIntEq`. Comparing the boxes instead
+    // made `Object.is(1n, 1n)` **false**, and `Object.is(-0n, 0n)` with it --
+    // BigInt has no negative zero, so node says true for both. A BigInt
+    // reaches here either boxed in an `Any` or as a bare `Value::Object`, so
+    // both spellings are resolved before the match below.
+    let as_obj = |value: &Value| match value {
+        Value::Object(object) => Some(*object),
+        Value::Any(any) => any
+            .as_object()
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+        _ => None,
+    };
+    if let (Some(left), Some(right)) = (as_obj(left), as_obj(right)) {
+        if let Some(same) = zun_gc::with_current_heap(|heap| {
+            let left = heap.bigint_value(left)?.clone();
+            let right = heap.bigint_value(right)?.clone();
+            Some(left == right)
+        }) {
+            return same;
+        }
+    }
     let number = |value: &Value| match value {
         Value::Int(value, _) => Some(*value as f64),
         Value::Float(value, _) => Some(*value),
@@ -1041,10 +1063,28 @@ pub(super) fn same_value(left: &Value, right: &Value) -> bool {
         (Value::Object(left), Value::Object(right)) => left.addr() == right.addr(),
         (Value::Null, Value::Null) => true,
         (Value::Void, Value::Void) => true,
-        (Value::Any(left), Value::Any(right)) => match (left.as_symbol(), right.as_symbol()) {
-            (Some(left), Some(right)) => left == right,
-            _ => false,
-        },
+        (Value::Any(left), Value::Any(right)) => {
+            // Two BigInts are the same value when their digits are, which is
+            // what `===` already answers through `bigIntEq`. Comparing the
+            // boxes instead made `Object.is(1n, 1n)` **false**, and
+            // `Object.is(-0n, 0n)` with it -- BigInt has no negative zero, so
+            // node says true for both.
+            if let (Some(left), Some(right)) = (left.as_object(), right.as_object()) {
+                let left = unsafe { zun_gc::Obj::from_addr(left as *mut u64) };
+                let right = unsafe { zun_gc::Obj::from_addr(right as *mut u64) };
+                if let Some(same) = zun_gc::with_current_heap(|heap| {
+                    let left = heap.bigint_value(left)?.clone();
+                    let right = heap.bigint_value(right)?.clone();
+                    Some(left == right)
+                }) {
+                    return same;
+                }
+            }
+            match (left.as_symbol(), right.as_symbol()) {
+                (Some(left), Some(right)) => left == right,
+                _ => false,
+            }
+        }
         _ => false,
     }
 }
