@@ -287,7 +287,10 @@ impl<'a> Interp<'a> {
                     // the target too.
                     let (handle, values) = if handle.is_bound() {
                         let (target, prepended) = self.unwrap_bound_chain(handle, values)?;
-                        if self.is_arrow_closure(target) || self.is_method_closure(target) {
+                        if self.is_arrow_closure(target)
+                            || self.is_method_closure(target)
+                            || self.method_yields(target.method_rid())
+                        {
                             return Err(self.proto_type_error("value is not a constructor"));
                         }
                         // `unwrap_bound_chain` serves the *call* path, where the

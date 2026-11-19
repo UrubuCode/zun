@@ -616,6 +616,13 @@ impl<'a> Interp<'a> {
         if handle.is_bound() {
             return true;
         }
+        // A generator function is not a constructor. There is no metadata flag
+        // for one, so this asks whether the body yields -- needed once a
+        // `Ty::Function` callee began reaching this path, since `new (g as
+        // any)()` otherwise built an object where node throws.
+        if self.method_yields(handle.method_rid()) {
+            return false;
+        }
         let rid = handle.method_rid();
         let owned_by_class = self
             .module

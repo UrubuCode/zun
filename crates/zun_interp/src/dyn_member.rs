@@ -1916,6 +1916,37 @@ impl Interp<'_> {
 }
 
 impl Interp<'_> {
+    /// Whether `method_rid`'s body yields, which is how a generator is
+    /// recognized -- there is no metadata flag, so `create_generator` scans for
+    /// `Yield` the same way and calls this rather than repeating the walk.
+    /// Needed because a generator function is **not** a constructor: once a
+    /// `Ty::Function` callee started reaching the runtime construct path,
+    /// `new (g as any)()` built an object where node throws a TypeError.
+    pub(crate) fn method_yields(&self, method_rid: u32) -> bool {
+        let Some(method) = self
+            .module
+            .tables
+            .method_defs
+            .get((method_rid as usize).wrapping_sub(1))
+        else {
+            return false;
+        };
+        let Ok(body) = crate::read_body(&self.module.code, method.body_offset) else {
+            return false;
+        };
+        let mut offset = 0;
+        while offset < body.code.len() {
+            let Ok((instruction, size)) = zun_il::decode_one(&body.code[offset..]) else {
+                return false;
+            };
+            if instruction.opcode == zun_il::Opcode::Yield {
+                return true;
+            }
+            offset += size;
+        }
+        false
+    }
+
     /// Whether `handle` is an arrow function (its closure name carries `@arrow`).
     pub(crate) fn is_arrow_closure(&self, handle: zun_core::FunctionHandle) -> bool {
         !handle.is_bound()

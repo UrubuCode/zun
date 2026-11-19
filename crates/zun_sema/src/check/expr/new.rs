@@ -76,7 +76,14 @@ impl Checker<'_> {
         } else {
             callee
         };
-        if callee.ty == Ty::Any {
+        // A function value too, not only `Ty::Any`. Sema used to lower a
+        // `Ty::Function(_)` callee as "not a constructor", evaluating the
+        // arguments and throwing -- which is why `new ((C as any).bind(null,
+        // 9))()` emitted `const.undef` and died while the same bind through a
+        // variable worked. A bound function **is** constructible, and the
+        // runtime already decides correctly, so the choice belongs there and
+        // not in a compile-time assumption.
+        if matches!(callee.ty, Ty::Any | Ty::Function(_)) {
             // A dynamic callee may hold a proxy over a class: construct through
             // it at run time (anything else throws a TypeError there).
             let elements: Vec<Option<hir::Expr>> =
