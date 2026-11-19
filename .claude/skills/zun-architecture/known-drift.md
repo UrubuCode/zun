@@ -1828,3 +1828,44 @@ member call on an `any`-typed receiver; `check_new_dynamic` is the entry, and
 the `const.f64 0` suggests the member read is going through the function-property
 fold path (`check/expr/field.rs`, the `name`/`length` folds) rather than being
 checked as a call.
+
+### What `fn-kinds`' dominant cluster actually needs: the function *kind* at run time
+
+After `d82234b4` and `c8b4ea86` the fixture prints 69 of node's 121 lines, and
+most of the 24 divergences inside those 69 are one cluster: every function kind
+reports no own `prototype`.
+
+    node:  plain:true  arrow:false  gen:true  async:false  method:false
+    zun:   plain:false arrow:false  gen:false async:false  method:false
+
+so `getOwnPropertyNames(f)` omits `prototype` for a plain function and a
+generator, and `has_prototype` / `plain_prototype` / `generator_prototype` /
+the per-kind `*_intrinsic` and `*_tag` lines all follow from the same missing
+information.
+
+The runtime predicates available are `is_arrow_closure`, `is_method_closure`
+(both read `@arrow` / `@method` markers out of the closure's name),
+`function_is_constructor`, and `method_yields` (added in `d82234b4`).
+
+**They cannot express node's shape, and here is the exact reason:** a generator
+needs `prototype` and an async function must not have one, but zun compiles an
+async function *as* a generator (`closures.rs`: `is_generator: function.is_async
+|| function.is_generator`), so `method_yields` answers true for both. And the
+body scan misses an **empty** generator or async function entirely -- which is
+also why `new` on either still constructs where node throws, on the parent
+binary as much as now.
+
+So the cluster needs the function kind to survive to run time. Two routes:
+
+* an `@async` marker beside `@arrow`/`@method` in `closures.rs` (additive, and
+  the runtime already reads that encoding) -- but check whether a *top-level*
+  `async function` declaration goes through `closures.rs` at all, since those
+  markers are built for closures;
+* or the constructibility/kind flag in `MethodDef`, which is a change to the
+  **format crates** -- the contract -- and so needs grounding in
+  `.docs-dotnet/` and round-trip tests per `CLAUDE.md`.
+
+Do not reach for `function_is_constructor(h) || method_yields(h)` as a
+shortcut: it gets plain, arrow, generator and method right and then gives an
+async function a `prototype`, trading a currently-correct answer for a line
+that stays wrong anyway.
