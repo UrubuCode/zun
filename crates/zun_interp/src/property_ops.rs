@@ -784,6 +784,26 @@ impl Interp<'_> {
                         BUILTIN_SET_ITERATOR
                     }),
                 );
+                // The string-named iterator methods are the **same function**
+                // as `@@iterator`, per spec: `Set.prototype.values` and
+                // `.keys` are, and so is `Map.prototype.entries`. Only the
+                // symbol was installed, so those names read as `undefined` --
+                // which also made the neighbouring
+                // `Set.prototype.keys === Set.prototype.values` true for the
+                // wrong reason, both sides being `undefined`.
+                let iter_handle = zun_core::FunctionHandle::new_builtin_method(if kind
+                    == BUILTIN_MAP_SIZE
+                {
+                    BUILTIN_MAP_ITERATOR
+                } else {
+                    BUILTIN_SET_ITERATOR
+                });
+                if kind == BUILTIN_MAP_SIZE {
+                    heap.dynamic_set_method(proto, "entries".to_owned(), iter_handle);
+                } else {
+                    heap.dynamic_set_method(proto, "values".to_owned(), iter_handle);
+                    heap.dynamic_set_method(proto, "keys".to_owned(), iter_handle);
+                }
                 heap.dynamic_define_accessor(
                     proto,
                     "size".to_owned(),
