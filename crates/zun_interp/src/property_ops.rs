@@ -1129,18 +1129,15 @@ impl Interp<'_> {
                 Ok(Value::Object(self.resolve_iterator(source)?))
             }
             BUILTIN_STRING_ITERATOR => {
-                let text = match &this {
-                    Value::Str(text) => Some(text.clone()),
-                    Value::Any(any) => match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
-                        Some(Value::Str(text)) => Some(text),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                let Some(text) = text else {
+                // The receiver is `ToString`'d, not required to be a string:
+                // `String.prototype[Symbol.iterator].call(123)` iterates
+                // `"123"` in node. Only a nullish receiver is a TypeError
+                // (RequireObjectCoercible); every other kind converts, which
+                // `stringIteratorNew` now does.
+                if matches!(this, Value::Null | Value::Void) {
                     return Err(self.incompatible_receiver("String.prototype[Symbol.iterator]"));
-                };
-                self.call_managed_collection("stringIteratorNew", &[Value::Str(text)])
+                }
+                self.call_managed_collection("stringIteratorNew", &[this])
             }
             k if (BUILTIN_DV_BASE..BUILTIN_DV_BASE + DATA_VIEW_METHODS.len() as u32).contains(&k) => {
                 let (js_name, native, elem, is_float) =

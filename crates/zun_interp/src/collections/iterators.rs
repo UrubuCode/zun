@@ -59,9 +59,30 @@ impl<'a> Interp<'a> {
             }
             "stringIteratorNew" => {
                 // Iterate by Unicode code point (`chars()`), not UTF-16 unit.
-                let value = match args.first().ok_or(RunError::BadToken)? {
-                    Value::Str(value) => value.clone(),
-                    _ => return Err(RunError::BadToken),
+                //
+                // The receiver is `ToString`'d, not required to be a string:
+                // `String.prototype[Symbol.iterator].call(123)` iterates
+                // `"123"` in node and only a nullish receiver is a TypeError
+                // (RequireObjectCoercible). Demanding `Value::Str` here threw
+                // for every other kind.
+                let raw = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let value = match raw {
+                    Value::Str(value) => value,
+                    Value::Null | Value::Void => {
+                        return Err(RunError::Native(
+                            "TypeError: String.prototype[Symbol.iterator] called on null or \
+                             undefined"
+                                .into(),
+                        ));
+                    }
+                    other => {
+                        let coerced =
+                            self.call_managed_collection("stringCoerce", &[other])?;
+                        match unbox_arg(&coerced)? {
+                            Value::Str(text) => text,
+                            _ => return Err(RunError::BadToken),
+                        }
+                    }
                 };
                 let points: Vec<String> = value.chars().map(|point| point.to_string()).collect();
                 let iterator = zun_gc::with_current_heap_mut(|heap| {
