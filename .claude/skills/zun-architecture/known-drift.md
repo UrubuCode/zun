@@ -2014,3 +2014,37 @@ array method, including `filter`/`map`, whose arguments are callbacks and must
 not be coerced to numbers. A correct fix needs per-method argument-coercion
 knowledge, or a generic `slice` that reads only the selected range instead of
 materializing through `arrayFromArrayLike`.
+
+## `buffer-compare-rw`: sorting byte views needs a runtime Buffer brand
+
+Two of the fixture's remaining lines, and both run into the same modelling
+choice.
+
+**`sort_buffers`.** `[Buffer…].sort()` leaves the array untouched
+(`b,ab,a` against node's `a,ab,b`). The default comparator in
+`array_iterate.rs` compares `stringify_any(..).unwrap_or_default()`, and
+`stringify_any`'s object arm does `heap.array_len(obj)?` -- which is `None` for
+a typed-array view -- so **both sides become `""`**, `a <= b` always holds and
+no element is ever swapped.
+
+Two hypotheses killed on the way: `Buffer.compare` itself is correct on all
+four orderings, and `sort(undefined)` is correct for strings and numbers
+(identical to node), so neither the comparator nor the default-sort path is
+broken.
+
+**The fix is not just teaching `stringify_any` about views**, because node
+stringifies the two kinds differently:
+
+    String(Buffer.from("ab"))        // "ab"       -- UTF-8 decode
+    String(new Uint8Array([97,98]))  // "97,98"    -- comma-joined numbers
+
+zun answers `"ab"` for both (pre-existing: same on the parent binary), because
+**Buffer is a nominal alias for the U8 view** -- `realm.rs` says so outright
+("Node's Buffer IS a Uint8Array"), so the distinction exists only in the static
+type and a runtime value cannot tell which it is. Decoding in `stringify_any`
+would fix the Buffer sort and make the `Uint8Array` case wrong.
+
+So this needs a Buffer brand that survives to run time, like the `@async`
+marker route did for function kinds. Until then both lines stay, and
+`write_lone_surrogate` (0 bytes where node writes `efbfbd`, the replacement
+character) is the fixture's other open line and is independent of this.
