@@ -1951,3 +1951,41 @@ Every `1xx/16x` figure in this skill's history and in the memory file is that
 weaker metric and is not comparable to a `tests_check.sh` number. Compare only
 like with like, and when an old number has to be checked, build that commit in
 a worktree and run the script there rather than reasoning about it.
+
+## Set/Map `values`/`keys`/`entries` read as `undefined` (and two dead hypotheses)
+
+`set-core-and-operations` is one line from passing:
+`Set.prototype[Symbol.iterator] === Set.prototype.values` is false. The cause is
+not the comparison -- **`Set.prototype.values` is `undefined`**:
+
+    Object.getOwnPropertyNames(Set.prototype)
+    zun:  constructor,add,has,delete,clear,size          (6)
+    node: constructor,has,add,delete,difference,clear,entries,forEach,...  (17)
+
+Set declares 8 methods in `builtin/set.zun` and lists 5; Map declares 9 and
+lists 6. The three missing in each are exactly `values`, `keys`, `entries`. So
+the fixture's neighbouring `keys === values` is **true for the wrong reason** --
+both sides are `undefined`.
+
+Two hypotheses measured and killed, so they are not re-tried:
+
+* **Not the name or the return type.** A user class with `values(): Array`
+  lists it and reads it as a function.
+* **Not trimming.** `zun disasm` shows `keys`, `values` and `entries` compiled
+  into the module.
+
+What is known: sema intercepts *all* of `add`/`has`/`delete`/`clear`/`values`/
+`keys`/`entries`/`forEach` on a `Ty::Set` receiver
+(`check/expr/mcall_managed.rs`, the `Ty::Set` arm) and routes them to natives,
+so interception alone does not explain it either -- the listed ones are
+intercepted too. And `s.values()` does not reach the prelude body at all: the
+returned value has no `length`.
+
+The two read paths differ in the IL, which is the lead to follow: the symbol
+form compiles to `lddyn.value` (computed key) and finds an iterator function
+whose `name` is `"values"`, while the string form compiles to `lddyn "values"`
+and finds nothing. Instrument `op_load_dynamic_value`'s computed-key path to see
+what it resolves for a Set prototype, then route the three string names to the
+same answer -- per spec `Set.prototype.values`, `.keys` and `@@iterator` are
+*the same function*, so making them identical is the correct fix and not a
+workaround.
