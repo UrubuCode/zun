@@ -323,15 +323,59 @@ impl Checker<'_> {
                             },
                         };
                         let (slot, tmp) = self.synthetic_local(cx, Ty::Array);
+                        // The spec validates a callback with IsCallable before
+                        // reading any element, so for the callback-taking
+                        // methods the check has to happen before the
+                        // array-like is materialized -- the conversion below
+                        // read index 0 of a Proxy and only then threw. The
+                        // callback is hoisted into its own temp so the guard
+                        // does not evaluate the argument expression twice.
+                        let takes_callback = matches!(
+                            name.as_str(),
+                            "forEach"
+                                | "map"
+                                | "filter"
+                                | "some"
+                                | "every"
+                                | "find"
+                                | "findIndex"
+                                | "findLast"
+                                | "findLastIndex"
+                                | "flatMap"
+                        );
+                        let mut call_args = args[1..].to_vec();
+                        let mut guard: Option<hir::Expr> = None;
+                        if takes_callback && !call_args.is_empty() {
+                            if let Some(&func) = self.by_name.get("__zunRequireCallable") {
+                                let checked = self.check_expr(cx, &call_args[0]);
+                                let (cb_slot, cb_tmp) = self.synthetic_local(cx, Ty::Any);
+                                guard = Some(hir::Expr {
+                                    kind: hir::ExprKind::Assign {
+                                        slot: cb_slot,
+                                        value: Box::new(hir::Expr {
+                                            kind: hir::ExprKind::Call {
+                                                func,
+                                                args: vec![Self::box_to_any(checked)],
+                                            },
+                                            ty: Ty::Any,
+                                            span,
+                                        }),
+                                    },
+                                    ty: Ty::Any,
+                                    span,
+                                });
+                                call_args[0] = ast::Expr::Ident(cb_tmp);
+                            }
+                        }
                         let call = ast::Expr::MethodCall {
                             receiver: Box::new(ast::Expr::Ident(tmp)),
                             method: ast::synthetic_ident(&name),
-                            args: args[1..].to_vec(),
+                            args: call_args,
                             span,
                         };
                         let body = self.check_expr(cx, &call);
                         let ty = body.ty;
-                        return Some(hir::Expr {
+                        let converted = hir::Expr {
                             kind: hir::ExprKind::Sequence {
                                 effect: Box::new(hir::Expr {
                                     kind: hir::ExprKind::Assign {
@@ -345,6 +389,17 @@ impl Checker<'_> {
                             },
                             ty,
                             span,
+                        };
+                        return Some(match guard {
+                            Some(guard) => hir::Expr {
+                                kind: hir::ExprKind::Sequence {
+                                    effect: Box::new(guard),
+                                    value: Box::new(converted),
+                                },
+                                ty,
+                                span,
+                            },
+                            None => converted,
                         });
                     }
                 }

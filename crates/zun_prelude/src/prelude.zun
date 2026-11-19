@@ -330,3 +330,15 @@ function encodeURIComponent(value?: any): string {
 function decodeURIComponent(value?: any): string {
     return uriString.decodeURIComponent(String(value));
 }
+
+// `Array.prototype.<cb-method>.call(arrayLike, cb)`: the spec validates the
+// callback with IsCallable **before** reading any element, so a non-callable
+// must throw before the array-like is materialized. Zun's borrowed-method
+// lowering converts the receiver first, which read index 0 of a Proxy before
+// throwing; the lowering now routes the callback through this guard.
+function __zunRequireCallable(value: any): any {
+    if (typeof value !== "function") {
+        throw new TypeError(String(value) + " is not a function");
+    }
+    return value;
+}
