@@ -2107,3 +2107,37 @@ nothing, so a guard at the top of it would be correctly ordered -- but the
 `BUILTIN_*` constants there name accessor kinds (`BUILTIN_TA_BUFFER`,
 `BUILTIN_FN_HAS_INSTANCE`, …), not the array methods, so the callback-taking
 kinds have to be identified first.
+
+## `String.prototype.valueOf.call({})` coerces where it must throw
+
+`string-constructor-wrappers-and-statics` is one line out after `4be289e4`
+fixed its iterator line. `String.prototype.valueOf.call({})` answers
+`"[object Object]"`; node throws a TypeError, because `valueOf` and `toString`
+use **thisStringValue** (a String primitive or String object, else TypeError)
+while every other `String.prototype` method uses RequireObjectCoercible +
+ToString.
+
+Measured, and the shape is the one that recurs: the same call **through a
+variable** throws correctly, so only the directly written form is wrong. The
+`zun disasm` of the direct form shows `call MethodDef[20]`, which is the
+prelude's `__thisString` -- so sema lowers
+`String.prototype.<m>.call(recv, …)` to `<m>(__thisString(recv), …)`, and
+`__thisString({})` is `"[object Object]"`, on which `.valueOf()` answers that
+string.
+
+The wiring is a **name rewrite**, which is why grepping for the lowering fails:
+`diagnostics.rs`'s `text()` maps the source text `"String.prototype"` to
+`"__thisString"` (alongside the `Intl.*` entries), and the borrowed-call
+lowering is generic over "receiver text resolves to a function name". Nothing in
+sema mentions `__thisString` directly.
+
+So the per-method receiver rule has nowhere to live in that scheme. Two routes:
+a strict `__thisStringValue` helper selected for `valueOf`/`toString` at
+whatever site assembles that call (find it by instrumenting, not grepping -- the
+rewrite hides it), or excluding those two names from the borrowed lowering so
+they fall through to the dynamic member call, which already answers correctly.
+
+Also measured on the way, so it is not re-tried: the over-read in
+`array-copy-and-slice-methods` is **not** this static-vs-dynamic split --
+`Array.prototype.slice.call(proxy, …)` reads 3 elements in both the direct and
+the variable form.
