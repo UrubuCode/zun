@@ -157,6 +157,45 @@ impl Checker<'_> {
             unreachable!()
         };
         let name = self.text(class).to_string();
+        // A namespace object is not a constructor: `new Math()` and
+        // `new JSON()` built an instance of the prelude class that models the
+        // namespace, where node throws a TypeError. Neither `try_realm_ctor`
+        // nor `try_new_builtin` claims these names (measured by tracing
+        // `check_new`), so they fell through to the ordinary class path. The
+        // prelude guard throws at run time, which is what the fixture catches.
+        //
+        // `Iterator` is deliberately absent: it *is* constructible in node.
+        if matches!(name.as_str(), "Math" | "JSON" | "Reflect" | "Atomics" | "crypto")
+            && cx.lookup(&name).is_none()
+        {
+            if let Some(&func) = self.by_name.get("__zunNotConstructor") {
+                let mut result = hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        func,
+                        args: vec![hir::Expr {
+                            kind: hir::ExprKind::String(name.clone()),
+                            ty: Ty::String,
+                            span,
+                        }],
+                    },
+                    ty: Ty::Any,
+                    span,
+                };
+                // The arguments are still evaluated, per spec order.
+                for arg in args.iter().rev() {
+                    let effect = self.check_expr(cx, arg);
+                    result = hir::Expr {
+                        kind: hir::ExprKind::Sequence {
+                            effect: Box::new(effect),
+                            value: Box::new(result),
+                        },
+                        ty: Ty::Any,
+                        span,
+                    };
+                }
+                return result;
+            }
+        }
         // The deprecated `new Buffer(arg, encodingOrOffset, length)`.
         if name == "Buffer" && !self.classes_by_name.contains_key("Buffer") {
             return self.check_buffer_ctor(cx, args, span);
