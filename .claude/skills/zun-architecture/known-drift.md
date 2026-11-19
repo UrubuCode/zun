@@ -1933,3 +1933,21 @@ than `Boolean === globalThis.Boolean`. One fixture line depends on it
 Note the shape, because it recurs: `as any` on the receiver, or binding the read
 to a variable, routes around the fold and answers correctly -- so a probe
 written with `as any` shows no bug at all.
+
+### The old high numbers were never the project criterion -- measured, not assumed
+
+Earlier notes record "conformance reached **135/168** (80.4%)" at `2d417873`
+(2026-11-15). Building that commit in a worktree and running **its own**
+`scripts/tests_check.sh`, with the fixtures and script of that era:
+
+    Total: 168   Pass: 77 (45.8%)   zun_diverge: 58   zun runtime error: 33
+
+So the recorded 135 was the exit-code metric too, not `pass`. There is **no
+hidden regression**: on the project's criterion the suite has gone from
+**77/168 (45.8%)** on 2026-11-15 to **88/169 (52.1%)** today, and runtime
+errors from **33 to 14**.
+
+Every `1xx/16x` figure in this skill's history and in the memory file is that
+weaker metric and is not comparable to a `tests_check.sh` number. Compare only
+like with like, and when an old number has to be checked, build that commit in
+a worktree and run the script there rather than reasoning about it.
