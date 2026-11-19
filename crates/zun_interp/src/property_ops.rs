@@ -666,6 +666,17 @@ impl Interp<'_> {
     /// descriptor `token`: a plain dynamic object anchored (non-enumerable) on
     /// the realm global so it is rooted and identity-stable.
     pub(crate) fn builtin_prototype_object(&self, token: u32) -> zun_gc::Obj {
+        // `Object.prototype` IS the realm's root prototype singleton -- the
+        // object the typed fold answers with and the one
+        // `Object.getPrototypeOf({})` returns. Building a separate one here
+        // made `globalThis.Object.prototype === Object.prototype` false (each
+        // path stable, the two not identical), which breaks realm identity for
+        // the most fundamental prototype there is.
+        if zun_gc::with_current_heap_mut(|heap| {
+            crate::intrinsic_meta::builtin_class_name_in(heap, token).as_deref() == Some("Object")
+        }) {
+            return Self::object_prototype_singleton();
+        }
         // The `Error` family is backed by prelude classes: `Error.prototype`
         // IS the class prototype object, so instances, subclasses and the
         // global constructor all share one link in the chain.
