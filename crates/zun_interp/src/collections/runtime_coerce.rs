@@ -715,6 +715,15 @@ impl<'a> Interp<'a> {
             }
             return Ok(Some(result));
         }
+        // An object whose prototype is explicitly `null` inherits no
+        // `toString`/`valueOf`, so ToPrimitive has nothing to call and the
+        // spec throws. This has to be known *before* the search, because the
+        // string-hint shortcut below rests on "`Object.prototype.toString`
+        // always exists" -- true for an ordinary object, false here.
+        let null_prototype = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_prototype(obj)
+                .is_some_and(|proto| proto.as_object().is_none())
+        });
         let mut rejected = false;
         let order: [&str; 2] = if hint == "string" {
             ["toString", "valueOf"]
@@ -758,7 +767,7 @@ impl<'a> Interp<'a> {
             // String hint: `Object.prototype.toString` always exists and
             // returns a primitive, so a missing own `toString` ends the
             // search (it never falls through to `valueOf`).
-            if hint == "string" && name == "toString" && method.is_none() {
+            if hint == "string" && name == "toString" && method.is_none() && !null_prototype {
                 return Ok(None);
             }
             if let Some((method, call_args)) = method {
@@ -771,6 +780,19 @@ impl<'a> Interp<'a> {
             }
         }
         if rejected {
+            return Err(RunError::Native(
+                "TypeError: Cannot convert object to primitive value".into(),
+            ));
+        }
+        // An object whose prototype is explicitly `null` inherits no
+        // `toString`/`valueOf`, so ToPrimitive has nothing to call and the spec
+        // throws. Returning `Ok(None)` here let the caller fall back to the
+        // `[object Object]` default, which is right for an ordinary object --
+        // it inherits `Object.prototype.toString` natively and never reaches
+        // this walk -- but wrong for `Object.create(null)` and for
+        // `JSON.rawJSON`'s frozen null-prototype box, both of which node
+        // rejects with a TypeError.
+        if null_prototype {
             return Err(RunError::Native(
                 "TypeError: Cannot convert object to primitive value".into(),
             ));

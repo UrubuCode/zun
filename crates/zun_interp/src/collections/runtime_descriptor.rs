@@ -129,6 +129,11 @@ impl<'a> Interp<'a> {
             out.extend(expandos);
             return Ok(out);
         }
+        // A proxy without the relevant trap defers to its target, where the
+        // properties actually live. `Object.keys(new Proxy({b: 2}, {}))`
+        // answered empty and `JSON.stringify` of any proxy answered `{}`,
+        // while `getOwnPropertyNames` already routed correctly.
+        let obj = self.enumerability_holder(obj);
         if zun_gc::with_current_heap(|heap| {
             heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
         }) {

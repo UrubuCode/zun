@@ -8,6 +8,19 @@ use super::*;
 impl<'a> Interp<'a> {
     /// Whether a realm class descriptor stands for an ECMAScript namespace object
     /// (`JSON`, `Atomics`) that the prelude models as a class of statics.
+    /// The object whose property table answers for `obj`'s own keys. A proxy
+    /// without the relevant trap defers to its target, which is where the
+    /// properties actually live: `Object.keys(new Proxy({b: 2}, {}))` answered
+    /// empty, and `JSON.stringify` of any proxy answered `{}`, because
+    /// enumerability was tested on the proxy itself while
+    /// `getOwnPropertyNames` already routed correctly.
+    pub(crate) fn enumerability_holder(&mut self, obj: zun_gc::Obj) -> zun_gc::Obj {
+        match self.proxy_route(obj, "getOwnPropertyDescriptor") {
+            Ok(ProxyRoute::Target(target)) => target,
+            _ => obj,
+        }
+    }
+
     pub(crate) fn descriptor_is_namespace(&self, token: u32) -> bool {
         if token & zun_natives::USER_CLASS_FLAG == 0 {
             return false;
@@ -1208,7 +1221,8 @@ impl<'a> Interp<'a> {
                         && heap.array_len(obj).is_none()
                 });
                 let enumerable = if is_dynamic {
-                    zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(obj, &key))
+                    let holder = self.enumerability_holder(obj);
+                    zun_gc::with_current_heap(|heap| heap.dynamic_is_enumerable(holder, &key))
                 } else {
                     // Typed declared fields are enumerable own properties.
                     self.object_own_entries_impl(obj, false)?

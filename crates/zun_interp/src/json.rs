@@ -246,6 +246,13 @@ impl Interp<'_> {
             };
             return Ok(Some(got));
         }
+        // A proxy **without** a `get` trap reads through to its target, where
+        // the properties live. Without this, `JSON.stringify(new Proxy({b: 2},
+        // {}))` answered `{}` even after the keys were enumerated correctly,
+        // and a cycle through such a proxy went undetected.
+        if let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(obj)) {
+            return self.json_get(target, key);
+        }
         // Elements of an array-like (an `arguments` object, a typed array).
         if let Some(index) = key.parse::<usize>().ok().filter(|i| i.to_string() == key) {
             if let Some(len) = crate::typed_arrays::element_len(obj) {
@@ -360,11 +367,34 @@ impl Interp<'_> {
         let key_value = Value::Str(key.into());
         // 1. toJSON
         if let Some(obj) = as_obj(&value) {
-            // A proxy's `get` trap observes the `toJSON` lookup (and may throw).
+            // A proxy's `get` trap observes the `toJSON` lookup (and may
+            // throw) -- and when it answers a callable, that callable **is**
+            // the hook and has to be called. Discarding the result meant
+            // `JSON.stringify(proxyWithToJSON)` ignored it: node answers
+            // `"PROXY_JSON"` where zun answered `{}`, and the trap log then
+            // showed an extra `get` of the first key once the walk started
+            // reading through the target.
             if zun_gc::with_current_heap(|heap| {
                 heap.proxy_target(obj).is_some() && heap.proxy_trap(obj, "get").is_some()
             }) {
-                self.proxy_dynamic_get(obj, "toJSON")?;
+                let hook = self.proxy_dynamic_get(obj, "toJSON")?;
+                let hook = match hook {
+                    Value::Any(any) => {
+                        zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+                            .unwrap_or(Value::Void)
+                    }
+                    other => other,
+                };
+                let hook = zun_gc::with_current_heap(|heap| {
+                    crate::collections::unbox_function_box(hook, heap)
+                });
+                if let Value::Function(handle) = hook {
+                    let this = Value::Object(ctx.slot_get(slot));
+                    value = self.json_call_with_this(handle, this, vec![key_value.clone()])?;
+                    if let Some(next) = as_obj(&value) {
+                        ctx.slot_set(slot, next);
+                    }
+                }
             }
             if let Some(millis) = zun_gc::with_current_heap(|heap| heap.date_millis(obj)) {
                 let _ = millis;
@@ -609,18 +639,24 @@ impl Interp<'_> {
         let keys: Vec<String> = match &ctx.list {
             Some(list) => list.clone(),
             None => {
+                // A proxy without the trap defers to its target, where the
+                // properties live: `JSON.stringify(new Proxy({b: 2}, {}))`
+                // answered `{}`, and a cycle through a proxy went undetected
+                // because the walk never entered it. The same resolution
+                // `Object.keys` needed.
+                let holder = self.enumerability_holder(obj);
                 if zun_gc::with_current_heap(|heap| {
-                    heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
+                    heap.is_dynamic_object(holder) && !heap.is_instance_bag(holder)
                 }) {
                     zun_gc::with_current_heap(|heap| {
-                        heap.dynamic_keys(obj)
+                        heap.dynamic_keys(holder)
                             .unwrap_or_default()
                             .into_iter()
-                            .filter(|key| heap.dynamic_is_enumerable(obj, key))
+                            .filter(|key| heap.dynamic_is_enumerable(holder, key))
                             .collect()
                     })
                 } else {
-                    self.object_own_entries(obj)?
+                    self.object_own_entries(holder)?
                         .into_iter()
                         .map(|(key, _)| key)
                         .collect()

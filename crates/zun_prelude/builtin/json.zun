@@ -33,6 +33,13 @@ class JSON {
     // `JSON.rawJSON(text)`: a frozen null-prototype box that stringify embeds
     // verbatim. Only primitive JSON text (no surrounding whitespace) is accepted.
     static rawJSON(text: any): any {
+        // The spec does `ToString(text)`, which **throws** for a symbol --
+        // unlike `String(sym)`, the lenient form, which answers "Symbol(s)".
+        // Using `String` here let a symbol through to `JSON.parse` and
+        // reported `SyntaxError` where node reports `TypeError`.
+        if (typeof text === "symbol") {
+            throw new TypeError("Cannot convert a Symbol value to a string");
+        }
         let s: string = String(text);
         let n: u64 = coreString.length(s);
         if (n == 0) {
