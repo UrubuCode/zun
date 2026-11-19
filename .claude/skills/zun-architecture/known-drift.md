@@ -2079,3 +2079,31 @@ divergent lines): the array walk defers child objects through the worklist
 (`st.mark()` / `st.node()`), so bytes written inline after the element loop do
 not land where the reader expects them. Any extras section has to be emitted
 through the same stash/worklist discipline the `Map` arm uses, not inline.
+
+### The computed borrowed-method form, and where its dispatch goes
+
+`3a104fff` fixed the callback guard for the *static*
+`Array.prototype.forEach.call(x, cb)` form in sema. The fixture
+`array-search-and-predicates` writes the **computed** form instead,
+`(Array.prototype as any)[m].call(probe, …)` with `m` from a loop, so sema
+never sees the method name and the lowering is bypassed. Its six extra
+`probeReadIndex0` lines are all one cause: one element read per method before
+the TypeError.
+
+The dispatch chain, traced rather than read:
+
+    dynamicCall2
+      -> dynamic_call.rs:640, the `.call`/`.apply` arm (inserts `this` as
+         argument 0 for a builtin method of kind >= 16)
+      -> invoke_function_value (runtime_iter.rs:1304)
+      -> invoke_builtin_with_this (property_ops.rs:953), a large `match kind`
+
+The natives themselves cannot host the guard: `arrayForEach` and friends
+(`array_iterate.rs:17`) already receive a converted array in argument 0 and
+answer a bare `RunError::BadToken` for a non-callable, so by then the read has
+happened. `invoke_builtin_with_this` is the first place that holds both the
+`kind` and the unconverted arguments, and its `this_obj` computation reads
+nothing, so a guard at the top of it would be correctly ordered -- but the
+`BUILTIN_*` constants there name accessor kinds (`BUILTIN_TA_BUFFER`,
+`BUILTIN_FN_HAS_INSTANCE`, …), not the array methods, so the callback-taking
+kinds have to be identified first.
