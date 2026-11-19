@@ -471,9 +471,30 @@ impl<'a> Interp<'a> {
         errors: zun_gc::Obj,
         message: &str,
     ) -> zun_core::Any {
-        // Keep-alive: the aggregate object, its name and its message are allocated while the
-        // errors array is still read.
+        // Keep-alive: the errors array is read while the aggregate is built.
         zun_gc::root!(errors = errors);
+        // Construct the prelude `AggregateError` rather than a plain object
+        // carrying the right fields. The object form answered
+        // `constructor.name === "Object"` and `e instanceof AggregateError ===
+        // false` while `errors`, their types and `message` were all already
+        // correct -- so only the brand was missing, and only a real instance
+        // can carry it. The class constructor also does the spec's
+        // `this.errors = [...errors]` copy.
+        let constructed = self.type_rid_of("AggregateError").and_then(|rid| {
+            let token = zun_natives::USER_CLASS_FLAG | rid as u32;
+            let args = vec![
+                Value::Object(errors.get()),
+                Value::Str(zun_core::ZStr::from(message)),
+            ];
+            self.construct_class_from_descriptor(token, args).ok()
+        });
+        if let Some(value) = constructed {
+            if let Some(any) = zun_gc::with_current_heap_mut(|heap| value.box_any(heap)) {
+                return any;
+            }
+        }
+        // Fall back to the plain object if the prelude class is unavailable
+        // (a trimmed module), so a rejection still carries its data.
         zun_gc::with_current_heap_mut(|heap| {
             let object = heap.alloc_dynamic();
             let name = Value::Str(zun_core::ZStr::from("AggregateError"))
