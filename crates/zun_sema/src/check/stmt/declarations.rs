@@ -155,6 +155,19 @@ impl Checker<'_> {
             ) => ty,
             _ => Ty::Any,
         };
+        // `var a = a` where `a` is also a parameter: per spec the body's var
+        // scope is seeded from the parameter scope, so the initializer reads
+        // the **parameter**, not the binding being declared -- which is still
+        // the `undefined` placeholder below. Resolving it before `declare`
+        // shadows the outer name is what makes `body=start` instead of
+        // `body=undefined`, and only when an outer binding exists: with none,
+        // the old order stands so `var x = x` still answers `undefined`
+        // through its own hoisted cell.
+        let seeded = if cx.lookup(&name_text).is_some() {
+            Some(self.check_expr(cx, init))
+        } else {
+            None
+        };
         let slot = cx.declare(&name_text, var_ty);
         cx.boxed.insert(slot);
         cx.mutated.insert(slot);
@@ -175,7 +188,10 @@ impl Checker<'_> {
                 span,
             }
         };
-        let mut value = self.check_expr(cx, init);
+        let mut value = match seeded {
+            Some(value) => value,
+            None => self.check_expr(cx, init),
+        };
         if var_ty == Ty::Any {
             value = Self::box_to_any(value);
         } else if !value.ty.is_error() && !self.is_assignable(value.ty, var_ty) {
