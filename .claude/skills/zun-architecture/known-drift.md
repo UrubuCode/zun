@@ -2048,3 +2048,34 @@ So this needs a Buffer brand that survives to run time, like the `@async`
 marker route did for function kinds. Until then both lines stay, and
 `write_lone_surrogate` (0 bytes where node writes `efbfbd`, the replacement
 character) is the fixture's other open line and is independent of this.
+
+## `structured-clone-semantics`: two fixes, both tried and both reverted
+
+The fixture is two lines out, and each line hides a constraint worth recording
+so neither attempt is repeated blind.
+
+**1. A user class should clone to a plain object.** Node answers
+`constructor.name === "Object"`, no methods, `instanceof` false; zun rebuilds
+the class. The deserializer's `Tag::Instance` arm calls
+`heap.alloc(type_rid, …)`, and making it build a dynamic object from the
+declared field names *does* fix the line -- verified byte-identical to node.
+
+**It also broke `structuredClone(new Date(0))`**, which lost `getTime`:
+`Date` is a *prelude class* and reaches the same `ObjKind::Instance` path, and
+`error_clone_rid` -- the only "keep the class" predicate there -- names only
+the eight `Error` types. The spec preserves the class for Date, RegExp, Blob,
+File, DOMException, Map, Set, views and the primitive wrappers, so the
+downgrade needs a way to tell a **user** class from a prelude platform class.
+zun exposes none at run time; a name allowlist would have to enumerate every
+platform class and would rot. (`with_prelude` appends the prelude after the
+user source, so user TypeDef rids are the lower ones -- a boundary rid, if it
+were recorded in the module, would be the clean discriminator.)
+
+**2. An array's own non-index properties should clone.** `a.x = "extra"`
+survives in node and is dropped here. Appending a count plus key/value pairs
+after the elements in the `ObjKind::Array` arm **corrupts the stream**
+(`deserialize: truncated or unknown tag`, and the fixture went from 2 to 103
+divergent lines): the array walk defers child objects through the worklist
+(`st.mark()` / `st.node()`), so bytes written inline after the element loop do
+not land where the reader expects them. Any extras section has to be emitted
+through the same stash/worklist discipline the `Map` arm uses, not inline.
