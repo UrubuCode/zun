@@ -1869,3 +1869,28 @@ Do not reach for `function_is_constructor(h) || method_yields(h)` as a
 shortcut: it gets plain, arrow, generator and method right and then gives an
 async function a `prototype`, trading a currently-correct answer for a line
 that stays wrong anyway.
+
+#### The `@async` route is viable, and these are its four sites
+
+Answering the open question above rather than leaving it: the marker route does
+**not** need the format crates.
+
+* **Where to emit it:** `check/signatures.rs:103`, where a top-level function's
+  name already becomes `format!("{name}@this")` when it takes an explicit
+  `this`. `f.is_async` is in scope in that same loop. (The `@arrow`/`@method`
+  markers are built in `closures.rs::check_closure_expr`, which handles closure
+  *expressions* only, so a top-level `async function` never passes through
+  there -- that was the thing to check.)
+* **What it would break if missed:** marker stripping is written per-marker, not
+  generically, so `af@async` would leak into `fn.name`. The sites that strip or
+  test it are:
+  * `zun_sema/src/check/expr/field.rs` -- two `trim_end_matches("@this")`,
+  * `zun_interp/src/collections/runtime_iter.rs:1152` -- `split("@this")`,
+  * `zun_interp/src/collections/runtime_class_proxy.rs:324` --
+    `name.contains("@this")`.
+
+Four sites, all surveyable. Generalize them to strip any `@`-suffixed marker
+before adding one, then a predicate reading `@async` gives both missing
+behaviours: `new` on an async function throwing (it constructs today, on the
+parent binary too), and an async function owning no `prototype` while a
+generator does.
