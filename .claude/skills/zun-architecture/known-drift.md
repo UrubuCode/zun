@@ -2201,3 +2201,19 @@ different registration path.
 So the fix needs that other path found first -- instrument the global
 registration for the `is_object == false` case and install the statics there,
 then re-check `Iterator.from`, `Iterator.prototype` and subclassing together.
+
+### Where `String.prototype.valueOf.call(o)` is *not* handled
+
+Narrowed by instrumenting `check_method_call` (printing the method name and
+receiver discriminant, then a marker at the end of the `try_mcall_*` chain):
+the `.call` reaches the **general** path -- none of the eight `try_mcall_*`
+attempts claims it -- so the coercion is applied when
+`String.prototype.valueOf` is checked as an expression, or by the general
+`.call` handling, not by a borrowed-method special case.
+
+`mcall_string.rs` does **not** mention `valueOf` or `toString` either, so the
+String method table is not where the receiver rule would go. The next place to
+instrument is `check/expr/field.rs`'s `X.prototype.<m>` resolution -- the same
+file that folds `.name`/`.length` and holds the `refs[1] == "prototype"`
+checks -- to see what value `String.prototype.valueOf` resolves to before the
+general `.call` applies it.
