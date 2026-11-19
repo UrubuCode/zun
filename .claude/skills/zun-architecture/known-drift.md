@@ -2175,3 +2175,29 @@ redefine rules, `getOwnPropertyDescriptor`, `hasOwnProperty` and
 needs an init-time site holding both the `Symbol` class value and the symbol
 values: note the prelude is not one today -- no prelude file imports the
 `collections` core module where `symbolWellKnown` lives.
+
+## `typeof Iterator` is `object`: the one-word flag flip is not enough
+
+`iterator-helpers-and-set-op-protocol` is one line out:
+`iterator_global=object:true` against node's `function:true`.
+
+The cause is a single table entry: `check/module_init.rs`'s `extra_globals`
+lists `("Iterator", true)`, where `true` means "namespace object". With no
+prelude class of that name the `is_object` branch builds an **empty dynamic
+object**, which is why `typeof` answers `object` -- while `Map` (a real class)
+and a user class both answer `function`.
+
+**Tried and reverted.** Flipping the entry to `false` does give
+`typeof Iterator === "function"` (and through `globalThis` too), and
+`class X extends Iterator` keeps working -- but **`Iterator.from` becomes
+`undefined`**, because the statics are installed by
+`install_iterator_global(namespace: Obj)`, called from `object_core.rs` only
+when the registered global's value `as_object()` is `Some`. Adding a
+class-descriptor branch there that installs into `class_expando_bag(token)`
+did not help either: an `eprintln` showed the `name == "Iterator"` block is
+**not reached at all** once the flag is `false`, so the descriptor form takes a
+different registration path.
+
+So the fix needs that other path found first -- instrument the global
+registration for the `is_object == false` case and install the statics there,
+then re-check `Iterator.from`, `Iterator.prototype` and subclassing together.
