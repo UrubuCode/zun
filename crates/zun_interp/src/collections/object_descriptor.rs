@@ -525,6 +525,22 @@ impl<'a> Interp<'a> {
                 // its expando bag.
                 if let Some(Ok(Value::Function(handle))) = args.first().map(unbox_arg) {
                     let bag = crate::function_expando_bag(handle);
+                    // Materialize `prototype` first for the kinds that own one.
+                    // Zun creates the object lazily, on construction, so the
+                    // descriptor read found nothing in the bag and answered
+                    // `undefined` where node reports
+                    // `w=true e=false c=false` -- while
+                    // `getOwnPropertyNames` already listed the key, so the two
+                    // disagreed. The guard is the same predicate, so a bound,
+                    // arrow, method or plain async function still gains none.
+                    // Not a coerce/built-in constructor: those already answer
+                    // `prototype` further down with the right flags
+                    // (`writable: false`), and materializing a writable one in
+                    // the bag first overrode it -- `Boolean`'s descriptor read
+                    // `true,false,false` against node's `false,false,false`.
+                    if self.function_owns_prototype(handle) && self.coerce_ctor_name(handle).is_none() {
+                        self.ensure_function_prototype(handle);
+                    }
                     return match args.get(1).and_then(crate::property_ops::prop_key) {
                         Some(crate::property_ops::PropKey::Str(key)) => {
                             if zun_gc::with_current_heap(|heap| heap.dynamic_has_own(bag, &key)) {
@@ -869,7 +885,12 @@ impl<'a> Interp<'a> {
                     let mut names = vec!["length".to_owned(), "name".to_owned()];
                     // A constructible function owns `prototype` too; the
                     // predicate carries node's shape and the reasons.
-                    if self.function_owns_prototype(handle) {
+                    // Not a coerce/built-in constructor: those already answer
+                    // `prototype` further down with the right flags
+                    // (`writable: false`), and materializing a writable one in
+                    // the bag first overrode it -- `Boolean`'s descriptor read
+                    // `true,false,false` against node's `false,false,false`.
+                    if self.function_owns_prototype(handle) && self.coerce_ctor_name(handle).is_none() {
                         names.push("prototype".to_owned());
                     }
                     if self.coerce_ctor_name(handle).is_some() {
