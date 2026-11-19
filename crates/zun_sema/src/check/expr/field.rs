@@ -857,7 +857,7 @@ impl Checker<'_> {
                 } else {
                     // The `@this` suffix marks a declared receiver parameter and
                     // is not part of the function's name.
-                    let declared = self.signatures[func as usize].name.trim_end_matches("@this");
+                    let declared = self.signatures[func as usize].name.trim_end_matches("@generator").trim_end_matches("@async").trim_end_matches("@this");
                     // `String` / `Number` / `Boolean` read as values are the
                     // `__coerce*` helpers; they answer as the constructors.
                     Self::coerce_constructor_name(declared).unwrap_or(declared).to_string()
@@ -875,7 +875,7 @@ impl Checker<'_> {
                 ) {
                     0
                 } else if Self::coerce_constructor_name(
-                    self.signatures[func as usize].name.trim_end_matches("@this"),
+                    self.signatures[func as usize].name.trim_end_matches("@generator").trim_end_matches("@async").trim_end_matches("@this"),
                 )
                 .is_some()
                 {

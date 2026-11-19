@@ -1149,7 +1149,12 @@ impl<'a> Interp<'a> {
                 if method_name.starts_with('<') {
                     return None;
                 }
-                let plain = method_name.split("@this").next().unwrap_or(method_name);
+                let plain = method_name
+                    .trim_end_matches("@generator")
+                    .trim_end_matches("@async")
+                    .split("@this")
+                    .next()
+                    .unwrap_or(method_name);
                 return Some(Value::Str(
                     if let Some(rest) = plain.strip_prefix("get_") {
                         format!("get {rest}")

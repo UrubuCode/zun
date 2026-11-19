@@ -620,7 +620,10 @@ impl<'a> Interp<'a> {
         // for one, so this asks whether the body yields -- needed once a
         // `Ty::Function` callee began reaching this path, since `new (g as
         // any)()` otherwise built an object where node throws.
-        if self.method_yields(handle.method_rid()) {
+        if self.method_yields(handle.method_rid())
+            || self.is_async_function(handle)
+            || self.is_generator_function(handle)
+        {
             return false;
         }
         let rid = handle.method_rid();

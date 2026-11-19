@@ -1948,6 +1948,39 @@ impl Interp<'_> {
     }
 
     /// Whether `handle` is an arrow function (its closure name carries `@arrow`).
+    /// Whether `handle` is a `function*` (its declared name carries the
+    /// `@generator` marker). Needed beside `method_yields` because a generator
+    /// with no `yield` in its body is invisible to that scan.
+    pub(crate) fn is_generator_function(&self, handle: zun_core::FunctionHandle) -> bool {
+        !handle.is_bound()
+            && handle.builtin_method().is_none()
+            && self
+                .module
+                .tables
+                .method_defs
+                .get((handle.method_rid() as usize).wrapping_sub(1))
+                .is_some_and(|method| {
+                    self.module.strings.get(method.name).contains("@generator")
+                })
+    }
+
+    /// Whether `handle` is an `async function` (its declared name carries the
+    /// `@async` marker). An async function is not a constructor and owns no
+    /// `prototype`, and nothing else at run time distinguishes one: zun
+    /// compiles it as a generator, so `method_yields` answers the same for an
+    /// async function and a real generator, and an empty body defeats that
+    /// scan outright.
+    pub(crate) fn is_async_function(&self, handle: zun_core::FunctionHandle) -> bool {
+        !handle.is_bound()
+            && handle.builtin_method().is_none()
+            && self
+                .module
+                .tables
+                .method_defs
+                .get((handle.method_rid() as usize).wrapping_sub(1))
+                .is_some_and(|method| self.module.strings.get(method.name).contains("@async"))
+    }
+
     pub(crate) fn is_arrow_closure(&self, handle: zun_core::FunctionHandle) -> bool {
         !handle.is_bound()
             && handle.builtin_method().is_none()

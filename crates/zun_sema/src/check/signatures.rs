@@ -100,10 +100,34 @@ impl Checker<'_> {
                 count
             };
             self.signatures.push(Signature {
-                name: if takes_this {
-                    format!("{name}@this")
-                } else {
-                    name
+                // The `@async` marker, like `@this`, rides on the declared
+                // name: an async function is **not** a constructor and owns no
+                // `prototype`, and nothing else at run time can tell one apart
+                // -- zun compiles it as a generator (`is_generator: is_async ||
+                // is_generator`), so the body scan `method_yields` uses answers
+                // the same for both, and an empty body defeats that scan
+                // entirely. Markers are stripped as *suffixes*, never at the
+                // first `@`: a closure name legitimately contains one
+                // (`<closure@123>`).
+                name: {
+                    let name = if takes_this {
+                        format!("{name}@this")
+                    } else {
+                        name
+                    };
+                    let name = if f.is_async {
+                        format!("{name}@async")
+                    } else {
+                        name
+                    };
+                    // A generator needs its own marker for the same reason: a
+                    // body with no `yield` is indistinguishable from a plain
+                    // function by the scan, and `new` on one must throw.
+                    if f.is_generator {
+                        format!("{name}@generator")
+                    } else {
+                        name
+                    }
                 },
                 params,
                 return_ty,
