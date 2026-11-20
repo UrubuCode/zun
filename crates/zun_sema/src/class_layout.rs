@@ -26,7 +26,23 @@ impl<'a> Checker<'a> {
             Some(b) => (*self.full_fields_rc(b)).clone(),
             None => Vec::new(),
         };
-        fields.extend(info.own_fields.iter().cloned());
+        // A field the class **redeclares** is the same property, not a second
+        // one: `class B extends A { tag = "b" }` over `class A { tag = "a" }`
+        // has one `tag`. Appending unconditionally gave it two slots, and a
+        // read resolved to the inherited one, so `new B().tag` answered `"a"`
+        // forever while the derived initializer wrote a slot nothing could see.
+        // The derived declaration takes over the inherited slot; a static and an
+        // instance field of one name stay distinct, as they are in JS.
+        let inherited = fields.len();
+        for field in &info.own_fields {
+            match fields[..inherited]
+                .iter()
+                .position(|existing| existing.0 == field.0 && existing.2 == field.2)
+            {
+                Some(slot) => fields[slot] = field.clone(),
+                None => fields.push(field.clone()),
+            }
+        }
         let rc = Rc::new(fields);
         self.full_fields_cache
             .borrow_mut()
@@ -49,7 +65,26 @@ impl<'a> Checker<'a> {
             Some(b) => (*self.full_initializers_rc(b)).clone(),
             None => Vec::new(),
         };
-        initializers.extend(info.own_initializers.iter().cloned());
+        // Index-aligned with `full_fields_rc`, so a redeclared field's
+        // initializer has to land in the slot that layout reused -- the same
+        // match, run over the inherited field names.
+        let inherited_fields = match info.base {
+            Some(b) => (*self.full_fields_rc(b)).clone(),
+            None => Vec::new(),
+        };
+        let inherited = inherited_fields.len();
+        for (index, initializer) in info.own_initializers.iter().enumerate() {
+            let own = info.own_fields.get(index);
+            let slot = own.and_then(|field| {
+                inherited_fields
+                    .iter()
+                    .position(|existing| existing.0 == field.0 && existing.2 == field.2)
+            });
+            match slot.filter(|slot| *slot < inherited) {
+                Some(slot) => initializers[slot] = initializer.clone(),
+                None => initializers.push(initializer.clone()),
+            }
+        }
         let rc = Rc::new(initializers);
         self.full_initializers_cache
             .borrow_mut()
