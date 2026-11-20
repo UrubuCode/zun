@@ -208,6 +208,30 @@ impl<'a> Interp<'a> {
                 let src = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let kind = kind_arg(args.get(1))?;
                 let elements = source_elements(src).ok_or(RunError::BadToken)?;
+                // A BigInt-kind array takes each element through ToBigInt, and a
+                // Number is a TypeError there: `BigInt64Array.from([1, 2])`
+                // throws instead of truncating the numbers in.
+                if matches!(kind.js_name(), "BigInt64Array" | "BigUint64Array")
+                    && elements.iter().any(|value| {
+                        matches!(
+                            unbox_arg(value),
+                            Ok(Value::Float(..))
+                                | Ok(Value::Int(
+                                    _,
+                                    zun_il::NumKind::I8
+                                        | zun_il::NumKind::I16
+                                        | zun_il::NumKind::I32
+                                        | zun_il::NumKind::U8
+                                        | zun_il::NumKind::U16
+                                        | zun_il::NumKind::U32
+                                ))
+                        )
+                    })
+                {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot convert a Number to a BigInt".into(),
+                    ));
+                }
                 let result = crate::typed_arrays::alloc_of(kind, elements.len())
                     .ok_or(RunError::BadToken)?;
                 for (index, value) in elements.iter().enumerate() {

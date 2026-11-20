@@ -144,22 +144,18 @@ impl Interp<'_> {
             // Zun has native 64-bit integers, so a plain int or float writes
             // directly into a BigInt64/BigUint64 view; a BigInt object and
             // bool also convert, matching JS.
-            if let Value::Int(bits, _) = value {
+            // A native 64-bit integer (zun's typed `i64`/`u64`) writes
+            // directly. A JS Number does not: ToBigInt of a Number is a
+            // TypeError, so `bigInts[0] = 5` throws rather than truncating.
+            if let Value::Int(bits, NumKind::I64 | NumKind::U64) = value {
                 Value::Int(bits, NumKind::I64)
-            } else if let Value::Float(n, _) = value {
-                Value::Int(n as i64, NumKind::I64)
+            } else if matches!(value, Value::Int(..) | Value::Float(..)) {
+                return Err(self.view_error(
+                    "TypeError",
+                    "Cannot convert a Number to a BigInt",
+                ));
             } else {
-                let big = match &value {
-                    Value::Object(o) => zun_gc::with_current_heap(|h| h.bigint_value(*o).cloned()),
-                    Value::Bool(b) => Some(zun_core::BigInt::from_u64(u64::from(*b))),
-                    _ => None,
-                };
-                let Some(big) = big else {
-                    return Err(self.view_error(
-                        "TypeError",
-                        "Cannot convert a value to a BigInt",
-                    ));
-                };
+                let big = self.to_bigint_operand(&value)?;
                 let bits = big.as_uint_n(64).to_u64().unwrap_or(0);
                 Value::Int(bits as i64, NumKind::I64)
             }
@@ -721,15 +717,19 @@ impl Interp<'_> {
         let write_bits: Option<u64> = if is_set {
             let value = args.get(1).cloned().unwrap_or(Value::Void);
             if signed_name == "i64" || signed_name == "u64" {
-                let big = match &value {
-                    Value::Object(o) => zun_gc::with_current_heap(|h| h.bigint_value(*o).cloned()),
-                    _ => None,
-                };
-                let Some(big) = big else {
-                    return Err(self.view_error("TypeError", "Cannot convert a value to a BigInt"));
-                };
+                let big = self.to_bigint_operand(&value)?;
                 Some(big.as_uint_n(64).to_u64().unwrap_or(0))
             } else {
+                // ToNumber of a BigInt is a TypeError; `dyn_to_number` also
+                // serves the explicit `Number(big)`, which converts, so the
+                // check belongs to this write.
+                if matches!(unbox_arg(&value)?, Value::Object(o)
+                    if zun_gc::with_current_heap(|h| h.bigint_value(o).is_some()))
+                {
+                    return Err(
+                        self.view_error("TypeError", "Cannot convert a BigInt value to a number")
+                    );
+                }
                 let n = self.dyn_to_number(&value)?;
                 Some(match signed_name {
                     "f32" => u64::from((n as f32).to_bits()),
@@ -1371,5 +1371,31 @@ impl Interp<'_> {
                 | "values"
                 | "with"
         ))
+    }
+}
+
+impl Interp<'_> {
+    /// ECMAScript ToBigInt for a value written into a BigInt-kind element or
+    /// through `DataView.prototype.setBig(U)Int64`: a BigInt passes through, a
+    /// boolean is `0n`/`1n`, a string parses (a malformed one is a
+    /// SyntaxError), and a number, `null`, `undefined` or a symbol is a
+    /// TypeError -- a Number is never silently truncated into a BigInt slot.
+    pub(crate) fn to_bigint_operand(&mut self, value: &Value) -> Result<zun_core::BigInt, RunError> {
+        let concrete = match value {
+            Value::Any(any) => zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap))
+                .unwrap_or(Value::Void),
+            other => other.clone(),
+        };
+        match &concrete {
+            Value::Object(object) => {
+                zun_gc::with_current_heap(|heap| heap.bigint_value(*object).cloned())
+                    .ok_or_else(|| self.view_error("TypeError", "Cannot convert a value to a BigInt"))
+            }
+            Value::Bool(flag) => Ok(zun_core::BigInt::from_u64(u64::from(*flag))),
+            Value::Str(text) => zun_core::BigInt::parse_js_string(text).map_err(|_| {
+                self.view_error("SyntaxError", &format!("Cannot convert {text} to a BigInt"))
+            }),
+            _ => Err(self.view_error("TypeError", "Cannot convert a value to a BigInt")),
+        }
     }
 }

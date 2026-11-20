@@ -410,15 +410,7 @@ impl Interp<'_> {
         }
         let value = raw(args, 2);
         let offset_value = raw(args, 1);
-        let big = match &value {
-            Value::Object(object) => {
-                zun_gc::with_current_heap(|heap| heap.bigint_value(*object).cloned())
-            }
-            _ => None,
-        };
-        let Some(big) = big else {
-            return Err(self.view_error("TypeError", "Cannot convert value to a BigInt"));
-        };
+        let big = self.to_bigint_operand(&value)?;
         let (min, max) = if signed {
             (
                 zun_core::BigInt::from_i64(i64::MIN),

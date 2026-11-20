@@ -398,6 +398,26 @@ impl Checker<'_> {
         call_args.push(offset);
         if is_set {
             let mut value = self.check_expr(cx, &args[1]);
+            // A dynamic value written through a *numeric* setter goes through
+            // ToNumber, which is a TypeError for a BigInt. Handed to the typed
+            // native as it was, `view.setFloat64(0, 1n as any)` wrote a number
+            // instead of throwing.
+            let numeric_elem = !matches!(elem, Ty::Int(IntKind::I64 | IntKind::U64));
+            if (value.ty == Ty::Any || value.ty == Ty::BigInt) && numeric_elem {
+                let span = value.span;
+                let number = self.to_number_expr(Self::box_to_any(value));
+                value = if elem.is_float() && number.ty == elem {
+                    number
+                } else {
+                    hir::Expr {
+                        kind: hir::ExprKind::Convert {
+                            value: Box::new(number),
+                        },
+                        ty: elem,
+                        span,
+                    }
+                };
+            }
             coerce_numeric_literal(&mut value, elem);
             if !value.ty.is_error() && !self.is_assignable(value.ty, elem) {
                 self.error(value.span, format!("DataView value must be {elem:?}"));
