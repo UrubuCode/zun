@@ -99,10 +99,36 @@ pub(crate) fn encode(text: &str, encoding: &str) -> Vec<u8> {
         "hex" => decode_hex(text),
         "base64" | "base64url" => decode_base64(text),
         // `ascii` writes the low byte of each UTF-16 unit, exactly like latin1.
-        "latin1" | "ascii" => text.encode_utf16().map(|c| (c & 0xff) as u8).collect(),
+        // `wtf16::encode`, not `encode_utf16`: a lone surrogate is stored as a
+        // plane-15 stand-in scalar, which `encode_utf16` would spell as a
+        // surrogate *pair* -- two bytes where node writes one.
+        "latin1" | "ascii" => zun_core::wtf16::encode(text)
+            .map(|c| (c & 0xff) as u8)
+            .collect(),
         "utf16le" => encode_utf16le(text),
-        _ => text.as_bytes().to_vec(),
+        _ => encode_utf8(text),
     }
+}
+
+/// UTF-8, with a lone surrogate replaced by U+FFFD as node's encoder does.
+/// The storage form keeps a lone surrogate as a plane-15 private-use scalar, so
+/// dumping `text.as_bytes()` leaked that scalar: `Buffer.from("a\uD800b")` came
+/// out as `61 f3 b0 80 80 62` where node gives `61 ef bf bd 62`.
+fn encode_utf8(text: &str) -> Vec<u8> {
+    if !text.chars().any(|c| zun_core::wtf16::lone_unit(c).is_some()) {
+        return text.as_bytes().to_vec();
+    }
+    let mut out = Vec::with_capacity(text.len());
+    let mut buf = [0u8; 4];
+    for c in text.chars() {
+        let c = if zun_core::wtf16::lone_unit(c).is_some() {
+            char::REPLACEMENT_CHARACTER
+        } else {
+            c
+        };
+        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    }
+    out
 }
 
 /// Decode bytes into a string under an encoding.
@@ -122,7 +148,9 @@ pub(crate) fn decode(bytes: &[u8], encoding: &str) -> String {
 /// Little-endian UTF-16 (ucs2/utf16le): two bytes per code unit, low byte first.
 fn encode_utf16le(text: &str) -> Vec<u8> {
     let mut out = Vec::new();
-    for unit in text.encode_utf16() {
+    // `wtf16::encode`: a lone surrogate is one code unit, not the pair its
+    // plane-15 storage stand-in would spell.
+    for unit in zun_core::wtf16::encode(text) {
         out.push((unit & 0xff) as u8);
         out.push((unit >> 8) as u8);
     }

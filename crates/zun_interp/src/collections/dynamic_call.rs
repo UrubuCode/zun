@@ -1502,6 +1502,37 @@ impl<'a> Interp<'a> {
                         .unwrap_or_else(zun_core::Any::null);
                         return Ok(Value::Any(boxed));
                     }
+                    // An **element** reached as a member call: `pairs[0][1]()`
+                    // where the inner value is a function. The property read
+                    // above only consults the dynamic table, and an array's
+                    // index lives in its storage, so a call through a numeric
+                    // key answered "1 is not a function" while `typeof` of the
+                    // same read answered "function". The general member read
+                    // resolves an index, a string key and the prototype chain
+                    // alike; it runs only here, as the last step before the
+                    // throw, so no earlier lookup is repeated.
+                    // An **element** reached as a member call: `pairs[0][1]()`
+                    // where the inner value is a function. The property read
+                    // above only consults the dynamic table and
+                    // `dynamic_member_get` answers `undefined` for an array
+                    // index, so a call through a numeric key threw
+                    // "1 is not a function" while `typeof` of the same read
+                    // answered "function". This runs only here, as the last
+                    // step before the throw, so no earlier lookup is repeated.
+                    let element = member.parse::<usize>().ok().and_then(|index| {
+                        zun_gc::with_current_heap(|heap| {
+                            let any = heap.array_get(namespace, index)?;
+                            Value::unbox_any(any, heap)
+                        })
+                    });
+                    if let Some(handle) = element.as_ref().and_then(super::callback_handle) {
+                        let result = self.invoke_function_value(handle, call_args)?;
+                        let boxed = zun_gc::with_current_heap_mut(|heap| {
+                            result.box_any_cell(heap)
+                        })
+                        .unwrap_or_else(zun_core::Any::null);
+                        return Ok(Value::Any(boxed));
+                    }
                     // Neither a method nor a namespace export: the member is
                     // missing or not callable.
                     if OPTIONAL_PROBE.with(|flag| flag.get()) {

@@ -7,7 +7,7 @@ use super::*;
 
 /// Prelude classes whose instances carry the class name as their builtin tag
 /// (a WebIDL interface with `[Symbol.toStringTag]`).
-const WEBIDL_TAGGED_CLASSES: &[&str] = &["Headers", "FormData"];
+const WEBIDL_TAGGED_CLASSES: &[&str] = &["Headers", "FormData", "URLSearchParams"];
 
 impl<'a> Interp<'a> {
     /// Whether a realm class descriptor stands for an ECMAScript namespace object

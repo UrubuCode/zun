@@ -329,7 +329,9 @@ class URLSearchParams {
 
     // A plain-object iterator over a snapshot `items` list (iterator objects
     // carry `next` and `[Symbol.iterator]`, so spread / for-of / Array.from work).
-    static listIterator(items: any): any {
+    // `tag`, when given, becomes the iterator's `Symbol.toStringTag`: each
+    // WebIDL interface has its own iterator brand ("URLSearchParams Iterator").
+    static listIterator(items: any, tag: any = undefined): any {
         let idx = 0;
         const it: any = {
             next: function (): any {
@@ -344,6 +346,9 @@ class URLSearchParams {
         it[Symbol.iterator] = function (): any {
             return it;
         };
+        if (tag !== undefined) {
+            it[Symbol.toStringTag] = tag;
+        }
         return it;
     }
 
@@ -356,19 +361,19 @@ class URLSearchParams {
     }
 
     keys(): any {
-        return URLSearchParams.listIterator(this.ks.slice());
+        return URLSearchParams.listIterator(this.ks.slice(), "URLSearchParams Iterator");
     }
 
     values(): any {
-        return URLSearchParams.listIterator(this.vs.slice());
+        return URLSearchParams.listIterator(this.vs.slice(), "URLSearchParams Iterator");
     }
 
     entries(): any {
-        return URLSearchParams.listIterator(this.pairList());
+        return URLSearchParams.listIterator(this.pairList(), "URLSearchParams Iterator");
     }
 
     [Symbol.iterator](): any {
-        return URLSearchParams.listIterator(this.pairList());
+        return URLSearchParams.listIterator(this.pairList(), "URLSearchParams Iterator");
     }
 
     toString(): string {
