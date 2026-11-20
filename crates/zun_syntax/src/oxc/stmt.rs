@@ -368,6 +368,12 @@ fn convert_bare_block(
                 Statement::VariableDeclaration(decl)
                     if !matches!(decl.kind, oxc_ast::ast::VariableDeclarationKind::Var)
             )
+                // A block-level function declaration is lexical too (ES2015,
+                // and this adapter lowers it to a `let`). Without it the block
+                // was flattened into the parent statement list, so a nested
+                // `function depth()` overwrote the enclosing one instead of
+                // shadowing it: all three nesting levels answered the innermost.
+                || matches!(inner, Statement::FunctionDeclaration(_))
         });
     let inner = convert_statement_list(source, &block.body)?;
     if declares_lexical {
