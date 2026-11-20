@@ -165,10 +165,12 @@ fn value_object(value: &Value) -> Option<zun_gc::Obj> {
 }
 
 fn callable(value: &Value) -> Option<zun_core::FunctionHandle> {
-    match unboxed(value) {
-        Value::Function(handle) => Some(handle),
-        _ => None,
-    }
+    // `callback_handle`, not a bare `Value::Function` match: a callable carried
+    // through `any` storage -- a destructured tuple element, an array slot --
+    // arrives as a function *cell*, an object holding the handle. The bare
+    // match rejected one, so `it.flatMap(ret)` with `ret` destructured threw
+    // before pulling anything while the same call written inline worked.
+    super::callback_handle(&unboxed(value))
 }
 
 fn state_set(obj: zun_gc::Obj, value: &Value, key: &str) {
@@ -250,6 +252,12 @@ impl<'a> Interp<'a> {
         if handle.builtin_method().is_some() {
             return self.invoke_function_value(handle, args);
         }
+        // A callback that declares an explicit `this` parameter takes its
+        // receiver as the first argument (the `@this` marker). Without the
+        // undefined receiver every declared parameter shifted by one, so
+        // `.map(function (this: any, v, i) {})` saw the index as `v` and
+        // `undefined` as `i`.
+        let args = self.with_this_value(handle, Value::Void, args);
         self.invoke_callback(handle, args)
     }
 
