@@ -185,7 +185,13 @@ impl Checker<'_> {
             }
             Ty::Any
         } else {
-            let hidden = usize::from(self.receiver_funcs.contains(&func));
+            // A class instance method carries its receiver as a hidden first
+            // parameter too. Called detached (`const f = obj.m; f()`) there is
+            // no receiver, and `this` is `undefined` -- without this the
+            // default padding filled the slot with `null`.
+            let hidden = usize::from(
+                self.receiver_funcs.contains(&func) || self.is_instance_method(func),
+            );
             let (param_tys, return_ty, optional_count, signature_name) = {
                 let sig = &self.signatures[func as usize];
                 (

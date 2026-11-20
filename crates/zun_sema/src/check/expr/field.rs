@@ -22,7 +22,7 @@ impl Checker<'_> {
     /// every method read off an instance. The runtime path asks the same
     /// question as `method_rid_is_instance_method`; this is its compile-time
     /// twin.
-    fn is_instance_method(&self, func: u32) -> bool {
+    pub(in crate::check) fn is_instance_method(&self, func: u32) -> bool {
         if self
             .signatures
             .get(func as usize)
