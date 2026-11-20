@@ -97,32 +97,7 @@ impl Interp<'_> {
     /// Allocate an instance of the Error-family class `class` (`message`,
     /// `stackFrames`, `cause` layout) without running its constructor.
     pub(crate) fn new_error_object(&mut self, class: &str, message: &str) -> Option<zun_gc::Obj> {
-        let rid = self.type_rid_of(class)?;
-        let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid);
-        let (field_start, field_count) = self.type_field_range(token).ok()?;
-        let kinds: Vec<u8> = (0..field_count as u32)
-            .map(|i| self.field_kind_at(field_start + i))
-            .collect::<Result<_, _>>()
-            .ok()?;
-        let values = [
-            Value::Str(message.into()),
-            Value::Str("".into()),
-            Value::Void,
-            Value::Str("".into()),
-            Value::Bool(false),
-            Value::Bool(false),
-            Value::Bool(false),
-        ];
-        if field_count != values.len() {
-            return None;
-        }
-        Some(zun_gc::with_current_heap_mut(|heap| {
-            let obj = heap.alloc(rid as u32, field_count);
-            for (index, value) in values.iter().enumerate() {
-                super::value::store_field(kinds[index], obj, index, value, heap);
-            }
-            obj
-        }))
+        self.alloc_error_record(class, message, "")
     }
 }
 

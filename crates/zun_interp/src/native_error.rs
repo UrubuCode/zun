@@ -41,34 +41,57 @@ impl<'a> Interp<'a> {
             "DOMException" => message.split_once(": ").unwrap_or(("Error", message)),
             _ => ("", message),
         };
+        self.alloc_error_record(class, message, name).map(Value::Object)
+    }
+
+    /// Allocate an instance of the prelude error class `class` with every slot
+    /// initialised. The record is filled **by field name** from the class's
+    /// own metadata: `message` and `nameOverride` take the given text and
+    /// every other slot takes the zero value of its kind.
+    ///
+    /// It used to be filled from a positional array of seven values, which
+    /// froze the prelude class's field list: one more declared field, even at
+    /// the end, left a slot unset here and made `new_error_object` refuse the
+    /// class outright (measured: 13 fixtures lost).
+    pub(crate) fn alloc_error_record(
+        &self,
+        class: &str,
+        message: &str,
+        name: &str,
+    ) -> Option<zun_gc::Obj> {
+        use zun_il::JitKind;
         let rid = self.type_rid_of(class)?;
         let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid);
         let (field_start, field_count) = self.type_field_range(token).ok()?;
-        let kinds: Vec<u8> = (0..field_count as u32)
-            .map(|i| self.field_kind_at(field_start + i))
-            .collect::<Result<_, _>>()
-            .ok()?;
-        // Field order of `Error`: message, stackFrames, cause, nameOverride, hasCause and
-        // the trailing `hasName` flag; every slot must be initialised (see
-        // `new_error_object`), or `name` reads an unset string slot.
-        let values = [
-            Value::Str(message.into()),
-            Value::Str("".into()),
-            Value::Void,
-            Value::Str(name.into()),
-            Value::Bool(false),
-            Value::Bool(false),
-            Value::Bool(false),
-        ];
-        let object = zun_gc::with_current_heap_mut(|heap| {
+        let mut slots: Vec<(u8, Value)> = Vec::with_capacity(field_count);
+        for index in 0..field_count as u32 {
+            let field = self
+                .module
+                .tables
+                .field_defs
+                .get((field_start + index) as usize - 1)?;
+            let value = match self.module.strings.get(field.name) {
+                "message" => Value::Str(message.into()),
+                "nameOverride" => Value::Str(name.into()),
+                _ => match field.kind {
+                    value::FIELD_STRING => Value::Str("".into()),
+                    value::FIELD_ANY | value::FIELD_OBJECT | value::FIELD_ARRAY => Value::Void,
+                    kind => match JitKind::from_byte(kind) {
+                        JitKind::Num(_) => Value::Float(0.0, zun_il::NumKind::F64),
+                        JitKind::Bool => Value::Bool(false),
+                        JitKind::String => Value::Str("".into()),
+                        _ => Value::Void,
+                    },
+                },
+            };
+            slots.push((field.kind, value));
+        }
+        Some(zun_gc::with_current_heap_mut(|heap| {
             let object = heap.alloc(rid as u32, field_count);
-            for (index, kind) in kinds.iter().enumerate() {
-                if let Some(v) = values.get(index) {
-                    value::store_field(*kind, object, index, v, heap);
-                }
+            for (index, (kind, value)) in slots.iter().enumerate() {
+                value::store_field(*kind, object, index, value, heap);
             }
             object
-        });
-        Some(Value::Object(object))
+        }))
     }
 }
