@@ -1605,6 +1605,18 @@ impl Interp<'_> {
                     } else {
                         args
                     };
+                    // A *declared* function ending in a rest parameter expects
+                    // its trailing arguments packed into an array. A typed call
+                    // site packs them itself; a dynamic one (`const g: any = f;
+                    // g(1, 2, 3)`) arrives unpacked. Every other dynamic entry
+                    // already packed here -- this opcode was the one that did
+                    // not, so the body read a loose argument where it expects
+                    // the array and aborted the engine.
+                    let call_args = if counted || dynamic {
+                        self.pack_rest_call_args(handle.method_rid(), call_args)
+                    } else {
+                        call_args
+                    };
                     // Calling a generator function through a function value creates
                     // the generator object instead of running the body.
                     let link = RootLink {
