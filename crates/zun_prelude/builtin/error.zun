@@ -30,6 +30,11 @@ function __zunErrorMessage(message: any): string {
     return `${message}`;
 }
 
+// True when a message argument other than `undefined` was passed.
+function __zunErrorHasMessage(message: any): boolean {
+    return message !== undefined;
+}
+
 // True when `options` is an object that carries a `cause` key (own or inherited).
 function __zunErrorHasCause(options: any): boolean {
     if (options === undefined || options === null) {
@@ -89,6 +94,11 @@ class Error {
     // `toString` substitutes "Error" - even on a subclass. A `string` getter cannot
     // answer `undefined`, so `name` itself reads as the class name.
     nameUndefined: boolean = false;
+
+    // True when a message argument other than `undefined` was passed. An own
+    // `message` property exists exactly then: `new Error("")` owns an empty
+    // one, `new Error()` and `new Error(undefined)` own none.
+    hasMessage: boolean = false;
 
     constructor(message: string, options?: any) {
         this.message = message;

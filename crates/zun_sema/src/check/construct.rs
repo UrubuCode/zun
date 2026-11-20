@@ -763,6 +763,36 @@ default_count: 0,
                 span,
             },
         };
+        // `hasMessage`: whether a message other than `undefined` was passed,
+        // which is exactly when the error owns a `message` property
+        // (`new Error("")` does; `new Error()` does not). A statically typed
+        // string answers at compile time and a plain identifier is probed at
+        // run time; any other dynamic expression keeps the field default, and
+        // the reflection floor still reports a non-empty message as own.
+        let mut has_message: Option<hir::Expr> = match args.first() {
+            Some(_) if message.ty == Ty::String => Some(hir::Expr {
+                kind: hir::ExprKind::Boolean(true),
+                ty: Ty::Boolean,
+                span,
+            }),
+            Some(arg @ ast::Expr::Ident(_)) => {
+                match self.by_name.get("__zunErrorHasMessage").copied() {
+                    Some(func) => {
+                        let probed = self.check_expr(cx, arg);
+                        Some(hir::Expr {
+                            kind: hir::ExprKind::Call {
+                                func,
+                                args: vec![Self::box_to_any(probed)],
+                            },
+                            ty: Ty::Boolean,
+                            span,
+                        })
+                    }
+                    None => None,
+                }
+            }
+            _ => None,
+        };
         // A message whose static type is not `string` follows JS `ToString` (`undefined`
         // means no message) instead of an unchecked unbox to `string`.
         if message.ty != Ty::String && !message.ty.is_error() {
@@ -877,6 +907,7 @@ default_count: 0,
                 "message" => message.take().unwrap_or_else(|| self.poison(span)),
                 "cause" => cause.take().unwrap_or_else(|| self.poison(span)),
                 "hasCause" if has_cause.is_some() => has_cause.take().unwrap(),
+                "hasMessage" if has_message.is_some() => has_message.take().unwrap(),
                 _ => match initializers.get(slot).and_then(|init| init.as_ref()) {
                     Some(init) => {
                         let init = init.clone();

@@ -76,8 +76,16 @@ impl<'a> Interp<'a> {
         if !typed || obj.type_rid() == 0 || !self.is_error_instance(obj) {
             return out;
         }
+        // Own exactly when a message argument other than `undefined` was
+        // passed, which the class records in `hasMessage`: `new Error("")`
+        // owns an empty `message`. A non-empty message still counts, for the
+        // construction paths that cannot set the flag.
+        let has_message = matches!(
+            self.instance_member_get(obj, "hasMessage"),
+            Ok(Some(Value::Bool(true)))
+        );
         if let Ok(Some(Value::Str(message))) = self.instance_member_get(obj, "message") {
-            if !message.is_empty() {
+            if has_message || !message.is_empty() {
                 out.push(("message".to_string(), Value::Str(message)));
             }
         }
