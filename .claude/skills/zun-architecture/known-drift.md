@@ -2294,3 +2294,61 @@ Things measured here that contradict earlier notes in this file:
 silently fails to match. Normalize with `perl -0pi -e 's/\r\n/\n/g'` first, and
 check that the edit actually landed rather than trusting the exit status of a
 `&&` chain.
+
+## Session 2026-11-20: 102 -> 107 of 169, and three measured dead ends
+
+New facts, each measured rather than reasoned:
+
+- **The `Error` class's field list is frozen.** Adding one field, *declared
+  last*, took the suite from 107 to **94** and runtime errors from 13 to 42.
+  The class comment already said "the native error allocators fill slots
+  positionally"; it means the end of the list too, not just the middle. The
+  constructor change that accompanied the first attempt was innocent -- the
+  field alone reproduces it. So `new Error("")` still owns no `message` (node
+  says it does), because the flag that would record "a message argument was
+  passed" has nowhere to live; the carrier has to be the instance bag or the
+  allocators have to learn the new arity.
+- **A prelude file's top-level statements run *after* the user's code.** The
+  prelude is concatenated after the user source, so a statement there cannot
+  set anything up. `realm.zun` is not a counter-example: it is a separate
+  const the checker consumes and emits into the module initializer. Anything
+  that must run before user code belongs in the initializer, not in a prelude
+  class file.
+- **Adding a `[Symbol.toStringTag]` getter to a prelude class can break the
+  module.** Symbol-keyed methods are exported as `[symbol]@N@this`, and adding
+  one shifts `N` until two classes collide: "duplicate module export". Brands
+  for such classes go in the class-chain table in `object_descriptor.rs`
+  instead (where `Date`'s already is).
+- **A declared method always wins over an assignment to the prototype**, in
+  both directions: `C.prototype.entries = C.prototype[Symbol.iterator]` makes
+  the identity hold while `c.entries()` still dispatches to the declaration.
+  That is why the WebIDL `iterable<>` alias is registered by the module
+  initializer with the named method's own function instead.
+- **Statics that exist only as a call form have no value.** `setTimeout`,
+  `Buffer.compare` and friends are lowered at the call site, so
+  `typeof setTimeout` was `"undefined"` and `[].sort(Buffer.compare)` sorted
+  nothing. Two tables now carry the value through a mangled prelude helper:
+  `module_init::timer_value_helper` and `field::static_value_helper`. A static
+  that needs a value joins one of them.
+- **A callable carried through `any` is a function cell**, and a bare
+  `Value::Function` match rejects one. Two more sites had that bug
+  (`iterator_helpers::callable`, the member-call element read). `callback_handle`
+  is the shared unwrapper; prefer it over matching `Value::Function`.
+- **`WeakMap` and `WeakSet` share one ephemeron floor**, so the heap cannot
+  tell them apart -- their `Object.prototype.toString` brands need a
+  discriminator, not a table entry. `WeakRef` and `FinalizationRegistry` are
+  native-backed realm base types, so the class-chain table does not reach
+  them either.
+- **A redeclared field used to get two slots.** Fixed; but zun fills every
+  slot in one pass, so there is still no base-then-derived *phasing*: a base
+  constructor reading a field the subclass redeclares sees the derived value.
+- Still open and each costing a representation change: the temporal dead zone
+  (`typeof x` before `let x` answers `"undefined"`), NamedEvaluation
+  (`const f = function () {}` has an empty `name`), `Object(0n)` (no
+  `BigIntObject` wrapper), an own property shadowing a prototype method, and
+  `Boolean`/`Number`/`String` read as a value being the `__coerce*` helper
+  rather than the class descriptor (so `Boolean.prototype.constructor ===
+  Boolean` is false, while the same test through `globalThis` passes).
+- A class cannot declare a static and an instance method of one name
+  (`methods_by_class` is keyed by name alone), which is what blocks
+  `Response.json`.
