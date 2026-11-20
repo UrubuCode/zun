@@ -157,7 +157,9 @@ impl Checker<'_> {
                     "String" => Some("__coerceString"),
                     "Number" => Some("__coerceNumber"),
                     "Boolean" => Some("__coerceBoolean"),
-                    _ => None,
+                    // The timer surface is lowered at the call site, so the
+                    // bare name read as a value had nothing to resolve to.
+                    _ => crate::check::module_init::timer_value_helper(text.as_str()),
                 };
                 if let Some(&func) = coerce_name.and_then(|n| self.by_name.get(n)) {
                     return hir::Expr {

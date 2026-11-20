@@ -382,3 +382,51 @@ function __zunRequireCallable(value: any): any {
     }
     return value;
 }
+
+// --- Timers as first-class values ---
+//
+// `setTimeout` and friends are lowered at the *call* site by the checker onto
+// the VM's timer intrinsics, so the bare names were callable but had no value:
+// `setTimeout.length` and `globalThis.setTimeout === setTimeout` both failed.
+// Declaring prelude functions under those names is not an option -- the
+// prelude is concatenated after the user source, so zun-node's own
+// `setTimeout` would become a duplicate declaration (issue #111). These
+// mangled helpers carry the value instead; the checker maps the bare name and
+// the realm global onto them, so both spellings are the same function object.
+// Each takes its callback as a required parameter so `length` is 1, as in node.
+
+function __zunSetTimeout(callback: any, delay: any = 0, ...rest: any[]): any {
+    if (rest.length > 0) {
+        return setTimeout(function () { callback.apply(undefined, rest); }, delay);
+    }
+    return setTimeout(callback, delay);
+}
+
+function __zunSetInterval(callback: any, delay: any = 0, ...rest: any[]): any {
+    if (rest.length > 0) {
+        return setInterval(function () { callback.apply(undefined, rest); }, delay);
+    }
+    return setInterval(callback, delay);
+}
+
+function __zunClearTimeout(handle: any = undefined): any {
+    clearTimeout(handle);
+    return undefined;
+}
+
+function __zunClearInterval(handle: any = undefined): any {
+    clearInterval(handle);
+    return undefined;
+}
+
+function __zunQueueMicrotask(callback: any): any {
+    queueMicrotask(callback);
+    return undefined;
+}
+
+function __zunSetImmediate(callback: any, ...rest: any[]): any {
+    if (rest.length > 0) {
+        return setImmediate(function () { callback.apply(undefined, rest); });
+    }
+    return setImmediate(callback);
+}

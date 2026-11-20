@@ -360,7 +360,13 @@ impl Checker<'_> {
                 if already_seeded.contains(name) {
                     continue;
                 }
-                let value = if let Some(&func) = self.by_name.get(*name) {
+                // A timer global's value lives under a mangled helper name, so
+                // the global property and the bare identifier resolve to the
+                // same function and `globalThis.setTimeout === setTimeout`.
+                let resolved = self.by_name.get(*name).copied().or_else(|| {
+                    timer_value_helper(name).and_then(|helper| self.by_name.get(helper).copied())
+                });
+                let value = if let Some(func) = resolved {
                     Self::box_to_any(hir::Expr {
                         kind: hir::ExprKind::FunctionRef { func },
                         ty: Ty::Function(func),
@@ -514,6 +520,24 @@ const PRELUDE_FUNCTION_GLOBALS: &[&str] = &[
     "escape",
     "unescape",
 ];
+
+/// The prelude helper that carries the *value* of a timer global. The timer
+/// surface is lowered at the call site, so the bare names had no function
+/// value at all (`setTimeout.length`, `globalThis.setTimeout === setTimeout`).
+/// They cannot be declared under their own names: the prelude is concatenated
+/// after the user source, so zun-node's own `setTimeout` would become a
+/// duplicate declaration (issue #111).
+pub(in crate::check) fn timer_value_helper(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "setTimeout" => "__zunSetTimeout",
+        "setInterval" => "__zunSetInterval",
+        "clearTimeout" => "__zunClearTimeout",
+        "clearInterval" => "__zunClearInterval",
+        "queueMicrotask" => "__zunQueueMicrotask",
+        "setImmediate" => "__zunSetImmediate",
+        _ => return None,
+    })
+}
 
 /// Prelude functions that are own properties of the global object in Node.
 const PLATFORM_FUNCTIONS: &[&str] = &[
