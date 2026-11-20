@@ -238,12 +238,28 @@ impl Checker<'_> {
                 {
                     self.realm_descriptor_expr(zun_natives::USER_CLASS_FLAG | (class_idx + 1), span)
                 } else if is_object {
+                    // `Iterator` is a constructor, not a namespace: `typeof
+                    // Iterator` is "function" and `class X extends Iterator`
+                    // works. It still has to be an *object*, because the realm
+                    // hangs `Iterator.from` and the shared `%Iterator.prototype%`
+                    // on it at run time -- making it an opaque descriptor token
+                    // instead fixed `typeof` and lost both. The `__classDesc`
+                    // record is the hook `typeof` already consults for exactly
+                    // this case; the realm re-defines it non-enumerably.
+                    let entries = if name == "Iterator" {
+                        let token = next_token;
+                        next_token += 1;
+                        vec![hir::ObjectEntry::Data {
+                            key: hir::ObjectKey::Named("__classDesc".to_string()),
+                            value: self.realm_descriptor_expr(token, span),
+                        }]
+                    } else {
+                        Vec::new()
+                    };
                     hir::Expr {
                         kind: hir::ExprKind::BoxAny {
                             value: Box::new(hir::Expr {
-                                kind: hir::ExprKind::DynamicObjectLiteral {
-                                    entries: Vec::new(),
-                                },
+                                kind: hir::ExprKind::DynamicObjectLiteral { entries },
                                 ty: Ty::DynamicObject,
                                 span,
                             }),
