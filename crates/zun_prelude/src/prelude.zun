@@ -346,6 +346,21 @@ function decodeURIComponent(value?: any): string {
     return uriString.decodeURIComponent(String(value));
 }
 
+// `Array.prototype.slice.call(arrayLike, start, end)`: ToIntegerOrInfinity of
+// each index runs **before** any element is read, so a throwing `valueOf`
+// aborts with nothing touched. `undefined` is passed through, because a
+// `slice` end of `undefined` means "to the length", not 0.
+function __zunSliceIndex(value: any): any {
+    if (value === undefined) {
+        return undefined;
+    }
+    const n: number = Number(value);
+    if (n !== n) {
+        return 0;
+    }
+    return Math.trunc(n);
+}
+
 // `Array.prototype.<cb-method>.call(arrayLike, cb)`: the spec validates the
 // callback with IsCallable **before** reading any element, so a non-callable
 // must throw before the array-like is materialized. Zun's borrowed-method

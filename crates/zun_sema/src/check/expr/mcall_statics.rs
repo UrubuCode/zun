@@ -344,27 +344,58 @@ impl Checker<'_> {
                                 | "flatMap"
                         );
                         let mut call_args = args[1..].to_vec();
-                        let mut guard: Option<hir::Expr> = None;
+                        let mut guards: Vec<hir::Expr> = Vec::new();
+                        // Hoist `call_args[index]` through the prelude helper
+                        // `name`, so the helper runs before the receiver
+                        // conversion that the sequence below performs.
+                        let mut hoist = |checker: &mut Self,
+                                         cx: &mut FunctionCx,
+                                         call_args: &mut Vec<ast::Expr>,
+                                         guards: &mut Vec<hir::Expr>,
+                                         index: usize,
+                                         helper: &str| {
+                            let Some(&func) = checker.by_name.get(helper) else {
+                                return;
+                            };
+                            let checked = checker.check_expr(cx, &call_args[index]);
+                            let (slot, tmp) = checker.synthetic_local(cx, Ty::Any);
+                            guards.push(hir::Expr {
+                                kind: hir::ExprKind::Assign {
+                                    slot,
+                                    value: Box::new(hir::Expr {
+                                        kind: hir::ExprKind::Call {
+                                            func,
+                                            args: vec![Self::box_to_any(checked)],
+                                        },
+                                        ty: Ty::Any,
+                                        span,
+                                    }),
+                                },
+                                ty: Ty::Any,
+                                span,
+                            });
+                            call_args[index] = ast::Expr::Ident(tmp);
+                        };
                         if takes_callback && !call_args.is_empty() {
-                            if let Some(&func) = self.by_name.get("__zunRequireCallable") {
-                                let checked = self.check_expr(cx, &call_args[0]);
-                                let (cb_slot, cb_tmp) = self.synthetic_local(cx, Ty::Any);
-                                guard = Some(hir::Expr {
-                                    kind: hir::ExprKind::Assign {
-                                        slot: cb_slot,
-                                        value: Box::new(hir::Expr {
-                                            kind: hir::ExprKind::Call {
-                                                func,
-                                                args: vec![Self::box_to_any(checked)],
-                                            },
-                                            ty: Ty::Any,
-                                            span,
-                                        }),
-                                    },
-                                    ty: Ty::Any,
-                                    span,
-                                });
-                                call_args[0] = ast::Expr::Ident(cb_tmp);
+                            hoist(self, cx, &mut call_args, &mut guards, 0, "__zunRequireCallable");
+                        }
+                        // `slice` orders its steps ToObject(this),
+                        // LengthOfArrayLike(this), ToIntegerOrInfinity(start),
+                        // ToIntegerOrInfinity(end), and only then reads
+                        // elements -- so a `valueOf` that throws aborts before
+                        // any element is touched. The conversion below reads
+                        // them all up front, which a Proxy observes, so both
+                        // index arguments are coerced first.
+                        if name == "slice" {
+                            for index in 0..call_args.len().min(2) {
+                                hoist(
+                                    self,
+                                    cx,
+                                    &mut call_args,
+                                    &mut guards,
+                                    index,
+                                    "__zunSliceIndex",
+                                );
                             }
                         }
                         let call = ast::Expr::MethodCall {
@@ -390,17 +421,19 @@ impl Checker<'_> {
                             ty,
                             span,
                         };
-                        return Some(match guard {
-                            Some(guard) => hir::Expr {
+                        // The guards run in the order they were pushed, all of
+                        // them before the receiver conversion inside `converted`.
+                        return Some(guards.into_iter().rev().fold(
+                            converted,
+                            |value, guard| hir::Expr {
                                 kind: hir::ExprKind::Sequence {
                                     effect: Box::new(guard),
-                                    value: Box::new(converted),
+                                    value: Box::new(value),
                                 },
                                 ty,
                                 span,
                             },
-                            None => converted,
-                        });
+                        ));
                     }
                 }
             }
