@@ -916,8 +916,13 @@ mod tests {
 /// function `Array.prototype[Symbol.iterator]` is installed as. An array
 /// instance's `@@iterator` has to read back as that same function object.
 pub(crate) fn array_values_kind() -> Option<u32> {
-    prototype_methods_of("Array")
-        .into_iter()
-        .find(|(_, name)| *name == "values")
-        .map(|(kind, _)| kind)
+    // Read on every `arr[Symbol.iterator]`; the table walk allocates, and the
+    // answer never changes.
+    static KIND: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *KIND.get_or_init(|| {
+        prototype_methods_of("Array")
+            .into_iter()
+            .find(|(_, name)| *name == "values")
+            .map(|(kind, _)| kind)
+    })
 }
