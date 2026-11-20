@@ -165,6 +165,13 @@ class Blob {
         return out;
     }
 
+    // The bytes of `blob`, synchronously, for the other platform classes that
+    // take a Blob as a body (`Response`, `Request`). Internal: the standard
+    // readers are all asynchronous.
+    static __bytesOf(blob: Blob): any {
+        return blob.#bytes;
+    }
+
     arrayBuffer(): any {
         return Promise.resolve(this.#bytes.slice().buffer);
     }

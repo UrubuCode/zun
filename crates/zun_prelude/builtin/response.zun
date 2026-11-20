@@ -17,8 +17,6 @@
 //     `arrayBuffer`, `blob`, `bytes` and `formData` are absent rather than
 //     approximated; a `Blob`, `FormData` or stream body takes the `String()`
 //     path.
-//   * The static `Response.json(data, init?)` is absent: a class cannot yet
-//     declare a static and an instance method of the same name.
 //
 // Also defines the global `fetch(url)` / `fetchWith(...)` free functions here (a
 // free function in `prelude.zun` cannot see prelude classes on the cached-std path).
@@ -83,6 +81,11 @@ class Response {
             } else if (body instanceof ArrayBuffer || body instanceof SharedArrayBuffer || ArrayBuffer.isView(body)) {
                 this.#text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(body);
                 implied = null;
+            } else if (body instanceof Blob) {
+                // A Blob body is its bytes, and its `type` (when it has one) is
+                // the implied content type. It used to fall to `String(body)`.
+                this.#text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(Blob.__bytesOf(body));
+                implied = body.type === "" ? null : body.type;
             } else if (body instanceof URLSearchParams) {
                 this.#text = body.toString();
                 implied = "application/x-www-form-urlencoded;charset=UTF-8";
@@ -179,6 +182,11 @@ class Response {
         return new TextEncoder().encode(this.#text).buffer;
     }
 
+    bytes(): any {
+        this.#consume();
+        return new TextEncoder().encode(this.#text);
+    }
+
     blob(): any {
         this.#consume();
         return new Blob([this.#text], { type: this.#headers.get("content-type") ?? "" });
@@ -197,6 +205,24 @@ class Response {
         this.#text = text;
         this.#type = type;
         return this;
+    }
+
+    // `Response.json(data, init?)`: the body is `JSON.stringify(data)` and the
+    // content type is `application/json` unless `init.headers` names one.
+    static json(data: any = undefined, init: any = undefined): Response {
+        const text: any = JSON.stringify(data);
+        if (text === undefined) {
+            throw new TypeError("Value is not JSON serializable");
+        }
+        let named: boolean = false;
+        if (init !== undefined && init !== null && init.headers !== undefined) {
+            named = new Headers(init.headers).has("content-type");
+        }
+        const response: Response = new Response(text, init);
+        if (!named) {
+            response.headers.set("content-type", "application/json");
+        }
+        return response;
     }
 
     static error(): Response {
