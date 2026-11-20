@@ -79,6 +79,16 @@ impl Checker<'_> {
             unreachable!()
         };
         let text = self.text(name).to_string();
+        // A `let`/`const` read before its declaration in an enclosing block of
+        // this function: the temporal dead zone, a ReferenceError when the
+        // read is evaluated.
+        // (A class name is not a binding read: `const C = class {}` is lowered
+        // to a hoisted class whose initializer names the class itself.)
+        if cx.in_dead_zone(&text) && !self.classes_by_name.contains_key(&text) {
+            if let Some(dead) = self.dead_zone_access(&text, Ty::Any, span) {
+                return dead;
+            }
+        }
         if cx.tdz_names.contains(&text) {
             // Reading a parameter before its initialisation is a ReferenceError.
             if let Some((id, _)) = zun_natives::resolve("collections", "globalRead") {

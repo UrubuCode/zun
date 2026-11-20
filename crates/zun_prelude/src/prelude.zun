@@ -439,3 +439,10 @@ function __zunSetImmediate(callback: any, ...rest: any[]): any {
 function __zunBufferCompare(a: any, b: any): number {
     return Buffer.compare(a, b);
 }
+
+// A `let` / `const` read before its declaration (the temporal dead zone). The
+// checker lowers such a read -- `typeof` included -- onto this call when the
+// declaration is further down an enclosing block of the same function.
+function __zunDeadZone(name: string): any {
+    throw new ReferenceError("Cannot access '" + name + "' before initialization");
+}

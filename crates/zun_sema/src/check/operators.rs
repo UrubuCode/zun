@@ -376,6 +376,17 @@ impl Checker<'_> {
         operand: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        // `typeof x` does not excuse the temporal dead zone: it is safe on an
+        // *undeclared* name, but a `let`/`const` declared further down the
+        // block throws a ReferenceError here like any other read.
+        if let ast::Expr::Ident(name) = operand {
+            let text = self.text(name).to_string();
+            if cx.in_dead_zone(&text) {
+                if let Some(dead) = self.dead_zone_access(&text, Ty::String, span) {
+                    return dead;
+                }
+            }
+        }
         // `typeof Map.groupBy` / `typeof Math.max`: well-known built-in functions.
         {
             let mut parts: Vec<String> = Vec::new();
@@ -752,5 +763,31 @@ impl Checker<'_> {
                 None => return false,
             }
         }
+    }
+}
+
+impl Checker<'_> {
+    /// The expression a temporal-dead-zone read lowers to: a call that throws
+    /// `ReferenceError: Cannot access '<name>' before initialization`. `ty` is
+    /// the type the surrounding expression expects; the call never returns.
+    pub(in crate::check) fn dead_zone_access(
+        &self,
+        name: &str,
+        ty: Ty,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let func = self.by_name.get("__zunDeadZone").copied()?;
+        Some(hir::Expr {
+            kind: hir::ExprKind::Call {
+                func,
+                args: vec![hir::Expr {
+                    kind: hir::ExprKind::String(name.to_string()),
+                    ty: Ty::String,
+                    span,
+                }],
+            },
+            ty,
+            span,
+        })
     }
 }

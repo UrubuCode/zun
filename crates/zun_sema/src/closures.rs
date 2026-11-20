@@ -61,6 +61,7 @@ impl Checker<'_> {
             mutated: HashSet::new(),
             mutated_names: HashSet::new(),
             tdz_names: HashSet::new(),
+            pending_lexical: Vec::new(),
             param_slot_count: 0,
             boxed: HashSet::new(),
             captures: captures

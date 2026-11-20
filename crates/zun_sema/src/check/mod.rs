@@ -683,6 +683,11 @@ struct FunctionCx {
     /// Parameter names still in their temporal dead zone while a default
     /// expression is being checked (later parameters and the parameter itself).
     tdz_names: HashSet<String>,
+    /// Lexical names each open block declares *later*: `(index of the block's
+    /// scope in `scopes`, names its `let`/`const` statements declare)`. A name
+    /// read while it is still here and not yet in that scope is in its
+    /// temporal dead zone.
+    pending_lexical: Vec<(usize, HashSet<String>)>,
     /// Number of leading local slots that are parameters of a top-level function
     /// (0 when unknown): an unboxed parameter is never captured by cell.
     param_slot_count: usize,

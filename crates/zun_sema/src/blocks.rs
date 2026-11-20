@@ -9,6 +9,41 @@ impl<'a> Checker<'a> {
         block: &ast::Block,
     ) -> Vec<hir::Stmt> {
         cx.scopes.push(Scope::new());
+        // The names this block declares lexically, for the temporal dead zone
+        // (see `FunctionCx::in_dead_zone`). Popped with the scope.
+        let lexical: std::collections::HashSet<String> = block
+            .statements
+            .iter()
+            .filter_map(|statement| match statement {
+                // Only a binding written `let x` / `const x`. The AST does not
+                // record the declaration kind, and a `var`, a function or a
+                // class declaration also reaches here as a `Let`: `var` has no
+                // dead zone at all, and the others are left alone rather than
+                // guessed at. A later declarator of a list (`let a, b`) is not
+                // matched either, which errs on the side of not throwing.
+                ast::Stmt::Let { name, .. }
+                    if zun_syntax::ast::synthetic_ident_text(*name).is_none()
+                        && name.span.start < zun_syntax::ast::SYNTHETIC_NAME_BASE
+                        && self
+                            .source
+                            .get(..name.span.start as usize)
+                            .map(str::trim_end)
+                            .is_some_and(|before| {
+                                ["let", "const"].iter().any(|keyword| {
+                                    before.strip_suffix(keyword).is_some_and(|rest| {
+                                        !rest.ends_with(|c: char| {
+                                            c.is_alphanumeric() || c == '_' || c == '$'
+                                        })
+                                    })
+                                })
+                            }) =>
+                {
+                    Some(self.text(name).to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        cx.pending_lexical.push((cx.scopes.len() - 1, lexical));
         let mut stmts: Vec<hir::Stmt> = Vec::with_capacity(block.statements.len());
         for statement in &block.statements {
             // Static initializers of classes declared above this statement run
@@ -80,6 +115,7 @@ impl<'a> Checker<'a> {
             }
         }
         cx.scopes.pop();
+        cx.pending_lexical.pop();
         stmts
     }
 }
