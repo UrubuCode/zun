@@ -5,9 +5,20 @@
 
 use super::*;
 
-/// Prelude classes whose instances carry the class name as their builtin tag
-/// (a WebIDL interface with `[Symbol.toStringTag]`).
-const WEBIDL_TAGGED_CLASSES: &[&str] = &["Headers", "FormData", "URLSearchParams"];
+/// Prelude classes whose instances carry the class name as their builtin tag:
+/// a WebIDL interface with `[Symbol.toStringTag]`, and the ECMAScript classes
+/// whose brand comes from an internal slot zun models as a prelude class.
+const WEBIDL_TAGGED_CLASSES: &[&str] = &[
+    "Headers",
+    "FormData",
+    "URLSearchParams",
+    // Not `WeakMap` / `WeakSet` / `WeakRef` / `FinalizationRegistry`: those are
+    // realm base types backed by native storage rather than typed class
+    // instances, so a class-chain lookup never reaches them -- and a WeakMap and
+    // a WeakSet share one ephemeron floor, so the heap cannot tell them apart to
+    // brand them at all. Their tags remain `[object Object]`.
+];
+
 
 impl<'a> Interp<'a> {
     /// Whether a realm class descriptor stands for an ECMAScript namespace object
@@ -1342,7 +1353,19 @@ impl<'a> Interp<'a> {
                     Value::Int(..) | Value::Float(..) => "Number".into(),
                     Value::Bool(_) => "Boolean".into(),
                     Value::Str(_) => "String".into(),
-                    Value::Function(_) => "Function".into(),
+                    // A generator or async function has its own brand, read off
+                    // the `@generator` / `@async` markers in the closure name.
+                    Value::Function(handle) => {
+                        let generator = self.is_generator_function(*handle);
+                        let asynchronous = self.is_async_function(*handle);
+                        match (generator, asynchronous) {
+                            (true, true) => "AsyncGeneratorFunction",
+                            (true, false) => "GeneratorFunction",
+                            (false, true) => "AsyncFunction",
+                            (false, false) => "Function",
+                        }
+                        .into()
+                    }
                     Value::Any(a) if a.as_symbol().is_some() => "Symbol".into(),
                     // A namespace the prelude models as a class of statics
                     // (`JSON`, `Atomics`, `crypto`) carries its own brand.
@@ -1455,6 +1478,10 @@ impl<'a> Interp<'a> {
                             .into()
                         }
                     }
+                    // A class value is a constructor, so its brand is
+                    // `Function`; only a namespace class (handled above) is an
+                    // object. This arm answered `Object`.
+                    Value::Any(a) if a.as_class_descriptor().is_some() => "Function".into(),
                     _ => "Object".into(),
                 };
                 Ok(Value::Str(format!("[object {tag}]").into()))

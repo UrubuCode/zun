@@ -302,14 +302,26 @@ impl Checker<'_> {
                     Some(name) => format!(":{}", self.text(&name)),
                     None => String::new(),
                 };
+                // `@async` / `@generator` make a function expression's brand
+                // readable (`[object GeneratorFunction]`) and tell the runtime
+                // it owns no `prototype`. They sit **before** `{method}` on
+                // purpose: a dozen runtime tests are end-anchored on
+                // `@this>` / `@rest>`, so a trailing marker would break them.
+                let kind = if function.is_generator {
+                    "@generator"
+                } else if function.is_async {
+                    "@async"
+                } else {
+                    ""
+                };
                 if takes_this {
                     format!(
-                        "<closure@{}{unique}{written}{method}@this{rest_suffix}>",
+                        "<closure@{}{unique}{written}{kind}{method}@this{rest_suffix}>",
                         span.start
                     )
                 } else {
                     format!(
-                        "<closure@{}{unique}{written}{method}{rest_suffix}>",
+                        "<closure@{}{unique}{written}{kind}{method}{rest_suffix}>",
                         span.start
                     )
                 }
