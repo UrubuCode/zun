@@ -140,6 +140,21 @@ function __coerceString(value: any): string {
     return String(value);
 }
 
+// `String.prototype.valueOf.call(v)` / `.toString.call(v)`: thisStringValue, not
+// ToString -- only a string (or a String object, which zun represents as the
+// primitive) is accepted; anything else is a TypeError.
+function __thisStringValue(value: any): string {
+    if (typeof value === "string") {
+        return value;
+    }
+    // A `new String(...)` wrapper. zun has no own brand for it, so the object's
+    // builtin tag stands in for the [[StringData]] slot.
+    if (Object.prototype.toString.call(value) === "[object String]") {
+        return String(value);
+    }
+    throw new TypeError("String.prototype.valueOf requires that 'this' be a String");
+}
+
 function __coerceNumber(value: any): number {
     return Number(value);
 }

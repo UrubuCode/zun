@@ -368,6 +368,18 @@ fn convert_static_member_call(
                 {
                     let mut rest = args;
                     let this_arg = rest.remove(0);
+                    // `valueOf` / `toString` take thisStringValue, not ToString:
+                    // a non-string receiver is a TypeError, and for a string
+                    // both methods are the identity.
+                    if rest.is_empty()
+                        && matches!(method_member.property.name.as_str(), "valueOf" | "toString")
+                    {
+                        return Ok(Expr::Call {
+                            callee: crate::ast::synthetic_ident("__thisStringValue"),
+                            args: vec![this_arg],
+                            span: span(call.span),
+                        });
+                    }
                     return Ok(Expr::MethodCall {
                         receiver: Box::new(Expr::Call {
                             callee: Name {
