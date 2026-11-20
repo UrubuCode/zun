@@ -233,6 +233,7 @@ fn check_impl(
         full_initializers_cache: std::cell::RefCell::new(HashMap::new()),
         field_index_cache: std::cell::RefCell::new(HashMap::new()),
         methods_by_class: Vec::new(),
+        static_twins: Vec::new(),
         imports: HashMap::new(),
         namespace_imports: HashMap::new(),
         core_namespaces: HashMap::new(),
@@ -534,6 +535,12 @@ struct Checker<'a> {
         std::cell::RefCell<HashMap<u32, std::rc::Rc<HashMap<String, (u16, Ty)>>>>,
     /// Per class index: method name -> global func index.
     methods_by_class: Vec<HashMap<String, u32>>,
+    /// A static method that shares its name with an instance method of the
+    /// same class (`static json()` beside `json()`): the instance one stays in
+    /// `methods_by_class`, the static one lives here. JS keeps the two on
+    /// different objects (the constructor and the prototype), so they do not
+    /// collide.
+    static_twins: Vec<HashMap<String, u32>>,
     /// Imported intrinsic name -> (dispatch id, its native signature).
     imports: HashMap<String, (u32, &'static zun_natives::NativeFn)>,
     /// Namespace binding -> native module identity for static member calls.

@@ -157,6 +157,7 @@ impl Checker<'_> {
         // order. Instance methods have an implicit leading `this`; static
         // methods intentionally do not.
         self.methods_by_class = vec![HashMap::new(); program.classes.len()];
+        self.static_twins = vec![HashMap::new(); program.classes.len()];
         // Owned names avoid borrowing `self` across the loop's `&mut self`
         // calls (the same set was previously rescanned per method).
         let classes_used_as_base: HashSet<String> = program
@@ -241,12 +242,43 @@ impl Checker<'_> {
                     }
                 };
                 let func_index = self.signatures.len() as u32;
-                if self.methods_by_class[class_idx]
-                    .insert(name.clone(), func_index)
-                    .is_some()
-                {
-                    self.error(m.name.span, format!("duplicate method `{name}`"));
+                let mut twin_static = false;
+                match self.methods_by_class[class_idx].get(&name).copied() {
+                    None => {
+                        self.methods_by_class[class_idx].insert(name.clone(), func_index);
+                    }
+                    // A static and an instance method of one name live on
+                    // different objects and do not collide. The instance one
+                    // keeps the main slot; the static one is its twin.
+                    Some(existing)
+                        if self.signatures[existing as usize].is_static != m.is_static
+                            && !self.static_twins[class_idx].contains_key(&name) =>
+                    {
+                        let (instance, statik) = if m.is_static {
+                            (existing, func_index)
+                        } else {
+                            (func_index, existing)
+                        };
+                        self.methods_by_class[class_idx].insert(name.clone(), instance);
+                        self.static_twins[class_idx].insert(name.clone(), statik);
+                        twin_static = m.is_static;
+                        // The vtable is slotted by emitted name, so the two
+                        // must not share one: the static twin is emitted as
+                        // `name@static`. When the static came first it was
+                        // already registered under the plain name.
+                        if !m.is_static {
+                            let earlier = &mut self.signatures[statik as usize].name;
+                            *earlier = match earlier.strip_suffix("@this") {
+                                Some(plain) => format!("{plain}@static@this"),
+                                None => format!("{earlier}@static"),
+                            };
+                        }
+                    }
+                    Some(_) => {
+                        self.error(m.name.span, format!("duplicate method `{name}`"));
+                    }
                 }
+                let name = if twin_static { format!("{name}@static") } else { name };
                 let name = if hidden_class_param {
                     self.static_this.insert(func_index, class_idx as u32);
                     format!("{name}@this")

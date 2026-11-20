@@ -144,6 +144,19 @@ impl<'a> Checker<'a> {
         self.field_index(class).get(&internal_name).copied()
     }
 
+    /// Resolve a name reached through the class value (`C.name`): the static
+    /// twin of a same-named instance method first, then the ordinary lookup.
+    pub(super) fn static_method_of(&self, class: u32, name: &str) -> Option<u32> {
+        let mut current = Some(class);
+        while let Some(index) = current {
+            if let Some(&f) = self.static_twins[index as usize].get(name) {
+                return Some(f);
+            }
+            current = self.classes[index as usize].base;
+        }
+        self.method_of(class, name)
+    }
+
     /// Resolve a method name to its function index, searching base classes.
     pub(super) fn method_of(&self, class: u32, name: &str) -> Option<u32> {
         if let Some(&f) = self.methods_by_class[class as usize].get(name) {

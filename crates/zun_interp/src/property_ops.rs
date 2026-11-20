@@ -1474,6 +1474,9 @@ impl Interp<'_> {
                     Some(p) => (p, true),
                     None => (method_name, false),
                 };
+                // `name@static`: a static that shares its name with an
+                // instance method of the class (see `static_twins` in sema).
+                let plain = plain.strip_suffix("@static").unwrap_or(plain);
                 if method.is_static && plain == name {
                     return Some((mrid, hidden));
                 }
@@ -1735,6 +1738,7 @@ impl Interp<'_> {
             }
             let raw = self.module.strings.get(method.name);
             let plain = raw.strip_suffix("@this").unwrap_or(raw);
+            let plain = plain.strip_suffix("@static").unwrap_or(plain);
             if plain == name || plain == getter || plain == setter {
                 return true;
             }
@@ -1808,6 +1812,7 @@ impl Interp<'_> {
                     Some(plain) => (plain, true),
                     None => (raw_name, false),
                 };
+                let method_name = method_name.strip_suffix("@static").unwrap_or(method_name);
                 if method_name == getter {
                     found_getter = Some((mrid, hidden));
                 } else if method_name == name && !hidden {

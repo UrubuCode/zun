@@ -1194,6 +1194,7 @@ impl<'a> Interp<'a> {
                     .split("@this")
                     .next()
                     .unwrap_or(method_name);
+                let plain = plain.strip_suffix("@static").unwrap_or(plain);
                 // A platform function whose *value* is carried by a mangled
                 // prelude helper (the timers, `Buffer.compare`) reports the
                 // public name, not the helper's. Interim: a typed

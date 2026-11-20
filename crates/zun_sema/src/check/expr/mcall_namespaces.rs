@@ -637,7 +637,7 @@ impl Checker<'_> {
         span: Span,
     ) -> Option<hir::Expr> {
         if let Some(&class_index) = self.classes_by_name.get(class_name) {
-            if let Some(func) = self.method_of(class_index, self.text(method)) {
+            if let Some(func) = self.static_method_of(class_index, self.text(method)) {
                 // A static taking the receiving class value hidden-first.
                 let hidden_class = self.static_this.contains_key(&func);
                 let (param_tys, return_ty) = {
