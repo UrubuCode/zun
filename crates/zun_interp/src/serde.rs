@@ -317,7 +317,23 @@ impl Interp<'_> {
             ObjKind::Array => {
                 let len = zun_gc::with_current_heap(|heap| heap.array_len(obj))
                     .ok_or(RunError::BadToken)?;
-                st.out.push(Tag::Array.to_u8());
+                // Own enumerable named (non-index) data properties are cloned
+                // with the array; they used to be dropped.
+                let named: Vec<String> = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_keys(obj)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|key| {
+                            key != "length"
+                                && key.parse::<u32>().is_err()
+                                && heap.dynamic_is_enumerable(obj, key)
+                                && !heap.dynamic_is_accessor(obj, key)
+                                && heap.dynamic_get(obj, key).is_some()
+                        })
+                        .collect()
+                });
+                let tag = if named.is_empty() { Tag::Array } else { Tag::ArrayProps };
+                st.out.push(tag.to_u8());
                 write_uvarint(&mut st.out, len as u64);
                 for i in 0..len {
                     // Re-read the array and the element: a child walk may have
@@ -330,6 +346,20 @@ impl Interp<'_> {
                             self.ser_value(&value, st)?;
                         }
                         _ => st.out.push(Tag::Hole.to_u8()),
+                    }
+                }
+                if !named.is_empty() {
+                    write_uvarint(&mut st.out, named.len() as u64);
+                    for key in named {
+                        write_bytes(&mut st.out, key.as_bytes());
+                        let holder = st.node(node);
+                        let value = match zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get(holder, &key)
+                        }) {
+                            Some(any) => self.any_to_value(any)?,
+                            None => Value::Void,
+                        };
+                        self.ser_value(&value, st)?;
                     }
                 }
             }
@@ -495,6 +525,31 @@ impl Interp<'_> {
                 // An error clones as the ES error type its name denotes (a
                 // subclass or `AggregateError` flattens to `Error`); own extras
                 // are not part of the layout, so they are dropped.
+                // An instance of a class the *program* declares clones as a
+                // plain object holding its public fields: the structured clone
+                // algorithm has a fixed list of platform types it preserves,
+                // and a user class is not one, so the prototype (and with it
+                // every method) is dropped. Platform classes -- the prelude's
+                // -- keep the instance encoding below.
+                if self.error_clone_rid(type_rid).is_none() && self.is_program_class(type_rid) {
+                    let fields = self.instance_named_fields(type_rid)?;
+                    st.out.push(Tag::Object.to_u8());
+                    write_uvarint(&mut st.out, fields.len() as u64);
+                    for (name, slot, kind) in fields {
+                        write_bytes(&mut st.out, name.as_bytes());
+                        let holder = st.node(node);
+                        let value = zun_gc::with_current_heap(|heap| {
+                            value::load_field(kind, holder, slot, heap)
+                        });
+                        if matches!(value, Value::Function(_)) {
+                            return Err(RunError::Native(
+                                "DOMException: DataCloneError: function could not be cloned.".into(),
+                            ));
+                        }
+                        self.ser_value(&value, st)?;
+                    }
+                    return Ok(());
+                }
                 let type_rid = self.error_clone_rid(type_rid).unwrap_or(type_rid);
                 let layout = self.instance_serialized_fields(type_rid)?;
                 st.out.push(Tag::Instance.to_u8());
@@ -754,7 +809,7 @@ impl Interp<'_> {
                 memo.push(Value::Object(obj));
                 Ok(Value::Object(obj))
             }
-            Tag::Array => {
+            Tag::Array | Tag::ArrayProps => {
                 let len = reader.read_uvarint().ok_or_else(bad)? as usize;
                 let obj = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(len));
                 // Record the shell before filling so a self/back reference resolves.
@@ -766,6 +821,18 @@ impl Interp<'_> {
                     let value = self.de_value(reader, memo)?;
                     let any = self.value_to_any(&value)?;
                     zun_gc::with_current_heap_mut(|heap| heap.array_set(obj, i, any));
+                }
+                if tag == Tag::ArrayProps {
+                    let count = reader.read_uvarint().ok_or_else(bad)? as usize;
+                    for _ in 0..count {
+                        let key = reader.read_str().ok_or_else(bad)?;
+                        let value = self.de_value(reader, memo)?;
+                        let any = self.value_to_any(&value)?;
+                        zun_gc::with_current_heap_mut(|heap| {
+                            heap.ensure_dynamic_entry(obj);
+                            heap.dynamic_set(obj, key, any);
+                        });
+                    }
                 }
                 Ok(Value::Object(obj))
             }
@@ -917,6 +984,39 @@ impl Interp<'_> {
     /// declaration order (declared instance fields, base classes first,
     /// `static`/`private` excluded), so serialize and deserialize agree
     /// field-for-field.
+    /// Whether class `type_rid` is declared by the program rather than by the
+    /// prelude. The prelude is compiled as source *after* the user's, so its
+    /// classes take the higher TypeDef rids, and `Error` is the first of them.
+    fn is_program_class(&self, type_rid: u32) -> bool {
+        self.type_rid_of("Error").is_some_and(|first_prelude| type_rid < first_prelude)
+    }
+
+    /// The public instance fields of `type_rid` as `(name, slot, kind)`, in
+    /// layout order (inherited first).
+    fn instance_named_fields(&self, type_rid: u32) -> Result<Vec<(String, usize, u8)>, RunError> {
+        let ty = self
+            .module
+            .tables
+            .type_defs
+            .get(type_rid as usize - 1)
+            .ok_or(RunError::BadToken)?;
+        let mut out = Vec::new();
+        for field_rid in ty.field_start..ty.field_end {
+            let field = self
+                .module
+                .tables
+                .field_defs
+                .get(field_rid as usize - 1)
+                .ok_or(RunError::BadToken)?;
+            if field.is_static || field.is_private {
+                continue;
+            }
+            let layout = self.types.get_field(field_rid).ok_or(RunError::BadToken)?;
+            out.push((self.module.strings.get(field.name).to_string(), layout.slot, layout.kind));
+        }
+        Ok(out)
+    }
+
     fn instance_serialized_fields(&self, type_rid: u32) -> Result<Vec<(usize, u8)>, RunError> {
         // A `TypeDef`'s field range already includes the inherited fields (base
         // first), so only the concrete type is walked.

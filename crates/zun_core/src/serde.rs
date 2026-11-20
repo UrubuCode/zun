@@ -103,6 +103,11 @@ pub enum Tag {
     /// A resizable `ArrayBuffer` (memoized): the [`Tag::ArrayBuffer`] body
     /// (current length + raw bytes) then a uvarint `maxByteLength`.
     ResizableBuffer = 22,
+    /// An array (memoized) that also owns named properties (`a.label = "x"`):
+    /// the [`Tag::Array`] body, then a uvarint count and, per entry, a string
+    /// key and its value. An array with none is still written as plain
+    /// [`Tag::Array`], keeping that path byte-compatible.
+    ArrayProps = 23,
 }
 
 impl Tag {
@@ -133,6 +138,7 @@ impl Tag {
             20 => Self::Hole,
             21 => Self::RegExp,
             22 => Self::ResizableBuffer,
+            23 => Self::ArrayProps,
             _ => return None,
         })
     }
