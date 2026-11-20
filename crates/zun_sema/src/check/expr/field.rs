@@ -597,6 +597,25 @@ impl Checker<'_> {
                 });
             }
         }
+        // A static that exists only as a *call* form (lowered onto an intrinsic)
+        // has no function value, so `[..].sort(Buffer.compare)` passed
+        // `undefined` and sorted nothing while `Buffer.compare(a, b)` worked.
+        // A prelude helper carries the value, the same shape the timer globals
+        // use (see `module_init::timer_value_helper`).
+        if let Some(helper) =
+            static_value_helper(self.text(class_name), fname).filter(|_| {
+                !self.classes_by_name.contains_key(self.text(class_name))
+                    && !self.by_name.contains_key(self.text(class_name))
+            })
+        {
+            if let Some(&func) = self.by_name.get(helper) {
+                return Some(hir::Expr {
+                    kind: hir::ExprKind::FunctionRef { func },
+                    ty: Ty::Function(func),
+                    span,
+                });
+            }
+        }
         // `Buffer.poolSize` (Node's pre-allocated pool size, a plain number).
         if self.text(class_name) == "Buffer"
             && fname == "poolSize"
@@ -1130,4 +1149,14 @@ impl Checker<'_> {
             }
         }
     }
+}
+
+/// The prelude helper carrying the *value* of a static that is otherwise only a
+/// call form. `Buffer.compare` is lowered onto an intrinsic at the call site, so
+/// reading it as a value answered `undefined`.
+fn static_value_helper(class: &str, member: &str) -> Option<&'static str> {
+    Some(match (class, member) {
+        ("Buffer", "compare") => "__zunBufferCompare",
+        _ => return None,
+    })
 }

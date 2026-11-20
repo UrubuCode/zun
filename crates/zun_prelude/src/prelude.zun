@@ -430,3 +430,10 @@ function __zunSetImmediate(callback: any, ...rest: any[]): any {
     }
     return setImmediate(callback);
 }
+
+// `Buffer.compare` as a first-class value (`[..].sort(Buffer.compare)`). The
+// static is lowered onto an intrinsic at the call site, so the bare read had no
+// value; the checker maps it onto this helper.
+function __zunBufferCompare(a: any, b: any): number {
+    return Buffer.compare(a, b);
+}
