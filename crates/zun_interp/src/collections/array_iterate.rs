@@ -220,58 +220,8 @@ impl<'a> Interp<'a> {
                 } else {
                     None
                 };
-                let length = zun_gc::with_current_heap(|heap| heap.array_len(source))
-                    .ok_or(RunError::BadToken)?;
-                // The comparator re-enters managed code and can evacuate the array and the
-                // comparator's closure environment; both are read back after each call.
                 zun_gc::root!(source = source);
-                zun_gc::root!(comparator = comparator);
-                // Insertion sort so each comparison re-enters the interpreter at
-                // most once; elements are read back from the rooted source after
-                // every comparator call in case a GC relocated the backing store.
-                for i in 1..length {
-                    let mut j = i;
-                    while j > 0 {
-                        let left =
-                            zun_gc::with_current_heap(|heap| heap.array_get(source.get(), j - 1))
-                                .ok_or(RunError::BadToken)?;
-                        let right =
-                            zun_gc::with_current_heap(|heap| heap.array_get(source.get(), j))
-                                .ok_or(RunError::BadToken)?;
-                        let ordered_before = match comparator.get() {
-                            Some(handle) => {
-                                let outcome = self.invoke_callback(
-                                    handle,
-                                    vec![Value::Any(left), Value::Any(right)],
-                                )?;
-                                // `<= 0` keeps order; a non-numeric (`NaN`)
-                                // result is treated as `0` (stable, no swap).
-                                !(self.dyn_to_number(&outcome)? > 0.0)
-                            }
-                            None => {
-                                let (a, b) = zun_gc::with_current_heap(|heap| {
-                                    (
-                                        stringify_any(left, heap).unwrap_or_default(),
-                                        stringify_any(right, heap).unwrap_or_default(),
-                                    )
-                                });
-                                a <= b
-                            }
-                        };
-                        if ordered_before {
-                            break;
-                        }
-                        zun_gc::with_current_heap_mut(|heap| {
-                            let a = heap.array_get(source.get(), j - 1);
-                            let b = heap.array_get(source.get(), j);
-                            if let (Some(a), Some(b)) = (a, b) {
-                                heap.array_set(source.get(), j - 1, b);
-                                heap.array_set(source.get(), j, a);
-                            }
-                        });
-                        j -= 1;
-                    }
-                }
+                self.sort_array_elements(source.get(), comparator, false)?;
                 Ok(Value::Object(source.get()))
             }
             "arrayJoin" => {
@@ -464,6 +414,10 @@ impl<'a> Interp<'a> {
                     let element =
                         zun_gc::with_current_heap(|heap| heap.array_get(source.get(), index))
                             .ok_or(RunError::BadToken)?;
+                    // A hole is not visited: `[1, , 2].flatMap(f)` calls `f` twice.
+                    if element.is_hole() {
+                        continue;
+                    }
                     let callback_args = vec![
                         Value::Any(element),
                         Value::Any(zun_core::Any::float(index as f64)),
@@ -726,5 +680,107 @@ impl<'a> Interp<'a> {
             }
             _ => Err(RunError::BadToken),
         }
+    }
+}
+
+impl Interp<'_> {
+    /// SortIndexedProperties over the array `target`, in place.
+    ///
+    /// The specification sorts only the values that are present and not
+    /// `undefined`: the comparator never sees `undefined`, which goes after
+    /// every sorted value, and holes go after that (`holes_become_undefined`
+    /// is `toSorted`, whose result has no holes). The default order compares
+    /// ToString of each value, which runs a user `toString`.
+    ///
+    /// `sort` and `toSorted` each carried a copy of an insertion sort that
+    /// handed `undefined` and holes to the comparator and compared objects by
+    /// a stringification that ignored their `toString`.
+    pub(crate) fn sort_array_elements(
+        &mut self,
+        target: zun_gc::Obj,
+        comparator: Option<zun_core::FunctionHandle>,
+        holes_become_undefined: bool,
+    ) -> Result<(), RunError> {
+        let length = zun_gc::with_current_heap(|heap| heap.array_len(target))
+            .ok_or(RunError::BadToken)?;
+        // The comparator and `toString` re-enter managed code and can move
+        // everything: the values being sorted live in a rooted scratch array.
+        zun_gc::root!(target = target);
+        zun_gc::root!(comparator = comparator);
+        let (work, undefined_count, hole_count) = zun_gc::with_current_heap_mut(|heap| {
+            let work = heap.alloc_array(0);
+            let mut undefined_count = 0usize;
+            let mut hole_count = 0usize;
+            for index in 0..length {
+                match heap.array_get(target.get(), index) {
+                    Some(any) if any.is_hole() => hole_count += 1,
+                    Some(any) if any.tag() == zun_core::AnyTag::Void => undefined_count += 1,
+                    Some(any) => {
+                        heap.array_push(work, any);
+                    }
+                    None => hole_count += 1,
+                }
+            }
+            (work, undefined_count, hole_count)
+        });
+        zun_gc::root!(work = work);
+        let count = length - undefined_count - hole_count;
+        // Insertion sort: stable, and each comparison re-enters the
+        // interpreter at most once.
+        for i in 1..count {
+            let mut j = i;
+            while j > 0 {
+                let (left, right) = zun_gc::with_current_heap(|heap| {
+                    (heap.array_get(work.get(), j - 1), heap.array_get(work.get(), j))
+                });
+                let (Some(left), Some(right)) = (left, right) else {
+                    return Err(RunError::BadToken);
+                };
+                let ordered_before = match comparator.get() {
+                    Some(handle) => {
+                        let outcome =
+                            self.invoke_callback(handle, vec![Value::Any(left), Value::Any(right)])?;
+                        // `<= 0` keeps order; a `NaN` result counts as `0`.
+                        !(self.dyn_to_number(&outcome)? > 0.0)
+                    }
+                    None => {
+                        let a = self.dyn_to_string(&Value::Any(left))?;
+                        // `toString` may have run user code: re-read the right side.
+                        let right = zun_gc::with_current_heap(|heap| heap.array_get(work.get(), j))
+                            .ok_or(RunError::BadToken)?;
+                        let b = self.dyn_to_string(&Value::Any(right))?;
+                        // Code-unit order, as the specification compares strings.
+                        a.encode_utf16().le(b.encode_utf16())
+                    }
+                };
+                if ordered_before {
+                    break;
+                }
+                zun_gc::with_current_heap_mut(|heap| {
+                    let a = heap.array_get(work.get(), j - 1);
+                    let b = heap.array_get(work.get(), j);
+                    if let (Some(a), Some(b)) = (a, b) {
+                        heap.array_set(work.get(), j - 1, b);
+                        heap.array_set(work.get(), j, a);
+                    }
+                });
+                j -= 1;
+            }
+        }
+        for index in 0..length {
+            let value = zun_gc::with_current_heap(|heap| {
+                if index < count {
+                    heap.array_get(work.get(), index).unwrap_or_else(zun_core::Any::void)
+                } else if index < count + undefined_count || holes_become_undefined {
+                    zun_core::Any::void()
+                } else {
+                    zun_core::Any::hole()
+                }
+            });
+            zun_gc::with_current_heap_mut(|heap| {
+                heap.array_set(target.get(), index, value);
+            });
+        }
+        Ok(())
     }
 }

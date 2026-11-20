@@ -486,50 +486,8 @@ impl<'a> Interp<'a> {
                     }
                     copy
                 });
-                // The comparator re-enters managed code and can collect; the copy is read back
-                // through its guard on every compare and swap.
                 zun_gc::root!(copy = copy);
-                zun_gc::root!(comparator = comparator);
-                for i in 1..length {
-                    let mut j = i;
-                    while j > 0 {
-                        let left =
-                            zun_gc::with_current_heap(|heap| heap.array_get(copy.get(), j - 1))
-                                .ok_or(RunError::BadToken)?;
-                        let right = zun_gc::with_current_heap(|heap| heap.array_get(copy.get(), j))
-                            .ok_or(RunError::BadToken)?;
-                        let ordered_before = match comparator.get() {
-                            Some(handle) => {
-                                let outcome = self.invoke_callback(
-                                    handle,
-                                    vec![Value::Any(left), Value::Any(right)],
-                                )?;
-                                !(self.dyn_to_number(&outcome)? > 0.0)
-                            }
-                            None => {
-                                let (a, b) = zun_gc::with_current_heap(|heap| {
-                                    (
-                                        stringify_any(left, heap).unwrap_or_default(),
-                                        stringify_any(right, heap).unwrap_or_default(),
-                                    )
-                                });
-                                a <= b
-                            }
-                        };
-                        if ordered_before {
-                            break;
-                        }
-                        zun_gc::with_current_heap_mut(|heap| {
-                            let a = heap.array_get(copy.get(), j - 1);
-                            let b = heap.array_get(copy.get(), j);
-                            if let (Some(a), Some(b)) = (a, b) {
-                                heap.array_set(copy.get(), j - 1, b);
-                                heap.array_set(copy.get(), j, a);
-                            }
-                        });
-                        j -= 1;
-                    }
-                }
+                self.sort_array_elements(copy.get(), comparator, true)?;
                 Ok(Value::Object(copy.get()))
             }
             "arrayToReversed" => {

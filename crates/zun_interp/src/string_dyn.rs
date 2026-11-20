@@ -63,7 +63,7 @@ impl<'a> Interp<'a> {
     }
 
     /// ECMAScript ToString over any value (objects run OrdinaryToPrimitive).
-    pub(super) fn dyn_to_string(&mut self, value: &Value) -> Result<String, RunError> {
+    pub(crate) fn dyn_to_string(&mut self, value: &Value) -> Result<String, RunError> {
         if let Ok(Value::Any(any)) = unbox_arg(value) {
             if any.as_symbol().is_some() {
                 return Err(RunError::Native(

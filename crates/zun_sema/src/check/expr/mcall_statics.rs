@@ -348,7 +348,7 @@ impl Checker<'_> {
                         // Hoist `call_args[index]` through the prelude helper
                         // `name`, so the helper runs before the receiver
                         // conversion that the sequence below performs.
-                        let mut hoist = |checker: &mut Self,
+                        let hoist = |checker: &mut Self,
                                          cx: &mut FunctionCx,
                                          call_args: &mut Vec<ast::Expr>,
                                          guards: &mut Vec<hir::Expr>,
