@@ -979,6 +979,26 @@ impl Checker<'_> {
                 span,
             });
         }
+        // An own property shadows a declared method: after
+        // `(obj as any).show = fn`, `obj.show()` calls `fn`. Typed dispatch
+        // goes straight to the vtable and never looks at the object, so a call
+        // to a method whose *name* the program assigns as a member somewhere is
+        // dispatched by name instead, where the own property is found first.
+        // The name set over-approximates (see `assigned_member_names`): a false
+        // hit costs speed on that call, never correctness.
+        let receiver = match receiver.ty {
+            Ty::Instance(class)
+                if args.len() <= 6
+                    && !mname.starts_with('#')
+                    && self.assigned_member_names.contains(mname)
+                    && self.method_of(class, mname).is_some_and(|func| {
+                        !self.signatures[func as usize].is_static
+                    }) =>
+            {
+                Self::box_to_any(receiver)
+            }
+            _ => receiver,
+        };
         if matches!(receiver.ty, Ty::Any | Ty::DynamicObject) && args.len() <= 6 {
             // Dynamic member call on an `any`/dynamic receiver (e.g. a
             // namespace from `import()`, or an object-literal method in

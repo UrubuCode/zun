@@ -234,6 +234,7 @@ fn check_impl(
         field_index_cache: std::cell::RefCell::new(HashMap::new()),
         methods_by_class: Vec::new(),
         static_twins: Vec::new(),
+        assigned_member_names: assigned_member_names(source),
         imports: HashMap::new(),
         namespace_imports: HashMap::new(),
         core_namespaces: HashMap::new(),
@@ -541,6 +542,9 @@ struct Checker<'a> {
     /// different objects (the constructor and the prototype), so they do not
     /// collide.
     static_twins: Vec<HashMap<String, u32>>,
+    /// Every name the program assigns as a member (`x.name = ...`). See
+    /// [`assigned_member_names`].
+    assigned_member_names: std::collections::HashSet<String>,
     /// Imported intrinsic name -> (dispatch id, its native signature).
     imports: HashMap<String, (u32, &'static zun_natives::NativeFn)>,
     /// Namespace binding -> native module identity for static member calls.
@@ -964,4 +968,46 @@ struct DecoratorTarget {
     replaces_method: bool,
     /// A returned function is the field's initializer transform.
     transforms_field: bool,
+}
+
+/// Every identifier the source assigns as a member: `<expr>.name = value`.
+///
+/// A lexical over-approximation, on purpose. Its one consumer asks "could an
+/// own property named like this method exist at run time?", and a wrong *yes*
+/// (the pattern inside a comment or a string, or an assignment to an
+/// unrelated object) only sends that method's calls through by-name dispatch.
+/// A wrong *no* is what must not happen for a written name, and a plain scan
+/// for `.name =` cannot miss one. Computed keys (`x[k] = f`) are not seen, and
+/// such a shadow is still not honoured by a typed call.
+fn assigned_member_names(source: &str) -> std::collections::HashSet<String> {
+    let bytes = source.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut names = std::collections::HashSet::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'.' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut end = start;
+        while end < bytes.len() && is_ident(bytes[end]) {
+            end += 1;
+        }
+        if end == start || bytes[start].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let mut after = end;
+        while after < bytes.len() && (bytes[after] == b' ' || bytes[after] == b'\t') {
+            after += 1;
+        }
+        if bytes.get(after) == Some(&b'=')
+            && !matches!(bytes.get(after + 1), Some(b'=') | Some(b'>'))
+        {
+            names.insert(source[start..end].to_string());
+        }
+        i = end;
+    }
+    names
 }
