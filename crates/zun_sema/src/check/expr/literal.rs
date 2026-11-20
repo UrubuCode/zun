@@ -310,7 +310,7 @@ impl Checker<'_> {
 
 /// Whether `text` uses the word `this` as code: not inside a comment or a
 /// string literal, and not part of a longer identifier.
-fn mentions_this_word(text: &str) -> bool {
+pub(in crate::check) fn mentions_this_word(text: &str) -> bool {
     let bytes = text.as_bytes();
     let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
     let mut i = 0;

@@ -12,7 +12,7 @@ mod call_indirect;
 mod call_sugar;
 mod field;
 mod ident;
-mod literal;
+pub(in crate::check) mod literal;
 mod mcall_arrays;
 mod mcall_buffers;
 mod mcall_dispatch;

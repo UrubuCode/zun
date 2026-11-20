@@ -10,10 +10,12 @@ impl Checker<'_> {
             || self
                 .source
                 .get(f.body.span.start as usize..f.body.span.end as usize)
-                .is_some_and(|text| {
-                    text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
-                        .any(|word| word == "this")
-                })
+                // The comment- and string-aware scan closures already use. A
+                // bare word split counted `this` inside a string literal or a
+                // comment, so an error message mentioning 'this' silently gave
+                // the function a hidden receiver parameter -- and a call site
+                // that did not know failed IL verification with StackUnderflow.
+                .is_some_and(crate::check::expr::literal::mentions_this_word)
     }
 
     /// Whether a function declaration's parameter list opens with `this`.
