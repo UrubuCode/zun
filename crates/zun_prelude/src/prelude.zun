@@ -147,10 +147,12 @@ function __thisStringValue(value: any): string {
     if (typeof value === "string") {
         return value;
     }
-    // A `new String(...)` wrapper. zun has no own brand for it, so the object's
-    // builtin tag stands in for the [[StringData]] slot.
-    if (Object.prototype.toString.call(value) === "[object String]") {
-        return String(value);
+    // A `new String(...)` wrapper: an instance of the prelude wrapper class,
+    // which is what holds the [[StringData]]. Not the builtin tag -- that
+    // honours a user `Symbol.toStringTag`, so a plain object tagged "String"
+    // was accepted where it must be a TypeError.
+    if (value instanceof StringObject) {
+        return (value as StringObject).value;
     }
     throw new TypeError("String.prototype.valueOf requires that 'this' be a String");
 }
