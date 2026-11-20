@@ -2081,9 +2081,14 @@ impl Interp<'_> {
         {
             zun_gc::with_current_heap_mut(|heap| heap.ensure_instance_bag(obj));
         } else if zun_gc::with_current_heap(|heap| {
-            heap.map_len(obj).is_some() || heap.set_len(obj).is_some()
+            heap.map_len(obj).is_some()
+                || heap.set_len(obj).is_some()
+                // A Promise too: it is not a dynamic object and had no table,
+                // so `Object.defineProperty(p, Symbol.toStringTag, ..)` was
+                // refused outright.
+                || heap.promise_state(obj).is_some()
         }) {
-            // A Map / Set takes expando properties in an instance bag too.
+            // A Map / Set / Promise takes expando properties in an instance bag.
             zun_gc::with_current_heap_mut(|heap| heap.ensure_instance_bag(obj));
         }
         let name = match key {

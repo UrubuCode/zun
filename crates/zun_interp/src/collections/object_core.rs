@@ -639,6 +639,25 @@ impl<'a> Interp<'a> {
                         });
                     }
                 }
+                // An ECMAScript namespace the prelude models as a **class**
+                // (`JSON`, `Atomics`) answered the right
+                // `Object.prototype.toString` tag -- it is synthesized from the
+                // class name -- but owned no `Symbol.toStringTag` property, so
+                // `getOwnPropertyDescriptor` answered `undefined` where `Math`
+                // and `Reflect`, which are plain objects, carry a real one.
+                // Writable false, enumerable false, configurable true, as in the
+                // specification.
+                if matches!(name.as_str(), "JSON" | "Atomics") {
+                    if let Some(token) = value.as_class_descriptor() {
+                        let bag = Self::class_expando_bag(token);
+                        let symbol = zun_core::WellKnownSymbol::ToStringTag.id();
+                        zun_gc::with_current_heap_mut(|heap| {
+                            let tag = zun_core::Any::string(heap.intern_string(&name));
+                            heap.dynamic_define_symbol(bag, symbol, tag, false);
+                            heap.dynamic_set_symbol_attributes(bag, symbol, Some(false), Some(true));
+                        });
+                    }
+                }
                 Ok(Value::Void)
             }
             "globalGet" => {
