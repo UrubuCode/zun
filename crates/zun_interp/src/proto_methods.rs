@@ -14,6 +14,12 @@ use crate::intrinsic_meta::prototype_method_at;
 
 /// Array methods that only read the receiver: an array-like receiver is
 /// converted to a temporary array first (`CreateListFromArrayLike`).
+/// The `ARRAY_READ_ONLY` methods that take a callback as their first argument.
+const ARRAY_TAKES_CALLBACK: &[&str] = &[
+    "every", "filter", "find", "findIndex", "findLast", "findLastIndex", "flatMap", "forEach",
+    "map", "reduce", "reduceRight", "some",
+];
+
 const ARRAY_READ_ONLY: &[&str] = &[
     "at", "concat", "entries", "every", "filter", "find", "findIndex", "findLast",
     "findLastIndex", "flat", "flatMap", "forEach", "includes", "indexOf", "join", "keys",
@@ -514,6 +520,23 @@ impl Interp<'_> {
                 self.proto_dynamic_call(Value::Object(first), name, args)
             }
             _ if ARRAY_READ_ONLY.contains(&name) => {
+                // The spec validates a callback with IsCallable before reading
+                // any element, so for the callback-taking methods the check has
+                // to happen before the array-like is materialized below -- the
+                // conversion reads index 0, which a Proxy observes. The static
+                // `Array.prototype.m.call(...)` form is guarded in sema; this is
+                // the run-time path a computed `(Array.prototype as any)[m]`
+                // takes, where sema never sees the method name.
+                if ARRAY_TAKES_CALLBACK.contains(&name)
+                    && !matches!(
+                        proto_concrete(args.first().cloned().unwrap_or(Value::Void)),
+                        Value::Function(_)
+                    )
+                {
+                    return Err(self.proto_type_error(&format!(
+                        "Array.prototype.{name} callback is not a function"
+                    )));
+                }
                 let temp = match &recv {
                     // A primitive other than a string has no indexed properties.
                     Value::Float(..) | Value::Int(..) | Value::Bool(_) | Value::Function(_) => {
