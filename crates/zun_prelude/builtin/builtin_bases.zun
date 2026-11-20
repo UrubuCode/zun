@@ -319,6 +319,11 @@ function __zunMapGroupBy(items: any, callback: any): Map<any, any> {
 // `Error.prototype.toString.call(value)`: the generic ToString of any object
 // with `name` / `message` properties (spec 20.5.3.4).
 function __zunErrorProtoToString(value: any): string {
+    // Step 2: the receiver must be an Object. A primitive is a TypeError, not
+    // a value whose `name` / `message` happen to read as `undefined`.
+    if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+        throw new TypeError("Error.prototype.toString requires that 'this' be an Object");
+    }
     const rawName: any = value.name;
     const rawMessage: any = value.message;
     const name: string = rawName === undefined ? "Error" : String(rawName);
