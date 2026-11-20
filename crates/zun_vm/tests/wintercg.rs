@@ -362,7 +362,9 @@ fn headers_set_append_delete() {
         h.delete("accept");
         console.log(h.has("Accept"));
     }"#);
-    assert_eq!(out.lines, ["a", "1", "c", "false"]);
+    // `get` joins the values of a repeated name with ", " (Fetch, "get a
+    // header"): two `append`s under one name read back as one combined value.
+    assert_eq!(out.lines, ["a, b", "1", "c", "false"]);
 }
 
 #[test]
