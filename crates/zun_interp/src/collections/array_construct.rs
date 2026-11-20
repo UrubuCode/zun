@@ -411,6 +411,13 @@ impl<'a> Interp<'a> {
                 if crate::typed_arrays::element_len(source).is_some() {
                     return Ok(Value::Object(self.typed_array_snapshot(source)));
                 }
+                // A `String` wrapper instance is an array-like over the code
+                // units of the string it holds. Its indices are not data slots,
+                // so the generic index loop below read `undefined` for each and
+                // `Array.prototype.join.call(Object("xyz"), "+")` answered "++".
+                if let Some(text) = self.string_wrapper_text(source) {
+                    return self.col_array_construct(name, &[Value::Str(text.into())]);
+                }
                 let length_value = self.dynamic_member_get(source, "length")?;
                 let length_value = match length_value {
                     Value::Any(any) => {

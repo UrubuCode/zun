@@ -97,6 +97,10 @@ impl Checker<'_> {
             let wrapper_name = match arg.ty {
                 Ty::F64 => Some("NumberObject"),
                 Ty::Boolean => Some("BooleanObject"),
+                // `Object("abc")` is a String object, not the primitive: it is
+                // array-like, so `f.apply(null, Object("abc"))` spreads its
+                // three characters where a primitive is a TypeError.
+                Ty::String => Some("StringObject"),
                 _ => None,
             };
             if let Some(wrapper) =
