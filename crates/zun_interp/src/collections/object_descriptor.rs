@@ -1400,8 +1400,13 @@ impl<'a> Interp<'a> {
                             .filter(|name| *name == "__AsyncGenerator")
                             .map(|_| "AsyncGenerator".to_string())
                             .or_else(|| {
+                                // A typed instance that gained an instance bag
+                                // (an own expando, or a prototype swapped by
+                                // `Reflect.construct(Error, args, NewTarget)`)
+                                // is still that instance: the bag makes it
+                                // "dynamic" without making it a plain object.
                                 (!zun_gc::with_current_heap(|heap| {
-                                    heap.is_dynamic_object(obj)
+                                    (heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj))
                                         || heap.promise_state(obj).is_some()
                                         || heap.bigint_value(obj).is_some()
                                 })
