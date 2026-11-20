@@ -707,23 +707,22 @@ impl Interp<'_> {
         // everything: the values being sorted live in a rooted scratch array.
         zun_gc::root!(target = target);
         zun_gc::root!(comparator = comparator);
-        let (work, undefined_count, hole_count) = zun_gc::with_current_heap_mut(|heap| {
-            let work = heap.alloc_array(0);
-            let mut undefined_count = 0usize;
-            let mut hole_count = 0usize;
-            for index in 0..length {
-                match heap.array_get(target.get(), index) {
-                    Some(any) if any.is_hole() => hole_count += 1,
-                    Some(any) if any.tag() == zun_core::AnyTag::Void => undefined_count += 1,
-                    Some(any) => {
-                        heap.array_push(work, any);
-                    }
-                    None => hole_count += 1,
-                }
-            }
-            (work, undefined_count, hole_count)
-        });
+        let work = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(0));
         zun_gc::root!(work = work);
+        let mut undefined_count = 0usize;
+        let mut hole_count = 0usize;
+        for index in 0..length {
+            // `array_element_value` runs the getter of an index defined as an
+            // accessor, so each element is read exactly once.
+            match self.array_element_value(target.get(), index)? {
+                Some(any) if any.is_hole() => hole_count += 1,
+                Some(any) if any.tag() == zun_core::AnyTag::Void => undefined_count += 1,
+                Some(any) => {
+                    zun_gc::with_current_heap_mut(|heap| heap.array_push(work.get(), any));
+                }
+                None => hole_count += 1,
+            }
+        }
         let count = length - undefined_count - hole_count;
         // Insertion sort: stable, and each comparison re-enters the
         // interpreter at most once.
@@ -777,9 +776,28 @@ impl Interp<'_> {
                     zun_core::Any::hole()
                 }
             });
-            zun_gc::with_current_heap_mut(|heap| {
-                heap.array_set(target.get(), index, value);
+            // An accessor element is written through its setter and keeps its
+            // slot; any other element is stored.
+            let setter = zun_gc::with_current_heap(|heap| {
+                let record = heap
+                    .array_get(target.get(), index)
+                    .and_then(|slot| slot.as_object())
+                    .map(|addr| unsafe { zun_gc::Obj::from_addr(addr as *mut u64) })
+                    .filter(|record| heap.dynamic_has(*record, "__elemAcc"))?;
+                Some(heap.dynamic_accessor_setter(record, "v"))
             });
+            match setter {
+                Some(Some(setter)) => {
+                    let args = self.with_this_arg(setter, target.get(), vec![Value::Any(value)]);
+                    self.invoke_function_value(setter, args)?;
+                }
+                Some(None) => {}
+                None => {
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.array_set(target.get(), index, value);
+                    });
+                }
+            }
         }
         Ok(())
     }
