@@ -323,9 +323,54 @@ impl<'a> Interp<'a> {
         }
         let getter = format!("get_{name}");
         if let Some(rid) = self.instance_method_rid(object, &getter) {
+            if self.inherited_member_detached(type_rid, rid) {
+                return Ok(None);
+            }
             return self.call(rid, vec![Value::Object(object)], None).map(Some);
         }
         Ok(None)
+    }
+
+    /// Whether method `method_rid`, declared by an ancestor of class
+    /// `type_rid`, is no longer inherited because the class's prototype chain
+    /// was relinked away from that ancestor
+    /// (`Object.setPrototypeOf(Broken.prototype, Object.prototype)`).
+    ///
+    /// Typed dispatch resolves inherited members from metadata, which cannot
+    /// see such a relink; `instanceof` already honoured it while an inherited
+    /// getter kept answering. Free until the first `setPrototypeOf` in the
+    /// program: the walk only runs once the flag is set.
+    pub(crate) fn inherited_member_detached(&self, type_rid: u32, method_rid: u32) -> bool {
+        if !PROTOTYPE_RELINKED.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        let owner = self
+            .module
+            .tables
+            .type_defs
+            .iter()
+            .position(|def| (def.method_start..def.method_end).contains(&method_rid))
+            .map(|index| index as u32 + 1);
+        let Some(owner) = owner.filter(|owner| *owner != type_rid) else {
+            return false;
+        };
+        let target = self.class_prototype_object(owner);
+        let mut current = self.class_prototype_object(type_rid);
+        for _ in 0..64 {
+            if current.addr() == target.addr() {
+                return false;
+            }
+            let next = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_prototype(current)
+                    .and_then(|any| any.as_object())
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+            });
+            match next {
+                Some(next) => current = next,
+                None => return true,
+            }
+        }
+        true
     }
 
     pub(crate) fn dynamic_name(&self, operand: &Operand) -> Result<&str, RunError> {
@@ -487,3 +532,8 @@ impl Interp<'_> {
         Ok(true)
     }
 }
+
+/// Set by the first `Object.setPrototypeOf` / `Reflect.setPrototypeOf` of the
+/// program; until then no class prototype chain can differ from the metadata.
+pub(crate) static PROTOTYPE_RELINKED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);

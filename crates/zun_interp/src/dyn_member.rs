@@ -509,6 +509,11 @@ impl Interp<'_> {
                 .get(&object.type_rid())
                 .and_then(|methods| methods.get(&format!("get_{name}")))
                 .copied()
+                // Not when the class's prototype chain was relinked away from
+                // the ancestor that declares the getter.
+                .filter(|getter| {
+                    !self.inherited_member_detached(object.type_rid(), getter.method_rid())
+                })
         } else {
             None
         };

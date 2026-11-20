@@ -1151,6 +1151,10 @@ impl<'a> Interp<'a> {
             }
             "objectSetPrototypeOf" | "reflectSetPrototypeOf" => {
                 let reflect = name == "reflectSetPrototypeOf";
+                // From here on a class prototype may no longer inherit from its
+                // base class's; see `inherited_member_detached`.
+                crate::metadata::PROTOTYPE_RELINKED
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 if !reflect {
                     // `Object.setPrototypeOf(O, proto)`: a nullish `O` and a `proto`
                     // that is neither an object nor null are TypeErrors; a primitive
