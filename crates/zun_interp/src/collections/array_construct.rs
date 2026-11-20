@@ -736,12 +736,25 @@ impl<'a> Interp<'a> {
                                 Err(error) => {
                                     // A present, non-undefined `[Symbol.iterator]` that fails is an error, not an array-like.
                                     let present = zun_gc::with_current_heap(|heap| {
-                                        heap.dynamic_get_symbol(
+                                        // An object literal's `[Symbol.iterator]() {}`
+                                        // lands in the symbol-**function** slot, not the
+                                        // data slot, so both have to be consulted: only
+                                        // checking the data slot made a throwing
+                                        // iterator look like a missing one, and the
+                                        // array-like fallback below answered `[]` where
+                                        // the TypeError had to propagate.
+                                        heap.dynamic_get_symbol_function(
                                             source,
                                             zun_core::WellKnownSymbol::Iterator.id(),
                                         )
-                                        .and_then(|any| Value::unbox_any(any, heap))
-                                        .is_some_and(|v| !matches!(v, Value::Void))
+                                        .is_some()
+                                            || heap
+                                                .dynamic_get_symbol(
+                                                    source,
+                                                    zun_core::WellKnownSymbol::Iterator.id(),
+                                                )
+                                                .and_then(|any| Value::unbox_any(any, heap))
+                                                .is_some_and(|v| !matches!(v, Value::Void))
                                     });
                                     if present {
                                         return Err(error);

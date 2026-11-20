@@ -351,6 +351,16 @@ function decodeURIComponent(value?: any): string {
 // must throw before the array-like is materialized. Zun's borrowed-method
 // lowering converts the receiver first, which read index 0 of a Proxy before
 // throwing; the lowering now routes the callback through this guard.
+// IteratorNext: the `{ value, done }` result must be an Object. The `yield*`
+// desugaring reads the two keys off it, which on a primitive silently answer
+// `undefined`, so the check has to be explicit.
+function __zunRequireIterResult(value: any): any {
+    if (value === null || typeof value !== "object") {
+        throw new TypeError("Iterator result " + String(value) + " is not an object");
+    }
+    return value;
+}
+
 function __zunRequireCallable(value: any): any {
     if (typeof value !== "function") {
         throw new TypeError(String(value) + " is not a function");

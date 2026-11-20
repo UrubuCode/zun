@@ -1339,6 +1339,19 @@ impl Interp<'_> {
                         }
                         // Built-in iterables expose `[Symbol.iterator]` as a
                         // callable that produces their iterator.
+                        // `arr[Symbol.iterator]` **is** `Array.prototype.values`,
+                        // the same function object. The receiver-bound generator
+                        // handle built below cannot be, so an array answers the
+                        // prototype's own handle instead.
+                        None if symbol == zun_core::WellKnownSymbol::Iterator.id()
+                            && zun_gc::with_current_heap(|heap| heap.array_len(object).is_some())
+                            && crate::intrinsic_meta::array_values_kind().is_some() =>
+                        {
+                            Value::Function(zun_core::FunctionHandle::new_builtin_method(
+                                crate::intrinsic_meta::array_values_kind()
+                                    .expect("array values kind"),
+                            ))
+                        }
                         None if symbol == zun_core::WellKnownSymbol::Iterator.id()
                             && zun_gc::with_current_heap(|heap| {
                                 heap.array_len(object).is_some()

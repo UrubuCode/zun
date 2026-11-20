@@ -911,3 +911,13 @@ mod tests {
     }
 }
 
+
+/// The builtin-method kind behind `Array.prototype.values`, which is also the
+/// function `Array.prototype[Symbol.iterator]` is installed as. An array
+/// instance's `@@iterator` has to read back as that same function object.
+pub(crate) fn array_values_kind() -> Option<u32> {
+    prototype_methods_of("Array")
+        .into_iter()
+        .find(|(_, name)| *name == "values")
+        .map(|(kind, _)| kind)
+}

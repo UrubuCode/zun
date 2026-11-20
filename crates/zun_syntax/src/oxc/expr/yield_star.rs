@@ -30,9 +30,17 @@ impl YieldStar {
     }
 
     fn step(&self, args: Vec<Expr>) -> Expr {
-        Expr::ComputedCall {
-            callee: Box::new(self.index(self.it, "next")),
-            args,
+        // IteratorNext requires the result to be an Object. The loop below reads
+        // `result["done"]` / `result["value"]`, which on a primitive answer
+        // `undefined` -- so a `next()` returning a non-object looked like an
+        // endless stream of `undefined` instead of throwing at the first pull.
+        Expr::Call {
+            callee: crate::ast::synthetic_ident("__zunRequireIterResult"),
+            args: vec![Expr::ComputedCall {
+                callee: Box::new(self.index(self.it, "next")),
+                args,
+                span: self.sp,
+            }],
             span: self.sp,
         }
     }
