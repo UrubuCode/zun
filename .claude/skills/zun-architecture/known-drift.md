@@ -2249,3 +2249,48 @@ The fixture's third line is separate: `function d(x = typeof d)` must see `d`
 in the parameter scope (`"function"`, not `"undefined"`) -- the same
 "own binding visible inside its own default" shape as `super`/`new.target` in
 a closure.
+
+## Session 2026-11-19: eight fixtures closed, 94 -> 102 of 169
+
+Things measured here that contradict earlier notes in this file:
+
+- **zun does have primitive wrapper objects.** `NumberObject`, `BooleanObject`
+  and `StringObject` are prelude classes, and `new String("z")` builds one with
+  `[object String]`, `length` and code-unit indices. The earlier note that zun
+  "has no primitive wrappers" came from `typeof Object("abc")` answering
+  `"string"`, which was a missing `Ty::String` arm in the `Object(x)` fold --
+  the `StringObject` header already documented the intended lowering.
+- A `String` wrapper's indices are **synthesized**, not data slots. Any
+  array-like conversion that reads them with `dynamic_member_get` sees
+  `undefined`; `arrayFromArrayLike` now special-cases it.
+- `Array.prototype[Symbol.iterator]` already accepts an arbitrary receiver
+  (`.call([7, 8])` worked), so an array instance does not need a
+  receiver-bound handle for it.
+- `function_meta` returns `None` for any name starting with `<`, which is why
+  every closure's `.name` was `""`. A named function expression's name now
+  rides the synthetic closure name as a `:<name>` segment **before** the
+  markers -- a trailing segment would break the dozen `ends_with("@this>")` /
+  `ends_with("@rest>")` tests.
+- `convert_bare_block` kept a block as a scope only for a `let`/`const`
+  *variable* declaration. A block-level function declaration is lexical too;
+  without it nested same-named function declarations collapsed onto the
+  innermost.
+- `arrayFrom`'s array-like fallback asked whether `[Symbol.iterator]` is
+  present with `dynamic_get_symbol` alone. An object literal's
+  `[Symbol.iterator]() {}` lands in the symbol-**function** slot, so a
+  throwing iterator looked like a missing one and the TypeError was swallowed.
+- `typeof Iterator`: flipping `extra_globals` to the function-like form fixes
+  `typeof` and subclassing but loses `Iterator.from` *and*
+  `Iterator.prototype`, because the realm installs both onto the seeded
+  **object** and the function-like form seeds an opaque token. The working
+  shape is the object plus a `__classDesc` record, which `typeof` already
+  consults.
+- Still open on the same ground: NamedEvaluation (`const anon = function () {}`
+  has `name` `""`, node says `"anon"`), and the temporal dead zone (`typeof x`
+  before `let x` answers `"undefined"` instead of throwing ReferenceError).
+
+**Tooling trap that cost two false "not found" patches:** a file restored with
+`git checkout` comes back CRLF in this working copy, so an LF-anchored patch
+silently fails to match. Normalize with `perl -0pi -e 's/\r\n/\n/g'` first, and
+check that the edit actually landed rather than trusting the exit status of a
+`&&` chain.
