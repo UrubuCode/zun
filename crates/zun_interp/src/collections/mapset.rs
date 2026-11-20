@@ -317,46 +317,21 @@ impl<'a> Interp<'a> {
                     .ok_or(RunError::BadToken)?;
                 Ok(Value::Void)
             }
-            "mapValues" => {
+            "mapValues" | "mapKeys" | "mapEntries" => {
+                // A live cursor over the map, not a snapshot: an entry added
+                // during iteration is visited and a deleted one is skipped, as
+                // the specification's Map Iterator behaves.
                 let object =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let entries = zun_gc::with_current_heap(|heap| heap.map_entries(object))
-                    .ok_or(RunError::BadToken)?;
-                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(entries.len()));
-                for (index, (_, value)) in entries.into_iter().enumerate() {
-                    zun_gc::with_current_heap_mut(|heap| {
-                        heap.array_set(array, index, value);
-                    });
-                }
-                let iterator =
-                    zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
-                            .ok_or(RunError::BadToken)?;
-                Ok(Value::Object(iterator))
-            }
-            "mapKeys" | "mapEntries" => {
-                let object =
-                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
-                let entries = zun_gc::with_current_heap(|heap| heap.map_entries(object))
-                    .ok_or(RunError::BadToken)?;
-                let array = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(entries.len()));
-                for (index, (key, value)) in entries.into_iter().enumerate() {
-                    let item = if name == "mapKeys" {
-                        key
-                    } else {
-                        zun_gc::with_current_heap_mut(|heap| {
-                            let item = heap.alloc_array(2);
-                            let _ = heap.array_set(item, 0, key);
-                            let _ = heap.array_set(item, 1, value);
-                            zun_core::Any::object(item.addr() as usize)
-                        })
-                    };
-                    zun_gc::with_current_heap_mut(|heap| {
-                        let _ = heap.array_set(array, index, item);
-                    });
-                }
-                let iterator =
-                    zun_gc::with_current_heap_mut(|heap| heap.alloc_array_iterator(array))
-                            .ok_or(RunError::BadToken)?;
+                let mode = match name {
+                    "mapKeys" => 1,
+                    "mapValues" => 2,
+                    _ => 0,
+                };
+                let iterator = zun_gc::with_current_heap_mut(|heap| {
+                    heap.alloc_map_iterator_mode(object, mode)
+                })
+                .ok_or(RunError::BadToken)?;
                 Ok(Value::Object(iterator))
             }
             "mapForEach" => {

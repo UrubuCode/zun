@@ -587,6 +587,29 @@ impl Interp<'_> {
         } else {
             value
         };
+        // A `Map` / `Set` inherits its methods from the builtin prototype:
+        // `map.entries` read as a value is `Map.prototype.entries`. The
+        // collection is native storage with no prototype link to walk, so the
+        // read answered `undefined`.
+        let value = if matches!(value, Value::Void) {
+            let builtin = zun_gc::with_current_heap(|heap| {
+                if heap.map_entries(object).is_some() {
+                    Some("Map")
+                } else if heap.set_values(object).is_some() {
+                    Some("Set")
+                } else {
+                    None
+                }
+            });
+            builtin
+                .and_then(|class| self.builtin_prototype_by_name(class))
+                .and_then(|proto| {
+                    zun_gc::with_current_heap(|heap| heap.dynamic_get_function(proto, &name))
+                })
+                .map_or(Value::Void, Value::Function)
+        } else {
+            value
+        };
         // An inherited `Object.prototype` method read off a plain dynamic
         // object is a callable function value.
         let proto_mode = crate::object_proto_mode(name.as_str());
@@ -1355,6 +1378,27 @@ impl Interp<'_> {
                             Value::Function(zun_core::FunctionHandle::new_builtin_method(
                                 crate::intrinsic_meta::array_values_kind()
                                     .expect("array values kind"),
+                            ))
+                        }
+                        // Likewise `map[Symbol.iterator]` **is**
+                        // `Map.prototype.entries` and `set[Symbol.iterator]` is
+                        // `Set.prototype.values`: the prototype's own handle.
+                        None if symbol == zun_core::WellKnownSymbol::Iterator.id()
+                            && zun_gc::with_current_heap(|heap| {
+                                heap.map_entries(object).is_some()
+                            }) =>
+                        {
+                            Value::Function(zun_core::FunctionHandle::new_builtin_method(
+                                crate::property_ops::BUILTIN_MAP_ITERATOR,
+                            ))
+                        }
+                        None if symbol == zun_core::WellKnownSymbol::Iterator.id()
+                            && zun_gc::with_current_heap(|heap| {
+                                heap.set_values(object).is_some()
+                            }) =>
+                        {
+                            Value::Function(zun_core::FunctionHandle::new_builtin_method(
+                                crate::property_ops::BUILTIN_SET_ITERATOR,
                             ))
                         }
                         None if symbol == zun_core::WellKnownSymbol::Iterator.id()

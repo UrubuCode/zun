@@ -378,6 +378,18 @@ impl Heap {
         Some(iterator)
     }
 
+    /// A live `Map` cursor yielding entries (0), keys (1) or values (2).
+    pub fn alloc_map_iterator_mode(&mut self, map: Obj, mode: u8) -> Option<Obj> {
+        self.map_len(map)?;
+        let iterator = self.alloc(0, 1);
+        iterator.set_field(0, map.addr() as u64);
+        self.map_iterators.insert(
+            iterator.addr() as usize,
+            (map, zun_core::MapIterator::with_mode(mode)),
+        );
+        Some(iterator)
+    }
+
     pub fn alloc_date(&mut self, millis: Option<i64>) -> Obj {
         let object = self.alloc(0, 0);
         self.dates.insert(

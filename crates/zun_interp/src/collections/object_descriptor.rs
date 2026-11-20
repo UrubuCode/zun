@@ -1452,6 +1452,10 @@ impl<'a> Interp<'a> {
                                     } else {
                                         "Array"
                                     }
+                                } else if heap.map_iterator_done(obj).is_some() {
+                                    "Map Iterator"
+                                } else if heap.set_iterator_done(obj).is_some() {
+                                    "Set Iterator"
                                 } else if heap.array_iterator_done(obj).is_some() {
                                     if heap.array_iterator_mode(obj) == Some(3) {
                                         "String Iterator"

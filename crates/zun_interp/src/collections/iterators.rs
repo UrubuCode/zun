@@ -152,8 +152,8 @@ impl<'a> Interp<'a> {
                 let iterator =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 Ok(
-                    zun_gc::with_current_heap_mut(|heap| heap.map_iterator_next(iterator))
-                        .map(Value::Object)
+                    zun_gc::with_current_heap_mut(|heap| heap.map_iterator_step(iterator))
+                        .and_then(|any| zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)))
                         .unwrap_or(Value::Void),
                 )
             }

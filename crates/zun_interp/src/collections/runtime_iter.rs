@@ -247,7 +247,9 @@ impl<'a> Interp<'a> {
                 .unwrap_or(Value::Void);
             return Ok((value, false));
         }
-        if let Some(done) = zun_gc::with_current_heap(|heap| heap.set_iterator_done(it)) {
+        if let Some(done) =
+            zun_gc::with_current_heap_mut(|heap| heap.set_iterator_done_latching(it))
+        {
             if done {
                 return Ok((Value::Void, true));
             }
@@ -256,12 +258,14 @@ impl<'a> Interp<'a> {
                 .unwrap_or(Value::Void);
             return Ok((value, false));
         }
-        if let Some(done) = zun_gc::with_current_heap(|heap| heap.map_iterator_done(it)) {
+        if let Some(done) =
+            zun_gc::with_current_heap_mut(|heap| heap.map_iterator_done_latching(it))
+        {
             if done {
                 return Ok((Value::Void, true));
             }
-            let value = zun_gc::with_current_heap_mut(|heap| heap.map_iterator_next(it))
-                .map(Value::Object)
+            let value = zun_gc::with_current_heap_mut(|heap| heap.map_iterator_step(it))
+                .and_then(|any| zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)))
                 .unwrap_or(Value::Void);
             return Ok((value, false));
         }

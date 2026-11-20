@@ -42,8 +42,48 @@ impl Heap {
         self.array_set(pair, 1, value);
         Some(pair)
     }
+    /// One step of a `Map` cursor in its own mode: the `[key, value]` pair, the
+    /// key, or the value.
+    pub fn map_iterator_step(&mut self, iterator: Obj) -> Option<zun_core::Any> {
+        let (map, state) = self.map_iterators.get_mut(&(iterator.addr() as usize))?;
+        let mode = state.mode();
+        let (key, value) = state.next(self.maps.get(&(map.addr() as usize))?)?;
+        Some(match mode {
+            1 => key,
+            2 => value,
+            _ => {
+                let pair = self.alloc_array(2);
+                self.array_set(pair, 0, key);
+                self.array_set(pair, 1, value);
+                zun_core::Any::object(pair.addr() as usize)
+            }
+        })
+    }
     pub fn map_iterator_done(&self, iterator: Obj) -> Option<bool> {
         let (map, state) = self.map_iterators.get(&(iterator.addr() as usize))?;
         Some(state.is_done(self.maps.get(&(map.addr() as usize))?))
+    }
+}
+
+impl Heap {
+    /// Whether a `Map` cursor is exhausted, latching the answer: once it has
+    /// reported completion it stays complete even if the map grows.
+    pub fn map_iterator_done_latching(&mut self, iterator: Obj) -> Option<bool> {
+        let (map, state) = self.map_iterators.get_mut(&(iterator.addr() as usize))?;
+        let done = state.is_done(self.maps.get(&(map.addr() as usize))?);
+        if done {
+            state.latch_done();
+        }
+        Some(done)
+    }
+
+    /// The `Set` twin of [`Self::map_iterator_done_latching`].
+    pub fn set_iterator_done_latching(&mut self, iterator: Obj) -> Option<bool> {
+        let (set, state) = self.set_iterators.get_mut(&(iterator.addr() as usize))?;
+        let done = state.is_done(self.sets.get(&(set.addr() as usize))?);
+        if done {
+            state.latch_done();
+        }
+        Some(done)
     }
 }
