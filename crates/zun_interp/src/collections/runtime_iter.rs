@@ -1147,7 +1147,22 @@ impl<'a> Interp<'a> {
             // derive `name` and `length` from the method metadata.
             if name == "name" {
                 if method_name.starts_with('<') {
-                    return None;
+                    // A closure carries a named function expression's own name
+                    // as a `:<name>` segment before its markers; everything
+                    // else has no name at all.
+                    let written = method_name
+                        .split_once(':')
+                        .map(|(_, rest)| {
+                            rest.split(['@', '>'])
+                                .next()
+                                .unwrap_or_default()
+                                .to_string()
+                        })
+                        .unwrap_or_default();
+                    if written.is_empty() {
+                        return None;
+                    }
+                    return Some(Value::Str(written.into()));
                 }
                 let plain = method_name
                     .trim_end_matches("@generator")

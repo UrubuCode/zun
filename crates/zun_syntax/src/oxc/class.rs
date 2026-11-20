@@ -438,6 +438,7 @@ fn convert_static_block(
     let statements =
         convert_function_statements(source, &block.body, &[]).map_err(|error| vec![error])?;
     let arrow = Expr::Function(FunctionExpr {
+        written_name: None,
         params: Vec::new(),
         return_type: convert_type_annotation(source, None).map_err(|error| vec![error])?,
         body: Block {

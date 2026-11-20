@@ -130,6 +130,7 @@ pub(super) fn throw_const_assignment(value: Expr, whole: Span) -> Expr {
         },
     ];
     let iife = Expr::Function(FunctionExpr {
+        written_name: None,
         params: Vec::new(),
         return_type: None,
         body: Block {

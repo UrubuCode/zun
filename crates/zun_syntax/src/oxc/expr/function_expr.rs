@@ -44,6 +44,7 @@ pub(super) fn convert_named_function_expression(
         },
     ];
     let iife = Expr::Function(FunctionExpr {
+        written_name: None,
         params: Vec::new(),
         return_type: convert_type_annotation(source, None)?,
         body: Block {
@@ -137,11 +138,19 @@ pub(super) fn convert_class_expression(
 /// Whether a function expression's body mentions its own name.
 pub(super) fn refers_to_own_name(source: &str, function: &OxcFunction<'_>) -> bool {
     function.id.as_ref().is_some_and(|id| {
-        function.body.as_ref().is_some_and(|body| {
-            contains_word(
-                &source[body.span.start as usize..body.span.end as usize],
-                id.name.as_str(),
-            )
-        })
+        // A parameter default is inside the function's scope too, so
+        // `function d(x = typeof d) {}` refers to its own name just as a body
+        // mention does. Only the body was looked at, so that form skipped the
+        // desugaring entirely and `d` resolved to nothing.
+        let in_params = source
+            .get(function.params.span.start as usize..function.params.span.end as usize)
+            .is_some_and(|text| contains_word(text, id.name.as_str()));
+        in_params
+            || function.body.as_ref().is_some_and(|body| {
+                contains_word(
+                    &source[body.span.start as usize..body.span.end as usize],
+                    id.name.as_str(),
+                )
+            })
     })
 }

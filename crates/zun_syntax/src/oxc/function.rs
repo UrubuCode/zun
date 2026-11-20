@@ -168,6 +168,11 @@ pub(super) fn convert_oxc_function(
     let mut params = params;
     inject_arguments_object(source, span(function.span), &mut params, &mut statements);
     Ok(Expr::Function(FunctionExpr {
+        // A named function expression `function fact() {}` carries its own
+        // name, which ECMAScript makes the function's `name`. A function
+        // *declaration* reaches sema through its own path, so this only ever
+        // sees the expression form.
+        written_name: function.id.as_ref().map(|id| Name { span: span(id.span) }),
         params,
         return_type: convert_type_annotation(source, function.return_type.as_deref())?,
         body: Block {
@@ -241,6 +246,7 @@ pub(super) fn convert_arrow(
         return Err("OXC adapter: unexpected arrow body".into());
     };
     Ok(Expr::Function(FunctionExpr {
+        written_name: None,
         params,
         return_type: convert_type_annotation(source, arrow.return_type.as_deref())?,
         body,

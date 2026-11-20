@@ -64,6 +64,7 @@ pub(in crate::oxc) fn convert_argument(
                     span: span(member.span),
                 };
                 return Ok(Expr::Function(FunctionExpr {
+        written_name: None,
                     params: vec![crate::ast::Param {
                         name: property_name,
                         ty: None,

@@ -108,16 +108,35 @@ impl Checker<'_> {
         // A named closure (`const f = () => … f() …`, a nested `function f`)
         // can call itself: bind its own name to a function value made from
         // its own method and environment.
+        // A parameter default is inside the function's scope, so
+        // `function d(x = typeof d) {}` needs the self-binding too. Only the
+        // body text was consulted, and the outer `let d` the desugaring
+        // creates is captured by value *before* it is assigned, so the default
+        // read `undefined`.
+        let mentions_self = |name: &str| {
+            let in_body = self
+                .source
+                .get(function.body.span.start as usize..function.body.span.end as usize)
+                .map(|body| body.contains(name))
+                .unwrap_or(true);
+            let in_defaults = function.params.iter().any(|parameter| {
+                parameter.default_value.as_deref().is_some_and(|value| {
+                    let span = value.span();
+                    self.source
+                        .get(span.start as usize..span.end as usize)
+                        .is_some_and(|text| text.contains(name))
+                })
+            });
+            in_body || in_defaults
+        };
+        let mut self_slot: Option<u16> = None;
         let self_binding = match self_name.as_deref() {
             Some(name)
                 if function.params.iter().all(|p| self.text(&p.name) != name)
-                    && self
-                        .source
-                        .get(function.body.span.start as usize..function.body.span.end as usize)
-                        .map(|body| body.contains(name))
-                        .unwrap_or(true) =>
+                    && mentions_self(name) =>
             {
                 let slot = inner.declare(name, Ty::Function(hir::DYNAMIC_FUNCTION));
+                self_slot = Some(slot);
                 Some(hir::Stmt::Let {
                     slot,
                     init: hir::Expr {
@@ -203,6 +222,43 @@ impl Checker<'_> {
             })
             .collect::<Vec<Option<hir::Expr>>>();
         let mut defaults = defaults;
+        // The `Let` that binds the self-name is inserted at the top of the
+        // *body*, which runs after the default prologue. A default that reads
+        // the name therefore needs the slot filled first, so the assignment
+        // rides the earliest default expression.
+        if let Some(slot) = self_slot {
+            if let Some(first) = defaults.iter_mut().flatten().next() {
+                let span = first.span;
+                let ty = first.ty;
+                let value = std::mem::replace(
+                    first,
+                    hir::Expr {
+                        kind: hir::ExprKind::Null,
+                        ty: Ty::Void,
+                        span,
+                    },
+                );
+                *first = hir::Expr {
+                    kind: hir::ExprKind::Sequence {
+                        effect: Box::new(hir::Expr {
+                            kind: hir::ExprKind::Assign {
+                                slot,
+                                value: Box::new(hir::Expr {
+                                    kind: hir::ExprKind::SelfClosure,
+                                    ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+                                    span,
+                                }),
+                            },
+                            ty: Ty::Function(hir::DYNAMIC_FUNCTION),
+                            span,
+                        }),
+                        value: Box::new(value),
+                    },
+                    ty,
+                    span,
+                };
+            }
+        }
         if takes_this {
             defaults.insert(0, None);
         }
@@ -230,7 +286,7 @@ impl Checker<'_> {
                         c.name.starts_with(&format!("<closure@{}", span.start))
                             && c.name[("<closure@".len())..]
                                 .trim_start_matches(|ch: char| ch.is_ascii_digit())
-                                .starts_with(['@', '>', '#'])
+                                .starts_with(['@', '>', '#', ':'])
                     })
                     .count();
                 let unique = if copies == 0 {
@@ -238,10 +294,24 @@ impl Checker<'_> {
                 } else {
                     format!("#{copies}")
                 };
+                // A named function expression's own name is its `name`. It rides
+                // the synthetic name as a `:<name>` segment placed before every
+                // marker, so the `@this>` / `@rest>` suffix tests all over the
+                // runtime keep matching.
+                let written = match function.written_name {
+                    Some(name) => format!(":{}", self.text(&name)),
+                    None => String::new(),
+                };
                 if takes_this {
-                    format!("<closure@{}{unique}{method}@this{rest_suffix}>", span.start)
+                    format!(
+                        "<closure@{}{unique}{written}{method}@this{rest_suffix}>",
+                        span.start
+                    )
                 } else {
-                    format!("<closure@{}{unique}{method}{rest_suffix}>", span.start)
+                    format!(
+                        "<closure@{}{unique}{written}{method}{rest_suffix}>",
+                        span.start
+                    )
                 }
             },
             param_count: function.params.len() as u16 + u16::from(takes_this),

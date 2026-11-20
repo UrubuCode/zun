@@ -254,6 +254,7 @@ pub(super) fn convert_destructuring_assignment(
         span: whole,
     });
     let iife = Expr::Function(FunctionExpr {
+        written_name: None,
         params: vec![crate::ast::Param {
             name: whole_temp,
             ty: None,

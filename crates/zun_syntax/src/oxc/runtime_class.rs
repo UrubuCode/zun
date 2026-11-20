@@ -756,6 +756,7 @@ pub(super) fn convert_runtime_class(
         span: whole,
     });
     let definition = Expr::Function(FunctionExpr {
+        written_name: None,
         params: Vec::new(),
         return_type: convert_type_annotation(source, None)?,
         body: Block {
@@ -951,6 +952,7 @@ fn convert_members(
                 let _frames = enter_member_frames(Some(class_binding), Some(static_home));
                 let body = convert_function_statements(source, &block.body, &[])?;
                 let arrow = Expr::Function(FunctionExpr {
+        written_name: None,
                     params: Vec::new(),
                     return_type: convert_type_annotation(source, None)?,
                     body: Block {
@@ -981,6 +983,7 @@ fn convert_members(
     let has_fields = !field_statements.is_empty();
     if has_fields {
         let initializer = Expr::Function(FunctionExpr {
+        written_name: None,
             params: Vec::new(),
             return_type: convert_type_annotation(source, None)?,
             body: Block {
@@ -1095,6 +1098,7 @@ fn convert_members(
             }
             body.insert(0, call_check());
             Expr::Function(FunctionExpr {
+        written_name: None,
                 params,
                 return_type: convert_type_annotation(source, None)?,
                 body: Block {

@@ -236,6 +236,10 @@ pub enum AccessorKind {
 /// An anonymous function expression or arrow function.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionExpr {
+    /// The name written on a named function expression (`function fact() {}`),
+    /// which ECMAScript makes its `name`. `None` for an anonymous expression,
+    /// an arrow, and every expression the adapter synthesizes.
+    pub written_name: Option<Name>,
     /// Parameters in declaration order.
     pub params: Vec<Param>,
     /// Declared return type, if present.

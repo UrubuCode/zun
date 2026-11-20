@@ -95,6 +95,7 @@ pub(super) fn convert_sequence(
         span: span(last.span()),
     });
     let iife = Expr::Function(FunctionExpr {
+        written_name: None,
         params: Vec::new(),
         return_type: convert_type_annotation(source, None)?,
         body: Block {
