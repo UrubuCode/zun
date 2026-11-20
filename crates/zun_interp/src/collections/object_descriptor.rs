@@ -5,6 +5,10 @@
 
 use super::*;
 
+/// Prelude classes whose instances carry the class name as their builtin tag
+/// (a WebIDL interface with `[Symbol.toStringTag]`).
+const WEBIDL_TAGGED_CLASSES: &[&str] = &["Headers", "FormData"];
+
 impl<'a> Interp<'a> {
     /// Whether a realm class descriptor stands for an ECMAScript namespace object
     /// (`JSON`, `Atomics`) that the prelude models as a class of statics.
@@ -1388,6 +1392,24 @@ impl<'a> Interp<'a> {
                                     && obj.type_rid() != 0
                                     && self.class_chain_has_name(obj.type_rid(), "Date"))
                                 .then(|| "Date".to_string())
+                            })
+                            // A WebIDL interface's instances carry the interface
+                            // name as their `Symbol.toStringTag`. These prelude
+                            // classes cannot declare the getter themselves:
+                            // adding one shifts the `[symbol]@N@this` method
+                            // naming and makes two classes collide on one module
+                            // export. The brand is read from the class chain
+                            // instead, exactly as `Date` is above.
+                            .or_else(|| {
+                                if zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                    || obj.type_rid() == 0
+                                {
+                                    return None;
+                                }
+                                WEBIDL_TAGGED_CLASSES
+                                    .iter()
+                                    .find(|name| self.class_chain_has_name(obj.type_rid(), name))
+                                    .map(|name| (*name).to_string())
                             })
                             // A Boolean/Number/String object, or the constructor's own
                             // `prototype` (itself such an object), carries that brand.

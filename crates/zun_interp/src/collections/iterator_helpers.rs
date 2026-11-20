@@ -75,6 +75,38 @@ pub(crate) fn symbol_function_in_chain(
     None
 }
 
+/// A symbol-keyed **callable data** property, searched up the prototype chain.
+/// A method *declaration* lands in the symbol function slot that
+/// [`symbol_function_in_chain`] reads, but an assignment
+/// (`X.prototype[Symbol.iterator] = X.prototype.entries`) lands in the data
+/// slot as a function cell -- which the dynamic member read already unwraps,
+/// while the iteration protocol did not see it at all.
+pub(crate) fn symbol_callable_in_chain(
+    obj: zun_gc::Obj,
+    symbol: zun_core::SymbolId,
+) -> Option<zun_core::FunctionHandle> {
+    let mut current = obj;
+    for _ in 0..256 {
+        let found = zun_gc::with_current_heap(|heap| {
+            let any = heap.dynamic_get_symbol(current, symbol)?;
+            let value = Value::unbox_any(any, heap)?;
+            match crate::collections::unbox_function_box(value, heap) {
+                Value::Function(handle) => Some(handle),
+                _ => None,
+            }
+        });
+        if found.is_some() {
+            return found;
+        }
+        current = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_prototype(current)
+                .and_then(|any| any.as_object())
+                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+        })?;
+    }
+    None
+}
+
 /// Whether `obj` is a built-in iterator or generator (the receivers whose
 /// prototype chain reaches `%Iterator.prototype%` without a dynamic link).
 pub(crate) fn is_builtin_iterator_object(obj: zun_gc::Obj) -> bool {

@@ -140,6 +140,15 @@ impl<'a> Interp<'a> {
                 .or_else(|| {
                     let proto = self.instance_class_prototype(source)?;
                     super::iterator_helpers::symbol_function_in_chain(proto, iterator_id)
+                })
+                // An *assigned* `[Symbol.iterator]` (rather than a declared
+                // method) is a callable in the symbol data slot.
+                .or_else(|| {
+                    super::iterator_helpers::symbol_callable_in_chain(source, iterator_id)
+                })
+                .or_else(|| {
+                    let proto = self.instance_class_prototype(source)?;
+                    super::iterator_helpers::symbol_callable_in_chain(proto, iterator_id)
                 });
         let Some(handle) = handle else {
             // An object inheriting from an array iterates the inherited elements
@@ -161,7 +170,22 @@ impl<'a> Interp<'a> {
             }
             return Err(RunError::Native("TypeError: value is not iterable".into()));
         };
-        let call_args = self.with_this_arg(handle, source, Vec::new());
+        let mut call_args = self.with_this_arg(handle, source, Vec::new());
+        // `with_this_arg` prepends the receiver for an `@this` closure and for a
+        // declared accessor. A class **instance method** also takes its receiver
+        // as the first parameter, but by the method's own metadata rather than by
+        // a name marker -- and one can land here now that `[Symbol.iterator]`
+        // may be registered as an alias of a named method (WebIDL `iterable<>`).
+        // Without this the method ran with `this` unset, which aborted the
+        // engine rather than raising.
+        if call_args.is_empty()
+            && !handle.is_bound()
+            && handle.builtin_method().is_none()
+            && handle.generator_method().is_none()
+            && self.method_rid_is_instance_method(handle.method_rid())
+        {
+            call_args.push(Value::Object(source));
+        }
         let result = self.invoke_function_value(handle, call_args)?;
         object(&result).ok_or_else(|| {
             RunError::Native("TypeError: [Symbol.iterator]() did not return an object".into())

@@ -478,6 +478,7 @@ impl Checker<'_> {
         // 3) Class computed-symbol-key methods: attach each to the per-type
         //    symbol-method side table at class-definition time.
         self.append_class_symbol_methods(&mut body, span);
+        self.append_webidl_iterable_aliases(&mut body, span);
 
         // 4) Named `valueOf`/`toString` methods and literal field defaults, for
         //    ToPrimitive and runtime class construction.

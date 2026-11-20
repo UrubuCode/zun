@@ -198,6 +198,75 @@ impl Checker<'_> {
         }
     }
 
+    /// A WebIDL `iterable<>` declaration makes `[Symbol.iterator]` **the same
+    /// function object** as the interface's `entries` method, which is what
+    /// node reports (`h[Symbol.iterator] === h.entries`). A prelude class
+    /// cannot say that: two method declarations are two functions, and the
+    /// declared one always wins over an assignment to the prototype. So the
+    /// symbol is registered here with the named method's own function, after
+    /// `append_class_symbol_methods` so this registration is the surviving one.
+    pub(in crate::check) fn append_webidl_iterable_aliases(
+        &self,
+        body: &mut Vec<hir::Stmt>,
+        span: Span,
+    ) {
+        const ALIASES: &[(&str, &str)] = &[
+            ("Headers", "entries"),
+            ("FormData", "entries"),
+            ("URLSearchParams", "entries"),
+        ];
+        let Some((set_id, _)) = zun_natives::resolve("collections", "classSetSymbolFunction")
+        else {
+            return;
+        };
+        let Some((well_known_id, _)) = zun_natives::resolve("collections", "symbolWellKnown")
+        else {
+            return;
+        };
+        for (class_name, method_name) in ALIASES {
+            let Some(&class_idx) = self.classes_by_name.get(*class_name) else {
+                continue;
+            };
+            let Some(func) = self.method_of(class_idx, method_name) else {
+                continue;
+            };
+            let symbol = hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id: well_known_id,
+                    args: vec![hir::Expr {
+                        kind: hir::ExprKind::Number(
+                            zun_core::WellKnownSymbol::Iterator.id().get() as f64,
+                        ),
+                        ty: Ty::F64,
+                        span,
+                    }],
+                },
+                ty: Ty::Symbol,
+                span,
+            };
+            body.push(hir::Stmt::Expr(hir::Expr {
+                kind: hir::ExprKind::CallBuiltin {
+                    id: set_id,
+                    args: vec![
+                        hir::Expr {
+                            kind: hir::ExprKind::Number((class_idx + 1) as f64),
+                            ty: Ty::Int(IntKind::U32),
+                            span,
+                        },
+                        symbol,
+                        hir::Expr {
+                            kind: hir::ExprKind::FunctionRef { func },
+                            ty: Ty::Function(func),
+                            span,
+                        },
+                    ],
+                },
+                ty: Ty::Void,
+                span,
+            }));
+        }
+    }
+
     /// Register, at class-definition time, (a) each class's zero-parameter
     /// instance `valueOf`/`toString` (own or inherited) via `classSetMethod`,
     /// so the interpreter floor can resolve them by name for ToPrimitive, and
