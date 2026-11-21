@@ -1028,13 +1028,32 @@ impl Interp<'_> {
     pub(crate) fn this_symbol_value(&mut self, recv: &Value) -> Option<zun_core::SymbolId> {
         match recv {
             Value::Any(any) => any.as_symbol(),
+            // Through `wrapper_primitive`: the payload is a typed field, so a
+            // dynamic property read does not find it.
             Value::Object(object) if self.is_wrapper_object(*object, "SymbolObject") => {
-                match self.dynamic_member_get(*object, "value").ok()? {
+                match self.wrapper_primitive(Value::Object(*object), "Symbol").ok()? {
                     Value::Any(any) => any.as_symbol(),
                     _ => None,
                 }
             }
             _ => None,
         }
+    }
+}
+
+impl Interp<'_> {
+    /// The symbol an object names as a property key, if any.
+    ///
+    /// ToPropertyKey runs ToPrimitive and *keeps* a symbol, so
+    /// `o[Object(sym)]` writes the symbol-keyed property rather than one
+    /// named by the wrapper's string form (which would throw).
+    pub(crate) fn symbol_property_key(
+        &mut self,
+        object: zun_gc::Obj,
+    ) -> Result<Option<zun_core::SymbolId>, RunError> {
+        if self.wrapper_instance_kind(object) != Some("Symbol") {
+            return Ok(None);
+        }
+        Ok(self.this_symbol_value(&Value::Object(object)))
     }
 }

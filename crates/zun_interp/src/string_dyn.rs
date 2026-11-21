@@ -98,6 +98,13 @@ impl<'a> Interp<'a> {
                 }
                 zun_gc::root!(held = obj);
                 match self.ordinary_to_primitive(obj, "string")? {
+                    // A symbol out of ToPrimitive still goes through ToString,
+                    // which throws: `Object(sym) + ""` is a TypeError.
+                    Some(Value::Any(any)) if any.as_symbol().is_some() => {
+                        return Err(RunError::Native(
+                            "TypeError: Cannot convert a Symbol value to a string".into(),
+                        ));
+                    }
                     Some(primitive) => primitive.display(),
                     None => self.default_object_string(held.get())?,
                 }

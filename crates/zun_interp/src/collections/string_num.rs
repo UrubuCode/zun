@@ -215,6 +215,22 @@ impl<'a> Interp<'a> {
                         });
                         format!("Symbol({})", description.unwrap_or_default())
                     }
+                    // An object carried through `any` (`Object(sym) + ""`):
+                    // coerce the object, not the carrier, which used to read
+                    // as its placeholder text.
+                    Value::Any(any) if any.as_object().is_some() => {
+                        let address = any.as_object().unwrap_or_else(|| unreachable!());
+                        let obj = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                        match self.ordinary_to_primitive(obj, "string")? {
+                            Some(Value::Any(inner)) if inner.as_symbol().is_some() => {
+                                return Err(RunError::Native(
+                                    "TypeError: Cannot convert a Symbol value to a string".into(),
+                                ));
+                            }
+                            Some(prim) => prim.display(),
+                            None => self.default_object_string(obj)?,
+                        }
+                    }
                     // A built-in function value reads as its native-code text.
                     other => match self.native_function_text(&other) {
                         Some(text) => text,

@@ -604,6 +604,22 @@ impl<'a> Interp<'a> {
                     };
                     prims.push(prim);
                 }
+                // A symbol that came out of ToPrimitive (`Object(sym) + ""`)
+                // refuses the same way a symbol operand does. The guard above
+                // only sees a symbol *operand*, so the wrapper slipped through
+                // and concatenated as its placeholder text.
+                for (index, prim) in prims.iter().enumerate() {
+                    if matches!(prim, Value::Any(any) if any.as_symbol().is_some()) {
+                        let kind = if matches!(prims.get(1 - index), Some(Value::Str(_))) {
+                            "string"
+                        } else {
+                            "number"
+                        };
+                        return Err(RunError::Native(format!(
+                            "TypeError: Cannot convert a Symbol value to a {kind}"
+                        )));
+                    }
+                }
                 let result = if prims.iter().any(|p| matches!(p, Value::Str(_))) {
                     let text: String = prims
                         .iter()

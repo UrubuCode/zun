@@ -1009,7 +1009,14 @@ impl Interp<'_> {
         };
         // ToPropertyKey: booleans, null/undefined and objects become
         // their string form (objects run toString first).
-        let key = if matches!(
+        // A Symbol object is a *symbol* key, not its string form: ToPropertyKey
+        // keeps a symbol that ToPrimitive produced.
+        let key = if let Some(symbol) = match &key {
+            Value::Object(obj) => self.symbol_property_key(*obj)?,
+            _ => None,
+        } {
+            Value::Any(zun_core::Any::symbol(symbol))
+        } else if matches!(
             key,
             Value::Bool(_) | Value::Null | Value::Void | Value::Object(_)
         ) {
@@ -1698,7 +1705,14 @@ impl Interp<'_> {
         };
         // ToPropertyKey: booleans, null/undefined and objects become
         // their string form (objects run toString first).
-        let key = if matches!(
+        // A Symbol object is a *symbol* key, not its string form: ToPropertyKey
+        // keeps a symbol that ToPrimitive produced.
+        let key = if let Some(symbol) = match &key {
+            Value::Object(obj) => self.symbol_property_key(*obj)?,
+            _ => None,
+        } {
+            Value::Any(zun_core::Any::symbol(symbol))
+        } else if matches!(
             key,
             Value::Bool(_) | Value::Null | Value::Void | Value::Object(_)
         ) {
