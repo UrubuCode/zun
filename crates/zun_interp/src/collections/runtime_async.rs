@@ -304,7 +304,15 @@ impl<'a> Interp<'a> {
         // Keep-alive: `call` runs the `__zunMakeAsyncGen` wrapper, which can collect; the
         // generator rides in its arguments and is not read afterwards.
         zun_gc::root!(generator = generator);
-        self.call(maker, vec![Value::Object(generator.get())], None)
+        let wrapper = self.call(maker, vec![Value::Object(generator.get())], None)?;
+        // The wrapper replaces the coroutine as the object a call answers, so
+        // the per-function prototype level has to be re-applied to it: the
+        // chain is `agObj -> ag.prototype -> __AsyncGenerator.prototype`, whose
+        // own `next`/`throw`/`return` are %AsyncGeneratorPrototype%'s.
+        if let Some(object) = crate::collections::object(&wrapper) {
+            self.link_async_generator_prototype(method_rid, object);
+        }
+        Ok(wrapper)
     }
 
     /// Entry of an `async` function: allocate its result Promise and a
@@ -452,22 +460,87 @@ impl Interp<'_> {
     /// one first -- the same step `Reflect.construct` takes before swapping a
     /// result's prototype.
     pub(crate) fn link_generator_prototype(&mut self, method_rid: u32, generator: zun_gc::Obj) {
+        let proto = self.generator_prototype_for(method_rid);
+        zun_gc::with_current_heap_mut(|heap| {
+            heap.ensure_instance_bag(generator);
+            heap.dynamic_set_prototype(
+                generator,
+                Some(zun_core::Any::object(proto.addr() as usize)),
+            );
+        });
+    }
+}
+
+impl Interp<'_> {
+    /// Insert the per-function `prototype` level into an async generator's
+    /// chain, between the object a call answers and the prelude
+    /// `__AsyncGenerator` class prototype that stands for
+    /// %AsyncGeneratorPrototype%.
+    pub(crate) fn link_async_generator_prototype(&mut self, method_rid: u32, object: zun_gc::Obj) {
+        let Some(class_proto) = self.instance_class_prototype(object) else {
+            return;
+        };
         let handle = zun_core::FunctionHandle::new(method_rid, None);
         self.ensure_function_prototype(handle);
         let bag = crate::function_expando_bag(handle);
-        let generator_proto = Self::iterator_prototype_object(7);
         zun_gc::with_current_heap_mut(|heap| {
             let Some(proto) = heap.dynamic_get(bag, "prototype").and_then(|any| any.as_object())
             else {
                 return;
             };
-            let object = unsafe { zun_gc::Obj::from_addr(proto as *mut u64) };
-            // The function's `prototype` inherits %GeneratorPrototype%, which
-            // owns `next`/`throw`/`return` and carries the `Generator` brand.
-            let link = zun_core::Any::object(generator_proto.addr() as usize);
-            heap.dynamic_set_prototype(object, Some(link));
-            heap.ensure_instance_bag(generator);
-            heap.dynamic_set_prototype(generator, Some(zun_core::Any::object(proto)));
+            let own = unsafe { zun_gc::Obj::from_addr(proto as *mut u64) };
+            heap.dynamic_set_prototype(
+                own,
+                Some(zun_core::Any::object(class_proto.addr() as usize)),
+            );
+            // The class prototype is the shared level, and carries its brand.
+            let tag = zun_core::Any::string(heap.intern_string("AsyncGenerator".to_string()));
+            heap.dynamic_define_symbol(
+                class_proto,
+                zun_core::WellKnownSymbol::ToStringTag.id(),
+                tag,
+                false,
+            );
+            heap.ensure_instance_bag(object);
+            heap.dynamic_set_prototype(object, Some(zun_core::Any::object(proto)));
         });
+    }
+}
+
+impl Interp<'_> {
+    /// The one `prototype` object a generator function owns, keyed by its
+    /// method rid.
+    ///
+    /// Both the generator-creation path (which knows only the rid) and the
+    /// `g.prototype` read (which has the function value, whose handle may
+    /// carry an environment) must land on the *same* object, or
+    /// `Object.getPrototypeOf(g()) === g.prototype` is false. The function
+    /// expando bag is keyed by the whole handle, so it cannot be that shared
+    /// place; a hidden global is, the way class prototypes are kept.
+    pub(crate) fn generator_prototype_for(&self, method_rid: u32) -> zun_gc::Obj {
+        let key = format!("$genProto#{method_rid}");
+        let generator_proto = Self::iterator_prototype_object(7);
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(address) = heap.dynamic_get(global, &key).and_then(|any| any.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            // It inherits %GeneratorPrototype%, which owns `next`/`throw`/
+            // `return` and carries the `Generator` brand, and holds no
+            // `constructor`: a generator is not a constructor.
+            heap.dynamic_set_prototype(
+                proto,
+                Some(zun_core::Any::object(generator_proto.addr() as usize)),
+            );
+            let global = heap.global_object();
+            heap.dynamic_define(
+                global,
+                key,
+                zun_core::Any::object(proto.addr() as usize),
+                false,
+            );
+            proto
+        })
     }
 }

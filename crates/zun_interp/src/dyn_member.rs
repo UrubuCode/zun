@@ -2259,6 +2259,23 @@ impl Interp<'_> {
             return;
         }
         let bag = crate::function_expando_bag(handle);
+        // A generator function's `prototype` is the shared object keyed by its
+        // method rid, so the `g.prototype` read and the generator-creation path
+        // land on the same one; it inherits %GeneratorPrototype% and holds no
+        // `constructor`, a generator being no constructor.
+        let generator = self.is_generator_function(handle)
+            || (handle.builtin_method().is_none() && self.method_yields(handle.method_rid()));
+        if generator {
+            let shared = self.generator_prototype_for(handle.method_rid());
+            zun_gc::with_current_heap_mut(|heap| {
+                if heap.dynamic_get(bag, "prototype").is_some() {
+                    return;
+                }
+                let any = zun_core::Any::object(shared.addr() as usize);
+                heap.dynamic_define_data(bag, "prototype", any, true, false, false);
+            });
+            return;
+        }
         zun_gc::with_current_heap_mut(|heap| {
             if heap.dynamic_get(bag, "prototype").is_some() {
                 return;
