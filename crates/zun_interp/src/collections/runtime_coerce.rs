@@ -254,27 +254,6 @@ impl<'a> Interp<'a> {
                 _ => None,
             }
         };
-        let normalize_digits = |text: &str| -> Option<String> {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                return Some("0".to_string());
-            }
-            let (negative, digits) = match trimmed.strip_prefix('-') {
-                Some(rest) => (true, rest),
-                None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
-            };
-            if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
-                return None;
-            }
-            let stripped = digits.trim_start_matches('0');
-            if stripped.is_empty() {
-                Some("0".to_string())
-            } else if negative {
-                Some(format!("-{stripped}"))
-            } else {
-                Some(stripped.to_string())
-            }
-        };
         match (big_text(&left), big_text(&right)) {
             (Some(a), Some(b)) => return Ok(a == b),
             (Some(a), None) | (None, Some(a)) => {
@@ -284,7 +263,13 @@ impl<'a> Interp<'a> {
                     &left
                 };
                 match other {
-                    Value::Str(text) => return Ok(normalize_digits(text).is_some_and(|n| n == a)),
+                    // StringToBigInt: decimal, or a `0x` / `0o` / `0b` literal,
+                    // surrounded by optional whitespace; anything else (a
+                    // fraction, junk) is not equal.
+                    Value::Str(text) => {
+                        return Ok(zun_core::BigInt::parse_js_string(text)
+                            .is_ok_and(|parsed| parsed.to_string() == a))
+                    }
                     Value::Int(..) | Value::Float(..) => {
                         let n = number(other).unwrap_or(f64::NAN);
                         return Ok(n.is_finite()

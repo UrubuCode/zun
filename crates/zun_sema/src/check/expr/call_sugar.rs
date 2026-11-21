@@ -140,7 +140,13 @@ impl Checker<'_> {
             };
             let mut arg = self.check_expr(cx, &args[0]);
             coerce_numeric_literal(&mut arg, Ty::F64);
-            let arg = self.to_number_for_arg(arg);
+            // ToNumber of a BigInt or a Symbol is a TypeError, so `isNaN(1n)`
+            // throws; the strict coercion is the one that says so.
+            let arg = if matches!(arg.ty, Ty::Any | Ty::BigInt | Ty::Symbol) {
+                self.to_number_expr_strict(Self::box_to_any(arg))
+            } else {
+                self.to_number_for_arg(arg)
+            };
             return Some(hir::Expr {
                 kind: hir::ExprKind::CallBuiltin {
                     id,
