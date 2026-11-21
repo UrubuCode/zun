@@ -766,54 +766,40 @@ impl<'a> Interp<'a> {
                                     if present {
                                         return Err(error);
                                     }
-                                    // An array-like plain object (`{ length: n, 0: .. }`).
-                                    let built = zun_gc::with_current_heap_mut(|heap| {
-                                        if !heap.is_dynamic_object(source) {
-                                            return None;
-                                        }
-                                        let length =
-                                            heap.dynamic_get(source, "length").and_then(|any| {
-                                                match Value::unbox_any(any, heap) {
-                                                    Some(Value::Float(n, _)) if n >= 0.0 => {
-                                                        Some(n as usize)
-                                                    }
-                                                    Some(Value::Int(n, _)) if n >= 0 => {
-                                                        Some(n as usize)
-                                                    }
-                                                    _ => None,
-                                                }
-                                            });
-                                        let length = length.unwrap_or(0);
-                                        let array = heap.alloc_array(length);
+                                    // An array-like object: `length` through
+                                    // ToLength, then one index read each, which
+                                    // runs getters and walks the prototype
+                                    // chain. The hand-rolled reader that used
+                                    // to stand here required a numeric own
+                                    // `length` and read only data slots, so a
+                                    // string length or an accessor index
+                                    // produced an empty array.
+                                    let list = self.call_managed_collection(
+                                        "arrayFromArrayLike",
+                                        &[Value::Object(source)],
+                                    )?;
+                                    let built = object(&list).ok_or(RunError::BadToken)?;
+                                    // CreateListFromArrayLike leaves an absent
+                                    // index a hole, so a generic receiver keeps
+                                    // its `in` shape; `Array.from` instead
+                                    // defines every index, so an absent one is
+                                    // a present `undefined`.
+                                    zun_gc::with_current_heap_mut(|heap| {
+                                        let length = heap.array_len(built).unwrap_or(0);
                                         for index in 0..length {
-                                            // Index reads walk the prototype chain
-                                            // (an inherited element fills the slot).
-                                            let key = index.to_string();
-                                            let mut cursor = Some(source);
-                                            let mut found = None;
-                                            while let Some(current) = cursor {
-                                                if let Some(value) = heap.dynamic_get(current, &key)
-                                                {
-                                                    found = Some(value);
-                                                    break;
-                                                }
-                                                cursor = heap
-                                                    .dynamic_prototype(current)
-                                                    .and_then(|proto| proto.as_object())
-                                                    .map(|addr| unsafe {
-                                                        zun_gc::Obj::from_addr(addr as *mut u64)
-                                                    });
+                                            if heap
+                                                .array_get(built, index)
+                                                .is_some_and(|element| element.is_hole())
+                                            {
+                                                heap.array_set(
+                                                    built,
+                                                    index,
+                                                    zun_core::Any::void(),
+                                                );
                                             }
-                                            let value = found.unwrap_or_else(zun_core::Any::void);
-                                            heap.array_set(array, index, value);
                                         }
-                                        Some(array)
                                     });
-                                    built.ok_or_else(|| {
-                                        RunError::Thrown(Value::Str(zun_core::ZStr::from(
-                                            "Array.from: value is not array-like",
-                                        )))
-                                    })?
+                                    built
                                 }
                             };
                             if name == "arrayFrom" {

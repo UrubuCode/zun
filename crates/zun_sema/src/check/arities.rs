@@ -80,7 +80,9 @@ pub(in crate::check) fn builtin_function_length(path: &[&str]) -> Option<f64> {
         ["Array", "prototype", "copyWithin" | "slice" | "splice" | "toSpliced" | "with"] => 2.0,
         ["Array", "prototype", "pop" | "shift" | "entries" | "keys" | "values" | "flat" | "reverse" | "toLocaleString"
         | "toReversed" | "toString"] => 0.0,
-        ["Array", "isArray" | "of"] => 1.0,
+        ["Array", "isArray"] => 1.0,
+        // `Array.of` is variadic: its `length` is 0, not 1.
+        ["Array", "of"] => 0.0,
         ["Array", "from"] => 1.0,
         [kind, "from"] if crate::typed_arrays::view_kind(kind).is_some() => 1.0,
         [kind, "of"] if crate::typed_arrays::view_kind(kind).is_some() => 0.0,

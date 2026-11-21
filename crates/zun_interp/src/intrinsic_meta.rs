@@ -741,7 +741,7 @@ const STATIC_METHODS: &[(&str, &[(&str, u32, &str)])] = &[
     // `Array`'s statics. `of` and `from` are generic over `this`, so
     // `static_methods.rs` adapts them by name. `fromAsync` is absent on purpose:
     // it has no value form yet, and a listed function must also behave.
-    ("Array", &[("from", 1, ""), ("isArray", 1, ""), ("of", 0, "")]),
+    ("Array", &[("from", 1, ""), ("isArray", 1, ""), ("of", 0, ""), ("fromAsync", 1, "")]),
     // `String`'s statics. Like `Number`, `String` read as a value is the
     // coercion function, and `static_methods.rs` adapts the three by name: the
     // natives are single-code helpers the typed call sites fold onto.

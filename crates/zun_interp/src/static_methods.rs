@@ -408,6 +408,32 @@ impl Interp<'_> {
                 let value = self.proto_box(arg(0));
                 self.call_managed_collection("arrayIsArray", &[value])
             }
+            // `Array.fromAsync` as a *value*: the typed call site folds onto
+            // the prelude helper, so the property had no value at all.
+            "fromAsync" => {
+                // The helper is reachable only from the typed call site, so the
+                // trimmer drops it in a program that never spells
+                // `Array.fromAsync(..)` out. Pinning it as a root would make
+                // the value form work in that program too.
+                // The declared name carries the `@async` marker.
+                let rid = self
+                    .free_function_rid("__zunArrayFromAsync@async")
+                    .or_else(|| self.free_function_rid("__zunArrayFromAsync"))
+                    .ok_or_else(|| {
+                    RunError::Native(
+                        "TypeError: Array.fromAsync is unavailable in this program".into(),
+                    )
+                })?;
+                // Both parameters always: the helper declares a default for the
+                // mapper, and a missing argument does not fill it here.
+                let mapper = if count > 1 {
+                    self.proto_box(arg(1))
+                } else {
+                    Value::Any(zun_core::Any::void())
+                };
+                let call = vec![self.proto_box(arg(0)), mapper];
+                self.call(rid, call, None)
+            }
             "of" => {
                 let list = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(count));
                 zun_gc::root!(list = list);

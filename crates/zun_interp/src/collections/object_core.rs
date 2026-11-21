@@ -1092,7 +1092,17 @@ impl<'a> Interp<'a> {
                     });
                     if let Some(name) = builtin {
                         if let Some(proto) = self.builtin_prototype_by_name(name) {
-                            return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                            // Unless `obj` *is* that prototype: `Array.prototype`
+                            // is itself an Array exotic object, so answering the
+                            // brand made it its own prototype and every chain
+                            // walk from it ran forever.
+                            if proto != obj {
+                                return Ok(Value::Any(zun_core::Any::object(
+                                    proto.addr() as usize
+                                )));
+                            }
+                            let root = Self::object_prototype_singleton();
+                            return Ok(Value::Any(zun_core::Any::object(root.addr() as usize)));
                         }
                     }
                 }

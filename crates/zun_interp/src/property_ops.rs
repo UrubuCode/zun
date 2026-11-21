@@ -717,7 +717,18 @@ impl Interp<'_> {
             if let Some(address) = heap.dynamic_get(global, &key).and_then(|a| a.as_object()) {
                 return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
             }
-            let proto = heap.alloc_dynamic();
+            // `Array.prototype` is itself an Array exotic object: `length` 0,
+            // `Array.isArray` true, `[object Array]`. Every other built-in
+            // prototype is an ordinary object.
+            let array_proto = crate::intrinsic_meta::builtin_class_name_in(heap, token).as_deref()
+                == Some("Array");
+            let proto = if array_proto {
+                let proto = heap.alloc_array(0);
+                heap.ensure_dynamic_entry(proto);
+                proto
+            } else {
+                heap.alloc_dynamic()
+            };
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, key, any, false);
             // `Map.prototype.size` / `Set.prototype.size`: accessor properties
