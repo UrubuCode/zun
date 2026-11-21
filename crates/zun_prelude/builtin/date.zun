@@ -196,7 +196,12 @@ class Date {
             return this.t;
         }
         if (hint === "string" || hint === "default") {
-            return this.toString();
+            // OrdinaryToPrimitive calls the receiver's *inherited* `toString`,
+            // which is `Object.prototype.toString` for a plain object: the hook
+            // is callable on any receiver. Through `any` so the dispatch is
+            // dynamic rather than Date's own method.
+            const self: any = this;
+            return self.toString();
         }
         throw new TypeError("Invalid hint: " + String(hint));
     }

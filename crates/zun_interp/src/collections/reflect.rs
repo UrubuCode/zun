@@ -747,8 +747,14 @@ impl<'a> Interp<'a> {
         handle: zun_core::FunctionHandle,
     ) -> Result<bool, RunError> {
         self.ensure_function_prototype(handle);
+        // OrdinaryHasInstance refuses a callable whose `prototype` is not an
+        // object -- an arrow function, a method, a generator`s shorthand -- and
+        // does not simply answer false.
         let Some(target) = Self::function_prototype_property(handle) else {
-            return Ok(false);
+            return Err(RunError::Native(
+                "TypeError: Function has non-object prototype 'undefined' in instanceof check"
+                    .into(),
+            ));
         };
         let Some(current) = unbox_arg(value).ok().as_ref().and_then(object) else {
             return Ok(false);

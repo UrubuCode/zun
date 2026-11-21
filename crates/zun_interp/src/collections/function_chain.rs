@@ -188,3 +188,28 @@ impl<'a> Interp<'a> {
         self.with_this_arg(method, receiver, args)
     }
 }
+
+impl Interp<'_> {
+    /// Like [`Self::linked_chain_function`] but for a non-function value: used
+    /// where the specification's GetMethod has to tell "absent" from "present
+    /// but not callable".
+    pub(crate) fn linked_chain_value(
+        object: zun_gc::Obj,
+        lookup: impl Fn(&zun_gc::Heap, zun_gc::Obj) -> Option<zun_core::Any>,
+    ) -> Option<zun_core::Any> {
+        zun_gc::with_current_heap(|heap| {
+            if !heap.is_dynamic_object(object) || heap.proxy_target(object).is_some() {
+                return None;
+            }
+            let mut holder = heap.dynamic_prototype(object)?.as_object()?;
+            for _ in 0..256 {
+                let current = unsafe { zun_gc::Obj::from_addr(holder as *mut u64) };
+                if let Some(found) = lookup(heap, current) {
+                    return Some(found);
+                }
+                holder = heap.dynamic_prototype(current)?.as_object()?;
+            }
+            None
+        })
+    }
+}

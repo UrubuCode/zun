@@ -467,6 +467,13 @@ impl<'a> Interp<'a> {
                 .unwrap_or_else(zun_core::Any::void);
             index += 1;
             let concrete = zun_gc::with_current_heap(|heap| Value::unbox_any(element, heap));
+            // A symbol element refuses ToString, so the whole join throws.
+            // `[sym].join("")` quietly produced the empty string.
+            if matches!(&concrete, Some(Value::Any(any)) if any.as_symbol().is_some()) {
+                return Err(RunError::Native(
+                    "TypeError: Cannot convert a Symbol value to a string".into(),
+                ));
+            }
             let text = match concrete {
                 Some(Value::Object(inner))
                     if zun_gc::with_current_heap(|heap| heap.bigint_value(inner).is_none()) =>
@@ -515,6 +522,15 @@ impl<'a> Interp<'a> {
             }
         };
         let (a, b) = (unbox(&stack[len - 2]), unbox(&stack[len - 1]));
+        // A relational comparison runs ToPrimitive with the number hint, and
+        // ToNumber of a symbol throws. `sym < "z"` answered false.
+        for operand in [&a, &b] {
+            if matches!(operand, Value::Any(any) if any.as_symbol().is_some()) {
+                return Err(RunError::Native(
+                    "TypeError: Cannot convert a Symbol value to a number".into(),
+                ));
+            }
+        }
         let is_plain_object = |v: &Value| match v {
             Value::Object(obj) => {
                 zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_none())
@@ -684,6 +700,26 @@ impl<'a> Interp<'a> {
                     .get(&(obj.type_rid(), tp.get()))
                     .copied()
             });
+        // GetMethod returns undefined only for undefined/null. A hook that is
+        // present but not callable is a TypeError, before any fallback: the
+        // function-only lookup above missed it, so `({[Symbol.toPrimitive]: 42})
+        // + ""` quietly fell through to `valueOf`.
+        if handle.is_none() {
+            let present = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_get_symbol(obj, tp)
+                    .or_else(|| Self::linked_chain_value(obj, |heap, holder| {
+                        heap.dynamic_get_symbol(holder, tp)
+                    }))
+                    .is_some_and(|any| {
+                        !matches!(any.tag(), zun_core::AnyTag::Void | zun_core::AnyTag::Null)
+                    })
+            });
+            if present {
+                return Err(RunError::Native(
+                    "TypeError: Cannot convert object to primitive value".into(),
+                ));
+            }
+        }
         if let Some(handle) = handle {
             let hint_value = zun_gc::with_current_heap_mut(|heap| {
                 Value::Any(zun_core::Any::string(heap.intern_string(hint)))

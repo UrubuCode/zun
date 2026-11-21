@@ -978,7 +978,21 @@ impl<'a> Interp<'a> {
                                 ));
                             }
                         }
-                        return Ok(result);
+                        // `getOwnPropertyNames` keeps the *string* keys. The
+                        // trap result used to be returned whole, so a symbol
+                        // key came back among the names as a null entry.
+                        let kept = zun_gc::with_current_heap_mut(|heap| {
+                            let entries: Vec<zun_core::Any> = (0..count)
+                                .filter_map(|index| heap.array_get(list, index))
+                                .filter(|entry| entry.as_symbol().is_none())
+                                .collect();
+                            let kept = heap.alloc_array(entries.len());
+                            for (at, entry) in entries.into_iter().enumerate() {
+                                let _ = heap.array_set(kept, at, entry);
+                            }
+                            kept
+                        });
+                        return Ok(Value::Object(kept));
                     }
                     ProxyRoute::Target(target) => target,
                     ProxyRoute::NotProxy => proxy,
@@ -1084,6 +1098,37 @@ impl<'a> Interp<'a> {
                 }
                 let obj =
                     object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                // A proxy answers through its `ownKeys` trap, keeping the
+                // *symbol* keys. Reading the proxy object's own symbol table
+                // instead always reported none.
+                let obj = match self.proxy_route(obj, "ownKeys")? {
+                    ProxyRoute::Trap(callback, target) => {
+                        let result =
+                            self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
+                        let list = object(&result).and_then(|list| {
+                            zun_gc::with_current_heap(|heap| heap.array_len(list)).map(|n| (list, n))
+                        });
+                        let Some((list, count)) = list else {
+                            return Err(RunError::Native(
+                                "TypeError: proxy ownKeys trap result is not a list".to_string(),
+                            ));
+                        };
+                        let kept = zun_gc::with_current_heap_mut(|heap| {
+                            let entries: Vec<zun_core::Any> = (0..count)
+                                .filter_map(|index| heap.array_get(list, index))
+                                .filter(|entry| entry.as_symbol().is_some())
+                                .collect();
+                            let kept = heap.alloc_array(entries.len());
+                            for (at, entry) in entries.into_iter().enumerate() {
+                                let _ = heap.array_set(kept, at, entry);
+                            }
+                            kept
+                        });
+                        return Ok(Value::Object(kept));
+                    }
+                    ProxyRoute::Target(target) => target,
+                    ProxyRoute::NotProxy => obj,
+                };
                 let symbols = zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(obj));
                 let array = zun_gc::with_current_heap_mut(|heap| {
                     let array = heap.alloc_array(symbols.len());
