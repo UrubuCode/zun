@@ -247,16 +247,39 @@ impl Checker<'_> {
                     // instead fixed `typeof` and lost both. The `__classDesc`
                     // record is the hook `typeof` already consults for exactly
                     // this case; the realm re-defines it non-enumerably.
-                    let entries = if name == "Iterator" {
+                    // The descriptor travels as a hidden global the realm reads
+                    // while it populates the namespace -- not as an entry of the
+                    // literal: a populated dynamic literal is a `stdyn`, which
+                    // put a dynamic site in the initializer of *every* module
+                    // and switched the trimmer to its conservative fallback.
+                    if name == "Iterator" {
                         let token = next_token;
                         next_token += 1;
-                        vec![hir::ObjectEntry::Data {
-                            key: hir::ObjectKey::Named("__classDesc".to_string()),
-                            value: self.realm_descriptor_expr(token, span),
-                        }]
-                    } else {
-                        Vec::new()
-                    };
+                        let descriptor = self.realm_descriptor_expr(token, span);
+                        let flag = |value: bool| hir::Expr {
+                            kind: hir::ExprKind::Boolean(value),
+                            ty: Ty::Boolean,
+                            span,
+                        };
+                        body.push(hir::Stmt::Expr(hir::Expr {
+                            kind: hir::ExprKind::CallBuiltin {
+                                id: set_id,
+                                args: vec![
+                                    hir::Expr {
+                                        kind: hir::ExprKind::String("$IteratorDesc".to_string()),
+                                        ty: Ty::String,
+                                        span,
+                                    },
+                                    descriptor,
+                                    flag(false),
+                                    flag(false),
+                                ],
+                            },
+                            ty: Ty::Void,
+                            span,
+                        }));
+                    }
+                    let entries = Vec::new();
                     hir::Expr {
                         kind: hir::ExprKind::BoxAny {
                             value: Box::new(hir::Expr {
@@ -415,20 +438,11 @@ impl Checker<'_> {
                 ty: Ty::Any,
                 span,
             };
-            let undefined = hir::Expr {
-                kind: hir::ExprKind::DynamicGet {
-                    object: Box::new(hir::Expr {
-                        kind: hir::ExprKind::DynamicObjectLiteral {
-                            entries: Vec::new(),
-                        },
-                        ty: Ty::DynamicObject,
-                        span,
-                    }),
-                    name: "undefined".to_string(),
-                },
-                ty: Ty::Any,
-                span,
-            };
+            // `void` of a constant, not a read of a missing key off a fresh
+            // dynamic object: that read is an `lddyn`, a dynamic site in the
+            // initializer of every module, which alone switched the trimmer to
+            // its conservative fallback for every program.
+            let undefined = crate::check::default_args::missing_arg(Ty::Any, span);
             let global_self = hir::Expr {
                 kind: hir::ExprKind::BoxAny {
                     value: Box::new(hir::Expr {

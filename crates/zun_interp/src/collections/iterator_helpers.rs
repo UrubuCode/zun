@@ -198,11 +198,15 @@ impl<'a> Interp<'a> {
         zun_gc::root!(namespace = namespace);
         zun_gc::root!(proto = proto);
         zun_gc::with_current_heap_mut(|heap| {
-            // The `__classDesc` record that makes `typeof Iterator` answer
-            // "function" is seeded by the module initializer as an ordinary
-            // literal entry, which would be enumerable -- node has
-            // `Object.keys(Iterator)` empty.
-            if let Some(desc) = heap.dynamic_get(namespace.get(), "__classDesc") {
+            // The `__classDesc` record is what makes `typeof Iterator` answer
+            // "function". The module initializer hands the descriptor over in
+            // the hidden `$IteratorDesc` global; it is defined non-enumerable
+            // here, since `Object.keys(Iterator)` is empty in node.
+            let global = heap.global_object();
+            if let Some(desc) = heap
+                .dynamic_get(global, "$IteratorDesc")
+                .filter(|any| any.as_class_descriptor().is_some())
+            {
                 heap.dynamic_define_data(
                     namespace.get(),
                     "__classDesc".to_owned(),
