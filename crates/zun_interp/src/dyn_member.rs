@@ -104,6 +104,27 @@ impl Interp<'_> {
             _ => popped,
         };
         let function_receiver = Self::is_function_value(&popped);
+        // A generator, async or async-generator function inherits its own
+        // intrinsic prototype (%GeneratorFunction.prototype% and siblings)
+        // rather than `Function.prototype`, so `constructor` and the brand
+        // come from there. Answered before every other read: the function
+        // paths below settle `constructor` from the realm.
+        if function_receiver {
+            if let Some(found) = super::collections::callback_handle(&popped)
+                .and_then(|handle| self.function_kind_ctor(handle))
+                .map(|ctor_kind| self.function_kind_prototype(ctor_kind))
+                .and_then(|proto| {
+                    zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get_function(proto, name.as_str())
+                            .map(Value::Function)
+                            .or_else(|| heap.dynamic_get(proto, name.as_str()).map(Value::Any))
+                    })
+                })
+            {
+                stack.push(found);
+                return Ok(ArmFlow::Continue);
+            }
+        }
         let raw = expando_receiver(popped);
         // A dynamic receiver that unboxes to a primitive string or an
         // array exposes `.length` the same as the typed forms, so a
@@ -2121,6 +2142,7 @@ impl Interp<'_> {
             && !self.is_method_closure(handle)
             && !self.is_value_helper(handle)
             && (self.is_generator_function(handle)
+                || (handle.builtin_method().is_none() && self.method_yields(handle.method_rid()))
                 || (self.function_is_constructor(handle)
                     && !self.is_async_function(handle)))
     }
@@ -2167,14 +2189,32 @@ impl Interp<'_> {
     /// async function and a real generator, and an empty body defeats that
     /// scan outright.
     pub(crate) fn is_async_function(&self, handle: zun_core::FunctionHandle) -> bool {
-        !handle.is_bound()
-            && handle.builtin_method().is_none()
-            && self
-                .module
-                .tables
-                .method_defs
-                .get((handle.method_rid() as usize).wrapping_sub(1))
-                .is_some_and(|method| self.module.strings.get(method.name).contains("@async"))
+        if handle.is_bound() || handle.builtin_method().is_some() {
+            return false;
+        }
+        let Some(method) = self
+            .module
+            .tables
+            .method_defs
+            .get((handle.method_rid() as usize).wrapping_sub(1))
+        else {
+            return false;
+        };
+        // The `@async` marker is a closure name's; a declared `async f()` and a
+        // class method keep their plain names, so the body's opening
+        // instruction stands in -- an async body starts by building its
+        // coroutine.
+        self.module.strings.get(method.name).contains("@async")
+            || crate::read_body(&self.module.code, method.body_offset).is_ok_and(|body| {
+                matches!(
+                    zun_il::decode_one(body.code),
+                    Ok((first, _))
+                        if matches!(
+                            first.opcode,
+                            zun_il::Opcode::AsyncStart | zun_il::Opcode::AsyncGenStart
+                        )
+                )
+            })
     }
 
     pub(crate) fn is_arrow_closure(&self, handle: zun_core::FunctionHandle) -> bool {

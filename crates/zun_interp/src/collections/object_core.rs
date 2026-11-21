@@ -881,6 +881,18 @@ impl<'a> Interp<'a> {
                 Ok(Value::Object(obj))
             }
             "objectGetPrototypeOf" => {
+                // A generator, async or async-generator function inherits its
+                // own intrinsic (%GeneratorFunction.prototype% and siblings),
+                // which carries the brand. Checked first and on the *unboxed*
+                // value: a class method read off a prototype comes back as a
+                // function cell, so the `Value::Function` tests further down
+                // never saw it.
+                if let Some(handle) = args.first().and_then(super::callback_handle) {
+                    if let Some(ctor_kind) = self.function_kind_ctor(handle) {
+                        let proto = self.function_kind_prototype(ctor_kind);
+                        return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                    }
+                }
                 // A user class value: its prototype is the base class value.
                 if let Ok(Value::Any(descriptor)) = unbox_arg(args.first().ok_or(RunError::BadToken)?)
                 {
