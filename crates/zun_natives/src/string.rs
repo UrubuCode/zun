@@ -12,7 +12,7 @@ fn length(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeErr
 fn concat(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {
     match (args.first(), args.get(1)) {
         (Some(NativeArg::Str(left)), Some(NativeArg::Str(right))) => {
-            Ok(NativeValue::Str(format!("{left}{right}")))
+            Ok(NativeValue::Str(zun_core::wtf16::join(left, right)))
         }
         _ => Err(NativeError("concat: expected two strings".to_string())),
     }

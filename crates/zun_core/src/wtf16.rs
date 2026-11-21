@@ -162,7 +162,33 @@ pub fn js_trim_end(text: &str) -> &str {
 
 /// Re-pair adjacent lone-surrogate stand-ins (a high followed by a low) that
 /// string building (join, repeat) may have placed side by side.
+/// Concatenate two stored strings, pairing a surrogate that becomes complete
+/// across the boundary.
+///
+/// `"\u{D83D}" + "\u{DE00}"` is one astral character, so joining the two
+/// stand-ins has to produce the real scalar -- otherwise the result keeps two
+/// stand-ins and reads as two code points. The boundary test is O(1), so an
+/// ordinary concatenation pays two character reads.
+pub fn join(left: &str, right: &str) -> String {
+    let high = left
+        .chars()
+        .next_back()
+        .and_then(lone_unit)
+        .is_some_and(|unit| (0xD800..0xDC00).contains(&unit));
+    let low = right
+        .chars()
+        .next()
+        .and_then(lone_unit)
+        .is_some_and(|unit| (0xDC00..0xE000).contains(&unit));
+    if !high || !low {
+        return format!("{left}{right}");
+    }
+    let units: Vec<u16> = encode(left).chain(encode(right)).collect();
+    from_units(&units)
+}
+
 pub fn normalize(text: String) -> String {
+
     if !text.chars().any(|c| lone_unit(c).is_some()) {
         return text;
     }
