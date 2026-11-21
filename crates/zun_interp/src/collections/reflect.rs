@@ -575,6 +575,24 @@ impl<'a> Interp<'a> {
                         _ => None,
                     },
                 };
+                // A newTarget whose `prototype` is not an object gives the
+                // result `Object.prototype`, not the target's own prototype.
+                // ... but only for an ordinary constructor. A builtin falls back
+                // to its *own* intrinsic prototype instead, which is what
+                // leaving the link alone already does.
+                let ordinary = self.user_class_rid(token).is_some();
+                let proto = match (&proto, &new_target) {
+                    (None, target)
+                        if ordinary
+                            && !matches!(
+                                unbox_arg(target),
+                                Ok(Value::Void) | Ok(Value::Null)
+                            ) =>
+                    {
+                        Some(Self::object_prototype_singleton())
+                    }
+                    _ => proto,
+                };
                 if let (Some(proto), Some(result)) = (proto, object(&built)) {
                     zun_gc::with_current_heap_mut(|heap| {
                         heap.ensure_instance_bag(result);
