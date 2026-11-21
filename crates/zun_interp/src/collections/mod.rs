@@ -310,6 +310,21 @@ impl<'a> Interp<'a> {
         match name {
             "bufferNew" => self.col_buffer(name, args),
             "bufferMarkShared" => self.col_buffer(name, args),
+            "nullPrototype" => {
+                // `class C extends null {}`: the prototype object inherits
+                // nothing, so `C.prototype.toString` is undefined and
+                // `Object.getPrototypeOf(C.prototype)` is null.
+                let rid = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let proto = self.class_prototype_object(rid);
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.dynamic_set_prototype(proto, Some(zun_core::Any::null()))
+                });
+                Ok(Value::Void)
+            }
             "bufferLength" => self.col_buffer(name, args),
             "bufferSlice" => self.col_buffer(name, args),
             "bufferResizableNew" => self.col_buffer(name, args),

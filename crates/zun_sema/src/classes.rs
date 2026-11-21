@@ -79,6 +79,7 @@ impl<'a> Checker<'a> {
                 base_name,
                 dynamic_base: false,
                 unconstructible_base: None,
+                null_heritage: c.null_heritage,
                 native_base: None,
                 own_fields: Vec::new(),
                 own_initializers: Vec::new(),

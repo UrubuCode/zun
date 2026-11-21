@@ -280,6 +280,24 @@ impl Checker<'_> {
             ty: Ty::Int(IntKind::U32),
             span,
         };
+        // `class C extends null {}`: the prototype object gets a null
+        // [[Prototype]]. No TypeDef row records the difference between that
+        // and an ordinary base-less class, so it is applied here.
+        if let Some((null_proto, _)) = zun_natives::resolve("classShape", "nullPrototype") {
+            for class_idx in 0..self.classes.len() {
+                if !self.classes[class_idx].null_heritage {
+                    continue;
+                }
+                body.push(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: null_proto,
+                        args: vec![class_rid(class_idx)],
+                    },
+                    ty: Ty::Void,
+                    span,
+                }));
+            }
+        }
         if let Some((set_method, _)) = zun_natives::resolve("collections", "classSetMethod") {
             for class_idx in 0..self.classes.len() {
                 for name in ["valueOf", "toString", "get_name"] {

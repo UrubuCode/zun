@@ -132,6 +132,11 @@ pub struct Class {
     pub type_params: Vec<Name>,
     /// Base class name, if the class `extends` another.
     pub base: Option<Name>,
+    /// Set for `class C extends null {}`: the class has no base *and* its
+    /// prototype object has a null [[Prototype]], so instances inherit
+    /// nothing -- not even `Object.prototype`. Distinct from a base-less
+    /// class, which is why the clause cannot just resolve to `None`.
+    pub null_heritage: bool,
     /// Decorators applied to the class (`@foo class C {}`), in source order.
     /// Inert in Phase 1 (syntax only).
     pub decorators: Vec<Decorator>,

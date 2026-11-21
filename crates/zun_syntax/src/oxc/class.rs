@@ -92,6 +92,9 @@ pub(super) fn convert_class_declaration_inner(
         .map(|id| id.span)
         .unwrap_or(class_declaration.span);
     let base = convert_heritage(source, class_declaration)?;
+    let null_heritage = class_declaration.heritage.as_ref().is_some_and(|heritage| {
+        matches!(peel_heritage(&heritage.expression), Expression::NullLiteral(_))
+    });
     let mut fields = Vec::new();
     let mut methods = Vec::new();
     let mut method_index = MethodIndex::new();
@@ -140,6 +143,7 @@ pub(super) fn convert_class_declaration_inner(
         // OXC adapter erases generic type parameters (see above).
         type_params: Vec::new(),
         base,
+        null_heritage,
         decorators: class_declaration
             .decorators
             .iter()

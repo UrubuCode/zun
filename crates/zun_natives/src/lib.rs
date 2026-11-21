@@ -47,6 +47,7 @@ pub use collection_methods::{
     SET_OP_BOOL_HELPER, SET_OP_SET_HELPER,
 };
 mod brand;
+mod class_shape;
 mod shared_buffer;
 mod codegen;
 mod collections;
@@ -397,6 +398,9 @@ pub static MODULES: &[Module] = &[
     // The `SharedArrayBuffer` brand. Appended last so every existing dispatch
     // id stays stable.
     shared_buffer::MODULE,
+    // `class C extends null {}`. Appended last so every existing dispatch id
+    // stays stable.
+    class_shape::MODULE,
     // `Buffer` intrinsics that postdate the `nodeBuffer` group. Appended last so
     // every existing dispatch id stays stable.
 ];

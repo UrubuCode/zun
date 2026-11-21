@@ -500,6 +500,9 @@ struct ClassInfo {
     /// named in an `extends` clause but throws a TypeError when constructed,
     /// so `new` on such a class (through the implicit `super(...)`) throws too.
     unconstructible_base: Option<&'static str>,
+    /// `class C extends null {}`: the prototype object gets a null
+    /// [[Prototype]], so instances inherit nothing at all.
+    null_heritage: bool,
     /// The native built-in this class derives from (`Array`, `ArrayBuffer`, a
     /// typed array, `RegExp`: `zun_natives::NATIVE_CARRIER_BASES`), when its
     /// chain ends at a `__Builtin<Name>` carrier root.

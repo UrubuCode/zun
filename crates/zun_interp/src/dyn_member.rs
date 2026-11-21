@@ -648,8 +648,8 @@ impl Interp<'_> {
                 heap.is_dynamic_object(object)
                     && !heap.is_instance_bag(object)
                     && heap.array_len(object).is_none()
-                    && !matches!(heap.dynamic_prototype(object), Some(p) if p.tag() == zun_core::AnyTag::Null)
-            }) {
+            }) && !self.chain_ends_at_null(object)
+        {
             self.object_proto_method_value(object, name.as_str())
                 .unwrap_or(Value::Void)
         } else {
@@ -2262,5 +2262,37 @@ impl Interp<'_> {
             let proto_any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define_data(bag, "prototype", proto_any, true, false, false);
         });
+    }
+}
+
+impl Interp<'_> {
+    /// Whether the prototype chain from `object` ends at an explicit `null`
+    /// rather than at `Object.prototype`.
+    ///
+    /// Such an object inherits nothing: `o.toString` is `undefined`. Testing
+    /// only the object's *own* link missed the case one level down -- an
+    /// instance of `class C extends null {}`, whose link is `C.prototype` and
+    /// whose chain ends there.
+    pub(crate) fn chain_ends_at_null(&self, object: zun_gc::Obj) -> bool {
+        let root = Self::object_prototype_singleton();
+        let mut current = object;
+        for _ in 0..256 {
+            if current.addr() == root.addr() {
+                return false;
+            }
+            let link = zun_gc::with_current_heap(|heap| heap.dynamic_prototype(current));
+            match link {
+                Some(any) if any.tag() == zun_core::AnyTag::Null => return true,
+                Some(any) => match any.as_object() {
+                    Some(address) => {
+                        current = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+                    }
+                    None => return true,
+                },
+                // No explicit link: the object inherits `Object.prototype`.
+                None => return false,
+            }
+        }
+        false
     }
 }
