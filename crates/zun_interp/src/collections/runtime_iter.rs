@@ -772,6 +772,11 @@ impl<'a> Interp<'a> {
                 // walk jumped straight to `Object.prototype` and missed
                 // `Map.prototype`'s `size` accessor.
                 let builtin = zun_gc::with_current_heap(|heap| {
+                    // An `arguments` object is array-backed but inherits
+                    // `Object.prototype`, not `Array.prototype`.
+                    if heap.array_is_arguments(current) {
+                        return None;
+                    }
                     crate::collections::builtin_constructor_name(heap, current).map(str::to_owned)
                 })
                 .filter(|name| name != "Object")
@@ -783,6 +788,18 @@ impl<'a> Interp<'a> {
                     if let Some(getter) = getter {
                         let args = self.with_this_arg(getter, receiver, Vec::new());
                         return self.invoke_function_value(getter, args).map(Some);
+                    }
+                    // A method the built-in's prototype holds is a value too:
+                    // `promise.then` read without calling it used to be
+                    // `undefined` while `Promise.prototype.then` was a
+                    // function.
+                    let member = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get_function(proto, name)
+                            .map(Value::Function)
+                            .or_else(|| heap.dynamic_get(proto, name).map(Value::Any))
+                    });
+                    if member.is_some() {
+                        return Ok(member);
                     }
                 }
                 let root = Self::object_prototype_singleton();
