@@ -964,6 +964,16 @@ impl<'a> Interp<'a> {
                             return Ok(Value::Any(link));
                         }
                     }
+                    // A generator, async or async-generator function inherits
+                    // its own intrinsic (%GeneratorFunction.prototype% and
+                    // siblings), which carries the brand, not
+                    // `Function.prototype` directly.
+                    if let Value::Function(handle) = &first {
+                        if let Some(ctor_kind) = self.function_kind_ctor(*handle) {
+                            let proto = self.function_kind_prototype(ctor_kind);
+                            return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
+                        }
+                    }
                     if is_builtin_ctor || matches!(first, Value::Function(_)) {
                         let proto = Self::function_prototype_singleton();
                         return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));

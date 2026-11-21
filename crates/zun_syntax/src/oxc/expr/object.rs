@@ -70,6 +70,19 @@ pub(super) fn convert_object_literal(
                 convert_oxc_function(source, function)?
             }
         };
+        // NamedEvaluation: a function value a property holds takes the key as
+        // its `name` -- a method shorthand, an accessor, and an anonymous
+        // function or arrow assigned to the property alike. Only an identifier
+        // key: a string or numeric key's span includes its quotes or digits,
+        // and the name travels as a source span.
+        let mut value = value;
+        if let (crate::ast::PropertyKey::Ident(name), crate::ast::Expr::Function(function)) =
+            (&key, &mut value)
+        {
+            if function.written_name.is_none() {
+                function.written_name = Some(*name);
+            }
+        }
         properties.push(crate::ast::ObjectMember::Property(
             crate::ast::ObjectProperty {
                 key,

@@ -171,6 +171,12 @@ pub(crate) const BUILTIN_GEN_THROW: u32 = 29;
 /// pairs in the specification, not data properties, and their setters are the
 /// "ignores prototype properties" kind: a write through the prototype itself
 /// is refused, a write through anything else defines an own property.
+/// The `GeneratorFunction` / `AsyncFunction` / `AsyncGeneratorFunction`
+/// constructor values. They exist so `Object.getPrototypeOf(g).constructor`
+/// answers a function of the right name; calling one is refused.
+pub(crate) const BUILTIN_GENFN_CTOR: u32 = 36;
+pub(crate) const BUILTIN_ASYNCFN_CTOR: u32 = 37;
+pub(crate) const BUILTIN_ASYNCGENFN_CTOR: u32 = 38;
 pub(crate) const BUILTIN_ITERP_CTOR_GET: u32 = 32;
 pub(crate) const BUILTIN_ITERP_CTOR_SET: u32 = 33;
 pub(crate) const BUILTIN_ITERP_TAG_GET: u32 = 34;
@@ -1107,6 +1113,16 @@ impl Interp<'_> {
                     _ => num(heap.typed_array_len(o)),
                 }))
             }
+            BUILTIN_GENFN_CTOR | BUILTIN_ASYNCFN_CTOR | BUILTIN_ASYNCGENFN_CTOR => {
+                // Present as a value, not callable: building a function from a
+                // source string through these is not supported.
+                let shown = Self::builtin_method_meta(kind, "name")
+                    .map(|value| value.display())
+                    .unwrap_or_default();
+                Err(RunError::Native(format!(
+                    "TypeError: {shown} is not supported"
+                )))
+            }
             BUILTIN_ITERP_CTOR_GET => {
                 // `%Iterator%` itself, read off the realm.
                 Ok(zun_gc::with_current_heap_mut(|heap| {
@@ -1398,6 +1414,9 @@ impl Interp<'_> {
             BUILTIN_GEN_THROW => "throw",
             BUILTIN_ITER_SELF => "[Symbol.iterator]",
             BUILTIN_PROXY_REVOKE => "",
+            BUILTIN_GENFN_CTOR => "GeneratorFunction",
+            BUILTIN_ASYNCFN_CTOR => "AsyncFunction",
+            BUILTIN_ASYNCGENFN_CTOR => "AsyncGeneratorFunction",
             BUILTIN_STRING_ITERATOR => "[Symbol.iterator]",
             BUILTIN_FN_HAS_INSTANCE => {
                 return Some(if name == "name" {
@@ -3520,5 +3539,60 @@ impl Interp<'_> {
             heap.dynamic_prototype(bag)?.as_class_descriptor()
         })
         .and_then(|token| self.user_class_rid(token))
+    }
+}
+
+impl Interp<'_> {
+    /// The shared prototype of the generator / async / async-generator
+    /// function *objects*: %GeneratorFunction.prototype% and its siblings.
+    ///
+    /// `Object.getPrototypeOf(function* g(){})` is not `Function.prototype`:
+    /// it is this object, which carries the brand and a `constructor` of the
+    /// matching name, and inherits `Function.prototype` in turn.
+    pub(crate) fn function_kind_prototype(&self, ctor_kind: u32) -> zun_gc::Obj {
+        let key = format!("$fnKindProto#{ctor_kind}");
+        let tag = Self::builtin_method_meta(ctor_kind, "name")
+            .map(|value| value.display())
+            .unwrap_or_default();
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            if let Some(address) = heap.dynamic_get(global, &key).and_then(|any| any.as_object()) {
+                return unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+            }
+            let proto = heap.alloc_dynamic();
+            let handle = zun_core::FunctionHandle::new_builtin_method(ctor_kind);
+            heap.dynamic_set_method(proto, "constructor", handle);
+            let brand = zun_core::Any::string(heap.intern_string(tag));
+            heap.dynamic_define_symbol(
+                proto,
+                zun_core::WellKnownSymbol::ToStringTag.id(),
+                brand,
+                false,
+            );
+            let global = heap.global_object();
+            heap.dynamic_define(
+                global,
+                key,
+                zun_core::Any::object(proto.addr() as usize),
+                false,
+            );
+            proto
+        })
+    }
+
+    /// The constructor kind of the function `handle`, when it is a generator,
+    /// an async function or an async generator.
+    pub(crate) fn function_kind_ctor(&self, handle: zun_core::FunctionHandle) -> Option<u32> {
+        if handle.is_bound() || handle.builtin_method().is_some() {
+            return None;
+        }
+        let generator =
+            self.is_generator_function(handle) || self.method_yields(handle.method_rid());
+        match (generator, self.is_async_function(handle)) {
+            (true, true) => Some(BUILTIN_ASYNCGENFN_CTOR),
+            (true, false) => Some(BUILTIN_GENFN_CTOR),
+            (false, true) => Some(BUILTIN_ASYNCFN_CTOR),
+            (false, false) => None,
+        }
     }
 }
