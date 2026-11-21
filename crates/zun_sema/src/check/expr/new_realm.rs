@@ -67,6 +67,21 @@ impl Checker<'_> {
                 let before = self.diagnostics.len();
                 let typed = self.check_array_buffer_new(cx, args, span);
                 if self.diagnostics.len() == before {
+                    // A `SharedArrayBuffer` is the same storage with a brand.
+                    if name == "SharedArrayBuffer" {
+                        if let Some((id, _)) =
+                            zun_natives::resolve("sharedBuffer", "bufferMarkShared")
+                        {
+                            return Some(hir::Expr {
+                                ty: typed.ty,
+                                kind: hir::ExprKind::CallBuiltin {
+                                    id,
+                                    args: vec![typed],
+                                },
+                                span,
+                            });
+                        }
+                    }
                     return Some(typed);
                 }
                 self.diagnostics.truncate(before);

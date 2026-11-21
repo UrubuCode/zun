@@ -47,6 +47,7 @@ pub use collection_methods::{
     SET_OP_BOOL_HELPER, SET_OP_SET_HELPER,
 };
 mod brand;
+mod shared_buffer;
 mod codegen;
 mod collections;
 mod managed_methods;
@@ -393,6 +394,9 @@ pub static MODULES: &[Module] = &[
     // The private-name brand check (`#x in obj`). Appended last so every
     // existing dispatch id stays stable.
     brand::MODULE,
+    // The `SharedArrayBuffer` brand. Appended last so every existing dispatch
+    // id stays stable.
+    shared_buffer::MODULE,
     // `Buffer` intrinsics that postdate the `nodeBuffer` group. Appended last so
     // every existing dispatch id stays stable.
 ];

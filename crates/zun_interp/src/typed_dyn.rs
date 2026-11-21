@@ -297,6 +297,9 @@ impl Interp<'_> {
                 };
                 let buffer = buffer
                     .ok_or_else(|| self.view_error("RangeError", "Invalid array buffer length"))?;
+                if name == "SharedArrayBuffer" {
+                    zun_gc::with_current_heap_mut(|h| h.buffer_mark_shared(buffer));
+                }
                 Ok(Value::Object(buffer))
             }
             "DataView" => {

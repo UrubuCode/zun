@@ -13,6 +13,10 @@ pub struct ByteBuffer {
     /// `transfer`/`transferToFixedLength`). A detached buffer has byte length 0
     /// and rejects every further access, as ES2024 requires.
     detached: bool,
+    /// Set for a `SharedArrayBuffer`. Zun runs one agent, so the bytes are
+    /// not shared with anything; the flag is the brand that tells the two
+    /// buffer kinds apart (`Object.prototype.toString`, `Atomics.wait`).
+    shared: bool,
 }
 
 impl ByteBuffer {
@@ -21,6 +25,7 @@ impl ByteBuffer {
             bytes: vec![0; length],
             max: None,
             detached: false,
+            shared: false,
         }
     }
 
@@ -32,6 +37,7 @@ impl ByteBuffer {
             bytes: vec![0; length],
             max: Some(max),
             detached: false,
+            shared: false,
         })
     }
 
@@ -49,6 +55,7 @@ impl ByteBuffer {
             bytes: vec![0; length],
             max,
             detached: false,
+            shared: false,
         })
     }
 
@@ -59,6 +66,16 @@ impl ByteBuffer {
     }
 
     /// Whether this buffer has been detached.
+    /// Whether this is a `SharedArrayBuffer`.
+    pub fn shared(&self) -> bool {
+        self.shared
+    }
+
+    /// Brand this buffer as a `SharedArrayBuffer`.
+    pub fn mark_shared(&mut self) {
+        self.shared = true;
+    }
+
     pub fn detached(&self) -> bool {
         self.detached
     }

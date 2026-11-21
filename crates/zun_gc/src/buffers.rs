@@ -42,6 +42,20 @@ impl Heap {
     }
 
     /// `ArrayBuffer.prototype.detached`.
+    /// Whether `object` is a `SharedArrayBuffer`.
+    pub fn buffer_shared(&self, object: Obj) -> Option<bool> {
+        self.buffers
+            .get(&(object.addr() as usize))
+            .map(zun_core::ByteBuffer::shared)
+    }
+
+    /// Brand `object` as a `SharedArrayBuffer`. `None` when it is no buffer.
+    pub fn buffer_mark_shared(&mut self, object: Obj) -> Option<()> {
+        self.buffers
+            .get_mut(&(object.addr() as usize))
+            .map(zun_core::ByteBuffer::mark_shared)
+    }
+
     pub fn buffer_detached(&self, object: Obj) -> Option<bool> {
         self.buffers
             .get(&(object.addr() as usize))

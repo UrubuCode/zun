@@ -297,6 +297,7 @@ impl<'a> Interp<'a> {
         }
         match name {
             "bufferNew" => self.col_buffer(name, args),
+            "bufferMarkShared" => self.col_buffer(name, args),
             "bufferLength" => self.col_buffer(name, args),
             "bufferSlice" => self.col_buffer(name, args),
             "bufferResizableNew" => self.col_buffer(name, args),

@@ -1486,7 +1486,11 @@ impl<'a> Interp<'a> {
                                 } else if heap.data_view_buffer(obj).is_some() {
                                     "DataView"
                                 } else if heap.buffer_len(obj).is_some() {
-                                    "ArrayBuffer"
+                                    if heap.buffer_shared(obj) == Some(true) {
+                                        "SharedArrayBuffer"
+                                    } else {
+                                        "ArrayBuffer"
+                                    }
                                 } else {
                                     "Object"
                                 }

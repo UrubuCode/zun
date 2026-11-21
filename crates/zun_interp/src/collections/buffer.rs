@@ -8,6 +8,14 @@ use super::*;
 impl<'a> Interp<'a> {
     pub(super) fn col_buffer(&mut self, name: &str, args: &[Value]) -> Result<Value, RunError> {
         match name {
+            "bufferMarkShared" => {
+                // `new SharedArrayBuffer(n)`: the buffer is branded and returned.
+                let buffer =
+                    object(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+                zun_gc::with_current_heap_mut(|heap| heap.buffer_mark_shared(buffer))
+                    .ok_or(RunError::BadToken)?;
+                Ok(Value::Object(buffer))
+            }
             "bufferNew" => {
                 let length = match args.first().ok_or(RunError::BadToken)? {
                     Value::Int(value, _) => {
@@ -50,6 +58,12 @@ impl<'a> Interp<'a> {
                 let copy =
                     zun_gc::with_current_heap_mut(|heap| heap.buffer_slice(object, begin, end))
                         .ok_or(RunError::BadToken)?;
+                // A slice of a `SharedArrayBuffer` is a `SharedArrayBuffer`.
+                zun_gc::with_current_heap_mut(|heap| {
+                    if heap.buffer_shared(object) == Some(true) {
+                        heap.buffer_mark_shared(copy);
+                    }
+                });
                 Ok(Value::Object(copy))
             }
             "bufferResizableNew" => {

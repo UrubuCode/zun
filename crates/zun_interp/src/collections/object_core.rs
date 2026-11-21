@@ -1031,6 +1031,19 @@ impl<'a> Interp<'a> {
                             Some("Map")
                         } else if heap.set_values(obj).is_some() {
                             Some("Set")
+                        // A DataView and the two buffer kinds are native storage
+                        // too, with no link to walk: their prototype is the
+                        // builtin's. (They answered something else entirely, so
+                        // `Object.getPrototypeOf(view) === DataView.prototype`
+                        // was false.)
+                        } else if heap.data_view_buffer(obj).is_some() {
+                            Some("DataView")
+                        } else if heap.buffer_len(obj).is_some() {
+                            if heap.buffer_shared(obj) == Some(true) {
+                                Some("SharedArrayBuffer")
+                            } else {
+                                Some("ArrayBuffer")
+                            }
                         } else {
                             None
                         }

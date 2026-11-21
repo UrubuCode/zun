@@ -24,6 +24,12 @@ class Atomics {
         if (wide && name !== "Int32Array" && name !== "BigInt64Array") {
             throw new TypeError("[object Array] is not an int32 or BigInt64 typed array.");
         }
+        // ValidateIntegerTypedArray checks the buffer before the index: an
+        // operation on a detached buffer is a TypeError, not an out-of-range
+        // index (a detached buffer has length 0, which is how it read).
+        if (ta.buffer !== undefined && ta.buffer !== null && ta.buffer.detached === true) {
+            throw new TypeError("Cannot perform Atomics operation on a detached ArrayBuffer");
+        }
         let i: any = Number(index);
         if (i !== i) {
             i = 0;
@@ -133,6 +139,11 @@ class Atomics {
 
     static wait(ta: any, index: any, value: any, timeout: any): any {
         const i: any = Atomics.__index(ta, index, true);
+        // `wait` needs a shared buffer: an agent cannot block on memory no
+        // other agent can reach. (`notify` has no such requirement.)
+        if (Object.prototype.toString.call(ta.buffer) !== "[object SharedArrayBuffer]") {
+            throw new TypeError("[object Int32Array] is not an int32 or BigInt64 shared typed array.");
+        }
         if (ta[i] !== value) {
             return "not-equal";
         }
