@@ -366,6 +366,14 @@ impl Interp<'_> {
                 zun_core::WellKnownSymbol::Iterator.id(),
                 zun_core::FunctionHandle::new_builtin_method(BUILTIN_STRING_ITERATOR),
             );
+            // `String.prototype.constructor` is `String`. Without the own
+            // property the read fell through to `Object.prototype`'s.
+            if let Some(ctor) = heap
+                .dynamic_get(global, "String")
+                .filter(|any| any.as_class_descriptor().is_some())
+            {
+                heap.dynamic_define_data(proto, "constructor", ctor, true, false, true);
+            }
             let any = zun_core::Any::object(proto.addr() as usize);
             heap.dynamic_define(global, "$String.prototype", any, false);
             crate::intrinsic_meta::install_prototype_methods(heap, proto, "String");

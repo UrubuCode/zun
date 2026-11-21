@@ -1052,8 +1052,14 @@ impl Interp<'_> {
                         zun_core::wtf16::concat(&text(&a), &text(&b)).into(),
                     ));
                 }
-                Opcode::CmpEq => cmp(stack, true)?,
-                Opcode::CmpNe => cmp(stack, false)?,
+                Opcode::CmpEq => {
+                    self.unify_constructor_operands(stack);
+                    cmp(stack, true)?
+                }
+                Opcode::CmpNe => {
+                    self.unify_constructor_operands(stack);
+                    cmp(stack, false)?
+                }
                 Opcode::CmpLt | Opcode::CmpLe | Opcode::CmpGt | Opcode::CmpGe => {
                     // Objects run ToPrimitive(number) and a string meeting a non-string
                     // compares numerically, before the primitive comparison.

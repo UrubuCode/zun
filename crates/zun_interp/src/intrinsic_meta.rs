@@ -926,3 +926,38 @@ pub(crate) fn array_values_kind() -> Option<u32> {
             .map(|(kind, _)| kind)
     })
 }
+
+impl Interp<'_> {
+    /// Before an equality test: a coercion function value that stands for a
+    /// constructor (`Boolean` read as a value is the `__coerceBoolean` helper,
+    /// so that `xs.map(Boolean)` has something to call) is replaced by that
+    /// constructor's class value.
+    ///
+    /// The helper already *is* the constructor as far as `name`, `length` and
+    /// its own constants go (`coerce_ctor_name`); identity was the one place
+    /// that still saw two values, so `Boolean.prototype.constructor ===
+    /// Boolean` was false while the same test through `globalThis` passed.
+    /// Only an operand that is a bare function value is examined, so an
+    /// ordinary comparison pays one tag test.
+    pub(crate) fn unify_constructor_operands(&self, stack: &mut [Value]) {
+        let len = stack.len();
+        if len < 2 {
+            return;
+        }
+        for index in [len - 2, len - 1] {
+            let Value::Function(handle) = &stack[index] else {
+                continue;
+            };
+            let Some(name) = self.coerce_ctor_name(*handle) else {
+                continue;
+            };
+            let descriptor = zun_gc::with_current_heap_mut(|heap| {
+                let global = heap.global_object();
+                heap.dynamic_get(global, name)
+            });
+            if let Some(descriptor) = descriptor.filter(|any| any.as_class_descriptor().is_some()) {
+                stack[index] = Value::Any(descriptor);
+            }
+        }
+    }
+}
