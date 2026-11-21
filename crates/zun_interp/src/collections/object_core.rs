@@ -444,6 +444,26 @@ impl<'a> Interp<'a> {
                             self.assign_store(target, key, Value::Any(boxed))?;
                             continue;
                         }
+                        // An *inherited* accessor decides the write, as Set
+                        // semantics require: the fast path below consults only
+                        // the target's own accessor, so a setter one level up
+                        // was shadowed by a fresh own data property.
+                        if !zun_gc::with_current_heap(|heap| heap.dynamic_has_own(target, &key)) {
+                            if let Some((getter, setter)) = self.inherited_accessor(target, &key) {
+                                if let Some(setter) = setter {
+                                    let call = self.with_this_arg(
+                                        setter,
+                                        target,
+                                        vec![Value::Any(boxed)],
+                                    );
+                                    self.invoke_function_value(setter, call)?;
+                                    continue;
+                                }
+                                if getter.is_some() {
+                                    continue;
+                                }
+                            }
+                        }
                         let (is_accessor, setter, has, writable, extensible) =
                             zun_gc::with_current_heap(|heap| {
                                 (
@@ -872,6 +892,24 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(frozen))
             }
             "objectCreate" => {
+                // Only an object or `null` is a prototype: a primitive is a
+                // TypeError, where it used to be ignored and the result
+                // inherited `Object.prototype`.
+                let supplied = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                let primitive = match &supplied {
+                    Value::Int(..) | Value::Float(..) | Value::Bool(_) | Value::Str(_)
+                    | Value::Void => true,
+                    Value::Any(any) => any.as_symbol().is_some(),
+                    Value::Object(object) => {
+                        zun_gc::with_current_heap(|heap| heap.bigint_value(*object).is_some())
+                    }
+                    _ => false,
+                };
+                if primitive {
+                    return Err(RunError::Native(
+                        "TypeError: Object prototype may only be an Object or null".into(),
+                    ));
+                }
                 let prototype = Self::normalize_prototype(
                     prototype_from_arg(args.first().ok_or(RunError::BadToken)?),
                     args.first().ok_or(RunError::BadToken)?,
@@ -1569,6 +1607,22 @@ impl<'a> Interp<'a> {
             )
         });
         let is_function = matches!(value, Value::Function(_));
+        // `Object.assign` writes with Set semantics, so an inherited accessor
+        // decides: a setter runs and the target gains no own property, a
+        // getter without a setter refuses the write. The store below used to
+        // define an own data property over either.
+        if !zun_gc::with_current_heap(|heap| heap.dynamic_has_own(target, &key)) {
+            if let Some((getter, setter)) = self.inherited_accessor(target, &key) {
+                if let Some(setter) = setter {
+                    let call = self.with_this_arg(setter, target, vec![value]);
+                    self.invoke_function_value(setter, call)?;
+                    return Ok(());
+                }
+                if getter.is_some() {
+                    return Ok(());
+                }
+            }
+        }
         if typed {
             if let Some(message) = self.member_store_refusal(target, &key) {
                 return Err(RunError::Native(message));

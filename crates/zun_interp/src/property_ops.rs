@@ -2687,6 +2687,27 @@ impl Interp<'_> {
             }
             target
         };
+        // An *inherited* accessor decides the write before any own store: a
+        // setter runs with the receiver and the target gains no own property,
+        // and a getter without a setter refuses the write. The chain was not
+        // consulted at all, so both cases silently created an own data
+        // property that shadowed the accessor.
+        if let PropKey::Str(name) = &key {
+            if !zun_gc::with_current_heap(|heap| heap.dynamic_has_own(target, name)) {
+                if let Some(found) = self.inherited_accessor(target, name) {
+                    let (getter, setter) = found;
+                    if let Some(setter) = setter {
+                        let value = unbox_arg(value_arg)?;
+                        let call = self.with_this_arg(setter, target, vec![value]);
+                        self.invoke_function_value(setter, call)?;
+                        return Ok(Value::Bool(true));
+                    }
+                    if getter.is_some() {
+                        return Ok(Value::Bool(false));
+                    }
+                }
+            }
+        }
         // A typed class instance: a declared field or `set` accessor takes the
         // write; any other key is an expando, which needs the instance's
         // property table. A Map, Set, RegExp ... gains a table the same way, so
@@ -3605,5 +3626,38 @@ impl Interp<'_> {
             (false, true) => Some(BUILTIN_ASYNCFN_CTOR),
             (false, false) => None,
         }
+    }
+}
+
+impl Interp<'_> {
+    /// The accessor pair an object inherits for `name`, if the prototype chain
+    /// holds one. The object's own properties are not consulted, and an own
+    /// data property further up ends the search.
+    pub(crate) fn inherited_accessor(
+        &self,
+        object: zun_gc::Obj,
+        name: &str,
+    ) -> Option<(Option<zun_core::FunctionHandle>, Option<zun_core::FunctionHandle>)> {
+        let mut current = object;
+        for _ in 0..256 {
+            let next = zun_gc::with_current_heap(|heap| {
+                heap.dynamic_prototype(current)
+                    .and_then(|any| any.as_object())
+                    .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
+            })?;
+            let found = zun_gc::with_current_heap(|heap| {
+                let get = heap.dynamic_accessor_getter(next, name);
+                let set = heap.dynamic_accessor_setter(next, name);
+                (get.is_some() || set.is_some()).then_some((get, set))
+            });
+            if found.is_some() {
+                return found;
+            }
+            if zun_gc::with_current_heap(|heap| heap.dynamic_has_own(next, name)) {
+                return None;
+            }
+            current = next;
+        }
+        None
     }
 }
