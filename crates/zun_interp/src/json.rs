@@ -89,10 +89,53 @@ impl Interp<'_> {
         let space_arg = concrete(args.get(2));
         let mut replacer = None;
         let mut list = None;
+        // A class value is callable, so it is *called* as a replacer -- and a
+        // class called without `new` throws.
+        if matches!(&replacer_arg, Value::Any(any) if any.as_class_descriptor().is_some()) {
+            return Err(RunError::Native(
+                "TypeError: Class constructor cannot be invoked without 'new'".into(),
+            ));
+        }
+        // A proxy stands for what it wraps: over a callable it is the replacer
+        // function, over an array it is the property list, and a revoked one
+        // refuses both (IsArray throws on it).
+        let replacer_arg = match as_obj(&replacer_arg) {
+            Some(proxy) if zun_gc::with_current_heap(|heap| heap.proxy_target(proxy).is_some()) => {
+                if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+                    return Err(self.revoked_proxy_error("ownKeys"));
+                }
+                let target = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
+                    .ok_or(RunError::BadToken)?;
+                // An `apply` trap on a replacer is not honoured: the target's
+                // own callable answers.
+                match zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_get_function(target, "__boxedFn")
+                        .or_else(|| heap.function_of_cell(target))
+                }) {
+                    Some(handle) => Value::Function(handle),
+                    None => {
+                        let list = self.call_managed_collection(
+                            "arrayFromArrayLike",
+                            &[Value::Object(proxy)],
+                        )?;
+                        concrete(Some(&list))
+                    }
+                }
+            }
+            _ => replacer_arg,
+        };
         match &replacer_arg {
             Value::Function(handle) => replacer = Some(*handle),
             Value::Object(array) => {
-                if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(*array)) {
+                // Only a real Array is a property list. An `arguments` object
+                // is array-backed but not one, and was taken for a list, which
+                // dropped every key it did not name.
+                let is_list = zun_gc::with_current_heap(|heap| {
+                    heap.array_len(*array).is_some() && !heap.array_is_arguments(*array)
+                });
+                if let Some(len) =
+                    zun_gc::with_current_heap(|heap| heap.array_len(*array)).filter(|_| is_list)
+                {
                     let mut names: Vec<String> = Vec::new();
                     let mut seen: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
@@ -105,6 +148,16 @@ impl Interp<'_> {
                             Some(Value::Str(text)) => Some(text.to_string()),
                             Some(Value::Int(n, _)) => Some(n.to_string()),
                             Some(Value::Float(f, _)) => Some(zun_natives::format_float(f)),
+                            // A String or Number *wrapper* entry counts as its
+                            // primitive, which the primitive-only match skipped.
+                            Some(Value::Object(entry))
+                                if matches!(
+                                    self.json_class_name(entry).as_str(),
+                                    "NumberObject" | "StringObject"
+                                ) =>
+                            {
+                                self.json_wrapper_primitive_text(entry)
+                            }
                             _ => None,
                         };
                         if let Some(name) = name {
@@ -714,4 +767,21 @@ fn inherited_function(
         current = unsafe { zun_gc::Obj::from_addr(next as *mut u64) };
     }
     None
+}
+
+impl Interp<'_> {
+    /// The text a String or Number wrapper object names as a property key.
+    fn json_wrapper_primitive_text(&mut self, wrapper: zun_gc::Obj) -> Option<String> {
+        let ctor = match self.json_class_name(wrapper).as_str() {
+            "NumberObject" => "Number",
+            "StringObject" => "String",
+            _ => return None,
+        };
+        match self.wrapper_primitive(Value::Object(wrapper), ctor).ok()? {
+            Value::Str(text) => Some(text.to_string()),
+            Value::Int(n, _) => Some(n.to_string()),
+            Value::Float(f, _) => Some(zun_natives::format_float(f)),
+            _ => None,
+        }
+    }
 }
