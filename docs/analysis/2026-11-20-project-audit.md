@@ -160,3 +160,64 @@ below was verified against the full fixture suite and the per-crate tests.
 - One `git stash pop` was run on a clean tree and applied an unrelated
   pre-existing stash, producing conflicts. The tree was reset to HEAD; the
   stash entry (`WIP on main: fe285190`) is intact.
+
+## 8. The road to 80% (measured at `2bf50e73`, 119 of 169)
+
+80% of 169 is 135.2, so **136 fixtures: +17**.
+
+**The shape of the remaining work changed.** No fixture is within 5 divergent
+lines any more (the closest is 6). The 50 non-passing fixtures split:
+
+- 18 *reachable* (6-12 divergent lines) holding **168 of the 842** divergent lines;
+- 20 *far* (14-90 lines) holding the other **674**;
+- 12 that abort.
+
+So 80% of the remaining wrong lines sit in fixtures that will not flip, and
+line count is a misleading measure from here on. +17 means clearing almost the
+whole reachable band plus several aborts: nothing in it can be skipped.
+
+### Single-cause targets (each probed against node)
+
+| Fixture | Lines | Cause |
+|---|---|---|
+| `builtin-collection-iteration` | 8 | **one**: `String.fromCharCode(0xd83d, 0xde00)` does not pair the surrogates into a code point. `fromCharCode(hi) + fromCharCode(lo)` *does*, so the multi-argument form bypasses the existing normaliser |
+| `weak-collections-and-refs` | 9 | **8 of 9**: brands and `instanceof` for `WeakMap`/`WeakSet`/`WeakRef`. Same shape as the `shared` flag just added to `ByteBuffer` |
+| `class-static-members-and-inheritance` | 8 | **one**: a static field is one shared slot. In JS it lives on the declaring constructor, a subclass reads through the chain, and a write through the subclass creates an own property |
+| `symbol-identity-registry-and-wrapper` | 10 | **~6**: no `Object(symbol)` wrapper (the shape done for BigInt) |
+| `generator-iteration-and-async` | 9 | **~7**: the generator prototype owns no `next`/`throw`/`return`, does not reach `%Iterator.prototype%`, and the `Generator`/`AsyncGenerator` brands are missing |
+
+### Structural levers, with line counts
+
+1. **Builtin prototype members have no value — 50 lines, 11 fixtures.** The
+   defect patched ad hoc three times already (timers, `Buffer.compare`,
+   `parseInt`). `Uint8Array.prototype.BYTES_PER_ELEMENT` is `undefined` (9
+   lines in `typedarray-construction-and-geometry` alone), `Map.get` is not
+   callable as a value, `ArrayBuffer.prototype.resize`/`transfer` are
+   `undefined`, and `FinalizationRegistry.prototype` does not even compile --
+   that is what aborts its fixture. Installing real function values on the
+   builtin prototypes removes the three name tables and touches 11 fixtures.
+2. **Argument validation — 148 lines, 21 fixtures.** The largest classifiable
+   cluster: permissive where the specification requires a TypeError. Spread
+   thin, so it is rarely a fixture's only cause.
+3. **Proxy trap routing — 116 lines, 6 fixtures.** Concentrated; flips perhaps
+   two or three, and the big ones stay out of reach.
+4. **D4 (brand byte) and D5 (typed method flags).** D5 got *worse* in the last
+   pass: the `@static` suffix and three more value-helper name tables.
+
+### Estimate
+
++17 fixtures is about **45-60 distinct fixes**: the last pass was 31 commits
+for +12 against targets of one or two causes, and the remaining band averages
+four or five independent causes per fixture. The order is what decides the
+cost: fixture-by-fixture makes the per-fixture price rise, and the two levers
+that bring it down (prototype members as values, the brand) are exactly where
+the case-by-case debt was accumulated.
+
+### Two traps found while measuring
+
+- `web-streams-encoding` looks cheap (12 of 12 lines missing, one rejection)
+  and is not: `TextEncoderStream`, `TextDecoderStream` and
+  `CompressionStream` do not exist, and the last needs real deflate.
+- `reflect-api-semantics` did not reproduce in a probe -- a primitive target
+  already throws here -- so the fixture uses another spelling and the estimate
+  is unverified.
