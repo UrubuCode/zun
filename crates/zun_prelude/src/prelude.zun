@@ -179,6 +179,14 @@ function __zunNotConstructor(name: string): any {
     throw new TypeError(name + " is not a constructor");
 }
 
+// `new Iterator()`: an abstract base refuses *direct* construction, while a
+// subclass reaching it through `super()` is fine. The two differ only in
+// `new.target`, and the checker separates them by syntax: only the literal
+// `new Iterator(...)` form reaches here.
+function __zunAbstractClass(name: string): any {
+    throw new TypeError("Abstract class " + name + " not directly constructable");
+}
+
 // Assignment to an immutable binding: a class or function declaration's own
 // name. JS makes this a run-time TypeError (a class body is strict code), not
 // a compile error -- the inner class-name binding is const, so

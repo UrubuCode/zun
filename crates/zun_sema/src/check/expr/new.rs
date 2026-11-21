@@ -164,11 +164,22 @@ impl Checker<'_> {
         // `check_new`), so they fell through to the ordinary class path. The
         // prelude guard throws at run time, which is what the fixture catches.
         //
-        // `Iterator` is deliberately absent: it *is* constructible in node.
-        if matches!(name.as_str(), "Math" | "JSON" | "Reflect" | "Atomics" | "crypto")
+        // `Iterator` is here too, but for a different reason and with its own
+        // message: it is an *abstract* base, constructible only through a
+        // subclass's `super()`. Direct construction throws, and the two cases
+        // differ only in `new.target` -- which the syntax already separates,
+        // since a `super()` call never spells `new Iterator(...)`.
+        let abstract_base = name == "Iterator";
+        if (abstract_base
+            || matches!(name.as_str(), "Math" | "JSON" | "Reflect" | "Atomics" | "crypto"))
             && cx.lookup(&name).is_none()
         {
-            if let Some(&func) = self.by_name.get("__zunNotConstructor") {
+            let helper = if abstract_base {
+                "__zunAbstractClass"
+            } else {
+                "__zunNotConstructor"
+            };
+            if let Some(&func) = self.by_name.get(helper) {
                 let mut result = hir::Expr {
                     kind: hir::ExprKind::Call {
                         func,

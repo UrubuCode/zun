@@ -229,13 +229,45 @@ impl<'a> Interp<'a> {
                 false,
                 false,
             );
-            heap.dynamic_define_data(
+            // `constructor` and `@@toStringTag` are accessor pairs, not data
+            // properties: `Object.getOwnPropertyDescriptor(Iterator.prototype,
+            // "constructor").get` is a function. They used to be data, so both
+            // `get` and `set` read as `undefined`.
+            // The namespace object, remembered so the `constructor` getter can
+            // answer it: reading the `Iterator` global back gives the class
+            // descriptor, not this object.
+            let realm = heap.global_object();
+            heap.dynamic_define(
+                realm,
+                "$IteratorNamespace".to_owned(),
+                zun_core::Any::object(namespace.get().addr() as usize),
+                false,
+            );
+            heap.dynamic_define_accessor(
                 proto.get(),
                 "constructor".to_owned(),
-                zun_core::Any::object(namespace.get().addr() as usize),
-                true,
+                Some(zun_core::FunctionHandle::new_builtin_method(
+                    crate::property_ops::BUILTIN_ITERP_CTOR_GET,
+                )),
+                Some(zun_core::FunctionHandle::new_builtin_method(
+                    crate::property_ops::BUILTIN_ITERP_CTOR_SET,
+                )),
                 false,
                 true,
+            );
+            heap.dynamic_set_symbol_getter(
+                proto.get(),
+                zun_core::WellKnownSymbol::ToStringTag.id(),
+                zun_core::FunctionHandle::new_builtin_method(
+                    crate::property_ops::BUILTIN_ITERP_TAG_GET,
+                ),
+            );
+            heap.dynamic_set_symbol_setter(
+                proto.get(),
+                zun_core::WellKnownSymbol::ToStringTag.id(),
+                zun_core::FunctionHandle::new_builtin_method(
+                    crate::property_ops::BUILTIN_ITERP_TAG_SET,
+                ),
             );
         });
     }

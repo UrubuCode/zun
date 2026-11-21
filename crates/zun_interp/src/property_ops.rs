@@ -166,6 +166,15 @@ pub(crate) const BUILTIN_GEN_THROW: u32 = 29;
 /// `Map.prototype.keys` and `Map.prototype.values`. Unlike Set's, these are
 /// *not* the `@` function: `Map.prototype.keys` and `.values` are
 /// three distinct function objects together with `.entries`.
+/// `get` / `set` of the `Iterator.prototype.constructor` and
+/// `Iterator.prototype[Symbol.toStringTag]` accessors. Both are accessor
+/// pairs in the specification, not data properties, and their setters are the
+/// "ignores prototype properties" kind: a write through the prototype itself
+/// is refused, a write through anything else defines an own property.
+pub(crate) const BUILTIN_ITERP_CTOR_GET: u32 = 32;
+pub(crate) const BUILTIN_ITERP_CTOR_SET: u32 = 33;
+pub(crate) const BUILTIN_ITERP_TAG_GET: u32 = 34;
+pub(crate) const BUILTIN_ITERP_TAG_SET: u32 = 35;
 pub(crate) const BUILTIN_MAP_KEYS: u32 = 30;
 pub(crate) const BUILTIN_MAP_VALUES: u32 = 31;
 /// First kind of the `Map.prototype` / `Set.prototype` method values; the kind
@@ -884,7 +893,9 @@ impl Interp<'_> {
                         .iter()
                         .enumerate()
                     {
-                        heap.dynamic_set_function(
+                        // Non-enumerable, like every built-in prototype member:
+                        // `dynamic_set_function` registers an enumerable key.
+                        heap.dynamic_set_method(
                             proto,
                             entry.0.to_owned(),
                             zun_core::FunctionHandle::new_builtin_method(
@@ -1095,6 +1106,52 @@ impl Interp<'_> {
                     BUILTIN_TA_BYTE_OFFSET => num(heap.typed_array_byte_offset(o)),
                     _ => num(heap.typed_array_len(o)),
                 }))
+            }
+            BUILTIN_ITERP_CTOR_GET => {
+                // `%Iterator%` itself, read off the realm.
+                Ok(zun_gc::with_current_heap_mut(|heap| {
+                    let global = heap.global_object();
+                    heap.dynamic_get(global, "$IteratorNamespace").map(Value::Any)
+                })
+                .unwrap_or(Value::Void))
+            }
+            BUILTIN_ITERP_TAG_GET => Ok(Value::Str("Iterator".into())),
+            BUILTIN_ITERP_CTOR_SET | BUILTIN_ITERP_TAG_SET => {
+                // SetterThatIgnoresPrototypeProperties: a write through
+                // `Iterator.prototype` itself is refused; a write through
+                // anything else defines an own property on the receiver.
+                let receiver = this_obj.ok_or_else(|| {
+                    self.incompatible_receiver("set Iterator.prototype.constructor")
+                })?;
+                if receiver == Self::iterator_prototype_object(0) {
+                    return Err(RunError::Native(
+                        "TypeError: Cannot assign to read only property of Iterator.prototype"
+                            .into(),
+                    ));
+                }
+                let value = _args.first().cloned().unwrap_or(Value::Void);
+                let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                    .unwrap_or_else(zun_core::Any::void);
+                zun_gc::with_current_heap_mut(|heap| {
+                    if kind == BUILTIN_ITERP_CTOR_SET {
+                        heap.dynamic_define_data(
+                            receiver,
+                            "constructor".to_owned(),
+                            any,
+                            true,
+                            true,
+                            true,
+                        );
+                    } else {
+                        heap.dynamic_define_symbol(
+                            receiver,
+                            zun_core::WellKnownSymbol::ToStringTag.id(),
+                            any,
+                            true,
+                        );
+                    }
+                });
+                Ok(Value::Void)
             }
             BUILTIN_MAP_KEYS | BUILTIN_MAP_VALUES => {
                 let native = if kind == BUILTIN_MAP_KEYS { "mapKeys" } else { "mapValues" };

@@ -80,6 +80,15 @@ impl<'a> Interp<'a> {
         if !dynamic {
             return Ok(None);
         }
+        // An own *accessor* answers first: `Iterator.prototype.constructor` is
+        // an accessor pair, and reading only the data and function slots
+        // skipped its getter.
+        if let Some(getter) =
+            zun_gc::with_current_heap(|heap| heap.dynamic_accessor_getter(object, "constructor"))
+        {
+            let args = self.with_this_arg(getter, object, Vec::new());
+            return self.invoke_function_value(getter, args).map(Some);
+        }
         let own = zun_gc::with_current_heap(|heap| {
             heap.dynamic_get(object, "constructor")
                 .map(Value::Any)
