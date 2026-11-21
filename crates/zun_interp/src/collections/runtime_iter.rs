@@ -1203,18 +1203,7 @@ impl<'a> Interp<'a> {
                 // prelude helper (the timers, `Buffer.compare`) reports the
                 // public name, not the helper's. Interim: a typed
                 // `display_name` on the method row replaces this table.
-                let plain = match plain {
-                    "__zunSetTimeout" => "setTimeout",
-                    "__zunSetInterval" => "setInterval",
-                    "__zunClearTimeout" => "clearTimeout",
-                    "__zunClearInterval" => "clearInterval",
-                    "__zunQueueMicrotask" => "queueMicrotask",
-                    "__zunSetImmediate" => "setImmediate",
-                    "__zunBufferCompare" => "compare",
-                    "__zunParseInt" => "parseInt",
-                    "__zunParseFloat" => "parseFloat",
-                    other => other,
-                };
+                let plain = crate::intrinsic_meta::value_helper_public_name(plain).unwrap_or(plain);
                 return Some(Value::Str(
                     if let Some(rest) = plain.strip_prefix("get_") {
                         format!("get {rest}")

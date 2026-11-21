@@ -961,3 +961,33 @@ impl Interp<'_> {
         }
     }
 }
+
+/// Platform functions whose *value* is carried by a mangled prelude helper,
+/// paired with the public name they report.
+///
+/// These are lowered at the call site, so the value a script reads is the
+/// helper's. One table, consulted by everything that has to see through the
+/// mangling: the reported `name`, and whether the value is a constructor (a
+/// platform function is not, and owns no `prototype`).
+///
+/// Interim: a typed `display_name` on the method row replaces it.
+const VALUE_HELPERS: &[(&str, &str)] = &[
+    ("__zunSetTimeout", "setTimeout"),
+    ("__zunSetInterval", "setInterval"),
+    ("__zunClearTimeout", "clearTimeout"),
+    ("__zunClearInterval", "clearInterval"),
+    ("__zunQueueMicrotask", "queueMicrotask"),
+    ("__zunSetImmediate", "setImmediate"),
+    ("__zunBufferCompare", "compare"),
+    ("__zunParseInt", "parseInt"),
+    ("__zunParseFloat", "parseFloat"),
+];
+
+/// The public name of the platform function the mangled prelude helper
+/// `mangled` carries, or `None` when it is an ordinary function.
+pub(crate) fn value_helper_public_name(mangled: &str) -> Option<&'static str> {
+    VALUE_HELPERS
+        .iter()
+        .find(|(helper, _)| *helper == mangled)
+        .map(|(_, public)| *public)
+}

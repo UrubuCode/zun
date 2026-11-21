@@ -2077,9 +2077,29 @@ impl Interp<'_> {
         !handle.is_bound()
             && !self.is_arrow_closure(handle)
             && !self.is_method_closure(handle)
+            && !self.is_value_helper(handle)
             && (self.is_generator_function(handle)
                 || (self.function_is_constructor(handle)
                     && !self.is_async_function(handle)))
+    }
+
+    /// Whether `handle` is the mangled prelude helper that carries a platform
+    /// function's value (`parseInt`, the timers). Such a function is not a
+    /// constructor and owns no `prototype`, where the helper -- an ordinary
+    /// prelude function -- would.
+    pub(crate) fn is_value_helper(&self, handle: zun_core::FunctionHandle) -> bool {
+        !handle.is_bound()
+            && handle.builtin_method().is_none()
+            && self
+                .module
+                .tables
+                .method_defs
+                .get((handle.method_rid() as usize).wrapping_sub(1))
+                .is_some_and(|method| {
+                    let name = self.module.strings.get(method.name);
+                    let plain = name.split("@this").next().unwrap_or(name);
+                    crate::intrinsic_meta::value_helper_public_name(plain).is_some()
+                })
     }
 
     /// Whether `handle` is a `function*` (its declared name carries the

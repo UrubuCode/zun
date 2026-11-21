@@ -431,13 +431,14 @@ impl<'a> Interp<'a> {
             "reflectSetReceiver" => self.reflect_set_receiver(args),
             "reflectGetReceiver" => self.reflect_get_receiver(args),
             "reflectRequireObject" => {
-                // `Reflect.*` on a primitive target is a TypeError. A string is let
-                // through: `Object("s")` is still modelled as the primitive, so a
-                // string target is how a boxed string reaches here.
+                // `Reflect.*` on a primitive target is a TypeError. A string is
+                // one: `Object("s")` builds a `StringObject`, so a boxed string
+                // arrives as an object and the primitive no longer has to be
+                // let through to stand in for it.
                 let first = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
                 let primitive = match &first {
                     Value::Int(..) | Value::Float(..) | Value::Bool(_)
-                    | Value::Null | Value::Void => true,
+                    | Value::Null | Value::Void | Value::Str(_) => true,
                     Value::Any(any) => matches!(any.tag(), zun_core::AnyTag::Symbol),
                     // A BigInt is a primitive too, though it lives on the heap.
                     Value::Object(object) => {
@@ -496,6 +497,26 @@ impl<'a> Interp<'a> {
                     .first()
                     .and_then(Self::class_token_of)
                     .ok_or_else(|| RunError::Native("TypeError: value is not a constructor".into()))?;
+                // The newTarget must itself be a constructor. The class path
+                // never checked it, so `Reflect.construct(Base, [], () => 1)`
+                // built an instance instead of refusing.
+                if let Some(new_target) = args.get(2) {
+                    let nullish = matches!(
+                        unbox_arg(new_target),
+                        Ok(Value::Void) | Ok(Value::Null)
+                    );
+                    // A constructor owns a `prototype` -- an arrow, a method
+                    // shorthand and an async function do not -- or is bound
+                    // (`F.bind(null)` keeps F's construct behaviour).
+                    let constructor = Self::class_token_of(new_target).is_some()
+                        || matches!(unbox_arg(new_target), Ok(Value::Function(handle))
+                            if handle.is_bound() || self.function_owns_prototype(handle));
+                    if !nullish && !constructor {
+                        return Err(RunError::Native(
+                            "TypeError: Reflect.construct: Argument 3 is not a constructor".into(),
+                        ));
+                    }
+                }
                 let array =
                     object(args.get(1).ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let values = self.read_array_values(array)?;
@@ -575,7 +596,12 @@ impl<'a> Interp<'a> {
                     if let Some(ctor) = self.coerce_ctor_name(handle) {
                         return self.construct_coerce_wrapper(handle, ctor, values);
                     }
-                    if !self.function_is_constructor(handle) {
+                    // A constructor owns a `prototype` or is bound: a platform
+                    // function value such as `parseInt` has neither, and used
+                    // to construct an object.
+                    if !self.function_is_constructor(handle)
+                        || !(handle.is_bound() || self.function_owns_prototype(handle))
+                    {
                         return Err(RunError::Native("TypeError: value is not a constructor".into()));
                     }
                     return self.construct_ordinary_function(handle, handle, values);
