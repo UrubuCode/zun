@@ -432,8 +432,12 @@ impl Interp<'_> {
                     ctx.slot_set(slot, next);
                 }
             } else if let Some(handle) = {
+                // A BigInt *object* inherits `BigInt.prototype.toJSON` too.
+                let bigint_wrapper = self.is_bigint_wrapper(obj);
                 let name = zun_gc::with_current_heap(|heap| {
-                    if heap.map_entries(obj).is_some() {
+                    if bigint_wrapper {
+                        Some("BigInt")
+                    } else if heap.map_entries(obj).is_some() {
                         Some("Map")
                     } else if heap.set_values(obj).is_some() {
                         Some("Set")

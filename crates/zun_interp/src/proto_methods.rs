@@ -293,6 +293,16 @@ impl Interp<'_> {
                 Ok(Value::Str(format!("Symbol({description})").into()))
             }
             "BigInt" => {
+                // thisBigIntValue: a BigInt, or a BigInt object's payload.
+                let unwrapped = match object {
+                    Some(candidate) => self.bigint_wrapper_payload(candidate)?,
+                    None => None,
+                };
+                let recv = match unwrapped {
+                    Some(big) => Value::Object(big),
+                    None => recv,
+                };
+                let object = unwrapped.or(object);
                 let big = object
                     .filter(|o| zun_gc::with_current_heap(|heap| heap.bigint_value(*o).is_some()))
                     .ok_or_else(|| {
@@ -962,5 +972,41 @@ impl Interp<'_> {
             }
             _ => Err(RunError::BadToken),
         }
+    }
+}
+
+impl Interp<'_> {
+    /// Whether `object` is a BigInt wrapper (`Object(1n)`): an instance of the
+    /// prelude `BigIntObject` class.
+    pub(crate) fn is_bigint_wrapper(&self, object: zun_gc::Obj) -> bool {
+        self.type_rid_describes_object(object)
+            && !zun_gc::with_current_heap(|heap| {
+                heap.is_dynamic_object(object) && !heap.is_instance_bag(object)
+            })
+            && self.class_chain_has_name(object.type_rid(), "BigIntObject")
+    }
+
+    /// The BigInt a wrapper holds ([[BigIntData]]), as the BigInt value.
+    pub(crate) fn bigint_wrapper_payload(
+        &mut self,
+        object: zun_gc::Obj,
+    ) -> Result<Option<zun_gc::Obj>, RunError> {
+        if !self.is_bigint_wrapper(object) {
+            return Ok(None);
+        }
+        let held = match self.instance_member_get(object, "value")? {
+            Some(Value::Any(any)) => {
+                zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))
+            }
+            other => other,
+        };
+        Ok(match held {
+            Some(Value::Object(big))
+                if zun_gc::with_current_heap(|heap| heap.bigint_value(big).is_some()) =>
+            {
+                Some(big)
+            }
+            _ => None,
+        })
     }
 }

@@ -1439,6 +1439,13 @@ impl<'a> Interp<'a> {
                                     .find(|name| self.class_chain_has_name(obj.type_rid(), name))
                                     .map(|name| (*name).to_string())
                             })
+                            // A BigInt object (`Object(1n)`).
+                            .or_else(|| {
+                                (!zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
+                                    && obj.type_rid() != 0
+                                    && self.class_chain_has_name(obj.type_rid(), "BigIntObject"))
+                                .then(|| "BigInt".to_string())
+                            })
                             // A Boolean/Number/String object, or the constructor's own
                             // `prototype` (itself such an object), carries that brand.
                             .or_else(|| self.wrapper_kind(obj).map(str::to_owned));

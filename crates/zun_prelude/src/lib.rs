@@ -50,6 +50,9 @@ pub const BOOLEAN: &str = include_str!("../builtin/boolean.zun");
 /// with every program for the same reason as [`BOOLEAN`].
 pub const NUMBER_OBJECT: &str = include_str!("../builtin/number_object.zun");
 
+/// The `Object(<bigint>)` wrapper class (`builtin/bigint_object.zun`).
+pub const BIGINT_OBJECT: &str = include_str!("../builtin/bigint_object.zun");
+
 /// The `new String(x)` wrapper class (`builtin/string_object.zun`).
 pub const STRING_OBJECT: &str = include_str!("../builtin/string_object.zun");
 
@@ -187,6 +190,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     DATE,
     BOOLEAN,
     NUMBER_OBJECT,
+    BIGINT_OBJECT,
     STRING_OBJECT,
     DECORATORS,
     INTL,

@@ -101,11 +101,15 @@ impl Checker<'_> {
                 // array-like, so `f.apply(null, Object("abc"))` spreads its
                 // three characters where a primitive is a TypeError.
                 Ty::String => Some("StringObject"),
+                // `Object(0n)` is a BigInt *object*: truthy, `typeof` "object".
+                Ty::BigInt => Some("BigIntObject"),
                 _ => None,
             };
             if let Some(wrapper) =
                 wrapper_name.and_then(|name| self.classes_by_name.get(name).copied())
             {
+                // The BigInt wrapper holds its payload in an `any` field.
+                let arg = if arg.ty == Ty::BigInt { Self::box_to_any(arg) } else { arg };
                 return Some(hir::Expr {
                     kind: hir::ExprKind::New {
                         class: wrapper,

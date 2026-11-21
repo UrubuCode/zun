@@ -289,9 +289,13 @@ impl<'a> Interp<'a> {
             }
             "numberCoerceStrict" => {
                 let value = unbox_arg(args.first().ok_or(RunError::BadToken)?)?;
+                // ToNumber of a BigInt is a TypeError, and a BigInt *object*
+                // converts to its BigInt first (ToPrimitive), so `+Object(1n)`
+                // throws as well.
                 let is_bigint = match &value {
                     Value::Object(obj) => {
                         zun_gc::with_current_heap(|heap| heap.bigint_value(*obj).is_some())
+                            || self.is_bigint_wrapper(*obj)
                     }
                     _ => false,
                 };

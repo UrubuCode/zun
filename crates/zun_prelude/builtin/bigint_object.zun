@@ -1,0 +1,14 @@
+// `Object(<bigint>)` wrapper object. A BigInt cannot be constructed with `new`,
+// but ToObject of one is a BigInt object: an *object*, so it is truthy even
+// when it holds `0n`, and `typeof` answers "object". The checker lowers
+// `Object(big)` to `new BigIntObject(big)`. Named like the other primitive
+// wrappers (`NumberObject`, ...), for the same reason: `BigInt` is the
+// primitive's own name.
+
+class BigIntObject {
+    value: any;
+
+    valueOf(): any { return this.value; }
+
+    toString(): string { return String(this.value); }
+}
