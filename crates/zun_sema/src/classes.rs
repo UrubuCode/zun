@@ -79,6 +79,7 @@ impl<'a> Checker<'a> {
                 base_name,
                 dynamic_base: false,
                 unconstructible_base: None,
+                dynamic_base_name: None,
                 null_heritage: c.null_heritage,
                 native_base: None,
                 own_fields: Vec::new(),
@@ -113,6 +114,7 @@ impl<'a> Checker<'a> {
                         // is compiled base-less.
                         if self.is_runtime_value_name(&base_name) {
                             self.classes[i].dynamic_base = true;
+                            self.classes[i].dynamic_base_name = Some(base_name.clone());
                             self.classes[i].unconstructible_base = match base_name.as_str() {
                                 "BigInt" => Some("BigInt"),
                                 "Symbol" => Some("Symbol"),

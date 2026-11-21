@@ -496,6 +496,11 @@ struct ClassInfo {
     /// The `extends` value is a runtime value rather than a known class, so the
     /// class is compiled base-less and `super(...)` is a no-op.
     dynamic_base: bool,
+    /// The source name of a base that is only a value at run time
+    /// (`class C extends Symbol {}`). Kept because `base_name` is cleared when
+    /// the class is compiled base-less, and the statics of that value are
+    /// still inherited.
+    dynamic_base_name: Option<String>,
     /// The `extends` value is `BigInt` or `Symbol`: a function that may be
     /// named in an `extends` clause but throws a TypeError when constructed,
     /// so `new` on such a class (through the implicit `super(...)`) throws too.

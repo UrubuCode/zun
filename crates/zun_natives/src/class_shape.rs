@@ -24,5 +24,15 @@ pub const MODULE: crate::Module = crate::Module {
             ret: Void,
             imp: unavailable,
         },
+        // `dynamicBase(classRid, name)`: record that the class whose metadata
+        // TypeDef rid is `classRid` extends the run-time value named `name`
+        // (`class C extends Symbol {}`). Such a class is compiled base-less,
+        // so nothing in the metadata says whose statics it inherits.
+        NativeFn {
+            name: "dynamicBase",
+            params: &[U32, Str],
+            ret: Void,
+            imp: unavailable,
+        },
     ],
 };

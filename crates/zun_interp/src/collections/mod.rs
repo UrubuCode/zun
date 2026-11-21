@@ -310,6 +310,30 @@ impl<'a> Interp<'a> {
         match name {
             "bufferNew" => self.col_buffer(name, args),
             "bufferMarkShared" => self.col_buffer(name, args),
+            "dynamicBase" => {
+                // Recorded as a hidden global, the way class prototypes are:
+                // `$dynamicBase#<rid>` names the run-time value whose statics
+                // the class inherits.
+                let rid = match args.first().ok_or(RunError::BadToken)? {
+                    Value::Int(value, _) => *value as u32,
+                    Value::Float(value, _) => *value as u32,
+                    _ => return Err(RunError::BadToken),
+                };
+                let Value::Str(base) = unbox_arg(args.get(1).ok_or(RunError::BadToken)?)? else {
+                    return Err(RunError::BadToken);
+                };
+                zun_gc::with_current_heap_mut(|heap| {
+                    let global = heap.global_object();
+                    let handle = heap.intern_string(base.to_string());
+                    heap.dynamic_define(
+                        global,
+                        format!("$dynamicBase#{rid}"),
+                        zun_core::Any::string(handle),
+                        false,
+                    );
+                });
+                Ok(Value::Void)
+            }
             "nullPrototype" => {
                 // `class C extends null {}`: the prototype object inherits
                 // nothing, so `C.prototype.toString` is undefined and

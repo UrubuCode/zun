@@ -283,6 +283,26 @@ impl Checker<'_> {
         // `class C extends null {}`: the prototype object gets a null
         // [[Prototype]]. No TypeDef row records the difference between that
         // and an ordinary base-less class, so it is applied here.
+        // A class whose base is only a run-time value inherits that value's
+        // statics; the metadata records no base for it.
+        if let Some((dynamic_base, _)) = zun_natives::resolve("classShape", "dynamicBase") {
+            for class_idx in 0..self.classes.len() {
+                let Some(name) = self.classes[class_idx].dynamic_base_name.clone() else {
+                    continue;
+                };
+                body.push(hir::Stmt::Expr(hir::Expr {
+                    kind: hir::ExprKind::CallBuiltin {
+                        id: dynamic_base,
+                        args: vec![
+                            class_rid(class_idx),
+                            hir::Expr { kind: hir::ExprKind::String(name), ty: Ty::String, span },
+                        ],
+                    },
+                    ty: Ty::Void,
+                    span,
+                }));
+            }
+        }
         if let Some((null_proto, _)) = zun_natives::resolve("classShape", "nullPrototype") {
             for class_idx in 0..self.classes.len() {
                 if !self.classes[class_idx].null_heritage {

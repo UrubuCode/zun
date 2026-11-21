@@ -732,7 +732,7 @@ pub(crate) fn managed_shared_buffer_builtin(id: u32) -> Option<&'static str> {
 /// Recognize the `classShape` intrinsics, serviced on the interpreter floor
 /// because they edit the managed prototype object a class owns.
 pub(crate) fn managed_class_shape_builtin(id: u32) -> Option<&'static str> {
-    ["nullPrototype"].into_iter().find(|&name| {
+    ["nullPrototype", "dynamicBase"].into_iter().find(|&name| {
         zun_natives::resolve("classShape", name).map(|(candidate, _)| candidate) == Some(id)
     })
 }

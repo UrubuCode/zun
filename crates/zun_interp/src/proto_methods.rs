@@ -282,7 +282,10 @@ impl Interp<'_> {
                 // as 1, so aliasing `valueOf` here would have answered
                 // `valueOf:0` -- right behaviour, wrong reflection.
                 if name == "valueOf" || name == "[Symbol.toPrimitive]" {
-                    return Ok(recv);
+                    // The *resolved* symbol, not the receiver: for a Symbol
+                    // object receiver (`Object(sym)`) the two differ, and
+                    // answering the receiver handed back the wrapper.
+                    return Ok(Value::Any(zun_core::Any::symbol(id)));
                 }
                 let description = zun_gc::with_current_heap(|heap| {
                     heap.symbol_description(id).map(str::to_owned)

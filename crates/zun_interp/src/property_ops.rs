@@ -1874,7 +1874,54 @@ impl Interp<'_> {
                 return Ok(Some(Value::Str(self.module.strings.get(def.name).into())));
             }
         }
+        // A class whose base is only a run-time value inherits that value's
+        // statics (`class S extends Symbol {}` reads `S.iterator`). The
+        // metadata records no base for such a class, so the module initializer
+        // registered the name.
+        if let Some(base) = self.dynamic_base_of(rid) {
+            if let Some(found) = self.static_of_runtime_base(&base, name)? {
+                return Ok(Some(found));
+            }
+        }
         Ok(None)
+    }
+
+    /// The source name of the run-time value class `rid` extends, if any.
+    fn dynamic_base_of(&self, rid: u32) -> Option<String> {
+        zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            let any = heap.dynamic_get(global, &format!("$dynamicBase#{rid}"))?;
+            heap.try_string(any.as_string()?).cloned()
+        })
+        .map(|text| text.to_string())
+    }
+
+    /// Read the static `name` off the run-time value named `base`.
+    fn static_of_runtime_base(
+        &mut self,
+        base: &str,
+        name: &str,
+    ) -> Result<Option<Value>, RunError> {
+        let value = zun_gc::with_current_heap_mut(|heap| {
+            let global = heap.global_object();
+            heap.dynamic_get(global, base)
+        });
+        let Some(token) = value.and_then(|any| any.as_class_descriptor()) else {
+            return Ok(None);
+        };
+        if let Some(rid) = self.user_class_rid(token) {
+            return self.class_static_read(rid, name);
+        }
+        // `Symbol`'s well-known symbols are data statics, not methods.
+        if base == "Symbol" {
+            if let Some(index) = Self::well_known_symbol_index(name) {
+                let id = zun_core::SymbolId::from_raw(index);
+                return Ok(Some(Value::Any(zun_core::Any::symbol(id))));
+            }
+        }
+        Ok(self
+            .builtin_static_kind(token, name)
+            .map(|kind| Value::Function(zun_core::FunctionHandle::new_builtin_method(kind))))
     }
 
     /// The `length` of the class `rid` as a constructor: the specified value for
