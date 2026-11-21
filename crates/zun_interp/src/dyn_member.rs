@@ -356,9 +356,19 @@ impl Interp<'_> {
         // `size` of a Map / Set reached through `any`.
         if name == "size" {
             if let Value::Object(obj) = &concrete {
+                // An own `size` shadows the prototype accessor, as any own
+                // property shadows an inherited one. This branch used to win
+                // outright, so `Object.defineProperty(map, "size", {value: 99})`
+                // had no effect until the own property was deleted.
+                let shadowed = zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_has_own(*obj, "size")
+                        || heap.dynamic_accessor_getter(*obj, "size").is_some()
+                });
                 if let Some(size) = zun_gc::with_current_heap(|heap| {
                     heap.map_len(*obj).or_else(|| heap.set_len(*obj))
-                }) {
+                })
+                .filter(|_| !shadowed)
+                {
                     stack.push(Value::Float(size as f64, zun_il::NumKind::F64));
                     return Ok(ArmFlow::Continue);
                 }

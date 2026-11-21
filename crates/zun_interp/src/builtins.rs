@@ -56,6 +56,24 @@ pub(super) fn call_builtin(
     };
     let _arg_scope = interp.publish_native_link(&arg_link);
     if let Some(name) = managed_builtin_name(id) {
+        // A `Map` / `Set` method a program replaced on the prototype wins over
+        // the built-in. A typed call site lowers straight to the native, so
+        // without this the patch was invisible to `set.has(x)` while a dynamic
+        // call saw it. Only this entry is intercepted: the engine's own
+        // `call_managed_collection` calls are internal operations, which the
+        // specification keeps away from a patched prototype.
+        if let Some((class, js_name, ..)) = crate::property_ops::COLLECTION_METHODS
+            .iter()
+            .find(|(.., native, _, _)| *native == name)
+        {
+            if let Some(handle) = interp.installed_builtin_method(class, js_name) {
+                let call_args =
+                    interp.with_this_value(handle, args[0].clone(), args[1..].to_vec());
+                let result = interp.invoke_function_value(handle, call_args)?;
+                stack.push(result);
+                return Ok(());
+            }
+        }
         stack.push(interp.call_managed_collection(name, &args)?);
         return Ok(());
     }

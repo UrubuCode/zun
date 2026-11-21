@@ -1067,3 +1067,29 @@ impl Interp<'_> {
         Ok(self.this_symbol_value(&Value::Object(object)))
     }
 }
+
+impl Interp<'_> {
+    /// A function a program installed on the prototype of the built-in `class`
+    /// under `member`, replacing the built-in of that name.
+    ///
+    /// `installed_wrapper_method` answers the same question for the primitive
+    /// wrappers; this one covers the built-ins whose prototype object the realm
+    /// owns (`Map`, `Set`, ...), whose methods a typed call site lowers
+    /// straight to a native and so would not otherwise see the patch.
+    pub(crate) fn installed_builtin_method(
+        &mut self,
+        class: &str,
+        member: &str,
+    ) -> Option<zun_core::FunctionHandle> {
+        let proto = self.builtin_prototype_by_name(class)?;
+        let found = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get_function(proto, member)
+                .map(Value::Function)
+                .or_else(|| heap.dynamic_get(proto, member).map(Value::Any))
+        })?;
+        match proto_concrete(found) {
+            Value::Function(handle) if handle.builtin_method().is_none() => Some(handle),
+            _ => None,
+        }
+    }
+}
