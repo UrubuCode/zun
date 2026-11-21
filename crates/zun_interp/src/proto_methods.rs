@@ -227,8 +227,15 @@ impl Interp<'_> {
                 self.call_managed_collection("weakRefDeref", &[Value::Object(target)])
             }
             "WeakMap" | "WeakSet" => {
-                let ok = object
-                    .is_some_and(|o| zun_gc::with_current_heap(|heap| heap.is_weak_collection(o)));
+                // The two kinds share one ephemeron floor, so the brand is
+                // what tells them apart: a `WeakSet` method borrowed with
+                // `.call` refuses a `WeakMap` receiver and the other way
+                // round. Accepting either made the check vacuous.
+                let ok = object.is_some_and(|o| {
+                    zun_gc::with_current_heap(|heap| {
+                        heap.is_weak_collection(o) && heap.is_weak_set(o) == (class == "WeakSet")
+                    })
+                });
                 if !ok {
                     return Err(self.proto_incompatible(class, name, &recv));
                 }

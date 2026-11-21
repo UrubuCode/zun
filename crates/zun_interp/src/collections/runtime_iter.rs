@@ -766,6 +766,25 @@ impl<'a> Interp<'a> {
                 if explicit_null || !unlinked {
                     return Ok(None);
                 }
+                // A built-in object (a Map, a Set, an array) carries no
+                // explicit link: its prototype is the built-in's, which
+                // `Object.getPrototypeOf` already answers. Without this hop the
+                // walk jumped straight to `Object.prototype` and missed
+                // `Map.prototype`'s `size` accessor.
+                let builtin = zun_gc::with_current_heap(|heap| {
+                    crate::collections::builtin_constructor_name(heap, current).map(str::to_owned)
+                })
+                .filter(|name| name != "Object")
+                .and_then(|name| self.builtin_prototype_by_name(&name));
+                if let Some(proto) = builtin.filter(|proto| *proto != current) {
+                    let getter = zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_accessor_getter(proto, name)
+                    });
+                    if let Some(getter) = getter {
+                        let args = self.with_this_arg(getter, receiver, Vec::new());
+                        return self.invoke_function_value(getter, args).map(Some);
+                    }
+                }
                 let root = Self::object_prototype_singleton();
                 if current == root {
                     return Ok(None);

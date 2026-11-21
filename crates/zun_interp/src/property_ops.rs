@@ -163,6 +163,11 @@ pub(crate) const BUILTIN_SETMAP_ITER_NEXT: u32 = 26;
 /// `next` / `return` / `throw` of `%GeneratorPrototype%` (27, 28, 29).
 pub(crate) const BUILTIN_GEN_NEXT: u32 = 27;
 pub(crate) const BUILTIN_GEN_THROW: u32 = 29;
+/// `Map.prototype.keys` and `Map.prototype.values`. Unlike Set's, these are
+/// *not* the `@` function: `Map.prototype.keys` and `.values` are
+/// three distinct function objects together with `.entries`.
+pub(crate) const BUILTIN_MAP_KEYS: u32 = 30;
+pub(crate) const BUILTIN_MAP_VALUES: u32 = 31;
 /// First kind of the `Map.prototype` / `Set.prototype` method values; the kind
 /// selects a row of [`COLLECTION_METHODS`].
 pub(crate) const BUILTIN_COLLECTION_BASE: u32 = 64;
@@ -808,6 +813,20 @@ impl Interp<'_> {
                 });
                 if kind == BUILTIN_MAP_SIZE {
                     heap.dynamic_set_method(proto, "entries".to_owned(), iter_handle);
+                    // `Map.prototype.keys` and `.values` are their own
+                    // functions, not the `@` one: they used to be
+                    // absent, which made `keys === values` true with both
+                    // sides `undefined`.
+                    heap.dynamic_set_method(
+                        proto,
+                        "keys".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method(BUILTIN_MAP_KEYS),
+                    );
+                    heap.dynamic_set_method(
+                        proto,
+                        "values".to_owned(),
+                        zun_core::FunctionHandle::new_builtin_method(BUILTIN_MAP_VALUES),
+                    );
                 } else {
                     heap.dynamic_set_method(proto, "values".to_owned(), iter_handle);
                     heap.dynamic_set_method(proto, "keys".to_owned(), iter_handle);
@@ -1076,6 +1095,17 @@ impl Interp<'_> {
                     BUILTIN_TA_BYTE_OFFSET => num(heap.typed_array_byte_offset(o)),
                     _ => num(heap.typed_array_len(o)),
                 }))
+            }
+            BUILTIN_MAP_KEYS | BUILTIN_MAP_VALUES => {
+                let native = if kind == BUILTIN_MAP_KEYS { "mapKeys" } else { "mapValues" };
+                let receiver = this_obj.ok_or_else(|| {
+                    self.incompatible_receiver(if kind == BUILTIN_MAP_KEYS {
+                        "Map.prototype.keys"
+                    } else {
+                        "Map.prototype.values"
+                    })
+                })?;
+                self.call_managed_collection(native, &[Value::Object(receiver)])
             }
             BUILTIN_SETMAP_ITER_NEXT => {
                 let it = this_obj
