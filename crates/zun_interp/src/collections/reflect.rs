@@ -230,7 +230,8 @@ impl<'a> Interp<'a> {
                         // A native-backed subclass instance also answers for
                         // the members its class prototype chain supplies.
                         if matches!(in_array, Value::Bool(false))
-                            && Self::native_chain_has(object, name)
+                            && (Self::native_chain_has(object, name)
+                                || self.inherits_builtin_member(object, name))
                         {
                             return Ok(Value::Bool(true));
                         }
@@ -247,7 +248,13 @@ impl<'a> Interp<'a> {
                 if zun_gc::with_current_heap(|heap| {
                     heap.is_dynamic_object(object) && !heap.is_instance_bag(object)
                 }) {
-                    return self.call_managed_collection("forInHas", args);
+                    let walked = self.call_managed_collection("forInHas", args)?;
+                    if matches!(walked, Value::Bool(false))
+                        && self.inherits_builtin_member(object, name)
+                    {
+                        return Ok(Value::Bool(true));
+                    }
+                    return Ok(walked);
                 }
                 let dynamic_hit =
                     zun_gc::with_current_heap(|heap| heap.dynamic_has_own(object, name));
@@ -281,7 +288,8 @@ impl<'a> Interp<'a> {
                         || self
                             .instance_method_rid(object, &format!("get_{name}"))
                             .is_some()
-                        || crate::object_proto_mode(&name).is_some();
+                        || crate::object_proto_mode(&name).is_some()
+                        || self.inherits_builtin_member(object, &name);
                     return Ok(Value::Bool(found));
                 }
                 Ok(Value::Bool(false))
@@ -870,5 +878,45 @@ impl<'a> Interp<'a> {
                 .and_then(|proto| proto.as_object())
                 .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) })
         })
+    }
+}
+
+impl Interp<'_> {
+    /// Whether `object` inherits a member named `name` from the prototype of
+    /// the built-in it belongs to.
+    ///
+    /// `"push" in []`, `"charAt" in Object("ab")` and `"get" in new Map()` are
+    /// all true, and nothing in the heap records those members: they are served
+    /// from the metadata tables, so a chain walk over stored properties cannot
+    /// find them.
+    pub(crate) fn inherits_builtin_member(&mut self, object: zun_gc::Obj, name: &str) -> bool {
+        if self.chain_ends_at_null(object) {
+            return false;
+        }
+        let class = self
+            .wrapper_instance_kind(object)
+            .map(str::to_owned)
+            .or_else(|| {
+                zun_gc::with_current_heap(|heap| {
+                    super::builtin_constructor_name(heap, object).map(str::to_owned)
+                })
+            });
+        let Some(class) = class else { return false };
+        // A typed array shares one prototype table under this name.
+        let class = if zun_gc::with_current_heap(|heap| heap.typed_array_element(object).is_some()) {
+            "TypedArray".to_owned()
+        } else {
+            class
+        };
+        if crate::intrinsic_meta::prototype_methods_of(&class)
+            .iter()
+            .any(|(_, method)| *method == name)
+        {
+            return true;
+        }
+        // Map and Set keep their methods in their own table.
+        crate::property_ops::COLLECTION_METHODS
+            .iter()
+            .any(|(owner, method, ..)| *owner == class && *method == name)
     }
 }

@@ -1407,6 +1407,33 @@ impl<'a> Interp<'a> {
                 let value = zun_gc::with_current_heap(|heap| {
                     crate::collections::unbox_function_box(value, heap)
                 });
+                // A proxy wears its *target's* brand: a proxy over an array is
+                // `[object Array]`, over a function `[object Function]`. Only
+                // the `@@toStringTag` read (which the trap can invent) comes
+                // from the proxy, and `string_tag_of` has already tried it.
+                if let Some(target) = object(&value)
+                    .and_then(|obj| zun_gc::with_current_heap(|heap| heap.proxy_target(obj)))
+                {
+                    if self.string_tag_of(object(&value).unwrap_or(target))?.is_none() {
+                        // The target's *brand*, not a tag stored on it: the
+                        // `@@toStringTag` read already happened, through the
+                        // trap, and answered nothing.
+                        let brand = zun_gc::with_current_heap(|heap| {
+                            // A proxy over a callable keeps its target in a
+                            // `functionBox` record, under `__boxedFn`.
+                            if heap.function_of_cell(target).is_some()
+                                || heap.dynamic_get_function(target, "__boxedFn").is_some()
+                            {
+                                Some("Function")
+                            } else {
+                                crate::collections::builtin_constructor_name(heap, target)
+                            }
+                        });
+                        return Ok(Value::Str(
+                            format!("[object {}]", brand.unwrap_or("Object")).into(),
+                        ));
+                    }
+                }
                 let tag: String = match &value {
                     Value::Void => "Undefined".into(),
                     Value::Null => "Null".into(),
@@ -1416,6 +1443,12 @@ impl<'a> Interp<'a> {
                     // A generator or async function has its own brand, read off
                     // the `@generator` / `@async` markers in the closure name.
                     Value::Function(handle) => {
+                        // A tag a script stored on the function wins: it lives
+                        // in the function's expando bag, which the brand below
+                        // never read.
+                        if let Some(text) = self.string_tag_of(crate::function_expando_bag(*handle))? {
+                            return Ok(Value::Str(format!("[object {text}]").into()));
+                        }
                         let generator = self.is_generator_function(*handle);
                         let asynchronous = self.is_async_function(*handle);
                         match (generator, asynchronous) {

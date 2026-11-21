@@ -20,6 +20,20 @@ impl<'a> Interp<'a> {
             Absent,
         }
         let symbol = zun_core::WellKnownSymbol::ToStringTag.id();
+        // A proxy answers through its `get` trap, which can invent the tag, and
+        // falls back to its *target* -- a proxy over an array is
+        // `[object Array]`. Reading the proxy object's own symbol store found
+        // neither.
+        if let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(start)) {
+            let read = self.proxy_dynamic_get_symbol(start, symbol)?;
+            if let Some(text) = read.and_then(|value| match value {
+                Value::Str(text) => Some(text.to_string()),
+                _ => None,
+            }) {
+                return Ok(Some(text));
+            }
+            return self.string_tag_of(target);
+        }
         // The receiver outlives the getter call and the allocations that build
         // lazy class prototype objects.
         zun_gc::root!(receiver = start);

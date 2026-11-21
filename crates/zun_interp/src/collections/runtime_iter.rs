@@ -1393,3 +1393,40 @@ impl<'a> Interp<'a> {
         self.call(method_rid, final_args, None)
     }
 }
+
+impl Interp<'_> {
+    /// A symbol-keyed read through a proxy's `get` trap.
+    ///
+    /// The trap receives the symbol itself as the key, so the string-keyed
+    /// read cannot stand in for it. Without a trap the target's own symbol
+    /// store answers. `None` means the read found nothing.
+    pub(crate) fn proxy_dynamic_get_symbol(
+        &mut self,
+        proxy: zun_gc::Obj,
+        symbol: zun_core::SymbolId,
+    ) -> Result<Option<Value>, RunError> {
+        if zun_gc::with_current_heap(|heap| heap.proxy_is_revoked(proxy)) {
+            return Err(self.revoked_proxy_error("get"));
+        }
+        let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy)) else {
+            return Err(RunError::BadToken);
+        };
+        let Some(callback) = zun_gc::with_current_heap(|heap| heap.proxy_trap(proxy, "get")) else {
+            let stored = zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol(target, symbol));
+            return Ok(stored.map(Value::Any));
+        };
+        let handler = zun_gc::with_current_heap(|heap| heap.proxy_handler(proxy)).unwrap_or(target);
+        let args = vec![
+            Value::Object(target),
+            Value::Any(zun_core::Any::symbol(symbol)),
+            Value::Object(proxy),
+        ];
+        let result =
+            self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?;
+        let concrete = unbox_arg(&result)?;
+        Ok(match concrete {
+            Value::Void => None,
+            other => Some(other),
+        })
+    }
+}

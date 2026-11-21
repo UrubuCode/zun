@@ -216,7 +216,7 @@ impl<'a> Interp<'a> {
                     Value::Str(name) => name.to_string(),
                     _ => return Err(RunError::BadToken),
                 };
-                Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                let own = zun_gc::with_current_heap(|heap| {
                     let len = heap.array_len(array).unwrap_or(0);
                     if key == "length" {
                         return true;
@@ -230,7 +230,12 @@ impl<'a> Interp<'a> {
                         }
                         _ => false,
                     }
-                })))
+                });
+                // Then the members `Array.prototype` supplies, which live in
+                // the metadata tables rather than the heap: `"push" in []`.
+                Ok(Value::Bool(
+                    own || self.inherits_builtin_member(array, &key),
+                ))
             }
             _ => Err(RunError::BadToken),
         }
