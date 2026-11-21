@@ -22,11 +22,12 @@ impl Heap {
         };
         let hash = self.any_hash(key);
         let strings = &self.strings;
+        let bigints = &self.bigints;
         let result =
             self.maps
                 .get_mut(&(object.addr() as usize))?
                 .insert(key, value, hash, |candidate| {
-                    any_same_value_zero(candidate, key, strings)
+                    any_same_value_zero(candidate, key, strings, bigints)
                 });
         if let Some(child) = key.as_object() {
             self.write_barrier(object, child as u64);
@@ -40,21 +41,23 @@ impl Heap {
     pub fn map_get(&self, object: Obj, key: zun_core::Any) -> Option<zun_core::Any> {
         let hash = self.any_hash(key);
         let strings = &self.strings;
+        let bigints = &self.bigints;
         self.maps
             .get(&(object.addr() as usize))?
             .get(hash, |candidate| {
-                any_same_value_zero(candidate, key, strings)
+                any_same_value_zero(candidate, key, strings, bigints)
             })
     }
 
     pub fn map_has(&self, object: Obj, key: zun_core::Any) -> Option<bool> {
         let hash = self.any_hash(key);
         let strings = &self.strings;
+        let bigints = &self.bigints;
         Some(
             self.maps
                 .get(&(object.addr() as usize))?
                 .contains(hash, |candidate| {
-                    any_same_value_zero(candidate, key, strings)
+                    any_same_value_zero(candidate, key, strings, bigints)
                 }),
         )
     }
@@ -71,10 +74,11 @@ impl Heap {
     ) -> Option<(zun_core::Any, zun_core::Any)> {
         let hash = self.any_hash(key);
         let strings = &self.strings;
+        let bigints = &self.bigints;
         self.maps
             .get_mut(&(object.addr() as usize))?
             .remove(hash, |candidate| {
-                any_same_value_zero(candidate, key, strings)
+                any_same_value_zero(candidate, key, strings, bigints)
             })
     }
 

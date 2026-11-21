@@ -20,8 +20,15 @@ impl Heap {
             }
             zun_core::AnyTag::Bool => value.as_bool().unwrap() as u64 ^ 0x33,
             zun_core::AnyTag::Object => {
-                unsafe { Obj::from_addr(value.as_object().unwrap() as *mut u64) }.identity_hash()
-                    ^ 0x44
+                // A BigInt hashes by value, so that equal BigInts -- always
+                // distinct allocations -- land in one bucket.
+                let address = value.as_object().unwrap();
+                if !self.bigints.is_empty() {
+                    if let Some(big) = self.bigints.get(&address) {
+                        return hash_bytes(big.to_string().as_bytes()) ^ 0x77;
+                    }
+                }
+                unsafe { Obj::from_addr(address as *mut u64) }.identity_hash() ^ 0x44
             }
             zun_core::AnyTag::String => {
                 self.try_string(value.as_string().unwrap())

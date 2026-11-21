@@ -16,15 +16,16 @@ impl Heap {
         };
         let hash = self.any_hash(value);
         let strings = &self.strings;
+        let bigints = &self.bigints;
         let set = self.sets.get_mut(&(object.addr() as usize))?;
         let existed = set
             .get(hash, |candidate| {
-                any_same_value_zero(candidate, value, strings)
+                any_same_value_zero(candidate, value, strings, bigints)
             })
             .is_some();
         if !existed {
             set.insert(value, zun_core::Any::bool(true), hash, |candidate| {
-                any_same_value_zero(candidate, value, strings)
+                any_same_value_zero(candidate, value, strings, bigints)
             });
             if let Some(child) = value.as_object() {
                 self.write_barrier(object, child as u64);
@@ -36,11 +37,12 @@ impl Heap {
     pub fn set_has(&self, object: Obj, value: zun_core::Any) -> Option<bool> {
         let hash = self.any_hash(value);
         let strings = &self.strings;
+        let bigints = &self.bigints;
         Some(
             self.sets
                 .get(&(object.addr() as usize))?
                 .get(hash, |candidate| {
-                    any_same_value_zero(candidate, value, strings)
+                    any_same_value_zero(candidate, value, strings, bigints)
                 })
                 .is_some(),
         )
@@ -49,11 +51,12 @@ impl Heap {
     pub fn set_remove(&mut self, object: Obj, value: zun_core::Any) -> Option<bool> {
         let hash = self.any_hash(value);
         let strings = &self.strings;
+        let bigints = &self.bigints;
         Some(
             self.sets
                 .get_mut(&(object.addr() as usize))?
                 .remove(hash, |candidate| {
-                    any_same_value_zero(candidate, value, strings)
+                    any_same_value_zero(candidate, value, strings, bigints)
                 })
                 .is_some(),
         )

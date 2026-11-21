@@ -439,6 +439,10 @@ impl<'a> Interp<'a> {
                     Value::Int(..) | Value::Float(..) | Value::Bool(_)
                     | Value::Null | Value::Void => true,
                     Value::Any(any) => matches!(any.tag(), zun_core::AnyTag::Symbol),
+                    // A BigInt is a primitive too, though it lives on the heap.
+                    Value::Object(object) => {
+                        zun_gc::with_current_heap(|heap| heap.bigint_value(*object).is_some())
+                    }
                     _ => false,
                 };
                 if primitive {
