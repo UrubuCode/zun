@@ -1703,6 +1703,19 @@ impl Interp<'_> {
         if matches!(name, "name" | "length" | "prototype") {
             return true;
         }
+        // A value stored for an *inherited* static field is an own property of
+        // this class: the storage is keyed by (class, declaring field), which
+        // is how `Sub.count = v` keeps the base's value untouched.
+        if let Some((owner, frid)) = self.static_field_origin(rid, name) {
+            if owner != rid
+                && zun_gc::with_current_heap(|heap| {
+                    heap.static_get(rid, frid).is_some()
+                        || heap.static_get_function(rid, frid).is_some()
+                })
+            {
+                return true;
+            }
+        }
         let Some(def) = self
             .module
             .tables
@@ -1774,17 +1787,18 @@ impl Interp<'_> {
             else {
                 break;
             };
-            for frid in def.field_start..def.field_end {
-                let Some(field) = self
+            // The declaring class holds the FieldDef, but the *value* may sit
+            // on any class between here and there: a write through a subclass
+            // creates an own property on it. So the search walks the chain,
+            // keyed by the declaring field.
+            if let Some((_, frid)) = self.static_field_origin(r, name) {
+                if let Some(kind) = self
                     .module
                     .tables
                     .field_defs
                     .get((frid as usize).wrapping_sub(1))
-                else {
-                    continue;
-                };
-                if field.is_static && !name.starts_with('#') && self.module.strings.get(field.name) == name {
-                    let kind = field.kind;
+                    .map(|field| field.kind)
+                {
                     let value = zun_gc::with_current_heap(|heap| {
                         if let Some(any) = heap.static_get(r, frid) {
                             let value = Value::unbox_any(any, heap).unwrap_or(Value::Void);
@@ -1793,8 +1807,6 @@ impl Interp<'_> {
                             heap.static_get_function(r, frid).map(Value::Function)
                         }
                     });
-                    // An inherited-layout copy that was never initialized on this
-                    // class falls through to the declaring base class.
                     if let Some(value) = value {
                         return Ok(Some(value));
                     }
@@ -1920,53 +1932,55 @@ impl Interp<'_> {
 
     /// `Class.name = value` through a class value: store into the static field
     /// found on the class or its bases. Answers whether a field took the write.
-    pub(crate) fn class_static_write(&mut self, rid: u32, name: &str, value: &Value) -> bool {
+    /// The `(declaring class rid, FieldDef rid)` of the static field `name`
+    /// visible from class `rid`, searching base classes.
+    ///
+    /// Static storage is keyed by the *pair*, so a subclass can hold its own
+    /// value for a base's field: that is what JS does when a write goes
+    /// through the subclass (`Sub.count++` reads the base's and creates an own
+    /// property on `Sub`).
+    pub(crate) fn static_field_origin(&self, rid: u32, name: &str) -> Option<(u32, u32)> {
+        if name.starts_with('#') {
+            return None;
+        }
         let mut current = Some(rid);
         for _ in 0..256 {
-            let Some(r) = current else { break };
-            let Some(def) = self
-                .module
-                .tables
-                .type_defs
-                .get((r as usize).wrapping_sub(1))
-                .cloned()
-            else {
-                break;
-            };
+            let r = current?;
+            let def = self.module.tables.type_defs.get((r as usize).wrapping_sub(1))?;
             for frid in def.field_start..def.field_end {
-                let Some(field) = self
+                let field = self
                     .module
                     .tables
                     .field_defs
-                    .get((frid as usize).wrapping_sub(1))
-                else {
-                    continue;
-                };
-                if !(field.is_static && !name.starts_with('#') && self.module.strings.get(field.name) == name) {
-                    continue;
+                    .get((frid as usize).wrapping_sub(1))?;
+                if field.is_static && self.module.strings.get(field.name) == name {
+                    return Some((r, frid));
                 }
-                let initialized = zun_gc::with_current_heap(|heap| {
-                    heap.static_get(r, frid).is_some()
-                        || heap.static_get_function(r, frid).is_some()
-                });
-                if !initialized {
-                    continue;
-                }
-                zun_gc::with_current_heap_mut(|heap| {
-                    if let Value::Function(handle) = value {
-                        heap.static_set_function(r, frid, *handle);
-                    } else {
-                        let any = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
-                        heap.static_set(r, frid, any);
-                    }
-                });
-                return true;
             }
             current = (def.base.table() == Some(zun_metadata::TableKind::TypeDef)
                 && !def.base.is_null())
             .then(|| def.base.rid());
         }
-        false
+        None
+    }
+
+    pub(crate) fn class_static_write(&mut self, rid: u32, name: &str, value: &Value) -> bool {
+        // The write lands on the *receiving* class, not the declaring one: in
+        // JS `Sub.count = v` creates an own property on `Sub` and leaves the
+        // base's alone. It used to walk the chain and overwrite the declaring
+        // class's slot, so every subclass shared one counter.
+        let Some((_, frid)) = self.static_field_origin(rid, name) else {
+            return false;
+        };
+        zun_gc::with_current_heap_mut(|heap| {
+            if let Value::Function(handle) = value {
+                heap.static_set_function(rid, frid, *handle);
+            } else {
+                let any = value.box_any(heap).unwrap_or_else(zun_core::Any::null);
+                heap.static_set(rid, frid, any);
+            }
+        });
+        true
     }
 
     /// A store to `Class.name` through a class value: a declared static field

@@ -16,11 +16,8 @@ impl Checker<'_> {
         {
             let fields = self.full_fields(class_idx as u32);
             let initializers = self.full_initializers(class_idx as u32);
-            let first_own = fields
-                .len()
-                .saturating_sub(self.classes[class_idx].own_fields.len());
-            for (slot, (_, field_ty, is_static, _)) in fields.iter().enumerate() {
-                if !*is_static || slot < first_own {
+            for (slot, (name, field_ty, is_static, _)) in fields.iter().enumerate() {
+                if !*is_static || !self.declares_own_field(class_idx as u32, name) {
                     continue;
                 }
                 let Some(Some(init)) = initializers.get(slot) else {
@@ -326,8 +323,13 @@ impl Checker<'_> {
         for class_idx in 0..self.classes.len() {
             let fields = self.full_fields(class_idx as u32);
             let initializers = self.full_initializers(class_idx as u32);
-            for (slot, (_, field_ty, is_static, _)) in fields.iter().enumerate() {
-                if !*is_static {
+            // Only the class that *declares* the field initializes it. Without
+            // this a subclass re-ran the base's literal initializer, which
+            // seeded a second slot and made the inherited static an own
+            // property of the subclass -- so `hasOwnProperty(Sub, "count")`
+            // was true before any write, and the two slots then drifted apart.
+            for (slot, (name, field_ty, is_static, _)) in fields.iter().enumerate() {
+                if !*is_static || !self.declares_own_field(class_idx as u32, name) {
                     continue;
                 }
                 let Some(Some(init)) = initializers.get(slot) else {

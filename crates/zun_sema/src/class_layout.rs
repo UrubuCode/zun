@@ -115,10 +115,15 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn static_field_of(&self, class: u32, name: &str) -> Option<(u16, Ty)> {
+        // Last match wins: a class that redeclares a base's static shadows it,
+        // and own fields come last in the inherited-first layout. Taking the
+        // first match read the base's slot while the initializer had filled
+        // the class's own one.
         self.full_fields_rc(class)
             .iter()
             .enumerate()
-            .find(|(_, (n, _, is_static, _))| n == name && *is_static)
+            .filter(|(_, (n, _, is_static, _))| n == name && *is_static)
+            .next_back()
             .map(|(slot, (_, ty, _, _))| (slot as u16, *ty))
     }
 
@@ -200,23 +205,19 @@ impl<'a> Checker<'a> {
     /// The class that declares static field `name` as seen from `class`: the
     /// class itself when it declares (or shadows) it, else the nearest base
     /// that does. An inherited static is stored once, on its declaring class.
-    pub(super) fn static_field_owner(&self, class: u32, name: &str) -> u32 {
-        let mut current = class;
-        loop {
-            let info = &self.classes[current as usize];
-            if info
-                .own_fields
-                .iter()
-                .any(|(n, _, is_static, _)| n == name && *is_static)
-            {
-                return current;
-            }
-            match info.base {
-                Some(base) => current = base,
-                None => return class,
-            }
-        }
+    /// The class a static field access is keyed by: the class *as written*,
+    /// not the one that declares the field.
+    ///
+    /// Static storage is keyed by (class, FieldDef), and the layout already
+    /// gives each class its own token for an inherited static, so keying by
+    /// the written class is what gives JS semantics: `Sub.count = v` creates
+    /// an own property on `Sub` and leaves the base's value alone, while a
+    /// read of an unset slot falls back along the chain by name. Returning the
+    /// declaring class instead made every subclass share one slot.
+    pub(super) fn static_field_owner(&self, class: u32, _name: &str) -> u32 {
+        class
     }
+
 }
 
 /// What a `receiver.#name` expression does with the private member.
@@ -408,5 +409,19 @@ impl Checker<'_> {
             };
         }
         Some(result)
+    }
+}
+
+impl crate::check::Checker<'_> {
+    /// Whether `class` itself declares a field called `name`.
+    ///
+    /// Not a position test: a field that redeclares a base's keeps the
+    /// inherited slot, so "own fields come last" does not hold and a
+    /// shadowing static was treated as inherited -- its initializer never ran.
+    pub(super) fn declares_own_field(&self, class: u32, name: &str) -> bool {
+        self.classes[class as usize]
+            .own_fields
+            .iter()
+            .any(|(n, _, _, _)| n == name)
     }
 }
