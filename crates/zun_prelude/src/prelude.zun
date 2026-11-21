@@ -235,6 +235,12 @@ function encodeURI(value?: any): string {
                     width = 2;
                 }
             }
+            // An unpaired surrogate has no UTF-8 encoding, so the
+            // specification refuses it. It used to encode as the plane-15
+            // stand-in zun stores it under.
+            if (width == 1 && c >= 0xd800 && c <= 0xdfff) {
+                throw new URIError("URI malformed");
+            }
             out += encodeURIComponent(s.substring(i, i + width));
             i += width;
         }
@@ -266,6 +272,9 @@ function decodeURI(value?: any): string {
                     run = "";
                 }
                 out += s.substring(i, i + 3);
+                // The whole escape is consumed: only one character was,
+                // so `decodeURI("%2F")` answered "%2F2F".
+                i += 2;
             } else {
                 run += s.charAt(i);
                 if (i + 2 < s.length) {

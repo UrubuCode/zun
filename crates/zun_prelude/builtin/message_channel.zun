@@ -1,0 +1,111 @@
+// `MessageChannel` and `MessagePort`: a pair of entangled ports that deliver
+// messages to each other as tasks.
+//
+// Zun runs one agent, so both ends live in this realm and delivery is a
+// `setTimeout(..., 0)` task -- the specification queues a task on the port's
+// event loop, and a microtask would run too early relative to the rest of a
+// turn. A message is structured-cloned on the way out, as it is across an
+// agent boundary, so the receiver cannot observe the sender's object.
+//
+// A port delivers nothing until it is started: `start()` does it, and so does
+// having an `onmessage`, which the specification makes equivalent.
+
+import { serialize as portSerialize, deserialize as portDeserialize } from "zun:core";
+
+class MessageEvent extends Event {
+    data: any = null;
+
+    constructor(type: any, init: any = null) {
+        super(type, init);
+        if (init !== null && init !== undefined) {
+            const supplied: any = init;
+            if (supplied.data !== undefined) {
+                this.data = supplied.data;
+            }
+        }
+    }
+}
+
+class MessagePort extends EventTarget {
+    peer: any = null;
+    started: boolean = false;
+    closed: boolean = false;
+    pending: any[] = [];
+    // Assigning `onmessage` starts the port, per the specification; a port
+    // that has one is therefore treated as started rather than through an
+    // accessor, which cannot be declared on a class whose fields are a fixed
+    // layout.
+    onmessage: any = null;
+
+    postMessage(message: any = undefined): void {
+        const target: any = this.peer;
+        if (this.closed || target === null || target === undefined) {
+            return;
+        }
+        // Structured-cloned on the way out, as it is across an agent boundary,
+        // so the receiver cannot observe the sender's object. Through the
+        // `zun:core` intrinsics directly: calling the `structuredClone` global
+        // from a prelude class makes every module reference it.
+        target.enqueue(portDeserialize(portSerialize(message)));
+    }
+
+    // Internal: take a message the other end sent.
+    enqueue(message: any): void {
+        if (this.closed) {
+            return;
+        }
+        this.pending.push(message);
+        // Through `any`: a function assigned to an `any` field lands in the
+        // dynamic property table, not the typed slot, so the declared field
+        // still reads `null`.
+        const self: any = this;
+        if (this.started || (self.onmessage !== null && self.onmessage !== undefined)) {
+            this.flush();
+        }
+    }
+
+    start(): void {
+        if (this.closed) {
+            return;
+        }
+        this.started = true;
+        this.flush();
+    }
+
+    close(): void {
+        this.closed = true;
+        this.peer = null;
+        this.pending = [];
+    }
+
+    // Internal: deliver everything queued, one task per message.
+    flush(): void {
+        while (this.pending.length > 0) {
+            const message: any = this.pending.shift();
+            const port: any = this;
+            setTimeout(function (): void {
+                if (port.closed) {
+                    return;
+                }
+                const event: any = new MessageEvent("message", { data: message });
+                const listener: any = port.onmessage;
+                if (listener !== null && listener !== undefined) {
+                    listener.call(port, event);
+                }
+                port.dispatchEvent(event);
+            }, 0);
+        }
+    }
+}
+
+class MessageChannel {
+    port1: MessagePort;
+    port2: MessagePort;
+
+    constructor() {
+        this.port1 = new MessagePort();
+        this.port2 = new MessagePort();
+        this.port1.peer = this.port2;
+        this.port2.peer = this.port1;
+    }
+}

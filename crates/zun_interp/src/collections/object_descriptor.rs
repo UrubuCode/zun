@@ -1793,3 +1793,43 @@ impl Interp<'_> {
             })
     }
 }
+
+/// Prelude classes that model a platform interface whose state lives in
+/// internal slots: their declared fields are not own properties.
+///
+/// A WebIDL interface exposes its state through accessors on the prototype,
+/// so an instance owns nothing. Matching by class name is the same fragility
+/// the audit records for the brand table; a typed flag on the TypeDef row
+/// would replace both.
+const PLATFORM_SLOT_CLASSES: &[&str] = &[
+    "URL",
+    "URLSearchParams",
+    "Headers",
+    "FormData",
+    "AbortController",
+    "AbortSignal",
+    "EventTarget",
+    "Event",
+    "MessageEvent",
+    "CustomEvent",
+    "Blob",
+    "File",
+    "Request",
+    "Response",
+    "TextEncoder",
+    "TextDecoder",
+];
+
+impl Interp<'_> {
+    /// Whether the class `rid` is a platform interface whose declared fields
+    /// stand for internal slots rather than own properties.
+    pub(crate) fn platform_internal_slots(&self, rid: u32) -> bool {
+        if rid == 0 {
+            return false;
+        }
+        let Some(def) = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1)) else {
+            return false;
+        };
+        PLATFORM_SLOT_CLASSES.contains(&self.module.strings.get(def.name))
+    }
+}

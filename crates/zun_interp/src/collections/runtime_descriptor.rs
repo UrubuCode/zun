@@ -177,6 +177,13 @@ impl<'a> Interp<'a> {
         // Typed object: walk the declared-field layout from the base-most type
         // down to the concrete type so keys read in definition order.
         let type_rid = obj.type_rid();
+        // A platform interface keeps its state in internal slots, reachable
+        // only through its accessors: `Object.getOwnPropertyNames(new URL(..))`
+        // is empty. The prelude models those slots as declared fields, which
+        // listed them all.
+        if self.platform_internal_slots(type_rid) {
+            return Ok(Self::wrapper_expandos(obj, true));
+        }
         let mut chain = Vec::new();
         let mut current = type_rid;
         loop {

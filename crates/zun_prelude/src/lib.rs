@@ -104,6 +104,9 @@ pub const EVENT: &str = include_str!("../builtin/event.zun");
 /// dispatch; listeners are stored as `functionBox` records. Uses [`EVENT`].
 pub const EVENT_TARGET: &str = include_str!("../builtin/event_target.zun");
 
+/// `MessageChannel` / `MessagePort` / `MessageEvent`. Uses [`EVENT_TARGET`].
+pub const MESSAGE_CHANNEL: &str = include_str!("../builtin/message_channel.zun");
+
 /// The `AbortSignal` and `AbortController` classes (`builtin/abort.zun`); an
 /// `AbortSignal` owns an [`EVENT_TARGET`].
 /// Minimal WHATWG streams (`builtin/streams.zun`).
@@ -206,6 +209,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     URL,
     EVENT,
     EVENT_TARGET,
+    MESSAGE_CHANNEL,
     ABORT,
     STREAMS,
     CRYPTO,

@@ -1097,6 +1097,12 @@ fn encode_uri_component(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeVa
             "encodeURIComponent: expected a string".to_string(),
         ));
     };
+    // An unpaired surrogate has no UTF-8 encoding, so the specification
+    // refuses it. It is stored as a plane-15 stand-in, whose own UTF-8 bytes
+    // used to be percent-encoded instead.
+    if value.chars().any(|c| zun_core::wtf16::lone_unit(c).is_some()) {
+        return Err(NativeError("URIError: URI malformed".to_string()));
+    }
     let mut out = String::new();
     for byte in value.as_bytes() {
         let b = *byte;
