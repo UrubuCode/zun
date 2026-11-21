@@ -446,3 +446,15 @@ function __zunBufferCompare(a: any, b: any): number {
 function __zunDeadZone(name: string): any {
     throw new ReferenceError("Cannot access '" + name + "' before initialization");
 }
+
+// `parseInt` / `parseFloat` as first-class values. Both are lowered at the call
+// site, so the global and `Number.parseInt` each had a value of their own and
+// `Number.parseInt === parseInt` was false; the specification makes them one
+// function object. The checker maps both spellings onto these helpers.
+function __zunParseInt(text: any, radix: any): number {
+    return parseInt(text, radix);
+}
+
+function __zunParseFloat(text: any): number {
+    return parseFloat(text);
+}

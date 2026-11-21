@@ -1211,6 +1211,8 @@ impl<'a> Interp<'a> {
                     "__zunQueueMicrotask" => "queueMicrotask",
                     "__zunSetImmediate" => "setImmediate",
                     "__zunBufferCompare" => "compare",
+                    "__zunParseInt" => "parseInt",
+                    "__zunParseFloat" => "parseFloat",
                     other => other,
                 };
                 return Some(Value::Str(

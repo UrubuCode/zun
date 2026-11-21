@@ -879,6 +879,21 @@ impl Checker<'_> {
                     let declared = self.signatures[func as usize].name.trim_end_matches("@generator").trim_end_matches("@async").trim_end_matches("@this");
                     // `String` / `Number` / `Boolean` read as values are the
                     // `__coerce*` helpers; they answer as the constructors.
+                    // A platform function whose value is carried by a mangled
+                    // helper (timers, `parseInt`, `Buffer.compare`) answers with
+                    // its public name; the run-time `name` read has the same table.
+                    let declared = match declared {
+                        "__zunSetTimeout" => "setTimeout",
+                        "__zunSetInterval" => "setInterval",
+                        "__zunClearTimeout" => "clearTimeout",
+                        "__zunClearInterval" => "clearInterval",
+                        "__zunQueueMicrotask" => "queueMicrotask",
+                        "__zunSetImmediate" => "setImmediate",
+                        "__zunBufferCompare" => "compare",
+                        "__zunParseInt" => "parseInt",
+                        "__zunParseFloat" => "parseFloat",
+                        other => other,
+                    };
                     Self::coerce_constructor_name(declared).unwrap_or(declared).to_string()
                 };
                 return Ok(hir::Expr {
@@ -1157,6 +1172,8 @@ impl Checker<'_> {
 fn static_value_helper(class: &str, member: &str) -> Option<&'static str> {
     Some(match (class, member) {
         ("Buffer", "compare") => "__zunBufferCompare",
+        ("Number", "parseInt") => "__zunParseInt",
+        ("Number", "parseFloat") => "__zunParseFloat",
         _ => return None,
     })
 }

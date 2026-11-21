@@ -282,6 +282,7 @@ impl Checker<'_> {
                         .by_name
                         .get(name)
                         .filter(|_| PRELUDE_FUNCTION_GLOBALS.contains(&name))
+                        .or_else(|| timer_value_helper(name).and_then(|h| self.by_name.get(h)))
                     {
                         Some(&func) => Self::box_to_any(hir::Expr {
                             kind: hir::ExprKind::FunctionRef { func },
@@ -537,6 +538,10 @@ pub(in crate::check) fn timer_value_helper(name: &str) -> Option<&'static str> {
         "clearInterval" => "__zunClearInterval",
         "queueMicrotask" => "__zunQueueMicrotask",
         "setImmediate" => "__zunSetImmediate",
+        // Not timers, but the same shape: call-site lowered globals whose
+        // value must be one function object shared with `Number.parseInt`.
+        "parseInt" => "__zunParseInt",
+        "parseFloat" => "__zunParseFloat",
         _ => return None,
     })
 }
