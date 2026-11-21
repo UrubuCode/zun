@@ -464,6 +464,7 @@ impl Interp<'_> {
                 };
             } else if zun_gc::with_current_heap(|heap| {
                 heap.typed_array_element(obj) == Some(zun_core::TypedElement::U8)
+                    && heap.is_node_buffer(obj)
                     && inherited_function(heap, obj, "toJSON").is_none()
             }) {
                 // A Node `Buffer` serialises as `{ type: 'Buffer', data: [..] }`.

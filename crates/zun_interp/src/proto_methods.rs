@@ -473,6 +473,16 @@ impl Interp<'_> {
             // `flat` defaults its depth to 1.
             args = vec![Value::Float(1.0, zun_il::NumKind::F64)];
         }
+        // A Node `Buffer` keeps its own `fill`, which validates its arguments
+        // where the typed-array one clamps. A Buffer *is* a `Uint8Array`, so
+        // only the brand tells them apart.
+        if let Value::Object(view) = &recv {
+            if name == "fill" && zun_gc::with_current_heap(|heap| heap.is_node_buffer(*view)) {
+                let mut forwarded = vec![Value::Object(*view)];
+                forwarded.extend(args.clone());
+                return self.call_managed_collection("nodeBufferFill", &forwarded);
+            }
+        }
         // A typed array is an array-like whose writes must land in its own
         // elements, never in a temporary copy.
         if let Value::Object(view) = &recv {

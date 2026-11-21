@@ -258,6 +258,10 @@ pub struct Heap {
     sets: HashMap<usize, zun_core::OrderedMap>,
     /// WeakMap handles owned by managed WeakMap objects.
     weak_map_objects: HashMap<usize, WeakMapId>,
+    /// The typed-array views created as a Node `Buffer`. A Buffer *is* a
+    /// `Uint8Array`, so nothing else tells the two apart -- and they differ:
+    /// `Buffer.isBuffer`, `fill`'s argument validation, JSON serialization.
+    node_buffers: std::collections::HashSet<usize>,
     /// The addresses in `weak_map_objects` that are `WeakSet`s rather than
     /// `WeakMap`s. The two share one ephemeron floor, so this is the only
     /// thing that distinguishes them (brands, `instanceof`, receiver checks).
@@ -918,6 +922,17 @@ impl Heap {
             mapped_owners.insert(mapped, id);
         }
         self.weak_map_objects = mapped_owners;
+        let node_buffers = std::mem::take(&mut self.node_buffers);
+        self.node_buffers = node_buffers
+            .into_iter()
+            .map(|owner| {
+                let mapped = map(owner);
+                if mapped != owner {
+                    rewritten += 1;
+                }
+                mapped
+            })
+            .collect();
         let weak_sets = std::mem::take(&mut self.weak_set_objects);
         self.weak_set_objects = weak_sets
             .into_iter()

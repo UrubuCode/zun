@@ -668,6 +668,7 @@ impl Heap {
                 self.sets.remove(&(r.addr as usize));
                 self.weak_map_objects.remove(&(r.addr as usize));
                 self.weak_set_objects.remove(&(r.addr as usize));
+                self.node_buffers.remove(&(r.addr as usize));
                 self.weak_ref_objects.remove(&(r.addr as usize));
                 self.promises.remove(&(r.addr as usize));
                 self.regexes.remove(&(r.addr as usize));

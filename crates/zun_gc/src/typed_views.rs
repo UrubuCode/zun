@@ -479,3 +479,15 @@ impl Heap {
         Some(view.fill_range(begin, end))
     }
 }
+
+impl Heap {
+    /// Brand `object` as a Node `Buffer` rather than a plain `Uint8Array`.
+    pub fn mark_node_buffer(&mut self, object: Obj) {
+        self.node_buffers.insert(object.addr() as usize);
+    }
+
+    /// Whether `object` was created as a Node `Buffer`.
+    pub fn is_node_buffer(&self, object: Obj) -> bool {
+        self.node_buffers.contains(&(object.addr() as usize))
+    }
+}

@@ -236,6 +236,17 @@ impl<'a> Interp<'a> {
     ) -> Result<Value, RunError> {
         // The typed-array intrinsics are generated from the master table in
         // `zun_core`, so every kind the checker accepts runs on Tier 0.
+        // A Node `Buffer` keeps its own `fill`, whose arguments are validated
+        // rather than clamped, and whose value may be a string or a view. A
+        // Buffer *is* a `Uint8Array`, so the typed-array intrinsic the checker
+        // folds onto would otherwise answer -- only the brand tells them apart.
+        if name.ends_with("ArrayFill") {
+            if let Some(view) = args.first().and_then(object) {
+                if zun_gc::with_current_heap(|heap| heap.is_node_buffer(view)) {
+                    return self.call_managed_collection("nodeBufferFill", args);
+                }
+            }
+        }
         if let Some(result) = crate::typed_arrays::call(name, args) {
             // A view constructor the buffer cannot back (misaligned or
             // out-of-range window) is a RangeError, not a malformed call.

@@ -103,6 +103,14 @@ impl<'a> Interp<'a> {
                     forwarded.extend(params);
                     return self.call_managed_collection("arrayFill", &forwarded);
                 }
+                // A Node `Buffer` has its own `fill`, whose arguments are
+                // validated rather than clamped. A Buffer *is* a `Uint8Array`,
+                // so only the brand tells them apart.
+                if zun_gc::with_current_heap(|heap| heap.is_node_buffer(target)) {
+                    let mut forwarded = vec![Value::Object(target)];
+                    forwarded.extend(params);
+                    return self.call_managed_collection("nodeBufferFill", &forwarded);
+                }
                 // A typed array is filled in place, through its own elements.
                 if crate::typed_arrays::element_len(target).is_some() {
                     return self.array_method_on_typed_array("fill", target, params);

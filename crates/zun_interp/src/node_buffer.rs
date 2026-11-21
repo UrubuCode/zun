@@ -57,6 +57,9 @@ pub(crate) fn buffer_from_bytes(bytes: &[u8]) -> Option<Value> {
             heap.buffer_set(buffer, index, *byte);
         }
         let view = heap.alloc_typed_array(buffer, 0, bytes.len(), zun_core::TypedElement::U8)?;
+        // Branded: a Buffer and a plain `Uint8Array` are the same storage, and
+        // only the brand tells them apart.
+        heap.mark_node_buffer(view);
         Some(Value::Object(view))
     })
 }
@@ -433,6 +436,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
             zun_gc::with_current_heap_mut(|heap| {
                 let len = heap.buffer_len(buffer)?;
                 let view = heap.alloc_typed_array(buffer, 0, len, zun_core::TypedElement::U8)?;
+                heap.mark_node_buffer(view);
                 Some(Value::Object(view))
             })
             .ok_or(RunError::BadToken)
@@ -498,6 +502,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
                         let len = heap.buffer_len(*obj)?;
                         let view =
                             heap.alloc_typed_array(*obj, 0, len, zun_core::TypedElement::U8)?;
+                        heap.mark_node_buffer(view);
                         Some(Value::Object(view))
                     })
                     .ok_or(RunError::BadToken)
@@ -531,9 +536,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
         })()),
         "nodeBufferIsBuffer" => Some((|| {
             let is_buffer = match object(args.first().ok_or(RunError::BadToken)?) {
-                Some(view) => zun_gc::with_current_heap(|heap| {
-                    heap.typed_array_element(view) == Some(zun_core::TypedElement::U8)
-                }),
+                Some(view) => zun_gc::with_current_heap(|heap| heap.is_node_buffer(view)),
                 None => false,
             };
             Ok(Value::Bool(is_buffer))
@@ -828,8 +831,12 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<Result<Value, RunError>
 
 /// A Node `Buffer`'s string form (`String(buf)`, `"" + buf`): its utf8 text.
 pub(crate) fn buffer_text(object: Obj) -> Option<String> {
+    // Only a Buffer, not any U8 view: a plain `Uint8Array` has no utf8 text
+    // form, and treating one as a Buffer leaked into `JSON.stringify` and
+    // `String(view)`.
     let is_u8 = zun_gc::with_current_heap(|heap| {
         heap.typed_array_element(object) == Some(zun_core::TypedElement::U8)
+            && heap.is_node_buffer(object)
     });
     if !is_u8 {
         return None;

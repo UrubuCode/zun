@@ -450,6 +450,11 @@ impl Interp<'_> {
         args: &[Value],
     ) -> Option<Result<Value, RunError>> {
         let tail = name.strip_prefix("nodeBuffer")?;
+        if tail == "FromAny" {
+            if let Some(result) = self.node_buffer_from_object(args) {
+                return Some(result);
+            }
+        }
         if let Some(result) = self.node_buffer_ops(tail, args) {
             return Some(result);
         }
@@ -570,5 +575,144 @@ impl Interp<'_> {
             self.nb_write_int(view, &raw(args, 2), &raw(args, 1), width, signed, little_endian)
         })();
         Some(outcome)
+    }
+}
+
+impl Interp<'_> {
+    /// `Buffer.from(object)`, following Node's order: the `valueOf` result
+    /// when it is a string or another object, then the array-like reading
+    /// (which runs index getters), then `[Symbol.toPrimitive]("string")`, and
+    /// an `ERR_INVALID_ARG_TYPE` when none of them answers.
+    ///
+    /// `None` leaves the argument to the plain native: a string, a view, an
+    /// array or an ArrayBuffer needs none of this.
+    pub(crate) fn node_buffer_from_object(
+        &mut self,
+        args: &[Value],
+    ) -> Option<Result<Value, RunError>> {
+        let source = crate::collections::object(args.first()?)?;
+        let plain = zun_gc::with_current_heap(|heap| {
+            heap.is_dynamic_object(source)
+                && heap.array_len(source).is_none()
+                && heap.buffer_len(source).is_none()
+                && heap.typed_array_element(source).is_none()
+                && heap.data_view_buffer(source).is_none()
+        });
+        if !plain {
+            return None;
+        }
+        Some(self.node_buffer_from_plain(source, args))
+    }
+
+    fn node_buffer_from_plain(
+        &mut self,
+        source: zun_gc::Obj,
+        args: &[Value],
+    ) -> Result<Value, RunError> {
+        let encoding = args.get(1).cloned().unwrap_or(Value::Void);
+        // 1. `valueOf`, when it answers a string or a *different* object.
+        if let Some(handle) = zun_gc::with_current_heap(|heap| {
+            heap.dynamic_get_function(source, "valueOf")
+        })
+        .or_else(|| {
+            Self::linked_chain_function(source, |heap, holder| {
+                heap.dynamic_get_function(holder, "valueOf")
+            })
+        }) {
+            // A throwing `valueOf` propagates, as the specification says.
+            let call = self.with_this_arg(handle, source, Vec::new());
+            let produced = self.invoke_function_value(handle, call)?;
+            let concrete = crate::proto_methods::proto_concrete(produced);
+            let usable = match &concrete {
+                Value::Str(_) => true,
+                Value::Object(other) => other.addr() != source.addr(),
+                _ => false,
+            };
+            if usable {
+                let boxed = self.proto_box(concrete);
+                return self.call_managed_collection("nodeBufferFromAny", &[boxed, encoding]);
+            }
+        }
+        // 2. The array-like reading, through index getters. A `length` that is
+        // present but not a number gives an empty buffer -- Node does not
+        // coerce it -- and a NaN length reads as zero.
+        let length = self.dynamic_member_get(source, "length")?;
+        let length = crate::collections::unbox_arg(&length)?;
+        let present = !matches!(length, Value::Void);
+        let numeric = match &length {
+            Value::Int(n, _) => Some(*n as f64),
+            Value::Float(n, _) => Some(*n),
+            _ => None,
+        };
+        if present && numeric.is_none() {
+            return self.call_managed_collection(
+                "nodeBufferFromAny",
+                &[Value::Str("".into()), encoding],
+            );
+        }
+        if let Some(raw) = numeric.map(|raw| if raw.is_nan() { 0.0 } else { raw }) {
+            let count = if raw <= 0.0 { 0usize } else { raw.trunc() as usize };
+            let list = zun_gc::with_current_heap_mut(|heap| heap.alloc_array(count));
+            zun_gc::root!(list = list);
+            zun_gc::root!(source = source);
+            for index in 0..count {
+                let element = self.dynamic_member_get(source.get(), &index.to_string())?;
+                let byte = match crate::collections::unbox_arg(&element)? {
+                    Value::Void | Value::Null => 0.0,
+                    other => self.to_number_value(other).unwrap_or(0.0),
+                };
+                let wrapped = if byte.is_finite() {
+                    (byte.trunc() as i64 & 0xff) as f64
+                } else {
+                    0.0
+                };
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.array_set(list.get(), index, zun_core::Any::float(wrapped));
+                });
+            }
+            return self.call_managed_collection(
+                "nodeBufferFromAny",
+                &[Value::Object(list.get()), encoding],
+            );
+        }
+        // 3. The `{ type: "Buffer", data: [...] }` form `toJSON` produces.
+        let kind = self.dynamic_member_get(source, "type")?;
+        if matches!(crate::collections::unbox_arg(&kind)?, Value::Str(ref text) if text.as_ref() == "Buffer")
+        {
+            let data = self.dynamic_member_get(source, "data")?;
+            if let Some(list) = crate::collections::object(&data) {
+                if zun_gc::with_current_heap(|heap| heap.array_len(list)).is_some() {
+                    return self.call_managed_collection(
+                        "nodeBufferFromAny",
+                        &[Value::Object(list), encoding],
+                    );
+                }
+            }
+        }
+        // 4. `[Symbol.toPrimitive]("string")`, only now.
+        let tp = zun_core::WellKnownSymbol::ToPrimitive.id();
+        if let Some(handle) =
+            zun_gc::with_current_heap(|heap| heap.dynamic_get_symbol_function(source, tp))
+        {
+            let hint = zun_gc::with_current_heap_mut(|heap| {
+                Value::Any(zun_core::Any::string(heap.intern_string("string")))
+            });
+            let call = self.with_this_arg(handle, source, vec![hint]);
+            let produced = self.invoke_function_value(handle, call)?;
+            if let Value::Str(text) = crate::proto_methods::proto_concrete(produced) {
+                return self.call_managed_collection(
+                    "nodeBufferFromAny",
+                    &[Value::Str(text), encoding],
+                );
+            }
+        }
+        let received = self.nb_received(&Value::Object(source));
+        Err(self.nb_error(
+            "TypeError",
+            "ERR_INVALID_ARG_TYPE",
+            format!(
+                "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.{received}"
+            ),
+        ))
     }
 }
