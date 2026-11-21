@@ -611,7 +611,14 @@ impl Interp<'_> {
             let Some(def) = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1)) else {
                 return false;
             };
-            if self.module.strings.get(def.name) == wrapper {
+            let name = self.module.strings.get(def.name);
+            // `class C extends Number` derives from the builtin-base class
+            // `__BuiltinNumber` rather than from `NumberObject`; its instances
+            // hold the [[NumberData]] all the same (in `inner`).
+            if name == wrapper
+                || (wrapper == "NumberObject" && name == "__BuiltinNumber")
+                || (wrapper == "BooleanObject" && name == "__BuiltinBoolean")
+            {
                 return true;
             }
             if def.base.table() != Some(zun_metadata::TableKind::TypeDef) || def.base.is_null() {
@@ -774,12 +781,17 @@ impl Interp<'_> {
                 _ => Value::Str("".into()),
             });
         }
-        Ok(match self.dynamic_member_get(object, "value")? {
+        let held = match self.dynamic_member_get(object, "value")? {
             Value::Any(any) => {
                 zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap)).unwrap_or(Value::Void)
             }
             other => other,
-        })
+        };
+        if !matches!(held, Value::Void) {
+            return Ok(held);
+        }
+        // A subclass of the builtin base keeps the primitive in `inner`.
+        Ok(self.instance_member_get(object, "inner")?.unwrap_or(Value::Void))
     }
 }
 

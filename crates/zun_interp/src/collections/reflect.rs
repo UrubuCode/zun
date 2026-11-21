@@ -270,6 +270,19 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectDelete" => {
+                // A constant a constructor owns (`Number.EPSILON`) is
+                // non-configurable, so deleting it reports `false`. `Number`
+                // read as a value is the coercion helper, which stands for
+                // the constructor.
+                if let (Some(Ok(target)), Some(Ok(Value::Str(key)))) =
+                    (args.first().map(unbox_arg), args.get(1).map(unbox_arg))
+                {
+                    if let Some(handle) = super::callback_handle(&target) {
+                        if self.coerce_ctor_constant(handle, &key).is_some() {
+                            return Ok(Value::Bool(false));
+                        }
+                    }
+                }
                 // A symbol key: a symbol-keyed data property is configurable,
                 // so deletion always reports success; remove it from the
                 // object's symbol store when present.
