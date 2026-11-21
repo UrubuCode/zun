@@ -1031,6 +1031,14 @@ impl<'a> Interp<'a> {
                             Some("Map")
                         } else if heap.set_values(obj).is_some() {
                             Some("Set")
+                        } else if heap.is_weak_collection(obj) {
+                            if heap.is_weak_set(obj) {
+                                Some("WeakSet")
+                            } else {
+                                Some("WeakMap")
+                            }
+                        } else if heap.is_weak_ref(obj) {
+                            Some("WeakRef")
                         // A DataView and the two buffer kinds are native storage
                         // too, with no link to walk: their prototype is the
                         // builtin's. (They answered something else entirely, so

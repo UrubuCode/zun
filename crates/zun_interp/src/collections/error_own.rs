@@ -151,3 +151,26 @@ impl<'a> Interp<'a> {
         });
     }
 }
+
+impl Interp<'_> {
+    /// The builtin a class derives from, when its chain reaches one of the
+    /// prelude `__Builtin<Name>` carrier roots: `class M extends Map {}` is
+    /// branded `[object Map]`, as every subclass of a builtin is.
+    pub(crate) fn builtin_base_brand(&self, rid: u32) -> Option<&str> {
+        let mut current = rid;
+        for _ in 0..256 {
+            if current == 0 {
+                return None;
+            }
+            let ty = self.module.tables.type_defs.get(current as usize - 1)?;
+            if let Some(name) = self.module.strings.get(ty.name).strip_prefix("__Builtin") {
+                return Some(name);
+            }
+            if ty.base.is_null() || ty.base.table() != Some(zun_metadata::TableKind::TypeDef) {
+                return None;
+            }
+            current = ty.base.rid();
+        }
+        None
+    }
+}

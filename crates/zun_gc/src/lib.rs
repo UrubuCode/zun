@@ -258,6 +258,10 @@ pub struct Heap {
     sets: HashMap<usize, zun_core::OrderedMap>,
     /// WeakMap handles owned by managed WeakMap objects.
     weak_map_objects: HashMap<usize, WeakMapId>,
+    /// The addresses in `weak_map_objects` that are `WeakSet`s rather than
+    /// `WeakMap`s. The two share one ephemeron floor, so this is the only
+    /// thing that distinguishes them (brands, `instanceof`, receiver checks).
+    weak_set_objects: std::collections::HashSet<usize>,
     /// WeakRef slots owned by managed WeakRef objects.
     weak_ref_objects: HashMap<usize, WeakRefId>,
     /// Promise state associated with managed Promise objects.
@@ -914,6 +918,17 @@ impl Heap {
             mapped_owners.insert(mapped, id);
         }
         self.weak_map_objects = mapped_owners;
+        let weak_sets = std::mem::take(&mut self.weak_set_objects);
+        self.weak_set_objects = weak_sets
+            .into_iter()
+            .map(|owner| {
+                let mapped = map(owner);
+                if mapped != owner {
+                    rewritten += 1;
+                }
+                mapped
+            })
+            .collect();
         let ref_owners = std::mem::take(&mut self.weak_ref_objects);
         let mut mapped_ref_owners = HashMap::with_capacity(ref_owners.len());
         for (owner, id) in ref_owners {

@@ -75,8 +75,9 @@ impl<'a> Interp<'a> {
             }
             "weakSetNew" => {
                 // A WeakSet reuses the WeakMap ephemeron floor; entries are
-                // stored value-less by keying each object to itself.
-                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_map());
+                // stored value-less by keying each object to itself. The brand
+                // is what tells the two kinds apart.
+                let object = zun_gc::with_current_heap_mut(|heap| heap.alloc_weak_set());
                 Ok(Value::Any(zun_core::Any::object(object.addr() as usize)))
             }
             "weakSetAdd" => {

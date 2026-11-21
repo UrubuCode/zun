@@ -64,6 +64,12 @@ impl Heap {
             .contains_key(&(object.addr() as usize))
     }
 
+    /// Whether `object` is a `WeakSet` rather than a `WeakMap`. The two share
+    /// one ephemeron floor, so this is the only thing that tells them apart.
+    pub fn is_weak_set(&self, object: Obj) -> bool {
+        self.weak_set_objects.contains(&(object.addr() as usize))
+    }
+
     /// Whether `object` is a WeakMap / WeakSet (they share the ephemeron floor).
     pub fn is_weak_collection(&self, object: Obj) -> bool {
         self.weak_map_objects

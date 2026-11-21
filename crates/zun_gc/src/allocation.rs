@@ -472,6 +472,14 @@ impl Heap {
         object
     }
 
+    /// Allocate a managed `WeakSet`: the same ephemeron floor as a `WeakMap`,
+    /// with the brand that tells the two apart.
+    pub fn alloc_weak_set(&mut self) -> Obj {
+        let object = self.alloc_weak_map();
+        self.weak_set_objects.insert(object.addr() as usize);
+        object
+    }
+
     pub fn weak_map_new(&mut self) -> WeakMapId {
         let id = WeakMapId(self.weak_maps.len() as u32);
         self.weak_maps.push(Ephemeron::default());

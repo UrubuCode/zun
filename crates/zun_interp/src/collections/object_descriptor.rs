@@ -1439,6 +1439,20 @@ impl<'a> Interp<'a> {
                                     .find(|name| self.class_chain_has_name(obj.type_rid(), name))
                                     .map(|name| (*name).to_string())
                             })
+                            // A subclass of a builtin keeps the builtin's
+                            // brand: its chain reaches a `__Builtin<Name>`
+                            // carrier root. (A `class extends WeakRef` answered
+                            // `[object Object]`, having no native storage of
+                            // its own to read a brand from.)
+                            .or_else(|| {
+                                if zun_gc::with_current_heap(|heap| {
+                                    heap.is_dynamic_object(obj) && !heap.is_instance_bag(obj)
+                                }) || obj.type_rid() == 0
+                                {
+                                    return None;
+                                }
+                                self.builtin_base_brand(obj.type_rid()).map(str::to_owned)
+                            })
                             // A BigInt object (`Object(1n)`).
                             .or_else(|| {
                                 (!zun_gc::with_current_heap(|heap| heap.is_dynamic_object(obj))
@@ -1481,6 +1495,16 @@ impl<'a> Interp<'a> {
                                     "Map"
                                 } else if heap.set_values(obj).is_some() {
                                     "Set"
+                                // The weak collections: native storage with no
+                                // class to read, so they had no brand at all.
+                                } else if heap.is_weak_collection(obj) {
+                                    if heap.is_weak_set(obj) {
+                                        "WeakSet"
+                                    } else {
+                                        "WeakMap"
+                                    }
+                                } else if heap.is_weak_ref(obj) {
+                                    "WeakRef"
                                 } else if let Some(kind) = heap.typed_array_element(obj) {
                                     kind.js_name()
                                 } else if heap.data_view_buffer(obj).is_some() {

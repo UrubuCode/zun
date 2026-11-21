@@ -345,7 +345,7 @@ impl<'a> Interp<'a> {
         }
         Ok(match self.ordinary_to_primitive(obj, "default")? {
             Some(primitive) => primitive,
-            None => Value::Str("[object Object]".into()),
+            None => Value::Str(self.default_object_string(obj)?.into()),
         })
     }
 

@@ -78,9 +78,15 @@ impl<'a> Interp<'a> {
     /// when it has no `toString` / `valueOf` / `[Symbol.toPrimitive]` of its own:
     /// `[object <tag>]` for a string `@@toStringTag`, else `[object Object]`.
     pub(crate) fn default_object_string(&mut self, obj: zun_gc::Obj) -> Result<String, RunError> {
-        Ok(match self.string_tag_of(obj)? {
-            Some(tag) => format!("[object {tag}]"),
-            None => "[object Object]".to_string(),
-        })
+        if let Some(tag) = self.string_tag_of(obj)? {
+            return Ok(format!("[object {tag}]"));
+        }
+        // Then the builtin brand. Without it `String(new WeakMap())` answered
+        // "[object Object]" while `Object.prototype.toString.call` on the same
+        // object answered "[object WeakMap]": two spellings of one question.
+        let brand = zun_gc::with_current_heap(|heap| {
+            crate::collections::builtin_constructor_name(heap, obj).map(str::to_owned)
+        });
+        Ok(format!("[object {}]", brand.as_deref().unwrap_or("Object")))
     }
 }

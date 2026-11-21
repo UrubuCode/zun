@@ -189,11 +189,8 @@ impl<'a> Interp<'a> {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
                             prim.display()
                         } else {
-                            let tag = self.string_tag_of(obj)?;
-                            match tag {
-                                Some(tag) => format!("[object {tag}]"),
-                                None => "[object Object]".to_string(),
-                            }
+                            // The one spelling of `[object <tag>]`, brand included.
+                            self.default_object_string(obj)?
                         }
                     }
                     Value::Any(a) if a.as_symbol().is_some() => {

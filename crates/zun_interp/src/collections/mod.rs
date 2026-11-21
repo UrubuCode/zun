@@ -105,6 +105,18 @@ pub(super) fn any(value: &Value) -> Option<zun_core::Any> {
 /// A valid weak key: an object (or a function, via its cell). Promoted from the
 /// preamble closure.
 pub(super) fn weak_key(value: &Value) -> Option<zun_gc::Obj> {
+    // A callable carried through `any` arrives as a function cell, and each
+    // carrier can be a different cell: keyed by the cell, `m.set(f, i)` through
+    // an array and `m.get(f)` on the function missed each other. Resolve to the
+    // handle first, which `function_cell` then maps to one cell per function.
+    let unwrapped = match value {
+        Value::Any(_) | Value::Object(_) => {
+            let concrete = crate::proto_methods::proto_concrete(value.clone());
+            matches!(concrete, Value::Function(_)).then_some(concrete)
+        }
+        _ => None,
+    };
+    let value = unwrapped.as_ref().unwrap_or(value);
     match value {
         Value::Function(handle) => Some(zun_gc::with_current_heap_mut(|heap| {
             heap.function_cell(*handle)
@@ -1128,6 +1140,14 @@ pub(crate) fn builtin_constructor_name(
         Some("Map")
     } else if heap.set_len(obj).is_some() {
         Some("Set")
+    } else if heap.is_weak_collection(obj) {
+        if heap.is_weak_set(obj) {
+            Some("WeakSet")
+        } else {
+            Some("WeakMap")
+        }
+    } else if heap.is_weak_ref(obj) {
+        Some("WeakRef")
     } else if heap.promise_state(obj).is_some() {
         Some("Promise")
     } else if heap.regex_source(obj).is_some() {
