@@ -875,6 +875,16 @@ pub(super) fn value_to_error_string(value: &Value) -> String {
 pub(super) fn prototype_from_arg(value: &Value) -> Option<zun_core::Any> {
     match value {
         Value::Null | Value::Void => None,
+        // A function has no heap object of its own, so the link goes to its
+        // expando bag -- which `Object.getPrototypeOf` already reads back as
+        // the function. Without this `Object.create(fn)` lost the prototype.
+        Value::Function(handle) => {
+            let bag = crate::function_expando_bag(*handle);
+            // Reflection answers the function, not the bag.
+            let cell = zun_gc::with_current_heap_mut(|heap| heap.function_cell(*handle));
+            crate::record_linked_function_bag(bag, zun_core::Any::object(cell.addr() as usize));
+            Some(zun_core::Any::object(bag.addr() as usize))
+        }
         Value::Object(object) => Some(zun_core::Any::object(object.addr() as usize)),
         Value::Any(any) => match any.tag() {
             zun_core::AnyTag::Null | zun_core::AnyTag::Void => None,

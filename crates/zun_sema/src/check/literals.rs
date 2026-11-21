@@ -135,7 +135,15 @@ impl Checker<'_> {
                 };
                 let computed_string =
                     matches!(&key, hir::ObjectKey::Computed(k) if k.ty == Ty::String);
-                if let (true, Some(define_id)) = (replaces_accessor || computed_string, define) {
+                // A *shorthand* `__proto__` is an ordinary own property; only
+                // `__proto__: value` sets the prototype. Defining it is how
+                // that difference is expressed, the same route a computed
+                // string key takes.
+                let shorthand_proto = property.shorthand
+                    && matches!(&key, hir::ObjectKey::Named(name) if name == "__proto__");
+                if let (true, Some(define_id)) =
+                    (replaces_accessor || computed_string || shorthand_proto, define)
+                {
                     let key_expr = match key {
                         hir::ObjectKey::Named(name) => Self::string_literal(name, span),
                         hir::ObjectKey::Computed(k) => k,

@@ -744,6 +744,30 @@ impl Interp<'_> {
         if let Some(flow) = self.reject_nullish_store(stack, pc, body, &name, next, size) {
             return flow;
         }
+        // `__proto__` is an accessor `Object.prototype` owns, so an object
+        // whose chain ends at `null` does not inherit it: the write is an
+        // ordinary own property, not a prototype change.
+        if name == "__proto__" {
+            if let Some(target) = stack.last().and_then(super::collections::object) {
+                if self.chain_ends_at_null(target) {
+                    let any = zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        .unwrap_or_else(zun_core::Any::void);
+                    zun_gc::with_current_heap_mut(|heap| {
+                        heap.dynamic_define_data(
+                            target,
+                            "__proto__".to_owned(),
+                            any,
+                            true,
+                            true,
+                            true,
+                        )
+                    });
+                    stack.pop();
+                    stack.push(value);
+                    return Ok(ArmFlow::Continue);
+                }
+            }
+        }
         // A class value: the write lands on its static field.
         if let Some(Value::Any(descriptor)) = stack.last() {
             let descriptor = *descriptor;

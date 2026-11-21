@@ -326,6 +326,10 @@ pub struct ObjectProperty {
     pub value: Expr,
     /// Whether this is a data property, a method, or an accessor.
     pub kind: PropertyKind,
+    /// Set for the shorthand form `{ x }`. It matters for one key: a
+    /// shorthand `__proto__` is an ordinary own property, while
+    /// `__proto__: value` sets the prototype.
+    pub shorthand: bool,
 }
 
 /// The key of an object-literal property.

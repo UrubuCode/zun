@@ -893,6 +893,12 @@ impl Interp<'_> {
         if self.chain_ends_at_null(object) {
             return false;
         }
+        // `Object.prototype` owns the `__proto__` accessor, which every object
+        // with a chain inherits. It is an accessor, so the method table that
+        // answers `toString` and friends does not list it.
+        if name == "__proto__" {
+            return true;
+        }
         let class = self
             .wrapper_instance_kind(object)
             .map(str::to_owned)

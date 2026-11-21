@@ -296,6 +296,7 @@ fn convert_computed_field(
             key: crate::ast::PropertyKey::Ident(crate::ast::synthetic_ident(name)),
             value,
             kind: crate::ast::PropertyKind::Init,
+            shorthand: false,
         })
     };
     let flag = |name: &str| {
@@ -822,6 +823,7 @@ fn install_runtime_computed_method(
                         span: Span::new(method.span.start, method.span.end),
                     },
                     kind: crate::ast::PropertyKind::Init,
+                    shorthand: false,
                 })
             };
             let slot = |name: &str, value: Expr| {
@@ -829,6 +831,7 @@ fn install_runtime_computed_method(
                     key: crate::ast::PropertyKey::Ident(crate::ast::synthetic_ident(name)),
                     value,
                     kind: crate::ast::PropertyKind::Init,
+                    shorthand: false,
                 })
             };
             let members = match method.kind {

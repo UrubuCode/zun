@@ -88,6 +88,7 @@ pub(super) fn convert_object_literal(
                 key,
                 value,
                 kind: member_kind,
+                shorthand: property.shorthand,
             },
         ));
     }
