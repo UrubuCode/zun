@@ -240,6 +240,21 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(same_value(&left, &right)))
             }
             "objectHasOwn" => {
+                // A proxy answers through its `getOwnPropertyDescriptor` trap:
+                // HasOwnProperty is defined in terms of [[GetOwnProperty]], so
+                // the trap decides. It used to read the proxy object itself,
+                // which owns nothing.
+                if let Some(target) = args.first().and_then(object) {
+                    if zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some()) {
+                        let key = args.get(1).cloned().unwrap_or(Value::Void);
+                        let descriptor = self.call_managed_collection(
+                            "objectGetOwnPropertyDescriptor",
+                            &[Value::Object(target), key],
+                        )?;
+                        let present = !matches!(unbox_arg(&descriptor), Ok(Value::Void));
+                        return Ok(Value::Bool(present));
+                    }
+                }
                 // A user class value owns its statics (not its bases').
                 // A function value: `prototype` is an own key of a plain
                 // function and a generator, which `objectGetOwnPropertyNames`

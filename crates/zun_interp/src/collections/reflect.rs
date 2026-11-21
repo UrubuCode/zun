@@ -101,6 +101,23 @@ impl<'a> Interp<'a> {
                 Ok(Value::Bool(false))
             }
             "reflectHas" => {
+                // A proxy answers through its `has` trap, which is what
+                // `key in proxy` consults. The chain walk below reads the
+                // proxy object itself, which has no properties of its own.
+                let symbol_key = matches!(
+                    args.get(1).and_then(crate::property_ops::prop_key),
+                    Some(crate::property_ops::PropKey::Sym(_))
+                );
+                if let Some(target) = args.first().and_then(object).filter(|_| !symbol_key) {
+                    if zun_gc::with_current_heap(|heap| heap.proxy_target(target).is_some()) {
+                        let key = match unbox_arg(args.get(1).unwrap_or(&Value::Void))? {
+                            Value::Str(text) => Value::Str(text),
+                            other => Value::Str(self.dyn_to_string(&other)?.into()),
+                        };
+                        return self
+                            .call_managed_collection("proxyHas", &[Value::Object(target), key]);
+                    }
+                }
                 // A symbol key: walk the prototype chain for an own or
                 // inherited symbol-keyed property, mirroring `symbolHas`.
                 if let Some(crate::property_ops::PropKey::Sym(symbol)) =
