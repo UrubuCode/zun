@@ -105,3 +105,58 @@ Startup is fine (57 ms for a trivial script).
 6. D6 (R5), D7 (C2), C6, C9.
 7. P4, P6, P7; then P1-P3.
 8. A1, A3-A6, A8, D8.
+
+## 7. Status after the first pass (main at `f8205aeb`, 119 of 169)
+
+Conformance went 107 -> 119 (70.4%); runtime errors 13 -> 12. Every commit
+below was verified against the full fixture suite and the per-crate tests.
+
+### Done
+
+| Item | Commit(s) | Note |
+|---|---|---|
+| R1 | `9beef56f` | The root cause was wider than timers: any declared rest function called dynamically aborted |
+| R2 | `5ef405f4`, `46e46092` | The review's claim that `length` differed was wrong; only `name` leaked |
+| R3 | `95e2b0b3` | Brand by `instanceof StringObject` |
+| R8 | `c0e1da0b` | |
+| A7 | `c112c8b8` | wintercg is 29 of 29 |
+| A3 (one case) | `303b0ea3` | `declaration_takes_this` counted `this` inside strings and comments; found when an error message changed a signature |
+| D1 | `427e05ff` | `Error` can gain fields |
+| D2 | `26f28a1c`, `e69058c7` | `Response.json`; closes `blob-file-response-body` |
+| D3 (interim) | `766bde3b` | Equality unifies the `__coerce*` helper with the class value; the single callable descriptor is still the end state |
+| D7 (static half) | `2cfde437` | Same-function reads only; a closure called before the declaration still needs the sentinel |
+| C1 | `299fc457` | New wire tag `ArrayProps` |
+| C2 | `2cfde437` | |
+| C3 | `2208df8d` | |
+| C4 | `34eb926a`, `22074950` | `sort`/`toSorted` share one routine |
+| C6 | `4a2c5493` | Live cursors with a completion latch |
+| C7 | `766bde3b`, `84117811`, `582cebc9`, `ec9860d6`, `7a624332` | BigInt wrapper; BigInt Map/Set keys by value; Number subclass |
+| C9 | `ff9d2ec9`, `6bbfa979` | Shadowing is by assigned *name*; computed keys are not seen |
+| C10 | `2c63a884`, `60bd30e6`, `400d00e3`, `cc0f8d48` | closes `error-types-and-subclassing` |
+| C5 (part) | `f8205aeb` | `SharedArrayBuffer` only; `WeakMap`/`WeakSet`/`WeakRef` still unbranded |
+| trimmer | `24dd1859` | `<module-init>` had a dynamic site for every program (one pre-existing, one from this series' `0ca21ab7`) |
+
+### Not done
+
+- **R4** (`WEBIDL_TAGGED_CLASSES` matches by name), **R5** (field
+  initializer phasing, D6), **R6**, **R7**, **R9**, **R10**: all still as
+  the review found them.
+- **D4** (brand byte), **D5** (typed method flags), **D8** (prelude as a
+  linked module): untouched. D5 got *worse* in this pass, not better: the
+  static twin of a same-named method is emitted as `name@static`, and three
+  more value-helper name tables were added.
+- **C5** for the weak collections, **C8** (NamedEvaluation, generator
+  function metadata).
+- **P1-P7**, **A1**, **A3** beyond the one case, **A4-A6**, **A8**: untouched.
+- `Object(x)` now reaches the run-time ToObject for a dynamic argument, but
+  index accessors on arrays (`Object.defineProperty(arr, "0", { get })`) are
+  honoured only by the iteration methods and `sort`, not by `arr[0]`.
+
+### Process notes
+
+- The `zun_compiler` library tests were not in the per-crate set run after
+  each change; two of them had been red since before this series. They are
+  part of the set now.
+- One `git stash pop` was run on a clean tree and applied an unrelated
+  pre-existing stash, producing conflicts. The tree was reset to HEAD; the
+  stash entry (`WIP on main: fe285190`) is intact.
