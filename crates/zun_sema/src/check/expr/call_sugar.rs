@@ -119,6 +119,20 @@ impl Checker<'_> {
                     span,
                 });
             }
+            // A dynamic argument may hold a primitive, so it is not "already
+            // an object": ToObject is decided at run time, by the same path
+            // `new Object(value)` takes. Returning it unchanged left
+            // `Object(x)` a primitive whenever `x` was typed `any`.
+            if arg.ty == Ty::Any {
+                return Some(self.check_expr(
+                    cx,
+                    &ast::Expr::New {
+                        class: *callee,
+                        args: args.to_vec(),
+                        span,
+                    },
+                ));
+            }
             return Some(arg);
         }
         // Global `isNaN`/`isFinite` coerce with ToNumber first (unlike

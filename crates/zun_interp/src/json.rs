@@ -542,7 +542,11 @@ impl Interp<'_> {
                 }) {
                     return Ok(None);
                 }
-                if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some()) {
+                // A BigInt, or a BigInt object (which holds one): neither is
+                // serialisable without a `toJSON` hook.
+                if zun_gc::with_current_heap(|heap| heap.bigint_value(obj).is_some())
+                    || self.is_bigint_wrapper(obj)
+                {
                     return Err(RunError::Native(
                         "TypeError: Do not know how to serialize a BigInt".into(),
                     ));

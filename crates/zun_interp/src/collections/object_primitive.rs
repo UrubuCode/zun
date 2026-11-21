@@ -222,11 +222,20 @@ impl Interp<'_> {
             Value::Any(any) if any.as_symbol().is_some() => {
                 return Ok(Some(zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic())));
             }
+            // A BigInt is a primitive carried as a heap payload; ToObject of
+            // one is a BigInt object, not the payload itself.
+            primitive @ Value::Object(_)
+                if matches!(&primitive, Value::Object(o)
+                    if zun_gc::with_current_heap(|heap| heap.bigint_value(*o).is_some())) =>
+            {
+                primitive
+            }
             _ => return Ok(None),
         };
         let ctor = match &primitive {
             Value::Str(_) => "String",
             Value::Bool(_) => "Boolean",
+            Value::Object(_) => "BigInt",
             _ => "Number",
         };
         let token = self

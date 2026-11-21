@@ -652,6 +652,11 @@ impl Interp<'_> {
             {
                 return Some(ctor);
             }
+            // A BigInt object (`Object(1n)`). Only the instance: unlike the
+            // other three, `BigInt.prototype` is not itself a wrapper.
+            if self.is_wrapper_object(object, "BigIntObject") {
+                return Some("BigInt");
+            }
         }
         KINDS.iter().map(|(ctor, _)| *ctor).find(|ctor| {
             zun_gc::with_current_heap_mut(|heap| {
@@ -693,6 +698,7 @@ impl Interp<'_> {
             "StringObject" => "String",
             "NumberObject" => "Number",
             "BooleanObject" => "Boolean",
+            "BigIntObject" => "BigInt",
             _ => return None,
         };
         self.wrapper_prototype_object(ctor)
@@ -712,7 +718,7 @@ impl Interp<'_> {
         {
             return None;
         }
-        ["Boolean", "Number", "String"]
+        ["Boolean", "Number", "String", "BigInt"]
             .into_iter()
             .find(|ctor| self.is_wrapper_object(object, &format!("{ctor}Object")))
     }
