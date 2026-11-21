@@ -864,8 +864,14 @@ impl Interp<'_> {
                 }
                 Opcode::ArrayLength => {
                     let array = pop(stack)?.as_object();
-                    let length = zun_gc::with_current_heap(|heap| heap.array_len(array))
-                        .ok_or(RunError::BadToken)?;
+                    // An `arguments` object reports its fixed own `length`, not
+                    // the backing array's live one: `arguments[5] = x` adds an
+                    // index and leaves the count alone.
+                    let length = zun_gc::with_current_heap(|heap| {
+                        heap.array_arguments_length(array)
+                            .or_else(|| heap.array_len(array))
+                    })
+                    .ok_or(RunError::BadToken)?;
                     stack.push(Value::Int(length as i64, zun_il::NumKind::U64));
                 }
                 Opcode::ArrayPop => {

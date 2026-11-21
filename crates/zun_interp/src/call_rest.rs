@@ -111,6 +111,12 @@ impl Interp<'_> {
             return Err(RunError::BadToken);
         }
         let array = pop(stack)?.as_object();
+        // The callee takes only the rest array, so the real argument count is
+        // its length. Without announcing it, `arguments.length` saw the single
+        // packed argument and reported 1 for every spread call.
+        if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(array)) {
+            crate::unwind::CALL_ARGC_MARK.with(|mark| mark.set(Some(len)));
+        }
         let args = vec![Value::Object(array)];
         let link = RootLink {
             stack: std::ptr::from_mut(stack.as_mut_slice()),
@@ -170,6 +176,10 @@ impl Interp<'_> {
         }
         let mut args = pop_n(stack, fixed_count + 1)?;
         let array = args.pop().ok_or(RunError::BadToken)?.as_object();
+        // The real argument count: the fixed parameters plus the rest array.
+        if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(array)) {
+            crate::unwind::CALL_ARGC_MARK.with(|mark| mark.set(Some(fixed_count + len)));
+        }
         args.push(Value::Object(array));
         let link = RootLink {
             stack: std::ptr::from_mut(stack.as_mut_slice()),

@@ -2617,7 +2617,13 @@ impl Interp<'_> {
                 if array_refusal(level, op).is_some() {
                     return Ok(Value::Bool(false));
                 }
-                zun_gc::with_current_heap_mut(|heap| heap.array_resize(target, wanted));
+                zun_gc::with_current_heap_mut(|heap| {
+                    heap.array_resize(target, wanted);
+                    // An `arguments` object's `length` is a writable own
+                    // property: the write takes effect where an index write
+                    // does not.
+                    heap.array_set_arguments_length(target, wanted);
+                });
                 return Ok(Value::Bool(true));
             }
             let Ok(index) = name.parse::<usize>() else {

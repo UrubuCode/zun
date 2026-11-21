@@ -20,6 +20,10 @@ pub struct ArrayStorage {
     integrity: u8,
     /// Set on the array that backs a function's `arguments` object.
     is_arguments: bool,
+    /// The `length` an `arguments` object reports. It is an own data property
+    /// fixed when the object is built, not the array's live length: writing
+    /// `arguments[5]` adds an index without changing it.
+    arguments_length: usize,
 }
 
 impl ArrayStorage {
@@ -34,6 +38,18 @@ impl ArrayStorage {
     }
     pub fn mark_arguments(&mut self) {
         self.is_arguments = true;
+        self.arguments_length = self.length;
+    }
+
+    /// The fixed `length` of an `arguments` object.
+    pub fn arguments_length(&self) -> usize {
+        self.arguments_length
+    }
+
+    /// Set the reported `length`. It is a *writable* own property, so
+    /// `arguments.length = 9` takes effect while an index write does not.
+    pub fn set_arguments_length(&mut self, length: usize) {
+        self.arguments_length = length;
     }
     pub fn len(&self) -> usize {
         self.length

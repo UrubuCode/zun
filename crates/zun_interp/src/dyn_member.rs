@@ -161,6 +161,26 @@ impl Interp<'_> {
                 }
             }
         }
+        // `arguments.callee` and `f.caller` are poisoned accessors: in strict
+        // code -- which every zun program is -- reading either throws. Neither
+        // was modelled, so both read as `undefined`.
+        let poisoned = (name == "callee"
+            && matches!(&concrete, Value::Object(obj)
+                if zun_gc::with_current_heap(|heap| heap.array_is_arguments(*obj))))
+            || (name == "caller" && function_receiver);
+        if poisoned {
+            let message = "'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions or the arguments objects for calls to them";
+            match self.new_error_object("TypeError", message) {
+                Some(error) => {
+                    let exception = Value::Object(error);
+                    if self.route_exception(body, stack, pc, next - size, &exception) {
+                        return Ok(ArmFlow::Continue);
+                    }
+                    return Err(RunError::Thrown(exception));
+                }
+                None => return Err(RunError::Native(format!("TypeError: {message}"))),
+            }
+        }
         // `gen.next` / `gen.return` / `gen.throw` read off a generator
         // object are callable method values.
         if matches!(name.as_str(), "next" | "return" | "throw") {
@@ -316,6 +336,15 @@ impl Interp<'_> {
                     return Ok(ArmFlow::Continue);
                 }
                 Value::Object(obj) => {
+                    // An `arguments` object reports its fixed own `length`,
+                    // not the backing array's live one: `arguments[5] = x`
+                    // adds an index and leaves the count alone.
+                    if let Some(len) =
+                        zun_gc::with_current_heap(|heap| heap.array_arguments_length(*obj))
+                    {
+                        stack.push(Value::Float(len as f64, zun_il::NumKind::F64));
+                        return Ok(ArmFlow::Continue);
+                    }
                     if let Some(len) = zun_gc::with_current_heap(|heap| heap.array_len(*obj)) {
                         stack.push(Value::Float(len as f64, zun_il::NumKind::F64));
                         return Ok(ArmFlow::Continue);
@@ -855,7 +884,10 @@ impl Interp<'_> {
                                     message.to_string()
                                 );
                             }
-                            zun_gc::with_current_heap_mut(|heap| heap.array_resize(object, wanted));
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.array_resize(object, wanted);
+                                heap.array_set_arguments_length(object, wanted);
+                            });
                         }
                     }
                     stack.push(value);

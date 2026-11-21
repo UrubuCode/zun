@@ -89,6 +89,12 @@ impl<'a> Interp<'a> {
         let Some(body) = zun_module::read_body(&self.module.code, method.body_offset).ok() else {
             return args;
         };
+        // Announce the real count before packing: `arguments.length` is the
+        // number of arguments the caller passed, and after the pack the callee
+        // sees one array. Without this every dynamic call, `apply` and spread
+        // of a function that reads `arguments` reported 1.
+        let passed = args.len();
+        crate::unwind::CALL_ARGC_MARK.with(|mark| mark.set(Some(passed)));
         let fixed = (body.param_count as usize).saturating_sub(1);
         while args.len() < fixed {
             args.push(Value::Null);

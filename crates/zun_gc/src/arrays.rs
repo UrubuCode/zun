@@ -74,6 +74,25 @@ impl Heap {
     }
 
     /// Mark an array as the backing store of an `arguments` object.
+    /// The fixed `length` an `arguments` object reports, if `object` is one.
+    pub fn array_arguments_length(&self, object: Obj) -> Option<usize> {
+        self.arrays
+            .get(&(object.addr() as usize))
+            .filter(|storage| storage.is_arguments())
+            .map(zun_core::ArrayStorage::arguments_length)
+    }
+
+    /// Set the `length` an `arguments` object reports, when `object` is one.
+    pub fn array_set_arguments_length(&mut self, object: Obj, length: usize) {
+        if let Some(storage) = self
+            .arrays
+            .get_mut(&(object.addr() as usize))
+            .filter(|storage| storage.is_arguments())
+        {
+            storage.set_arguments_length(length);
+        }
+    }
+
     pub fn array_mark_arguments(&mut self, object: Obj) {
         if let Some(array) = self.arrays.get_mut(&(object.addr() as usize)) {
             array.mark_arguments();
