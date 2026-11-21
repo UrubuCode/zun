@@ -818,6 +818,15 @@ impl<'a> Interp<'a> {
         let first = args.first().cloned().unwrap_or(Value::Void);
         match index {
             K_TAKE | K_DROP => {
+                // ToNumber of a symbol throws; it does not answer NaN, which
+                // used to turn into the out-of-range RangeError below.
+                if matches!(first, Value::Any(any) if any.as_symbol().is_some()) {
+                    let _ = self.iter_close(it.get(), true);
+                    return Err(self.iter_error(
+                        "TypeError",
+                        "Cannot convert a Symbol value to a number",
+                    ));
+                }
                 let limit = match self.to_number_value(first) {
                     Ok(number) => number,
                     Err(error) => {
