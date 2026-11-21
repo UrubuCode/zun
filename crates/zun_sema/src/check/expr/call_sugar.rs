@@ -103,20 +103,35 @@ impl Checker<'_> {
                 Ty::String => Some("StringObject"),
                 // `Object(0n)` is a BigInt *object*: truthy, `typeof` "object".
                 Ty::BigInt => Some("BigIntObject"),
+                // `Object(sym)` is a Symbol *object*: `typeof` "object", and
+                // never strictly equal to the symbol it holds.
+                Ty::Symbol => Some("SymbolObject"),
                 _ => None,
             };
             if let Some(wrapper) =
                 wrapper_name.and_then(|name| self.classes_by_name.get(name).copied())
             {
                 // The BigInt wrapper holds its payload in an `any` field.
-                let arg = if arg.ty == Ty::BigInt { Self::box_to_any(arg) } else { arg };
-                return Some(hir::Expr {
+                let arg = if matches!(arg.ty, Ty::BigInt | Ty::Symbol) {
+                    Self::box_to_any(arg)
+                } else {
+                    arg
+                };
+                let new = hir::Expr {
                     kind: hir::ExprKind::New {
                         class: wrapper,
                         args: vec![arg],
                     },
                     ty: Ty::Instance(wrapper),
                     span,
+                };
+                // A Symbol object is an ordinary object that takes arbitrary
+                // properties (`Object(sym).extra = 1`), so the static type is
+                // open. The wrapper class only carries the payload.
+                return Some(if wrapper_name == Some("SymbolObject") {
+                    Self::box_to_any(new)
+                } else {
+                    new
                 });
             }
             // A dynamic argument may hold a primitive, so it is not "already

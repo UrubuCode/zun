@@ -219,8 +219,10 @@ impl Interp<'_> {
             primitive @ (Value::Str(_) | Value::Int(..) | Value::Float(..) | Value::Bool(_)) => {
                 primitive
             }
-            Value::Any(any) if any.as_symbol().is_some() => {
-                return Ok(Some(zun_gc::with_current_heap_mut(|heap| heap.alloc_dynamic())));
+            // A symbol: ToObject is a Symbol *object* holding it. It used to
+            // be a bare dynamic object, which lost the payload and the brand.
+            primitive @ Value::Any(_) if matches!(&primitive, Value::Any(any) if any.as_symbol().is_some()) => {
+                primitive
             }
             // A BigInt is a primitive carried as a heap payload; ToObject of
             // one is a BigInt object, not the payload itself.
@@ -236,6 +238,7 @@ impl Interp<'_> {
             Value::Str(_) => "String",
             Value::Bool(_) => "Boolean",
             Value::Object(_) => "BigInt",
+            Value::Any(_) => "Symbol",
             _ => "Number",
         };
         let token = self

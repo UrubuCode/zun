@@ -1,0 +1,17 @@
+// `Object(<symbol>)` wrapper object. A symbol cannot be constructed with
+// `new`, but ToObject of one is a Symbol object: an *object*, so `typeof`
+// answers "object" and it is never strictly equal to the primitive it holds,
+// while `==` unwraps it. The checker lowers `Object(sym)` to
+// `new SymbolObject(sym)`. Named like the other primitive wrappers
+// (`NumberObject`, ...), for the same reason: `Symbol` is the primitive's own
+// name.
+//
+// It declares no methods: instances share `Symbol.prototype`, whose methods
+// accept the wrapper through ThisSymbolValue. Declaring `toString` here would
+// have made `String(Object(sym))` answer "Symbol(x)" where the specification
+// requires a TypeError -- ToPrimitive yields the symbol, and ToString of a
+// symbol throws.
+
+class SymbolObject {
+    value: any;
+}

@@ -302,6 +302,11 @@ impl<'a> Interp<'a> {
                     }
                     // A BigInt object is an instance of `BigInt`.
                     Value::Object(obj) if ctor == "BigInt" && self.is_bigint_wrapper(obj) => true,
+                    Value::Object(obj)
+                        if ctor == "Symbol" && self.is_wrapper_object(obj, "SymbolObject") =>
+                    {
+                        true
+                    }
                     Value::Object(obj) => {
                         let direct = zun_gc::with_current_heap(|heap| {
                             builtin_constructor_name(heap, obj).map(|name| name == ctor)

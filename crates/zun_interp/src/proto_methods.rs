@@ -263,10 +263,8 @@ impl Interp<'_> {
                 self.call_managed_collection(native, &[Value::Object(regex), Value::Str(input.into())])
             }
             "Symbol" => {
-                let id = match &recv {
-                    Value::Any(any) => any.as_symbol(),
-                    _ => None,
-                }
+                let id = self
+                    .this_symbol_value(&recv)
                 .ok_or_else(|| {
                     // Node names a symbol-keyed method as
                     // `Symbol.prototype [ @@toPrimitive ]`, not with a dot.
@@ -615,7 +613,7 @@ impl Interp<'_> {
     /// Whether `object` is an instance of the prelude `<ctor>Object` wrapper
     /// class (`NumberObject`, `BooleanObject`, `StringObject`) or of a class
     /// derived from it.
-    fn is_wrapper_object(&self, object: zun_gc::Obj, wrapper: &str) -> bool {
+    pub(crate) fn is_wrapper_object(&self, object: zun_gc::Obj, wrapper: &str) -> bool {
         let mut rid = object.type_rid();
         for _ in 0..64 {
             let Some(def) = self.module.tables.type_defs.get((rid as usize).wrapping_sub(1)) else {
@@ -656,6 +654,9 @@ impl Interp<'_> {
             // other three, `BigInt.prototype` is not itself a wrapper.
             if self.is_wrapper_object(object, "BigIntObject") {
                 return Some("BigInt");
+            }
+            if self.is_wrapper_object(object, "SymbolObject") {
+                return Some("Symbol");
             }
         }
         KINDS.iter().map(|(ctor, _)| *ctor).find(|ctor| {
@@ -699,6 +700,7 @@ impl Interp<'_> {
             "NumberObject" => "Number",
             "BooleanObject" => "Boolean",
             "BigIntObject" => "BigInt",
+            "SymbolObject" => "Symbol",
             _ => return None,
         };
         self.wrapper_prototype_object(ctor)
@@ -718,7 +720,7 @@ impl Interp<'_> {
         {
             return None;
         }
-        ["Boolean", "Number", "String", "BigInt"]
+        ["Boolean", "Number", "String", "BigInt", "Symbol"]
             .into_iter()
             .find(|ctor| self.is_wrapper_object(object, &format!("{ctor}Object")))
     }
@@ -1014,5 +1016,25 @@ impl Interp<'_> {
             }
             _ => None,
         })
+    }
+}
+
+impl Interp<'_> {
+    /// ThisSymbolValue: the symbol a `Symbol.prototype` method was called on.
+    ///
+    /// A symbol primitive, or the payload of a `SymbolObject` wrapper
+    /// (`Object(sym).description`) -- the wrapper is an object, so matching
+    /// `Value::Any` alone rejected it.
+    pub(crate) fn this_symbol_value(&mut self, recv: &Value) -> Option<zun_core::SymbolId> {
+        match recv {
+            Value::Any(any) => any.as_symbol(),
+            Value::Object(object) if self.is_wrapper_object(*object, "SymbolObject") => {
+                match self.dynamic_member_get(*object, "value").ok()? {
+                    Value::Any(any) => any.as_symbol(),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 }

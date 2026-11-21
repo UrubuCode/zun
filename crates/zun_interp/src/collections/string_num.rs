@@ -187,6 +187,16 @@ impl<'a> Interp<'a> {
                     }
                     Value::Object(obj) => {
                         if let Some(prim) = self.ordinary_to_primitive(obj, "string")? {
+                            // `String(sym)` is allowed and spells the symbol
+                            // out, but that is a special case for a symbol
+                            // *argument*. A symbol that came out of
+                            // ToPrimitive -- `String(Object(sym))` -- goes
+                            // through ToString, which throws.
+                            if matches!(&prim, Value::Any(any) if any.as_symbol().is_some()) {
+                                return Err(RunError::Native(
+                                    "TypeError: Cannot convert a Symbol value to a string".into(),
+                                ));
+                            }
                             prim.display()
                         } else {
                             // The one spelling of `[object <tag>]`, brand included.

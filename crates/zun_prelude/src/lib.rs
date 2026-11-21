@@ -52,6 +52,8 @@ pub const NUMBER_OBJECT: &str = include_str!("../builtin/number_object.zun");
 
 /// The `Object(<bigint>)` wrapper class (`builtin/bigint_object.zun`).
 pub const BIGINT_OBJECT: &str = include_str!("../builtin/bigint_object.zun");
+/// `Object(<symbol>)` wrapper class.
+pub const SYMBOL_OBJECT: &str = include_str!("../builtin/symbol_object.zun");
 
 /// The `new String(x)` wrapper class (`builtin/string_object.zun`).
 pub const STRING_OBJECT: &str = include_str!("../builtin/string_object.zun");
@@ -191,6 +193,7 @@ pub const PRELUDE_CLASSES: &[&str] = &[
     BOOLEAN,
     NUMBER_OBJECT,
     BIGINT_OBJECT,
+    SYMBOL_OBJECT,
     STRING_OBJECT,
     DECORATORS,
     INTL,

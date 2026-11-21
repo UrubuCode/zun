@@ -296,6 +296,13 @@ impl<'a> Interp<'a> {
             (Value::Str(a), Value::Str(b)) => return Ok(a == b),
             (Value::Bool(a), Value::Bool(b)) => return Ok(a == b),
             (Value::Object(a), Value::Object(b)) => return Ok(a.addr() == b.addr()),
+            // Two symbols: one identity, compared by id. `sym == sym` answered
+            // false, since no arm matched and the tail fell through.
+            (Value::Any(a), Value::Any(b))
+                if a.as_symbol().is_some() && b.as_symbol().is_some() =>
+            {
+                return Ok(a.as_symbol() == b.as_symbol());
+            }
             (Value::Function(a), Value::Function(b)) => return Ok(a == b),
             _ => {}
         }
@@ -646,6 +653,15 @@ impl<'a> Interp<'a> {
         obj: zun_gc::Obj,
         hint: &str,
     ) -> Result<Option<Value>, RunError> {
+        // A Symbol object yields the symbol it holds, whatever the hint. The
+        // caller then does what the specification says with a symbol: `==`
+        // compares it, and ToString / ToNumber throw -- which is why
+        // `String(Object(sym))` is a TypeError and not "Symbol(x)".
+        if self.wrapper_instance_kind(obj) == Some("Symbol") {
+            if let Some(symbol) = self.this_symbol_value(&Value::Object(obj)) {
+                return Ok(Some(Value::Any(zun_core::Any::symbol(symbol))));
+            }
+        }
         // A BigInt is a primitive: its string form is its decimal digits (the
         // number hint parses them back). Checked first so the heap object's
         // reserved type id never reaches the class-method tables.

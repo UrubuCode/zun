@@ -996,10 +996,7 @@ impl Interp<'_> {
         };
         match kind {
             BUILTIN_SYMBOL_DESCRIPTION => {
-                let symbol = match &this {
-                    Value::Any(any) => any.as_symbol(),
-                    _ => None,
-                };
+                let symbol = self.this_symbol_value(&this);
                 let Some(symbol) = symbol else {
                     let message = "Symbol.prototype.description requires that 'this' be a Symbol";
                     return Err(match self.new_error_object("TypeError", message) {
