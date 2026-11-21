@@ -991,6 +991,18 @@ impl<'a> Interp<'a> {
                     let proto = Self::iterator_prototype_object(if mode == 3 { 2 } else { 1 });
                     return Ok(Value::Any(zun_core::Any::object(proto.addr() as usize)));
                 }
+                // A generator object is linked to its function's `prototype`
+                // object, which is where its chain starts; the shared
+                // %GeneratorPrototype% is one level further up. The brand
+                // below used to shortcut past that level.
+                if let Some(address) = zun_gc::with_current_heap(|heap| {
+                    heap.generator_state(obj)
+                        .is_some()
+                        .then(|| heap.dynamic_prototype(obj).and_then(|any| any.as_object()))
+                        .flatten()
+                }) {
+                    return Ok(Value::Any(zun_core::Any::object(address)));
+                }
                 let setmap_kind = zun_gc::with_current_heap(|heap| {
                     if heap.generator_state(obj).is_some() {
                         Some(7u8)

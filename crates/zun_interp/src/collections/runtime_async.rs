@@ -288,6 +288,13 @@ impl<'a> Interp<'a> {
                 matches!(decode_one(body.code), Ok((first, _)) if first.opcode == Opcode::AsyncGenStart)
             })
             .unwrap_or(false);
+        // A generator object inherits the *function's* `prototype` object,
+        // whose own prototype is %GeneratorPrototype%. The chain the
+        // specification asks for is
+        // `gen -> g.prototype -> %GeneratorPrototype% -> %Iterator.prototype%`;
+        // the object used to inherit %GeneratorPrototype% directly, one level
+        // short, so `Object.getPrototypeOf(g()) === g.prototype` was false.
+        self.link_generator_prototype(method_rid, generator);
         if !is_async_gen {
             return Ok(Value::Object(generator));
         }
@@ -431,5 +438,36 @@ impl<'a> Interp<'a> {
                 Ok(())
             }
         }
+    }
+}
+
+impl Interp<'_> {
+    /// Link a freshly made generator object to its function's `prototype`
+    /// object, creating that object if this is the first generator from it.
+    ///
+    /// No predicate guards this: only a generator reaches the caller, and
+    /// `function* g()` keeps its plain declared name, so the `@generator`
+    /// marker that identifies a generator *closure* is absent here. A
+    /// generator object carries no property table of its own, so it is given
+    /// one first -- the same step `Reflect.construct` takes before swapping a
+    /// result's prototype.
+    pub(crate) fn link_generator_prototype(&mut self, method_rid: u32, generator: zun_gc::Obj) {
+        let handle = zun_core::FunctionHandle::new(method_rid, None);
+        self.ensure_function_prototype(handle);
+        let bag = crate::function_expando_bag(handle);
+        let generator_proto = Self::iterator_prototype_object(7);
+        zun_gc::with_current_heap_mut(|heap| {
+            let Some(proto) = heap.dynamic_get(bag, "prototype").and_then(|any| any.as_object())
+            else {
+                return;
+            };
+            let object = unsafe { zun_gc::Obj::from_addr(proto as *mut u64) };
+            // The function's `prototype` inherits %GeneratorPrototype%, which
+            // owns `next`/`throw`/`return` and carries the `Generator` brand.
+            let link = zun_core::Any::object(generator_proto.addr() as usize);
+            heap.dynamic_set_prototype(object, Some(link));
+            heap.ensure_instance_bag(generator);
+            heap.dynamic_set_prototype(generator, Some(zun_core::Any::object(proto)));
+        });
     }
 }
