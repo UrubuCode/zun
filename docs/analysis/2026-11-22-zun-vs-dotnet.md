@@ -43,23 +43,42 @@ is the largest gap and the most common shape in real code. **Fix: carry the
 element type** (`Ty::Array` gains an element, or a typed-array representation
 for `number[]`), so `a[j]` is `f64` and the existing `ldelem` lowering applies.
 
-### `alloc`, 170x: every object has a side record and a hash entry
+### `alloc`, 170x: the collector pays per dead object
 
-The loop *is* compiled. Two experiments ruled out collection frequency: raising
-the 256-allocation cadence changed 1459 -> 1308 ms, and an 8 MB nursery budget
-changed nothing. The cost is in `Heap::alloc` itself
-(`zun_gc/src/allocation.rs:50`): every allocation takes an identity hash,
-consults a `free` map keyed by size, pushes a `Record`, and inserts into the
-`by_addr` `HashMap` -- behind a native call, two thread-local lookups and an
-`ActiveNativeFrameScope`. Roughly 450 ns per object.
+The loop *is* compiled. The first reading of this line was wrong and is kept
+here because the way it was wrong is instructive. Two experiments were run one
+at a time -- raising the 256-allocation cadence (1459 -> 1308 ms) and an 8 MB
+nursery budget (no gain, slightly slower) -- and each was taken to *refute*
+collection as the cause, leaving `Heap::alloc` by elimination. Timing the path
+directly said otherwise:
 
-.NET allocates with an inline bump of a thread-local pointer -- about ten
-instructions emitted by the JIT, no call on the fast path -- and keeps **no
-per-object side structure**: the heap is walkable because the object header
-names the type and the type names the size. **Fix, in two steps:** (1) inline
-bump allocation in JIT code with the helper as the slow path only; (2) make the
-nursery linearly walkable from headers so young objects need no `Record` and no
-`by_addr` entry until they survive.
+| | collections | time in collection | time in `Heap::alloc` |
+| --- | --- | --- | --- |
+| default cadence | 11 718 | 1317 ms | 172 ms |
+| rare collections | 9 | 1221 ms | 263 ms |
+
+Collection was 73% of the time, and its cost did not move when its count fell
+1300-fold: the collector cost ~400 ns per **dead** object regardless of how
+often it ran. That is why neither experiment helped, and why the second got
+slower -- fewer collections, but larger side tables made each allocation
+dearer. Several causes were acting together and each experiment, alone, was
+masked by the others.
+
+The per-dead-object cost was the sweep removing each address from `by_addr`
+and then from 23 side tables, every one a SipHash probe, for an object that
+was in none of them. Fixed in `perf(gc): a dead object costs one hashed probe`:
+1459 -> 478 ms.
+
+What remains (478 ms against .NET's 8.5) is structural. Every allocation is a
+native call that takes an identity hash, pushes a `Record` and inserts into
+`by_addr`; every collection walks all records. .NET allocates with an inline
+bump of a thread-local pointer -- about ten instructions, no call on the fast
+path -- and keeps **no per-object side structure**: the heap is walkable
+because the header names the type and the type names the size. **Fix, in two
+steps:** (1) make the nursery linearly walkable from headers so a young object
+needs no `Record` and no `by_addr` entry until it survives, which makes a
+young collection cost per survivor; (2) inline the bump in JIT code with the
+helper as the slow path only.
 
 ### `obj_literal`, 59x: `lddyn`/`stdyn` are not lowered at all
 
