@@ -262,6 +262,7 @@ fn check_impl(
         type_param_names: HashSet::new(),
         enums: HashMap::new(),
         module_globals: HashSet::new(),
+        module_global_types: HashMap::new(),
         globals_read_in_functions: HashSet::new(),
         pending_static_classes: VecDeque::new(),
         arguments_functions: HashSet::new(),
@@ -366,6 +367,33 @@ fn check_impl(
                 let text = checker.text(name).to_string();
                 if top_assigned.contains(&text) {
                     assigned.insert(text);
+                }
+            }
+        }
+        // A top-level binding with a declared value type that nothing ever
+        // assigns to keeps that type when a function body reads it. Read as
+        // `any` it made the local holding it `any` too, and one `any` local
+        // disqualifies the whole method from Tier 1 (`eligible.rs`: every local
+        // must be a JIT value type) -- and the OSR loop entry takes every local
+        // as a parameter, so it disqualified the hot loop region as well. A
+        // `const N: number` read by a hot loop therefore ran that loop in the
+        // interpreter, measured ~36x slower than the same loop over a
+        // parameter. The declared type is the program's own statement about the
+        // binding; keeping it is more faithful than erasing it.
+        for statement in &program.top_level {
+            if let ast::Stmt::Let {
+                name,
+                ty: Some(annotation),
+                ..
+            } = statement
+            {
+                let text = checker.text(name).to_string();
+                if assigned.contains(&text) || top_assigned.contains(&text) {
+                    continue;
+                }
+                let declared = checker.resolve_annotation(annotation);
+                if matches!(declared, Ty::F64 | Ty::Boolean) {
+                    checker.module_global_types.insert(text, declared);
                 }
             }
         }
@@ -637,6 +665,11 @@ struct Checker<'a> {
     /// function body can read them, matching JS module scope. All are dynamic
     /// (`any`).
     module_globals: HashSet<String>,
+    /// The declared type of each top-level binding that nothing ever assigns
+    /// to, for the value types a read can be unboxed to. A read then carries
+    /// that type instead of `any`, which is what keeps a method that reads a
+    /// module global JIT-eligible (see the population site in `check`).
+    module_global_types: HashMap<String, Ty>,
     /// Module globals that some function/method/arrow body references by name
     /// (so a top-level write must be mirrored to the realm store for that
     /// reader to observe it). A sound over-approximation; names outside this set

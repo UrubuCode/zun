@@ -325,17 +325,23 @@ impl Checker<'_> {
         }
     }
 
-    /// `globalGet(name)` — read a module global (dynamic).
+    /// `globalGet(name)` — read a module global. A binding whose declared type
+    /// is a value type nothing ever assigns to is unboxed to that type, so the
+    /// local that receives it is a JIT value type rather than `any`.
     pub(in crate::check) fn global_get_expr(&self, name: &str, span: Span) -> hir::Expr {
         let (id, _) = zun_natives::resolve("collections", "globalGet")
             .expect("globalGet intrinsic must exist");
-        hir::Expr {
+        let read = hir::Expr {
             kind: hir::ExprKind::CallBuiltin {
                 id,
                 args: vec![Self::string_literal(name.to_string(), span)],
             },
             ty: Ty::Any,
             span,
+        };
+        match self.module_global_types.get(name).copied() {
+            Some(ty) => Self::unbox_to(read, ty),
+            None => read,
         }
     }
 }
