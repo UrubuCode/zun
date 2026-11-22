@@ -27,7 +27,7 @@
 // individual `# Safety` sections would only restate them.
 #![allow(clippy::missing_safety_doc)]
 
-use std::collections::{HashMap, HashSet};
+use crate::fast_hash::{HashMap, HashSet};
 
 mod handles;
 mod heap_context;
@@ -55,6 +55,7 @@ mod diagnostics;
 mod dynamic;
 mod errors;
 mod generators;
+pub mod fast_hash;
 mod hashing;
 mod iterators;
 mod maps;
@@ -261,11 +262,11 @@ pub struct Heap {
     /// The typed-array views created as a Node `Buffer`. A Buffer *is* a
     /// `Uint8Array`, so nothing else tells the two apart -- and they differ:
     /// `Buffer.isBuffer`, `fill`'s argument validation, JSON serialization.
-    node_buffers: std::collections::HashSet<usize>,
+    node_buffers: crate::fast_hash::HashSet<usize>,
     /// The addresses in `weak_map_objects` that are `WeakSet`s rather than
     /// `WeakMap`s. The two share one ephemeron floor, so this is the only
     /// thing that distinguishes them (brands, `instanceof`, receiver checks).
-    weak_set_objects: std::collections::HashSet<usize>,
+    weak_set_objects: crate::fast_hash::HashSet<usize>,
     /// WeakRef slots owned by managed WeakRef objects.
     weak_ref_objects: HashMap<usize, WeakRefId>,
     /// Promise state associated with managed Promise objects.
@@ -779,7 +780,7 @@ impl Heap {
         let map = |address| relocation.relocate_address(address);
         let mut rewritten = 0;
         let arrays = std::mem::take(&mut self.arrays);
-        let mut mapped_arrays = HashMap::with_capacity(arrays.len());
+        let mut mapped_arrays = HashMap::with_capacity_and_hasher(arrays.len(), Default::default());
         for (address, mut array) in arrays {
             let mapped = map(address);
             if mapped != address {
@@ -791,7 +792,7 @@ impl Heap {
         self.arrays = mapped_arrays;
 
         let any_fields = std::mem::take(&mut self.any_fields);
-        let mut mapped_any_fields = HashMap::with_capacity(any_fields.len());
+        let mut mapped_any_fields = HashMap::with_capacity_and_hasher(any_fields.len(), Default::default());
         for (address, mut fields) in any_fields {
             let mapped = map(address);
             if mapped != address {
@@ -811,7 +812,7 @@ impl Heap {
         self.any_fields = mapped_any_fields;
 
         let objects = std::mem::take(&mut self.dynamic_objects);
-        let mut mapped_objects = HashMap::with_capacity(objects.len());
+        let mut mapped_objects = HashMap::with_capacity_and_hasher(objects.len(), Default::default());
         for (address, mut object) in objects {
             let mapped = map(address);
             if mapped != address {
@@ -823,7 +824,7 @@ impl Heap {
         self.dynamic_objects = mapped_objects;
 
         let maps = std::mem::take(&mut self.maps);
-        let mut mapped_maps = HashMap::with_capacity(maps.len());
+        let mut mapped_maps = HashMap::with_capacity_and_hasher(maps.len(), Default::default());
         for (address, mut map_storage) in maps {
             let mapped = map(address);
             if mapped != address {
@@ -835,7 +836,7 @@ impl Heap {
         self.maps = mapped_maps;
 
         let sets = std::mem::take(&mut self.sets);
-        let mut mapped_sets = HashMap::with_capacity(sets.len());
+        let mut mapped_sets = HashMap::with_capacity_and_hasher(sets.len(), Default::default());
         for (address, mut set_storage) in sets {
             let mapped = map(address);
             if mapped != address {
@@ -859,7 +860,7 @@ impl Heap {
 
         let mut rewritten = 0;
         let mut arrays = std::mem::take(&mut self.array_iterators);
-        let mut new_arrays = HashMap::with_capacity(arrays.len());
+        let mut new_arrays = HashMap::with_capacity_and_hasher(arrays.len(), Default::default());
         for (address, (array, state)) in arrays.drain() {
             let iterator = unsafe { Obj::from_addr(address as *mut u64) };
             let new_iterator = relocated(relocation, iterator);
@@ -876,7 +877,7 @@ impl Heap {
         self.array_iterators = new_arrays;
 
         let mut sets = std::mem::take(&mut self.set_iterators);
-        let mut new_sets = HashMap::with_capacity(sets.len());
+        let mut new_sets = HashMap::with_capacity_and_hasher(sets.len(), Default::default());
         for (address, (set, state)) in sets.drain() {
             let iterator = unsafe { Obj::from_addr(address as *mut u64) };
             let new_iterator = relocated(relocation, iterator);
@@ -893,7 +894,7 @@ impl Heap {
         self.set_iterators = new_sets;
 
         let mut maps = std::mem::take(&mut self.map_iterators);
-        let mut new_maps = HashMap::with_capacity(maps.len());
+        let mut new_maps = HashMap::with_capacity_and_hasher(maps.len(), Default::default());
         for (address, (map, state)) in maps.drain() {
             let iterator = unsafe { Obj::from_addr(address as *mut u64) };
             let new_iterator = relocated(relocation, iterator);
@@ -910,7 +911,7 @@ impl Heap {
         self.map_iterators = new_maps;
 
         let mut views = std::mem::take(&mut self.typed_views);
-        let mut new_views = HashMap::with_capacity(views.len());
+        let mut new_views = HashMap::with_capacity_and_hasher(views.len(), Default::default());
         for (address, (buffer, view)) in views.drain() {
             let object = unsafe { Obj::from_addr(address as *mut u64) };
             let new_object = relocated(relocation, object);
@@ -958,7 +959,7 @@ impl Heap {
             }
         }
         let owners = std::mem::take(&mut self.weak_map_objects);
-        let mut mapped_owners = HashMap::with_capacity(owners.len());
+        let mut mapped_owners = HashMap::with_capacity_and_hasher(owners.len(), Default::default());
         for (owner, id) in owners {
             let mapped = map(owner);
             if mapped != owner {
@@ -990,7 +991,7 @@ impl Heap {
             })
             .collect();
         let ref_owners = std::mem::take(&mut self.weak_ref_objects);
-        let mut mapped_ref_owners = HashMap::with_capacity(ref_owners.len());
+        let mut mapped_ref_owners = HashMap::with_capacity_and_hasher(ref_owners.len(), Default::default());
         for (owner, id) in ref_owners {
             let mapped = map(owner);
             if mapped != owner {
@@ -1052,7 +1053,7 @@ impl Heap {
             }
         }
         let registries = std::mem::take(&mut self.finalization_registries);
-        let mut mapped_registries = HashMap::with_capacity(registries.len());
+        let mut mapped_registries = HashMap::with_capacity_and_hasher(registries.len(), Default::default());
         for (owner, mut cleanup) in registries {
             let mapped_owner = map(owner);
             if mapped_owner != owner {
@@ -1078,7 +1079,7 @@ impl Heap {
         let mut rewritten = 0;
 
         let buffers = std::mem::take(&mut self.buffers);
-        let mut mapped_buffers = HashMap::with_capacity(buffers.len());
+        let mut mapped_buffers = HashMap::with_capacity_and_hasher(buffers.len(), Default::default());
         for (address, buffer) in buffers {
             let mapped = map(address);
             if mapped != address {
@@ -1089,7 +1090,7 @@ impl Heap {
         self.buffers = mapped_buffers;
 
         let data_views = std::mem::take(&mut self.data_views);
-        let mut mapped_data_views = HashMap::with_capacity(data_views.len());
+        let mut mapped_data_views = HashMap::with_capacity_and_hasher(data_views.len(), Default::default());
         for (address, view) in data_views {
             let mapped = map(address);
             if mapped != address {
@@ -1107,7 +1108,7 @@ impl Heap {
         self.data_views = mapped_data_views;
 
         let dates = std::mem::take(&mut self.dates);
-        let mut mapped_dates = HashMap::with_capacity(dates.len());
+        let mut mapped_dates = HashMap::with_capacity_and_hasher(dates.len(), Default::default());
         for (address, value) in dates {
             let mapped = map(address);
             if mapped != address {
@@ -1118,7 +1119,7 @@ impl Heap {
         self.dates = mapped_dates;
 
         let errors = std::mem::take(&mut self.errors);
-        let mut mapped_errors = HashMap::with_capacity(errors.len());
+        let mut mapped_errors = HashMap::with_capacity_and_hasher(errors.len(), Default::default());
         for (address, value) in errors {
             let mapped = map(address);
             if mapped != address {
@@ -1129,7 +1130,7 @@ impl Heap {
         self.errors = mapped_errors;
 
         let regexes = std::mem::take(&mut self.regexes);
-        let mut mapped_regexes = HashMap::with_capacity(regexes.len());
+        let mut mapped_regexes = HashMap::with_capacity_and_hasher(regexes.len(), Default::default());
         for (address, value) in regexes {
             let mapped = map(address);
             if mapped != address {
@@ -1140,7 +1141,7 @@ impl Heap {
         self.regexes = mapped_regexes;
 
         let bigints = std::mem::take(&mut self.bigints);
-        let mut mapped_bigints = HashMap::with_capacity(bigints.len());
+        let mut mapped_bigints = HashMap::with_capacity_and_hasher(bigints.len(), Default::default());
         for (address, value) in bigints {
             let mapped = map(address);
             if mapped != address {
@@ -1160,7 +1161,7 @@ impl Heap {
             }
         }
         let by_addr = std::mem::take(&mut self.by_addr);
-        let mut mapped_by_addr = HashMap::with_capacity(by_addr.len());
+        let mut mapped_by_addr = HashMap::with_capacity_and_hasher(by_addr.len(), Default::default());
         for (address, index) in by_addr {
             mapped_by_addr.insert(map(address), index);
         }
@@ -1172,7 +1173,7 @@ impl Heap {
             .collect();
 
         let promises = std::mem::take(&mut self.promises);
-        let mut mapped_promises = HashMap::with_capacity(promises.len());
+        let mut mapped_promises = HashMap::with_capacity_and_hasher(promises.len(), Default::default());
         for (address, mut promise) in promises {
             let mapped_address = map(address);
             if mapped_address != address {
@@ -1184,7 +1185,7 @@ impl Heap {
         self.promises = mapped_promises;
 
         let proxies = std::mem::take(&mut self.proxies);
-        let mut mapped_proxies = HashMap::with_capacity(proxies.len());
+        let mut mapped_proxies = HashMap::with_capacity_and_hasher(proxies.len(), Default::default());
         for (address, proxy) in proxies {
             let mapped_address = map(address);
             let target = unsafe { Obj::from_addr(map(proxy.target.addr() as usize) as *mut u64) };

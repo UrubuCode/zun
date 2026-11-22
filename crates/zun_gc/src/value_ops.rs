@@ -8,7 +8,7 @@ pub(super) fn any_same_value_zero(
     a: zun_core::Any,
     b: zun_core::Any,
     strings: &[zun_core::ZStr],
-    bigints: &std::collections::HashMap<usize, zun_core::BigInt>,
+    bigints: &crate::fast_hash::HashMap<usize, zun_core::BigInt>,
 ) -> bool {
     if a.tag() != b.tag() {
         return false;

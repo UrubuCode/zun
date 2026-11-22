@@ -66,7 +66,7 @@ impl Heap {
     pub(super) fn rewrite_generator_states(&mut self, relocation: &RelocationMap) -> usize {
         let mut rewritten = 0;
         let states = std::mem::take(&mut self.generator_states);
-        let mut mapped = std::collections::HashMap::with_capacity(states.len());
+        let mut mapped = crate::fast_hash::HashMap::with_capacity_and_hasher(states.len(), Default::default());
         for (address, mut state) in states {
             let relocated = relocation.relocate_address(address);
             if relocated != address {
@@ -83,7 +83,7 @@ impl Heap {
     pub(super) fn rewrite_generator_frames(&mut self, relocation: &RelocationMap) -> usize {
         let mut rewritten = 0;
         let frames = std::mem::take(&mut self.generator_frames);
-        let mut mapped = std::collections::HashMap::with_capacity(frames.len());
+        let mut mapped = crate::fast_hash::HashMap::with_capacity_and_hasher(frames.len(), Default::default());
         for (address, mut frame) in frames {
             let relocated = relocation.relocate_address(address);
             if relocated != address {

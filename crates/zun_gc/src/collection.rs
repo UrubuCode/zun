@@ -407,7 +407,7 @@ impl Heap {
         // then resolve a key's values when the key itself enters the work list.
         // Each entry is therefore visited a constant number of times instead of
         // re-scanning every ephemeron on each propagation round.
-        let mut ephemeron_values: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut ephemeron_values: HashMap<usize, Vec<usize>> = HashMap::default();
         for entry in &self.weak_maps {
             for &(key, value) in &entry.entries {
                 ephemeron_values.entry(key).or_default().push(value);
@@ -651,29 +651,79 @@ impl Heap {
             if r.alive && collect_this && !r.marked {
                 r.alive = false;
                 self.by_addr.remove(&(r.addr as usize));
-                self.dynamic_objects.remove(&(r.addr as usize));
-                self.arrays.remove(&(r.addr as usize));
-                self.any_fields.remove(&(r.addr as usize));
-                self.buffers.remove(&(r.addr as usize));
-                self.data_views.remove(&(r.addr as usize));
-                self.typed_views.remove(&(r.addr as usize));
-                self.array_iterators.remove(&(r.addr as usize));
-                self.generator_frames.remove(&(r.addr as usize));
-                self.generator_states.remove(&(r.addr as usize));
-                self.set_iterators.remove(&(r.addr as usize));
-                self.map_iterators.remove(&(r.addr as usize));
-                self.dates.remove(&(r.addr as usize));
-                self.errors.remove(&(r.addr as usize));
-                self.maps.remove(&(r.addr as usize));
-                self.sets.remove(&(r.addr as usize));
-                self.weak_map_objects.remove(&(r.addr as usize));
-                self.weak_set_objects.remove(&(r.addr as usize));
-                self.node_buffers.remove(&(r.addr as usize));
-                self.weak_ref_objects.remove(&(r.addr as usize));
-                self.promises.remove(&(r.addr as usize));
-                self.regexes.remove(&(r.addr as usize));
-                self.bigints.remove(&(r.addr as usize));
-                self.proxies.remove(&(r.addr as usize));
+                // A plain object is in none of the side tables below, and a table
+                // that holds nothing cannot hold this address: the emptiness
+                // check is what keeps a dead object from costing a hashed probe
+                // per table.
+                if !self.dynamic_objects.is_empty() {
+                    self.dynamic_objects.remove(&(r.addr as usize));
+                }
+                if !self.arrays.is_empty() {
+                    self.arrays.remove(&(r.addr as usize));
+                }
+                if !self.any_fields.is_empty() {
+                    self.any_fields.remove(&(r.addr as usize));
+                }
+                if !self.buffers.is_empty() {
+                    self.buffers.remove(&(r.addr as usize));
+                }
+                if !self.data_views.is_empty() {
+                    self.data_views.remove(&(r.addr as usize));
+                }
+                if !self.typed_views.is_empty() {
+                    self.typed_views.remove(&(r.addr as usize));
+                }
+                if !self.array_iterators.is_empty() {
+                    self.array_iterators.remove(&(r.addr as usize));
+                }
+                if !self.generator_frames.is_empty() {
+                    self.generator_frames.remove(&(r.addr as usize));
+                }
+                if !self.generator_states.is_empty() {
+                    self.generator_states.remove(&(r.addr as usize));
+                }
+                if !self.set_iterators.is_empty() {
+                    self.set_iterators.remove(&(r.addr as usize));
+                }
+                if !self.map_iterators.is_empty() {
+                    self.map_iterators.remove(&(r.addr as usize));
+                }
+                if !self.dates.is_empty() {
+                    self.dates.remove(&(r.addr as usize));
+                }
+                if !self.errors.is_empty() {
+                    self.errors.remove(&(r.addr as usize));
+                }
+                if !self.maps.is_empty() {
+                    self.maps.remove(&(r.addr as usize));
+                }
+                if !self.sets.is_empty() {
+                    self.sets.remove(&(r.addr as usize));
+                }
+                if !self.weak_map_objects.is_empty() {
+                    self.weak_map_objects.remove(&(r.addr as usize));
+                }
+                if !self.weak_set_objects.is_empty() {
+                    self.weak_set_objects.remove(&(r.addr as usize));
+                }
+                if !self.node_buffers.is_empty() {
+                    self.node_buffers.remove(&(r.addr as usize));
+                }
+                if !self.weak_ref_objects.is_empty() {
+                    self.weak_ref_objects.remove(&(r.addr as usize));
+                }
+                if !self.promises.is_empty() {
+                    self.promises.remove(&(r.addr as usize));
+                }
+                if !self.regexes.is_empty() {
+                    self.regexes.remove(&(r.addr as usize));
+                }
+                if !self.bigints.is_empty() {
+                    self.bigints.remove(&(r.addr as usize));
+                }
+                if !self.proxies.is_empty() {
+                    self.proxies.remove(&(r.addr as usize));
+                }
                 self.free.entry(r.field_count).or_default().push(idx);
                 freed += 1;
             } else if r.alive && (!young_only || r.generation == records::Generation::Young) {
