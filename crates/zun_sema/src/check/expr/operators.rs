@@ -394,13 +394,21 @@ impl Checker<'_> {
                 && rhs.ty != Ty::BigInt;
             if needs_coerce {
                 if let Some((id, _)) = zun_natives::resolve("collections", "numberCoerceStrict") {
-                    let coerce = |e: hir::Expr| hir::Expr {
-                        span: e.span,
-                        kind: hir::ExprKind::CallBuiltin {
-                            id,
-                            args: vec![Self::box_to_any(e)],
-                        },
-                        ty: Ty::F64,
+                    // ToNumber of a `number` is that number: a typed operand
+                    // needs neither the box nor the call, which inside a loop
+                    // is a boxed constant and a native call per iteration.
+                    let coerce = |e: hir::Expr| {
+                        if e.ty == Ty::F64 {
+                            return e;
+                        }
+                        hir::Expr {
+                            span: e.span,
+                            kind: hir::ExprKind::CallBuiltin {
+                                id,
+                                args: vec![Self::box_to_any(e)],
+                            },
+                            ty: Ty::F64,
+                        }
                     };
                     let lhs = coerce(lhs);
                     let rhs = coerce(rhs);
