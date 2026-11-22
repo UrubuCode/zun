@@ -9,6 +9,7 @@
 mod builtins;
 mod call_rest;
 mod collections;
+mod decoded;
 mod decorators;
 mod dyn_member;
 mod errors;
@@ -577,6 +578,7 @@ impl Interp<'_> {
         let mut stack = &mut frame.stack;
         let locals = &mut frame.locals;
         let code = body.code;
+        let decoded = decoded::decoded_for(code);
         let mut pc = &mut frame.pc;
 
         if resumed && unwind::GENERATOR_RETURN_PENDING.with(|flag| flag.replace(false)) {
@@ -605,8 +607,11 @@ impl Interp<'_> {
             if let Some(frame) = self.call_stack.last_mut() {
                 frame.pc = *pc as u32;
             }
-            let (instr, size) =
-                decode_one(&code[*pc..]).map_err(|e| RunError::Malformed(e.to_string()))?;
+            let (instr, size) = match decoded.at(*pc) {
+                Some(hit) => hit,
+                None => decode_one(&code[*pc..])
+                    .map_err(|e| RunError::Malformed(e.to_string()))?,
+            };
             let next = *pc + size;
             *pc = next;
 
