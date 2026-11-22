@@ -834,27 +834,57 @@ fn install_runtime_computed_method(
                     shorthand: false,
                 })
             };
+            let member_span = Span::new(method.span.start, method.span.end);
+            // The key is evaluated once, as the specification evaluates it: it
+            // is read by both the naming helper and the define call, and a key
+            // expression with a side effect ran twice.
+            let n = COMPUTED_FIELD_COUNTER.with(|counter| {
+                let n = counter.get();
+                counter.set(n + 1);
+                n
+            });
+            let key_temp = crate::ast::synthetic_ident(&format!("__ck{n}"));
+            CLASS_TRAILING.with(|cells| {
+                cells.borrow_mut().push(Stmt::Let {
+                    name: key_temp,
+                    ty: None,
+                    init: key.clone(),
+                    span: member_span,
+                })
+            });
+            // The specification names a computed-key member at class-definition
+            // time; this desugaring makes it an anonymous function expression,
+            // which reports no name, so the helper applies the name the key
+            // gives it.
+            let named = |kind: f64, value: Expr| Expr::Call {
+                callee: crate::ast::synthetic_ident("__zunNameClassMember"),
+                args: vec![
+                    value,
+                    Expr::Ident(key_temp),
+                    Expr::Number { value: kind, span: member_span },
+                ],
+                span: member_span,
+            };
             let members = match method.kind {
                 MethodDefinitionKind::Get => {
-                    vec![slot("get", function_value), flag("configurable", true)]
+                    vec![slot("get", named(1.0, function_value)), flag("configurable", true)]
                 }
                 MethodDefinitionKind::Set => {
-                    vec![slot("set", function_value), flag("configurable", true)]
+                    vec![slot("set", named(2.0, function_value)), flag("configurable", true)]
                 }
                 _ => vec![
-                    slot("value", function_value),
+                    slot("value", named(0.0, function_value)),
                     flag("writable", true),
                     flag("configurable", true),
                 ],
             };
-            let member_span = Span::new(method.span.start, method.span.end);
             CLASS_TRAILING.with(|cells| {
                 cells.borrow_mut().push(Stmt::Expr(Expr::MethodCall {
                     receiver: Box::new(Expr::Ident(crate::ast::synthetic_ident("Object"))),
                     method: crate::ast::synthetic_ident("defineProperty"),
                     args: vec![
                         target,
-                        key.clone(),
+                        Expr::Ident(key_temp),
                         Expr::ObjectLiteral {
                             properties: members,
                             span: member_span,

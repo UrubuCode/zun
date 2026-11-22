@@ -191,6 +191,31 @@ function __zunAbstractClass(name: string): any {
 // name. JS makes this a run-time TypeError (a class body is strict code), not
 // a compile error -- the inner class-name binding is const, so
 // `class D { static f() { D = 1 } }` throws when `f` runs.
+// A class member with a computed key is installed by a generated
+// `Object.defineProperty` after the declaration, so its function value is an
+// anonymous expression and reported no name at all. The specification names it
+// at class-definition time (`SetFunctionName`): a symbol key becomes
+// `[description]`, a symbol without a description leaves the name empty, any
+// other key is its string form, and an accessor carries a `get ` / `set `
+// prefix. `kind` is 0 for a method, 1 for a getter, 2 for a setter.
+function __zunNameClassMember(fn: any, key: any, kind: number): any {
+    let label: string = "";
+    if (typeof key === "symbol") {
+        const described: any = (key as any).description;
+        if (described !== undefined) {
+            label = "[" + String(described) + "]";
+        }
+    } else {
+        label = String(key);
+    }
+    if (label !== "") {
+        const prefix: string = kind === 1 ? "get " : (kind === 2 ? "set " : "");
+        label = prefix + label;
+    }
+    Object.defineProperty(fn, "name", { value: label, writable: false, enumerable: false, configurable: true });
+    return fn;
+}
+
 function __zunAssignToConstant(): any {
     throw new TypeError("Assignment to constant variable.");
 }
