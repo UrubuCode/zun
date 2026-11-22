@@ -295,8 +295,29 @@ impl<'a> Interp<'a> {
             // Not a typed instance at all (a generator's identity object, say).
             return false;
         }
-        if rid > u8::MAX as u32 || zun_core::CoreTypeId::new(rid as u8).is_none() {
+        if rid > u8::MAX as u32 {
             return true;
+        }
+        let Some(core) = zun_core::CoreTypeId::new(rid as u8) else {
+            return true;
+        };
+        // The core type ids share their numbering with the TypeDef rids, so a
+        // promise (`CoreTypeId::Promise`, 6) reads as the module's sixth class
+        // and a BigInt as its seventh. The heap settles it: an object carrying
+        // the core kind's native state is that core object and no class
+        // instance. The field-count comparison below cannot tell them apart
+        // when the class declares no fields, so every promise in a program
+        // with six or more classes inherited the sixth class's prototype --
+        // which is how `p.then` came back `undefined` in a large program and a
+        // function in a small one.
+        let native = zun_gc::with_current_heap(|heap| match core {
+            zun_core::CoreTypeId::Promise => heap.promise_state(object).is_some(),
+            zun_core::CoreTypeId::BigInt => heap.bigint_value(object).is_some(),
+            zun_core::CoreTypeId::Array => heap.array_len(object).is_some(),
+            _ => false,
+        });
+        if native {
+            return false;
         }
         let token = zun_metadata::Token::new(zun_metadata::TableKind::TypeDef, rid);
         let Ok((_, declared)) = self.type_field_range(token) else {
