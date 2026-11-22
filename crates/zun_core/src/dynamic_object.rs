@@ -194,6 +194,26 @@ impl DynamicObject {
         }
         self.index.get(name).map(|&i| self.properties[i].1)
     }
+
+    /// Overwrite an existing data property without allocating a key,
+    /// answering whether the write happened. A caller holding only a `&str`
+    /// (a static-field slot key built in a stack buffer) uses this to avoid
+    /// the `String` that [`Self::set`] needs in order to insert, and falls
+    /// back to `set` when this answers `false`.
+    pub fn set_existing(&mut self, name: &str, value: Any) -> bool {
+        let Some(&i) = self.index.get(name) else {
+            return false;
+        };
+        if self.accessors.contains(name) || self.frozen || self.non_writable.contains(name) {
+            return false;
+        }
+        if self.string_functions.contains_key(name) {
+            self.string_functions.remove(name);
+        }
+        self.properties[i].1 = value;
+        true
+    }
+
     /// Insert or update a string data property through the ordinary assignment
     /// path (`obj.k = v`). Rejection returns `None` (non-throwing, matching
     /// `Object.freeze`): a new key is rejected on a non-extensible/frozen

@@ -49,6 +49,23 @@ impl Heap {
         result
     }
 
+    /// Overwrite an existing data property, answering whether the write
+    /// happened. Takes the key by reference, so a caller that would otherwise
+    /// build an owned key for every write (a static-field slot) pays nothing
+    /// for it; `false` means the caller must go through `dynamic_set`.
+    pub fn dynamic_set_existing(&mut self, object: Obj, name: &str, value: zun_core::Any) -> bool {
+        let Some(properties) = self.dynamic_objects.get_mut(&(object.addr() as usize)) else {
+            return false;
+        };
+        if !properties.set_existing(name, value) {
+            return false;
+        }
+        if let Some(child) = value.as_object() {
+            self.write_barrier(object, child as u64);
+        }
+        true
+    }
+
     /// User-level property assignment: `obj.__proto__ = v` / `{ __proto__: v }`
     /// sets `[[Prototype]]` (object or null; other values are ignored) instead
     /// of creating an own property. Everything else is `dynamic_set`.

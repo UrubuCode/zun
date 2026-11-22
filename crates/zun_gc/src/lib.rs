@@ -332,6 +332,33 @@ impl Heap {
         format!("{owner_type_rid}:{field_rid}")
     }
 
+    /// The same key written into a caller-owned buffer, which costs no
+    /// allocation. A static field is read inside loops -- a module binding that
+    /// lives in the synthetic module type is read and written on every
+    /// iteration -- and a heap string per access was the larger half of what
+    /// one access cost. The buffer holds two `u32` decimals and a separator,
+    /// so it can never be too small.
+    fn static_slot_key_in(buffer: &mut [u8; 24], owner_type_rid: u32, field_rid: u32) -> &str {
+        use core::fmt::Write as _;
+        struct Sink<'a> {
+            buffer: &'a mut [u8; 24],
+            len: usize,
+        }
+        impl core::fmt::Write for Sink<'_> {
+            fn write_str(&mut self, text: &str) -> core::fmt::Result {
+                let end = self.len + text.len();
+                self.buffer[self.len..end].copy_from_slice(text.as_bytes());
+                self.len = end;
+                Ok(())
+            }
+        }
+        let mut sink = Sink { buffer, len: 0 };
+        let _ = write!(sink, "{owner_type_rid}:{field_rid}");
+        let len = sink.len;
+        // Written from `{integer}:{integer}`, so the bytes are ASCII.
+        core::str::from_utf8(&buffer[..len]).unwrap_or("")
+    }
+
     /// Remove a class-static field slot (value or function), answering whether
     /// one was present.
     pub fn static_remove(&mut self, owner_type_rid: u32, field_rid: u32) -> bool {
@@ -347,12 +374,26 @@ impl Heap {
     /// Read a class-static field value (or `None` if unset).
     pub fn static_get(&self, owner_type_rid: u32, field_rid: u32) -> Option<zun_core::Any> {
         let object = self.statics?;
-        self.dynamic_get(object, &Self::static_slot_key(owner_type_rid, field_rid))
+        let mut buffer = [0u8; 24];
+        self.dynamic_get(
+            object,
+            Self::static_slot_key_in(&mut buffer, owner_type_rid, field_rid),
+        )
     }
 
     /// Write a class-static field value, allocating the statics object on first use.
     pub fn static_set(&mut self, owner_type_rid: u32, field_rid: u32, value: zun_core::Any) {
         let object = self.statics_object();
+        // Overwriting a slot that already exists -- which is every write after
+        // the first, and so every write inside a loop -- needs no owned key.
+        let mut buffer = [0u8; 24];
+        if self.dynamic_set_existing(
+            object,
+            Self::static_slot_key_in(&mut buffer, owner_type_rid, field_rid),
+            value,
+        ) {
+            return;
+        }
         self.dynamic_set(
             object,
             Self::static_slot_key(owner_type_rid, field_rid),
@@ -368,7 +409,11 @@ impl Heap {
         field_rid: u32,
     ) -> Option<zun_core::FunctionHandle> {
         let object = self.statics?;
-        self.dynamic_get_function(object, &Self::static_slot_key(owner_type_rid, field_rid))
+        let mut buffer = [0u8; 24];
+        self.dynamic_get_function(
+            object,
+            Self::static_slot_key_in(&mut buffer, owner_type_rid, field_rid),
+        )
     }
 
     /// Write a class-static field holding a function value.
