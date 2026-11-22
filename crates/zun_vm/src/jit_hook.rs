@@ -300,7 +300,43 @@ impl<'a> JitHook<'a> {
 
     /// Run the conservative loop-OSR gate and compile the entry. Any failure
     /// yields `Rejected`, which is cached so it is never retried.
+    /// `ZUN_JIT_TRACE=1`: say on stderr why a hot loop was kept interpreted.
+    fn trace_osr_rejection(&self, method_rid: u32, header_pc: usize) {
+        if std::env::var_os("ZUN_JIT_TRACE").is_none_or(|v| v.is_empty() || v == "0") {
+            return;
+        }
+        let name = self
+            .module
+            .tables
+            .method_defs
+            .get(method_rid as usize - 1)
+            .map(|m| self.module.strings.get(m.name).to_string())
+            .unwrap_or_default();
+        let reason = if !self.is_osr_patchpoint_allowed(method_rid, header_pc) {
+            "patchpoint not allowed here".to_string()
+        } else if let Some(why) =
+            zun_codegen::loop_region_rejection(self.module, method_rid, header_pc)
+        {
+            why
+        } else if zun_codegen::loop_region(self.module, method_rid, header_pc)
+            .is_some_and(|(start, end)| self.region_allocates(method_rid, start, end))
+        {
+            "loop allocates (NewObj/NewArray)".to_string()
+        } else {
+            "compile failed or a local is not a packable kind".to_string()
+        };
+        eprintln!("[jit] loop {name}@{header_pc:#06x} stays interpreted: {reason}");
+    }
+
     fn build_osr_loop(&self, method_rid: u32, header_pc: usize) -> OsrLoop {
+        let built = self.build_osr_loop_untraced(method_rid, header_pc);
+        if matches!(built, OsrLoop::Rejected) && method_rid != 0 {
+            self.trace_osr_rejection(method_rid, header_pc);
+        }
+        built
+    }
+
+    fn build_osr_loop_untraced(&self, method_rid: u32, header_pc: usize) -> OsrLoop {
         let Some((start, end)) = zun_codegen::loop_region(self.module, method_rid, header_pc)
         else {
             return OsrLoop::Rejected;

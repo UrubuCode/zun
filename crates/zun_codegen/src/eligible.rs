@@ -1056,17 +1056,25 @@ pub fn loop_region(module: &Module, method_rid: u32, target_pc: usize) -> Option
 /// body is otherwise ineligible can still have a hot loop region that is. Uses
 /// the same per-instruction predicates as whole-method eligibility.
 pub fn loop_region_eligible(module: &Module, method_rid: u32, target_pc: usize) -> bool {
+    loop_region_rejection(module, method_rid, target_pc).is_none()
+}
+
+/// Why the loop region headed at `target_pc` cannot be compiled, or `None`
+/// when it can. The reason names the first offending instruction, which is
+/// what `ZUN_JIT_TRACE` prints: a loop that stays interpreted is the single
+/// largest performance cliff, and the cause is otherwise invisible.
+pub fn loop_region_rejection(module: &Module, method_rid: u32, target_pc: usize) -> Option<String> {
     let Some((start, end)) = loop_region(module, method_rid, target_pc) else {
-        return false;
+        return Some("no loop region".into());
     };
     let Some(method) = module.tables.method_defs.get(method_rid as usize - 1) else {
-        return false;
+        return Some("no method".into());
     };
     let Ok(body) = zun_module::read_body(&module.code, method.body_offset) else {
-        return false;
+        return Some("unreadable body".into());
     };
     let Ok(instrs) = decode_all(body.code) else {
-        return false;
+        return Some("undecodable body".into());
     };
     let string_method_rids: HashSet<u32> = module
         .tables
@@ -1079,17 +1087,30 @@ pub fn loop_region_eligible(module: &Module, method_rid: u32, target_pc: usize) 
     for instr in &instrs {
         let next = offset + instr.encoded_len();
         if offset >= start && offset < end {
-            if requires_exception_bridge(instr.opcode)
-                || !opcode_supported(instr.opcode, instr)
-                || !instr_fields_ok(module, instr)
-                || !callvirt_is_non_overridden(module, instr, &string_method_rids)
-            {
-                return false;
+            let why = if requires_exception_bridge(instr.opcode) {
+                Some("needs the exception bridge")
+            } else if !opcode_supported(instr.opcode, instr) {
+                Some("opcode not lowered")
+            } else if !instr_fields_ok(module, instr) {
+                Some("field kind not lowered")
+            } else if !callvirt_is_non_overridden(module, instr, &string_method_rids) {
+                Some("overridden virtual call")
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                let detail = match (instr.opcode, &instr.operand) {
+                    (Opcode::CallBuiltin, Operand::Imm32(id)) => zun_natives::by_id(*id as u32)
+                        .map(|f| format!(" {}", f.name))
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
+                return Some(format!("{why}: {:?}{detail} at {offset:#06x}", instr.opcode));
             }
         }
         offset = next;
     }
-    true
+    None
 }
 
 pub fn eligible_methods(module: &Module) -> HashSet<u32> {
