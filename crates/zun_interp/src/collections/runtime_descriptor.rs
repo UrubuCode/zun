@@ -643,6 +643,154 @@ impl<'a> Interp<'a> {
         })
     }
 
+    /// A proxy's `ownKeys` trap result, validated as the specification's
+    /// `[[OwnPropertyKeys]]` requires: every entry is a string or a symbol, no
+    /// key repeats, and no non-configurable own key of the target is dropped.
+    /// `None` when `obj` is not a proxy, or has no such trap.
+    ///
+    /// One trap call answers for all three reflective surfaces
+    /// (`Reflect.ownKeys`, `getOwnPropertyNames`, `getOwnPropertySymbols`),
+    /// each keeping the entries it reports. `Reflect.ownKeys` used to compose
+    /// the other two and so called the trap twice.
+    pub(crate) fn proxy_own_keys_list(
+        &mut self,
+        obj: zun_gc::Obj,
+    ) -> Result<Option<zun_gc::Obj>, RunError> {
+        let ProxyRoute::Trap(callback, target) = self.proxy_route(obj, "ownKeys")? else {
+            return Ok(None);
+        };
+        let result = self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
+        let list = object(&result).and_then(|list| {
+            zun_gc::with_current_heap(|heap| heap.array_len(list)).map(|len| (list, len))
+        });
+        let Some((list, count)) = list else {
+            return Err(RunError::Native(
+                "TypeError: proxy ownKeys trap result is not a list".to_string(),
+            ));
+        };
+        let mut names: Vec<String> = Vec::new();
+        let mut symbols: Vec<zun_core::SymbolId> = Vec::new();
+        for index in 0..count {
+            let entry = zun_gc::with_current_heap(|heap| heap.array_get(list, index))
+                .ok_or(RunError::BadToken)?;
+            let duplicate = if let Some(symbol) = entry.as_symbol() {
+                let seen = symbols.contains(&symbol);
+                symbols.push(symbol);
+                seen
+            } else if let Ok(Value::Str(text)) = unbox_arg(&Value::Any(entry)) {
+                let name = text.to_string();
+                let seen = names.contains(&name);
+                names.push(name);
+                seen
+            } else {
+                return Err(RunError::Native(
+                    "TypeError: proxy ownKeys trap result entry is not a string or symbol"
+                        .to_string(),
+                ));
+            };
+            if duplicate {
+                return Err(self.proxy_own_keys_error(
+                    "'ownKeys' on proxy: trap returned duplicate entries",
+                ));
+            }
+        }
+        // A non-configurable own key of the target cannot be hidden.
+        for name in self.object_own_names(target)? {
+            if !names.contains(&name)
+                && !zun_gc::with_current_heap(|heap| heap.dynamic_can_delete(target, &name))
+            {
+                return Err(self.proxy_own_keys_error(&format!(
+                    "'ownKeys' on proxy: trap result did not include '{name}'"
+                )));
+            }
+        }
+        for symbol in zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(target)) {
+            if !symbols.contains(&symbol)
+                && !zun_gc::with_current_heap(|heap| {
+                    heap.dynamic_is_symbol_configurable(target, symbol)
+                })
+            {
+                let label = zun_gc::with_current_heap(|heap| {
+                    heap.symbol_description(symbol).unwrap_or_default().to_owned()
+                });
+                return Err(self.proxy_own_keys_error(&format!(
+                    "'ownKeys' on proxy: trap result did not include 'Symbol({label})'"
+                )));
+            }
+        }
+        Ok(Some(list))
+    }
+
+    /// The own enumerable *symbol* keys of a proxy and their values, through
+    /// the same traps as [`Self::proxy_own_entries`]: `ownKeys` offers them,
+    /// `getOwnPropertyDescriptor` decides enumerability, `get` reads them.
+    /// `None` when `obj` is not a proxy with an `ownKeys` trap.
+    ///
+    /// `Object.assign` and object spread read a source's symbol store
+    /// directly, which for a proxy is empty, so a symbol key the trap offered
+    /// was dropped from the copy.
+    pub(crate) fn proxy_own_symbol_entries(
+        &mut self,
+        obj: zun_gc::Obj,
+    ) -> Result<Option<Vec<(zun_core::SymbolId, Value)>>, RunError> {
+        let Some(list) = self.proxy_own_keys_list(obj)? else {
+            return Ok(None);
+        };
+        let count = zun_gc::with_current_heap(|heap| heap.array_len(list)).unwrap_or(0);
+        let symbols: Vec<zun_core::SymbolId> = (0..count)
+            .filter_map(|index| zun_gc::with_current_heap(|heap| heap.array_get(list, index)))
+            .filter_map(|entry| entry.as_symbol())
+            .collect();
+        let descriptor = match self.proxy_route(obj, "getOwnPropertyDescriptor")? {
+            ProxyRoute::Trap(callback, target) => Some((callback, target)),
+            _ => None,
+        };
+        let mut out: Vec<(zun_core::SymbolId, Value)> = Vec::new();
+        for symbol in symbols {
+            let enumerable = match descriptor {
+                Some((callback, target)) => {
+                    let got = self.invoke_proxy_trap(
+                        callback,
+                        vec![
+                            Value::Object(target),
+                            Value::Any(zun_core::Any::symbol(symbol)),
+                        ],
+                    )?;
+                    object(&got).is_some_and(|got| {
+                        zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get(got, "enumerable")
+                                .and_then(|any| Value::unbox_any(any, heap))
+                        })
+                        .is_some_and(|flag| matches!(flag, Value::Bool(true)))
+                    })
+                }
+                None => zun_gc::with_current_heap(|heap| {
+                    heap.proxy_target(obj)
+                        .is_some_and(|target| heap.dynamic_is_symbol_enumerable(target, symbol))
+                }),
+            };
+            if !enumerable {
+                continue;
+            }
+            // The descriptor says the key is there, so it is copied even when
+            // the read finds nothing: a trapless `get` reads the target, which
+            // need not hold a key the `ownKeys` trap invented.
+            let value = self
+                .proxy_dynamic_get_symbol(obj, symbol)?
+                .unwrap_or(Value::Void);
+            out.push((symbol, value));
+        }
+        Ok(Some(out))
+    }
+
+    /// A thrown `TypeError` for a broken `ownKeys` invariant.
+    fn proxy_own_keys_error(&mut self, message: &str) -> RunError {
+        match self.new_error_object("TypeError", message) {
+            Some(error) => RunError::Thrown(Value::Object(error)),
+            None => RunError::Native(format!("TypeError: {message}")),
+        }
+    }
+
     /// The own enumerable string keys of a proxy, and optionally their values,
     /// resolved the way `EnumerableOwnPropertyNames` does: the `ownKeys` trap
     /// supplies the candidate keys and the `getOwnPropertyDescriptor` trap

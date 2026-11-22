@@ -1431,6 +1431,54 @@ impl<'a> Interp<'a> {
 }
 
 impl Interp<'_> {
+    /// A symbol-keyed `has` / `deleteProperty` / `set` trap call. The trap
+    /// receives the symbol itself as the key, which the string-keyed
+    /// [`Self::proxy_key_op`] and [`Self::proxy_dynamic_set`] cannot express.
+    /// `None` means there is no such trap, leaving the caller's own route
+    /// (the target, or a prototype walk) to answer.
+    pub(crate) fn proxy_symbol_trap(
+        &mut self,
+        obj: zun_gc::Obj,
+        symbol: zun_core::SymbolId,
+        trap: &str,
+        value: Option<Value>,
+    ) -> Result<Option<Value>, RunError> {
+        let ProxyRoute::Trap(callback, target) = self.proxy_route(obj, trap)? else {
+            return Ok(None);
+        };
+        let handler = zun_gc::with_current_heap(|heap| heap.proxy_handler(obj)).unwrap_or(target);
+        let mut args = vec![
+            Value::Object(target),
+            Value::Any(zun_core::Any::symbol(symbol)),
+        ];
+        if let Some(value) = value {
+            let boxed = match &value {
+                Value::Function(_) | Value::Any(_) => value.clone(),
+                other => zun_gc::with_current_heap_mut(|heap| other.box_any(heap))
+                    .map(Value::Any)
+                    .unwrap_or(Value::Void),
+            };
+            args.push(boxed);
+            args.push(Value::Object(obj));
+        }
+        let result =
+            self.invoke_function_value(callback, self.with_this_arg(callback, handler, args))?;
+        Ok(Some(result))
+    }
+
+    /// Whether a symbol-keyed `has` / `deleteProperty` trap answered true.
+    pub(crate) fn proxy_symbol_key_op(
+        &mut self,
+        obj: zun_gc::Obj,
+        symbol: zun_core::SymbolId,
+        delete: bool,
+    ) -> Result<Option<bool>, RunError> {
+        let trap = if delete { "deleteProperty" } else { "has" };
+        Ok(self
+            .proxy_symbol_trap(obj, symbol, trap, None)?
+            .map(|result| zun_gc::with_current_heap(|heap| is_truthy(&result, heap))))
+    }
+
     /// A symbol-keyed read through a proxy's `get` trap.
     ///
     /// The trap receives the symbol itself as the key, so the string-keyed

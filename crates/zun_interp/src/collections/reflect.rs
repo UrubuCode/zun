@@ -81,6 +81,14 @@ impl<'a> Interp<'a> {
                         "TypeError: Cannot use 'in' operator to search in a non-object".into(),
                     ));
                 }
+                // A proxy's `has` trap receives the symbol itself as the key,
+                // so `sym in proxy` consults it rather than walking the proxy
+                // object, which has no properties of its own.
+                if let Some(proxy) = cursor {
+                    if let Some(answer) = self.proxy_symbol_key_op(proxy, symbol, false)? {
+                        return Ok(Value::Bool(answer));
+                    }
+                }
                 let mut depth = 0;
                 while let Some(current) = cursor {
                     let found = zun_gc::with_current_heap(|heap| {
@@ -124,6 +132,12 @@ impl<'a> Interp<'a> {
                     args.get(1).and_then(crate::property_ops::prop_key)
                 {
                     let mut cursor = object(args.first().ok_or(RunError::BadToken)?);
+                    // `Reflect.has(proxy, sym)` consults the `has` trap too.
+                    if let Some(proxy) = cursor {
+                        if let Some(answer) = self.proxy_symbol_key_op(proxy, symbol, false)? {
+                            return Ok(Value::Bool(answer));
+                        }
+                    }
                     let mut depth = 0;
                     while let Some(current) = cursor {
                         let found = zun_gc::with_current_heap(|heap| {
@@ -315,6 +329,11 @@ impl<'a> Interp<'a> {
                     args.get(1).and_then(crate::property_ops::prop_key)
                 {
                     if let Some(target) = object(args.first().ok_or(RunError::BadToken)?) {
+                        // A proxy's `deleteProperty` trap decides, and receives
+                        // the symbol itself as the key.
+                        if let Some(answer) = self.proxy_symbol_key_op(target, symbol, true)? {
+                            return Ok(Value::Bool(answer));
+                        }
                         zun_gc::with_current_heap_mut(|heap| {
                             heap.dynamic_delete_symbol(target, symbol)
                         });

@@ -2645,6 +2645,20 @@ impl Interp<'_> {
         let Some(key) = args.get(1).and_then(prop_key) else {
             return Ok(Value::Bool(false));
         };
+        // A proxy's `set` trap takes the write and reports whether it
+        // succeeded. A symbol key reaches the trap as the symbol itself, which
+        // the string-keyed proxy route cannot express, so a symbol-keyed write
+        // through a proxy used to land on the proxy object instead.
+        if let (Some(proxy), PropKey::Sym(symbol)) = (args.first().and_then(object), &key) {
+            let value = unbox_arg(args.get(2).ok_or(RunError::BadToken)?)?;
+            if let Some(result) =
+                self.proxy_symbol_trap(proxy, *symbol, "set", Some(value))?
+            {
+                return Ok(Value::Bool(zun_gc::with_current_heap(|heap| {
+                    crate::collections::is_truthy(&result, heap)
+                })));
+            }
+        }
         let value_arg = args.get(2).ok_or(RunError::BadToken)?;
         let first = args.first().ok_or(RunError::BadToken)?;
         // A class value: a declared static takes the write in place; any other

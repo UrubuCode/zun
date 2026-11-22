@@ -1416,6 +1416,17 @@ impl Interp<'_> {
         }
         let value = if let Value::Any(any) = &key {
             if let Some(symbol) = any.as_symbol() {
+                // A proxy's `get` trap receives the symbol itself as the key,
+                // so the string-keyed route cannot stand in for it: `p[sym]`
+                // read the proxy object's own (empty) symbol store and
+                // answered `undefined` without calling the trap.
+                if zun_gc::with_current_heap(|heap| {
+                    heap.proxy_target(object).is_some() && heap.proxy_trap(object, "get").is_some()
+                }) {
+                    let read = self.proxy_dynamic_get_symbol(object, symbol)?;
+                    stack.push(read.unwrap_or(Value::Void));
+                    return Ok(ArmFlow::Continue);
+                }
                 if let Some(getter) =
                     zun_gc::with_current_heap(|heap| heap.dynamic_symbol_getter(object, symbol))
                 {
@@ -1984,6 +1995,16 @@ impl Interp<'_> {
         match &key {
             Value::Any(key_any) if key_any.as_symbol().is_some() => {
                 let symbol = key_any.as_symbol().expect("symbol key");
+                // A proxy's `set` trap takes the write, receiving the symbol
+                // itself as the key: `proxy[sym] = v` used to store on the
+                // proxy object and never reach the handler.
+                if self
+                    .proxy_symbol_trap(object, symbol, "set", Some(value.clone()))?
+                    .is_some()
+                {
+                    stack.push(value);
+                    return Ok(ArmFlow::Next);
+                }
                 zun_gc::with_current_heap_mut(|heap| {
                     if heap.array_len(object).is_some() || heap.regex_source(object).is_some() {
                         heap.ensure_dynamic_entry(object);

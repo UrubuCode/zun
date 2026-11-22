@@ -502,7 +502,21 @@ impl<'a> Interp<'a> {
                             });
                         }
                     }
-                    // Own enumerable symbol-keyed properties.
+                    // Own enumerable symbol-keyed properties. A proxy offers
+                    // them through its traps, not from a symbol store of its
+                    // own.
+                    if let Some(entries) = self.proxy_own_symbol_entries(source)? {
+                        for (symbol, value) in entries {
+                            if let Some(any) =
+                                zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                            {
+                                zun_gc::with_current_heap_mut(|heap| {
+                                    heap.dynamic_set_symbol(target, symbol, any);
+                                });
+                            }
+                        }
+                        return Ok(Value::Object(target));
+                    }
                     let symbols =
                         zun_gc::with_current_heap(|heap| heap.dynamic_symbol_keys(source));
                     for symbol in symbols {
@@ -528,6 +542,19 @@ impl<'a> Interp<'a> {
                 let entries = self.object_own_entries(source)?;
                 for (key, value) in entries {
                     self.assign_store(target, key, value)?;
+                }
+                // A proxy source's own enumerable symbol keys come from its
+                // traps; its symbol store is empty, so they were dropped.
+                if let Some(symbols) = self.proxy_own_symbol_entries(source)? {
+                    for (symbol, value) in symbols {
+                        if let Some(any) =
+                            zun_gc::with_current_heap_mut(|heap| value.box_any(heap))
+                        {
+                            zun_gc::with_current_heap_mut(|heap| {
+                                heap.dynamic_set_symbol(target, symbol, any);
+                            });
+                        }
+                    }
                 }
                 Ok(Value::Object(target))
             }
