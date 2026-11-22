@@ -221,3 +221,51 @@ the case-by-case debt was accumulated.
 - `reflect-api-semantics` did not reproduce in a probe -- a primitive target
   already throws here -- so the fixture uses another spelling and the estimate
   is unverified.
+
+## 9. 80% reached: 136 of 169 (2026-11-22)
+
+Four fixtures closed, and the estimate above was wrong in a useful way: the
+per-fixture price did *not* rise, because three of the four turned out to be
+one root cause each rather than four or five.
+
+| Fixture | Lines | Cause |
+| --- | --- | --- |
+| `json-stringify-object-model` | 12 | a proxy's own keys never came from its traps |
+| `symbol-keys-and-reflection-surface` | 14 | a symbol key never reached a proxy's traps |
+| `class-symbols-generators-and-coercion` | 2 | a core type id read as a class rid; a computed key gave no name |
+| (shared) | — | `Object.keys` / `values` / `entries` on any trapped proxy |
+
+### The proxy surface was half-wired
+
+`Object.keys`, `Object.values`, `Object.entries` and `JSON.stringify` read a
+proxy object's *own* property table, which is always empty. Only the trapless
+case worked, because that one defers to the target. So every proxy that
+actually defined `ownKeys` or `getOwnPropertyDescriptor` reported no
+properties, with not one trap called. The same hole on the symbol side was
+wider: `p[sym]`, `sym in p`, `p[sym] = v`, `delete`, and the four matching
+`Reflect` entry points all bypassed the handler, because the string-keyed
+routes cannot carry a symbol as a key.
+
+The lesson for the remaining band is that the proxy code was *shaped*
+correctly -- `proxy_route`, `invoke_proxy_trap`, `proxy_dynamic_get` all
+existed -- and the gaps were call sites that had never been connected. Those
+are cheap. The expensive items in §8 are the ones with no shape yet.
+
+### One real bug, not a conformance gap
+
+`CoreTypeId::Promise` is 6, and the runtime reads an object header as a
+metadata TypeDef rid. A promise therefore read as an instance of the module's
+*sixth* class and inherited its prototype, so `p.then` was `undefined` --
+but only in a program with six or more classes, which is why no small probe
+reproduced it. The field-count check meant to settle that collision passes
+whenever the class declares no fields. Arrays (4) and BigInts (7) share the
+hazard. Worth remembering that the two numbering spaces overlap at all.
+
+### Still open in fixtures otherwise improved
+
+- `buffer-from-alloc-and-fill`, 4 lines: `fill` argument validation. Six
+  attempts have not identified the code path that fills; neither `nb_fill`
+  nor the typed-array intrinsic is reached.
+- `reflect-api-semantics`, 1 line: `new.target` through class construction,
+  which is one of the untouchable receiver-gate sites.
+- `Object.assign` on a proxy asks for its keys twice where node asks once.
