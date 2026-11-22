@@ -65,6 +65,41 @@ fn as_obj(value: &Value) -> Option<zun_gc::Obj> {
     }
 }
 
+/// The object a proxy ultimately stands for, following a proxy whose target is
+/// itself a proxy. `Array.isArray` and `IsCallable` both see through the whole
+/// chain, so `JSON.stringify` has to as well.
+fn proxy_root(obj: zun_gc::Obj) -> zun_gc::Obj {
+    let mut current = obj;
+    for _ in 0..MAX_DEPTH {
+        match zun_gc::with_current_heap(|heap| heap.proxy_target(current)) {
+            Some(target) => current = target,
+            None => break,
+        }
+    }
+    current
+}
+
+/// `ToLength` of an array-like's `length`, as read through a proxy's `get` trap.
+fn to_length(value: &Value) -> usize {
+    let number = match value {
+        Value::Int(n, _) => *n as f64,
+        Value::Float(n, _) => *n,
+        Value::Str(text) => text.trim().parse::<f64>().unwrap_or(0.0),
+        Value::Any(any) => {
+            match zun_gc::with_current_heap(|heap| Value::unbox_any(*any, heap)) {
+                Some(Value::Any(_)) | None => 0.0,
+                Some(inner) => return to_length(&inner),
+            }
+        }
+        _ => 0.0,
+    };
+    if number.is_finite() && number > 0.0 {
+        number as usize
+    } else {
+        0
+    }
+}
+
 fn is_undefined(value: &Value) -> bool {
     matches!(value, Value::Void)
         || matches!(value, Value::Any(any) if any.tag() == zun_core::AnyTag::Void)
@@ -449,6 +484,23 @@ impl Interp<'_> {
                     }
                 }
             }
+            // A proxy over a `Date` inherits `Date.prototype.toJSON` but not
+            // the date's internal state: the hook reaches `thisTimeValue`,
+            // which demands the receiver carry the internal slot, so
+            // `JSON.stringify(new Proxy(new Date(), {}))` throws. zun models
+            // that state as an instance field, which a trapless proxy would
+            // forward to its target, so the refusal is stated here rather than
+            // falling out of the field read -- without it the proxy serialised
+            // as an object of the date's internal fields.
+            if zun_gc::with_current_heap(|heap| heap.proxy_target(obj).is_some())
+                && self.json_class_name(proxy_root(obj)) == "Date"
+            {
+                let message = "this is not a Date object.";
+                return Err(match self.new_error_object("TypeError", message) {
+                    Some(error) => RunError::Thrown(Value::Object(error)),
+                    None => RunError::Native(format!("TypeError: {message}")),
+                });
+            }
             if let Some(millis) = zun_gc::with_current_heap(|heap| heap.date_millis(obj)) {
                 let _ = millis;
                 let iso = zun_gc::with_current_heap(|heap| {
@@ -623,8 +675,19 @@ impl Interp<'_> {
                         ));
                     }
                 }
+                // A proxy stands for what it wraps: over a function it is not
+                // serialisable at all, and over an array it serialises as an
+                // array, exactly as `IsCallable` and `Array.isArray` see it.
+                let kind = proxy_root(obj);
+                if kind.addr() != obj.addr()
+                    && zun_gc::with_current_heap(|heap| {
+                        heap.dynamic_get_function(kind, "__boxedFn").is_some()
+                    })
+                {
+                    return Ok(None);
+                }
                 if zun_gc::with_current_heap(|heap| {
-                    heap.array_len(obj).is_some() && !heap.array_is_arguments(obj)
+                    heap.array_len(kind).is_some() && !heap.array_is_arguments(kind)
                 }) {
                     self.json_array(ctx, slot, indent, depth)
                 } else {
@@ -641,6 +704,33 @@ impl Interp<'_> {
         indent: &str,
         depth: usize,
     ) -> Result<Option<String>, RunError> {
+        // A proxy over an array reads its `length` and every index through the
+        // `get` trap; the array itself is the trap's business, not ours.
+        if zun_gc::with_current_heap(|heap| heap.proxy_target(ctx.slot_get(slot)).is_some()) {
+            let proxy = ctx.slot_get(slot);
+            let len = match self.json_get(proxy, "length")? {
+                Some(value) => to_length(&value),
+                None => 0,
+            };
+            let inner = format!("{indent}{}", ctx.gap);
+            let mut parts: Vec<String> = Vec::with_capacity(len);
+            for index in 0..len {
+                let key = index.to_string();
+                let item = self
+                    .json_get(ctx.slot_get(slot), &key)?
+                    .unwrap_or(Value::Void);
+                let text = self.json_property(ctx, &key, slot, item, &inner, depth + 1)?;
+                parts.push(text.unwrap_or_else(|| "null".into()));
+            }
+            return Ok(Some(if ctx.gap.is_empty() {
+                format!("[{}]", parts.join(","))
+            } else {
+                format!(
+                    "[\n{inner}{}\n{indent}]",
+                    parts.join(&format!(",\n{inner}"))
+                )
+            }));
+        }
         let len = zun_gc::with_current_heap(|heap| heap.array_len(ctx.slot_get(slot))).unwrap_or(0);
         if len == 0 {
             return Ok(Some("[]".into()));
@@ -701,6 +791,12 @@ impl Interp<'_> {
         let keys: Vec<String> = match &ctx.list {
             Some(list) => list.clone(),
             None => {
+                // A proxy that defines `ownKeys` or `getOwnPropertyDescriptor`
+                // answers through those traps, as the specification's
+                // `SerializeJSONObject` does.
+                if let Some(entries) = self.proxy_own_entries(obj, false)? {
+                    entries.into_iter().map(|(key, _)| key).collect()
+                } else {
                 // A proxy without the trap defers to its target, where the
                 // properties live: `JSON.stringify(new Proxy({b: 2}, {}))`
                 // answered `{}`, and a cycle through a proxy went undetected
@@ -722,6 +818,7 @@ impl Interp<'_> {
                         .into_iter()
                         .map(|(key, _)| key)
                         .collect()
+                }
                 }
             }
         };

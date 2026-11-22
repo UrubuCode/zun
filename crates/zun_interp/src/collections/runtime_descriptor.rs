@@ -129,6 +129,11 @@ impl<'a> Interp<'a> {
             out.extend(expandos);
             return Ok(out);
         }
+        // A proxy that defines `ownKeys` or `getOwnPropertyDescriptor` answers
+        // through those traps.
+        if let Some(entries) = self.proxy_own_entries(obj, read_values)? {
+            return Ok(entries);
+        }
         // A proxy without the relevant trap defers to its target, where the
         // properties actually live. `Object.keys(new Proxy({b: 2}, {}))`
         // answered empty and `JSON.stringify` of any proxy answered `{}`,
@@ -636,6 +641,104 @@ impl<'a> Interp<'a> {
             },
             None => ProxyRoute::NotProxy,
         })
+    }
+
+    /// The own enumerable string keys of a proxy, and optionally their values,
+    /// resolved the way `EnumerableOwnPropertyNames` does: the `ownKeys` trap
+    /// supplies the candidate keys and the `getOwnPropertyDescriptor` trap
+    /// decides which of them are enumerable. Answers `None` for an object that
+    /// is not a proxy, and for a proxy with neither trap -- there its target
+    /// answers for it, which [`Self::enumerability_holder`] already arranges.
+    ///
+    /// Without this, a proxy that *did* define the traps reported no own keys
+    /// at all: `Object.keys`, `Object.values`, `Object.entries` and
+    /// `JSON.stringify` all read the proxy object's own (empty) property table
+    /// and answered as if it held nothing.
+    pub(crate) fn proxy_own_entries(
+        &mut self,
+        proxy: zun_gc::Obj,
+        read_values: bool,
+    ) -> Result<Option<Vec<(String, Value)>>, RunError> {
+        let descriptor = match self.proxy_route(proxy, "getOwnPropertyDescriptor")? {
+            ProxyRoute::Trap(callback, target) => Some((callback, target)),
+            ProxyRoute::Target(_) => None,
+            ProxyRoute::NotProxy => return Ok(None),
+        };
+        let keys: Vec<String> = match self.proxy_route(proxy, "ownKeys")? {
+            ProxyRoute::Trap(callback, target) => {
+                let result = self.invoke_proxy_trap(callback, vec![Value::Object(target)])?;
+                let list = object(&result).and_then(|list| {
+                    zun_gc::with_current_heap(|heap| heap.array_len(list)).map(|len| (list, len))
+                });
+                let Some((list, count)) = list else {
+                    return Err(RunError::Native(
+                        "TypeError: proxy ownKeys trap result is not a list".to_string(),
+                    ));
+                };
+                (0..count)
+                    .filter_map(|index| {
+                        zun_gc::with_current_heap(|heap| heap.array_get(list, index))
+                    })
+                    .filter(|entry| entry.as_symbol().is_none())
+                    .filter_map(|entry| match unbox_arg(&Value::Any(entry)) {
+                        Ok(Value::Str(text)) => Some(text.to_string()),
+                        _ => None,
+                    })
+                    .collect()
+            }
+            // No `ownKeys` trap: the candidates are the target's own names,
+            // which the descriptor trap then filters.
+            ProxyRoute::Target(target) => match descriptor {
+                Some(_) => self.object_own_names(target)?,
+                None => return Ok(None),
+            },
+            ProxyRoute::NotProxy => return Ok(None),
+        };
+        // Without a descriptor trap, enumerability is the target's own.
+        let inherent: Vec<String> = match descriptor {
+            Some(_) => Vec::new(),
+            None => {
+                let Some(target) = zun_gc::with_current_heap(|heap| heap.proxy_target(proxy))
+                else {
+                    return Ok(None);
+                };
+                self.object_own_entries_impl(target, false)?
+                    .into_iter()
+                    .map(|(key, _)| key)
+                    .collect()
+            }
+        };
+        let mut out: Vec<(String, Value)> = Vec::with_capacity(keys.len());
+        for key in keys {
+            let enumerable = match descriptor {
+                Some((callback, target)) => {
+                    let got = self.invoke_proxy_trap(
+                        callback,
+                        vec![Value::Object(target), Value::Str(key.clone().into())],
+                    )?;
+                    // An absent `enumerable` field completes to `false`, and a
+                    // trap that answers `undefined` reports no such property.
+                    object(&got).is_some_and(|got| {
+                        zun_gc::with_current_heap(|heap| {
+                            heap.dynamic_get(got, "enumerable")
+                                .and_then(|any| Value::unbox_any(any, heap))
+                        })
+                        .is_some_and(|flag| matches!(flag, Value::Bool(true)))
+                    })
+                }
+                None => inherent.contains(&key),
+            };
+            if !enumerable {
+                continue;
+            }
+            let value = if read_values {
+                self.proxy_dynamic_get(proxy, &key)?
+            } else {
+                Value::Void
+            };
+            out.push((key, value));
+        }
+        Ok(Some(out))
     }
 
     /// The `TypeError` every operation on a revoked proxy throws.
