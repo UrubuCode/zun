@@ -329,6 +329,22 @@ impl Checker<'_> {
     /// is a value type nothing ever assigns to is unboxed to that type, so the
     /// local that receives it is a JIT value type rather than `any`.
     pub(in crate::check) fn global_get_expr(&self, name: &str, span: Span) -> hir::Expr {
+        // A binding nothing assigns to, initialised from a literal, folds to
+        // that literal: no lookup, and the reading method stays JIT-eligible.
+        if let Some(value) = self.module_global_consts.get(name).copied() {
+            return match value {
+                super::Literal::Num(value) => hir::Expr {
+                    kind: hir::ExprKind::Number(value),
+                    ty: Ty::F64,
+                    span,
+                },
+                super::Literal::Bool(value) => hir::Expr {
+                    kind: hir::ExprKind::Boolean(value),
+                    ty: Ty::Boolean,
+                    span,
+                },
+            };
+        }
         let (id, _) = zun_natives::resolve("collections", "globalGet")
             .expect("globalGet intrinsic must exist");
         let read = hir::Expr {

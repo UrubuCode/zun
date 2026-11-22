@@ -263,6 +263,7 @@ fn check_impl(
         enums: HashMap::new(),
         module_globals: HashSet::new(),
         module_global_types: HashMap::new(),
+        module_global_consts: HashMap::new(),
         globals_read_in_functions: HashSet::new(),
         pending_static_classes: VecDeque::new(),
         arguments_functions: HashSet::new(),
@@ -384,6 +385,7 @@ fn check_impl(
             if let ast::Stmt::Let {
                 name,
                 ty: Some(annotation),
+                init,
                 ..
             } = statement
             {
@@ -393,7 +395,22 @@ fn check_impl(
                 }
                 let declared = checker.resolve_annotation(annotation);
                 if matches!(declared, Ty::F64 | Ty::Boolean) {
-                    checker.module_global_types.insert(text, declared);
+                    checker.module_global_types.insert(text.clone(), declared);
+                }
+                // A binding nothing assigns to, initialised from a literal, IS
+                // that literal: every read folds to it, which costs nothing at
+                // all. The read is otherwise `globalGet`, a lookup by string
+                // name the typed translator cannot lower, so a loop reading the
+                // binding in its own body stayed interpreted even once the
+                // binding carried a type.
+                match init {
+                    ast::Expr::Number { value, .. } if declared == Ty::F64 => {
+                        checker.module_global_consts.insert(text, Literal::Num(*value));
+                    }
+                    ast::Expr::Bool { value, .. } if declared == Ty::Boolean => {
+                        checker.module_global_consts.insert(text, Literal::Bool(*value));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -670,6 +687,9 @@ struct Checker<'a> {
     /// that type instead of `any`, which is what keeps a method that reads a
     /// module global JIT-eligible (see the population site in `check`).
     module_global_types: HashMap<String, Ty>,
+    /// Top-level bindings nothing assigns to whose initializer is a literal:
+    /// every read folds to the value.
+    module_global_consts: HashMap<String, Literal>,
     /// Module globals that some function/method/arrow body references by name
     /// (so a top-level write must be mirrored to the realm store for that
     /// reader to observe it). A sound over-approximation; names outside this set
@@ -1056,4 +1076,11 @@ fn assigned_member_names(source: &str) -> std::collections::HashSet<String> {
         i = end;
     }
     names
+}
+
+/// The value of a module binding that folds at its use sites.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::check) enum Literal {
+    Num(f64),
+    Bool(bool),
 }
