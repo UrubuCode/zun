@@ -735,7 +735,7 @@ impl Translator<'_> {
                 Opcode::NewObj => self.op_new_obj(instr, &mut stack)?,
                 Opcode::ArrayLength => self.op_array_length(&mut stack)?,
                 Opcode::NewArray => self.op_new_array(&mut stack)?,
-                Opcode::UnboxAny => self.op_unbox_any(&mut stack)?,
+                Opcode::UnboxAny => self.op_unbox_any(&mut stack, instrs.get(i + 1))?,
                 Opcode::CastClass => self.op_cast_class(&mut stack)?,
                 Opcode::BoxAny => self.op_box_any(&mut stack)?,
                 Opcode::LoadArray => {
@@ -778,6 +778,18 @@ impl Translator<'_> {
                             crate::any_abi::CARRIER_ALIGN_SHIFT,
                         ));
                         let carrier = self.builder.ins().stack_addr(types::I64, slot, 0);
+                        // An out-of-bounds read leaves the slot untouched; seed it as
+                        // `undefined` so it never reads as stale stack bytes.
+                        let void_tag = self.builder.ins().iconst(
+                            types::I64,
+                            zun_core::AnyTag::Void as i64,
+                        );
+                        self.builder.ins().store(
+                            MemFlags::trusted(),
+                            void_tag,
+                            carrier,
+                            crate::any_abi::TAG_OFFSET,
+                        );
                         let load = self.array_load_any_fref();
                         self.builder.ins().call(load, &[array, index, carrier]);
                         stack.push((carrier, JitKind::Other));

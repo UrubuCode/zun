@@ -43,6 +43,7 @@ pub(super) fn convert_binary(
                 ty: crate::ast::TypeAnnotation {
                     name: crate::ast::synthetic_ident("any"),
                     is_array: false,
+                    array_depth: 0,
                 },
                 span: span(identifier.span),
             };
@@ -75,6 +76,7 @@ pub(super) fn convert_unary(
                     span: Span::new(unary.span.start, unary.span.start),
                 },
                 is_array: false,
+                array_depth: 0,
             },
             span: span(unary.span),
         };

@@ -51,6 +51,7 @@ impl Checker<'_> {
             is_constructor: false,
             is_module_scope: true,
             finally_depth: 0,
+            number_arrays: HashSet::new(),
         };
         self.collect_mutated_names(&block.statements, &mut cx.mutated_names);
         // A class declared before the last top-level statement runs its static

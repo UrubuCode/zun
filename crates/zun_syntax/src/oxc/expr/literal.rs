@@ -131,6 +131,7 @@ pub(super) fn convert_ts_cast(
                 span: Span::new(type_span.start, type_span.end),
             },
             is_array: false,
+            array_depth: 0,
         },
         span: span(whole),
     })

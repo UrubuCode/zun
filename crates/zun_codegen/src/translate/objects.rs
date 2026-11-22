@@ -55,8 +55,55 @@ impl Translator<'_> {
         Ok(())
     }
 
-    pub(crate) fn op_unbox_any(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
+    pub(crate) fn op_unbox_any(
+        &mut self,
+        stack: &mut Vec<Slot>,
+        next: Option<&zun_il::Instruction>,
+    ) -> Result<(), String> {
         let value = stack.pop().ok_or("stack underflow")?;
+        // `unbox.any; conv f64` is the typed read of a `number` out of an `any`
+        // carrier. The target is the conversion, not the method return kind
+        // (an OSR loop region returns its resume PC), and the tag decides how
+        // the payload reads: a float is its bits, an int converts, anything
+        // else (`undefined` from a hole or out-of-bounds read) is `NaN`.
+        if value.1 == JitKind::Other
+            && next.is_some_and(|n| {
+                n.opcode == Opcode::Conv && NumKind::from_imm(imm32(&n.operand)) == Some(NumKind::F64)
+            })
+        {
+            let tag = self.builder.ins().load(
+                types::I64,
+                MemFlags::trusted(),
+                value.0,
+                crate::any_abi::TAG_OFFSET,
+            );
+            let payload = self.builder.ins().load(
+                types::I64,
+                MemFlags::trusted(),
+                value.0,
+                crate::any_abi::PAYLOAD_OFFSET,
+            );
+            let as_float = self
+                .builder
+                .ins()
+                .bitcast(types::F64, MemFlags::new(), payload);
+            let as_int = self.builder.ins().fcvt_from_sint(types::F64, payload);
+            let nan = self.builder.ins().f64const(f64::NAN);
+            let is_float = self.builder.ins().icmp_imm(
+                IntCC::Equal,
+                tag,
+                zun_core::AnyTag::Float as i64,
+            );
+            let is_int = self.builder.ins().icmp_imm(
+                IntCC::Equal,
+                tag,
+                zun_core::AnyTag::Int as i64,
+            );
+            let int_or_nan = self.builder.ins().select(is_int, as_int, nan);
+            let result = self.builder.ins().select(is_float, as_float, int_or_nan);
+            stack.push((result, JitKind::Num(NumKind::F64)));
+            return Ok(());
+        }
         if value.1 == JitKind::Other {
             let payload = self.builder.ins().load(
                 types::I64,

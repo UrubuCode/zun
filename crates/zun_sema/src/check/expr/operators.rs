@@ -96,6 +96,7 @@ impl Checker<'_> {
         let step_is_one = matches!(rhs.as_ref(), ast::Expr::Number { value, .. } if *value == 1.0);
         let mut lhs = self.check_expr(cx, lhs);
         let mut rhs = self.check_expr(cx, rhs);
+        self.type_number_array_reads(cx, *op, &mut lhs, &mut rhs);
         // `++`/`--` on a dynamic operand is ToNumeric(x) ± 1, never concatenation.
         if update_step && step_is_one && lhs.ty == Ty::Any {
             lhs = self.to_number_expr(lhs);
@@ -728,6 +729,63 @@ impl Checker<'_> {
             },
             ty: target,
             span,
+        }
+    }
+}
+
+impl Checker<'_> {
+    /// Whether the checked expression is an element read of a `: number[]`
+    /// local (see `FunctionCx::number_arrays`).
+    fn is_number_array_read(cx: &FunctionCx, expr: &hir::Expr) -> bool {
+        expr.ty == Ty::Any
+            && matches!(
+                &expr.kind,
+                hir::ExprKind::ArrayGet { object, .. }
+                    if matches!(object.kind, hir::ExprKind::Local(slot) if cx.number_arrays.contains(&slot))
+            )
+    }
+
+    /// Give the element read of a `number[]` the type `number` when the
+    /// operator consumes it numerically, so the arithmetic stays typed (and
+    /// JIT-lowerable) instead of going through the dynamic `addAny` path.
+    /// A hole or out-of-bounds read is `undefined`, which every one of these
+    /// operators turns into `NaN` exactly like the `number` conversion does.
+    /// Strict equality, string concatenation and plain bindings are left alone
+    /// so a read that is *observed* as `undefined` still prints `undefined`.
+    fn type_number_array_reads(
+        &self,
+        cx: &FunctionCx,
+        op: ast::BinaryOp,
+        lhs: &mut hir::Expr,
+        rhs: &mut hir::Expr,
+    ) {
+        use ast::BinaryOp::*;
+        let (left_read, right_read) = (
+            Self::is_number_array_read(cx, lhs),
+            Self::is_number_array_read(cx, rhs),
+        );
+        let (convert_left, convert_right) = match op {
+            Sub | Mul | Div | Rem | Lt | Le | Gt | Ge => (left_read, right_read),
+            // `+` concatenates when the other side is a string, so it is only
+            // numeric against a `number` or another such read.
+            Add => (
+                left_read && (rhs.ty == Ty::F64 || right_read),
+                right_read && (lhs.ty == Ty::F64 || left_read),
+            ),
+            _ => (false, false),
+        };
+        for (convert, side) in [(convert_left, lhs), (convert_right, rhs)] {
+            if convert {
+                let value = std::mem::replace(
+                    side,
+                    hir::Expr {
+                        kind: hir::ExprKind::Null,
+                        ty: Ty::Any,
+                        span: side.span,
+                    },
+                );
+                *side = Self::unbox_to(value, Ty::F64);
+            }
         }
     }
 }

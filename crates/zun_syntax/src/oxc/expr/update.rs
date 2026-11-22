@@ -43,6 +43,7 @@ pub(super) fn convert_update(
                         span: Span::new(update.span.start, update.span.start),
                     },
                     is_array: false,
+                    array_depth: 0,
                 },
                 span: whole,
             };

@@ -106,6 +106,12 @@ impl Checker<'_> {
             var_ty
         };
         let slot = cx.declare(&name_text, var_ty);
+        if var_ty == Ty::Array
+            && ty.as_ref().is_some_and(|a| self.is_number_array_annotation(a))
+            && !cx.mutated_names.contains(&name_text)
+        {
+            cx.number_arrays.insert(slot);
+        }
         // A variable that a closure may capture and that is assigned
         // somewhere is boxed from its declaration, so every access
         // lowered before the capturing closure already uses the cell.

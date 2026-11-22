@@ -543,6 +543,7 @@ fn convert_class_statement(
                 ty: Some(crate::ast::TypeAnnotation {
                     name: crate::ast::synthetic_ident("any"),
                     is_array: false,
+                    array_depth: 0,
                 }),
                 init: convert_runtime_class(source, class_declaration, id.name.as_str())?,
                 span: whole,
@@ -701,6 +702,7 @@ pub(super) fn convert_try_statement(
                     span: Span::new(0, 0),
                 },
                 is_array: false,
+                array_depth: 0,
             },
             body: catch_body,
         }]

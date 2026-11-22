@@ -242,6 +242,7 @@ impl Emitter {
         let return_type = method.return_type.map(|ty| ast::TypeAnnotation {
             name: self.name(&ty),
             is_array: false,
+            array_depth: 0,
         });
         let statements = method
             .body

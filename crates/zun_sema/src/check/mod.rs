@@ -830,6 +830,9 @@ struct FunctionCx {
     is_module_scope: bool,
     /// Number of enclosing `try` statements that have a `finally` clause.
     finally_depth: usize,
+    /// Locals declared `: number[]` and never reassigned: an index read of one
+    /// is a `number` when it is consumed numerically (see `typed_array_read`).
+    number_arrays: HashSet<hir::LocalSlot>,
 }
 
 #[derive(Default)]

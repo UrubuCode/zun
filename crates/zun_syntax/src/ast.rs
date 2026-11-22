@@ -378,6 +378,9 @@ pub struct TypeAnnotation {
     /// Zun arrays are untyped at runtime, so the element type is erased and any
     /// array depth resolves to `Array`.
     pub is_array: bool,
+    /// Number of `[]` suffixes: `number[]` is 1, `number[][]` is 2. Only depth 1
+    /// lets the checker know what an index read yields.
+    pub array_depth: u8,
 }
 
 /// An identifier occurrence: its text lives in the source at `span`.

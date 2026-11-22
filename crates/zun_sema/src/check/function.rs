@@ -61,6 +61,7 @@ impl Checker<'_> {
             is_constructor: this_class.is_some() && self.text(&f.name) == "constructor",
             is_module_scope: false,
             finally_depth: 0,
+            number_arrays: HashSet::new(),
         };
         // For a method, slot 0 is the implicit `this`; the declared params
         // follow it. For a free function, the params occupy every slot.
@@ -74,12 +75,24 @@ impl Checker<'_> {
             cx.declare("this", this_ty);
         }
         let mut declared_params: Vec<(String, hir::LocalSlot)> = Vec::new();
+        let mut number_array_params: Vec<hir::LocalSlot> = Vec::new();
         for (p, &ty) in f.params.iter().zip(param_tys_iter) {
             let pname = self.text(&p.name).to_string();
             let slot = cx.declare(&pname, ty);
+            if p.ty.as_ref().is_some_and(|a| self.is_number_array_annotation(a))
+                && !p.is_rest
+                && ty == Ty::Array
+            {
+                number_array_params.push(slot);
+            }
             declared_params.push((pname, slot));
         }
         self.collect_mutated_names(&f.body.statements, &mut cx.mutated_names);
+        for (pname, slot) in &declared_params {
+            if number_array_params.contains(slot) && !cx.mutated_names.contains(pname) {
+                cx.number_arrays.insert(*slot);
+            }
+        }
         // A closure created in a default expression captures the parameter scope.
         cx.param_slot_count = cx.locals.len();
         // The constructor of a native-backed class receives the typed

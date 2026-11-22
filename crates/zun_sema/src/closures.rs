@@ -80,6 +80,7 @@ impl Checker<'_> {
             is_constructor: function.is_arrow && outer.is_constructor,
             is_module_scope: false,
             finally_depth: 0,
+            number_arrays: HashSet::new(),
         };
         // The hidden environment is always local zero. User parameters and
         // ordinary locals follow it, matching the indirect-call ABI.

@@ -357,6 +357,7 @@ fn convert_computed_field(
                     span: Span::new(property.span.start, property.span.start),
                 },
                 is_array: false,
+                array_depth: 0,
             },
             is_static: false,
             is_private: true,
@@ -399,6 +400,7 @@ fn convert_field(
                 span: Span::new(field_span.start, field_span.start),
             },
             is_array: false,
+            array_depth: 0,
         });
     fields.push(crate::ast::ClassField {
         name: Name { span: field_span },
@@ -464,6 +466,7 @@ fn convert_static_block(
                 span: Span::new(block_span.start, block_span.start),
             },
             is_array: false,
+            array_depth: 0,
         },
         is_static: true,
         is_private: false,
@@ -557,6 +560,7 @@ fn infer_constructor_fields(
                         span: Span::new(field_span.start, field_span.start),
                     },
                     is_array: false,
+                    array_depth: 0,
                 },
                 is_static: false,
                 is_private: false,

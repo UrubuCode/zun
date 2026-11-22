@@ -19,9 +19,11 @@ pub(super) fn convert_type_annotation(
     // Strip trailing `[]` array suffixes; Zun arrays are untyped, so `T[]`
     // resolves to `Array` and the base name stays for diagnostics.
     let mut is_array = false;
+    let mut array_depth = 0u8;
     while let Some(stripped) = type_text.strip_suffix("[]") {
         type_text = stripped.trim_end();
         is_array = true;
+        array_depth = array_depth.saturating_add(1);
     }
     // Keep the base name of a generic (`Array<number>` -> `Array`); the type
     // arguments are erased like everything else.
@@ -67,6 +69,7 @@ pub(super) fn convert_type_annotation(
             span: Span::new(name_start as u32, (name_start + type_text.len()) as u32),
         },
         is_array,
+        array_depth,
     }))
 }
 

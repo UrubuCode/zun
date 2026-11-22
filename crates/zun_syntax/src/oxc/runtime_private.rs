@@ -188,6 +188,7 @@ impl PrivateMembers {
             Some(crate::ast::TypeAnnotation {
                 name: crate::ast::synthetic_ident("any"),
                 is_array: false,
+                array_depth: 0,
             })
         };
         let store = |name: Name| Stmt::Let {

@@ -191,6 +191,7 @@ impl YieldStar {
                         span: Span::new(0, 0),
                     },
                     is_array: false,
+                    array_depth: 0,
                 },
                 body: Block {
                     statements: vec![

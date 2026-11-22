@@ -193,3 +193,12 @@ impl<'a> Checker<'a> {
         }
     }
 }
+
+impl Checker<'_> {
+    /// Whether `annotation` is exactly `number[]` (one level, element `number`).
+    pub(super) fn is_number_array_annotation(&self, annotation: &ast::TypeAnnotation) -> bool {
+        annotation.array_depth == 1
+            && self.text(&annotation.name) == "number"
+            && !self.type_aliases.contains_key("number")
+    }
+}
