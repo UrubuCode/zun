@@ -203,6 +203,24 @@ impl Interp<'_> {
 
     /// `buf.fill(value, offset, end, encoding)` (`_fill`).
     fn nb_fill(&mut self, view: Obj, args: &[Value]) -> Result<Value, RunError> {
+        // A plain `Uint8Array` reaches here because the two share a static
+        // type, and its `fill` is the typed-array one: the range is clamped
+        // rather than refused, and the value coerced rather than read as a
+        // byte pattern.
+        if !zun_gc::with_current_heap(|heap| heap.is_node_buffer(view)) {
+            let len = view_len(view).unwrap_or(0);
+            let value = raw(args, 1);
+            let start = raw(args, 2);
+            let end = raw(args, 3);
+            let begin = self.view_relative(Some(&start).filter(|v| is_present(v)), len, 0)?;
+            let finish = self.view_relative(Some(&end).filter(|v| is_present(v)), len, len)?;
+            // Each store can run a user `valueOf` and move the view.
+            zun_gc::root!(view = view);
+            for index in begin..finish {
+                self.view_write(view.get(), index, &value)?;
+            }
+            return Ok(Value::Object(view.get()));
+        }
         let len = view_len(view).unwrap_or(0);
         let value = raw(args, 1);
         let mut offset = raw(args, 2);
@@ -353,6 +371,33 @@ impl Interp<'_> {
 
     /// `buf.slice(start, end)` / `buf.subarray(start, end)`.
     fn nb_slice(&mut self, view: Obj, args: &[Value]) -> Result<Value, RunError> {
+        // A plain `Uint8Array` reaches here because the two share a static
+        // type, and for it `slice` *copies* -- only a Node `Buffer`'s `slice`
+        // is `subarray` over the same memory. Writing through the original
+        // used to show up in the copy.
+        if !zun_gc::with_current_heap(|heap| heap.is_node_buffer(view)) {
+            let len = view_len(view).unwrap_or(0);
+            let start = raw(args, 1);
+            let end = raw(args, 2);
+            let start = if is_present(&start) {
+                self.nb_to_number(&start)?.trunc() as i64
+            } else {
+                0
+            };
+            let end = if is_present(&end) {
+                self.nb_to_number(&end)?.trunc() as i64
+            } else {
+                len as i64
+            };
+            return self.call_managed_collection(
+                "typedArraySlice",
+                &[
+                    Value::Object(view),
+                    Value::Int(start, zun_il::NumKind::I64),
+                    Value::Int(end, zun_il::NumKind::I64),
+                ],
+            );
+        }
         let len = view_len(view).unwrap_or(0);
         let start_arg = raw(args, 1);
         let end_arg = raw(args, 2);

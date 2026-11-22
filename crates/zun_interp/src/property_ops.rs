@@ -745,9 +745,25 @@ impl Interp<'_> {
             } else {
                 None
             };
-            if zun_core::TypedElement::ALL.iter().any(|k| is_class(heap, k.js_name())) {
+            if let Some(kind) = zun_core::TypedElement::ALL
+                .iter()
+                .find(|k| is_class(heap, k.js_name()))
+            {
                 let shared = Self::typed_array_prototype_singleton();
                 heap.dynamic_set_prototype(proto, Some(zun_core::Any::object(shared.addr() as usize)));
+                // `Int8Array.prototype.BYTES_PER_ELEMENT` is an own property of
+                // each *kind's* prototype (non-writable, non-enumerable,
+                // non-configurable), not only of the constructor. Only the
+                // constructor had it, so every `K.prototype.BYTES_PER_ELEMENT`
+                // read as `undefined`.
+                heap.dynamic_define_data(
+                    proto,
+                    "BYTES_PER_ELEMENT",
+                    zun_core::Any::float(kind.size() as f64),
+                    false,
+                    false,
+                    false,
+                );
             }
             if let Some(class) = crate::intrinsic_meta::builtin_class_name_in(heap, token)
                 .filter(|name| crate::intrinsic_meta::is_error_family(name))

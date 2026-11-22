@@ -78,7 +78,7 @@ impl Interp<'_> {
 
     /// A relative index argument clamped into `0..=len` (`undefined` takes
     /// `default`).
-    fn view_relative(
+    pub(crate) fn view_relative(
         &mut self,
         value: Option<&Value>,
         len: usize,
@@ -534,28 +534,27 @@ impl Interp<'_> {
             None => (member, None),
         };
         let args: &[Value] = owned_args.map_or(args, |call| call.as_slice());
+        // A name the two surfaces share is decided by the receiver's brand: a
+        // Node `Buffer` takes the Buffer form, a plain `Uint8Array` the
+        // typed-array one. `fill` used to take the Buffer route only at arity
+        // one, so `buf.fill(v, start, end)` reached the typed-array fill,
+        // which clamps the range where Node refuses it -- and `u8.slice(..)`
+        // took the Buffer route, which shares memory instead of copying.
+        let shared_name = matches!(
+            member,
+            "toString" | "slice" | "indexOf" | "lastIndexOf" | "includes" | "fill"
+        );
         let buffer_member = matches!(
             member,
-            "toString"
-                | "write"
-                | "equals"
-                | "copy"
-                | "swap16"
-                | "swap32"
-                | "swap64"
-                | "compare"
-                | "toJSON"
-                | "slice"
-                | "indexOf"
-                | "lastIndexOf"
-                | "includes"
-        ) || (member == "fill" && (args.len() == 1 || matches!(args.first(), Some(Value::Str(_)))))
+            "write" | "equals" | "copy" | "swap16" | "swap32" | "swap64" | "compare" | "toJSON"
+        ) || (shared_name
+            && zun_gc::with_current_heap(|heap| heap.is_node_buffer(view)))
             || member.starts_with("read")
             || (member.starts_with("write") && member.len() > "write".len());
         if !buffer_member {
             return Ok(None);
         }
-        let Some(spec) = zun_natives::view_member(member, true, if member == "fill" { 1 } else { args.len() }) else {
+        let Some(spec) = zun_natives::view_member(member, true, args.len()) else {
             return Ok(None);
         };
         if spec.module != "nodeBuffer" {

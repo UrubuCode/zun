@@ -92,7 +92,16 @@ macro_rules! int_from_numeric {
                 fn from_numeric(value: &Value) -> Option<Self> {
                     match value {
                         Value::Int(value, _) => Some(*value as $repr),
-                        Value::Float(value, _) => Some(*value as $repr),
+                        // A float narrows by ECMAScript's rule: truncate
+                        // toward zero, then reduce modulo the element's width.
+                        // A plain `as` cast *saturates* instead, so a bulk
+                        // conversion (`Uint8Array.of(300)`, `new
+                        // Uint8Array(float64View)`) stored 255 for 300 and 0
+                        // for -1 where the element store beside it wrapped
+                        // them to 44 and 255.
+                        Value::Float(value, _) => {
+                            Some(zun_core::to_int_wrapping(*value) as $repr)
+                        }
                         _ => None,
                     }
                 }

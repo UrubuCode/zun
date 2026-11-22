@@ -462,6 +462,14 @@ impl Heap {
         child.set_field(0, buffer.addr() as u64);
         self.typed_views
             .insert(child.addr() as usize, (buffer, subview));
+        // `Buffer.prototype.subarray` (and `slice`) answer a `Buffer`, so the
+        // brand travels to the child: without it the child read as a plain
+        // `Uint8Array` and took the typed-array form of every name the two
+        // surfaces share, so `buf.subarray(-3).toString()` answered
+        // `"89,101,102"` instead of the bytes as text.
+        if self.is_node_buffer(object) {
+            self.mark_node_buffer(child);
+        }
         Some(child)
     }
 

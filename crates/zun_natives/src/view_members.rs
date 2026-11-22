@@ -79,7 +79,11 @@ pub fn view_member(member: &str, is_u8: bool, argc: usize) -> Option<ViewMember>
             "toString" => node("nodeBufferToString".into(), vec![Raw, Raw, Raw], false),
             "write" => node("nodeBufferWrite".into(), vec![Raw, Raw, Raw, Raw], false),
             "slice" => node("nodeBufferSlice".into(), vec![Raw, Raw], false),
-            "fill" if argc == 1 => node("nodeBufferFill".into(), vec![Raw, Raw, Raw, Raw], false),
+            // `fill` goes to the Node implementation for every arity: the range
+            // forms used to fall through to the typed-array intrinsic, which
+            // clamps where Node refuses. The implementation tells a branded
+            // `Buffer` from a plain `Uint8Array` and applies the right rules.
+            "fill" => node("nodeBufferFill".into(), vec![Raw, Raw, Raw, Raw], false),
             "equals" => node("nodeBufferEquals".into(), vec![Raw], false),
             "copy" => node(
                 "nodeBufferCopy".into(),

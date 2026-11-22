@@ -27,32 +27,6 @@ impl<'a> Interp<'a> {
         name: &str,
         args: &[Value],
     ) -> Option<Result<Value, RunError>> {
-        let obj = |value: &Value| match value {
-            Value::Object(object) => Some(*object),
-            Value::Any(any) => any
-                .as_object()
-                .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
-            _ => None,
-        };
-        // Every value a source (array or typed array) holds, as interpreter
-        // values — the input shape for `set`/`from`/`of`.
-        let source_elements = |src: zun_gc::Obj| -> Option<Vec<Value>> {
-            if let Some(len) = crate::typed_arrays::element_len(src) {
-                let mut out = Vec::with_capacity(len);
-                for index in 0..len {
-                    out.push(crate::typed_arrays::read_element(src, index)?);
-                }
-                return Some(out);
-            }
-            let len = zun_gc::with_current_heap(|heap| heap.array_len(src))?;
-            let mut out = Vec::with_capacity(len);
-            for index in 0..len {
-                let any = zun_gc::with_current_heap(|heap| heap.array_get(src, index))?;
-                let value = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))?;
-                out.push(value);
-            }
-            Some(out)
-        };
         // A relative index (JS `slice`/`copyWithin` style): negative counts
         // from the end; the result is clamped into `0..=length`.
         let relative = |value: i64, length: usize| -> usize {
@@ -204,8 +178,15 @@ impl<'a> Interp<'a> {
             "typedArrayReduceNoInit" => Some(self.typed_array_reduce(args, true, false)),
             "typedArrayReduceRight" => Some(self.typed_array_reduce(args, false, true)),
             "typedArrayReduceRightNoInit" => Some(self.typed_array_reduce(args, false, false)),
-            "typedArrayFrom" | "typedArrayOf" => Some((|| {
-                let src = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
+            "typedArrayFrom" | "typedArrayOf" => Some(self.typed_array_from_or_of(args)),
+            _ => self.typed_array_rest(name, args),
+        }
+    }
+
+    /// `K.from(source)` and `K.of(..)`: every element goes through the
+    /// conversion the element kind asks for before it is stored.
+    fn typed_array_from_or_of(&mut self, args: &[Value]) -> Result<Value, RunError> {
+        let src = obj(args.first().ok_or(RunError::BadToken)?).ok_or(RunError::BadToken)?;
                 let kind = kind_arg(args.get(1))?;
                 let elements = source_elements(src).ok_or(RunError::BadToken)?;
                 // A BigInt-kind array takes each element through ToBigInt, and a
@@ -232,13 +213,39 @@ impl<'a> Interp<'a> {
                         "TypeError: Cannot convert a Number to a BigInt".into(),
                     ));
                 }
-                let result = crate::typed_arrays::alloc_of(kind, elements.len())
+                // A number-kind array takes each element through ToNumber
+                // first, which is what turns the characters of
+                // `Uint8Array.from("123")` into 1, 2 and 3; they used to reach
+                // the element store as strings, which it could not convert, so
+                // every element stayed zero. A BigInt kind keeps its elements,
+                // whose conversion is ToBigInt and is applied at the store.
+                let bigint_kind = matches!(kind.js_name(), "BigInt64Array" | "BigUint64Array");
+                let mut converted: Vec<Value> = Vec::with_capacity(elements.len());
+                for value in &elements {
+                    converted.push(if bigint_kind {
+                        value.clone()
+                    } else {
+                        Value::Float(self.dyn_to_number(value)?, zun_il::NumKind::F64)
+                    });
+                }
+                // Allocated after every conversion has run, so a collection
+                // inside a `valueOf` cannot move the result out from under the
+                // writes.
+                let result = crate::typed_arrays::alloc_of(kind, converted.len())
                     .ok_or(RunError::BadToken)?;
-                for (index, value) in elements.iter().enumerate() {
+                for (index, value) in converted.iter().enumerate() {
                     crate::typed_arrays::write_element(result, index, value);
                 }
                 Ok(Value::Object(result))
-            })()),
+    }
+
+    /// The typed-array natives that did not need splitting out.
+    fn typed_array_rest(
+        &mut self,
+        name: &str,
+        args: &[Value],
+    ) -> Option<Result<Value, RunError>> {
+        match name {
             "typedArrayFromMapped" => Some(self.typed_array_from_mapped(args)),
             "typedArrayTrackingNew" => Some((|| {
                 let buffer =
@@ -581,4 +588,35 @@ impl<'a> Interp<'a> {
     }
 
     // --- Timers: the macrotask source of the unified event loop (slice 4) ---
+}
+
+/// A value resolved to a heap object, following an `Any` payload.
+fn obj(value: &Value) -> Option<zun_gc::Obj> {
+    match value {
+        Value::Object(object) => Some(*object),
+        Value::Any(any) => any
+            .as_object()
+            .map(|address| unsafe { zun_gc::Obj::from_addr(address as *mut u64) }),
+        _ => None,
+    }
+}
+
+/// Every value a source (array or typed array) holds, as interpreter values:
+/// the input shape for `set` / `from` / `of`.
+fn source_elements(src: zun_gc::Obj) -> Option<Vec<Value>> {
+    if let Some(len) = crate::typed_arrays::element_len(src) {
+        let mut out = Vec::with_capacity(len);
+        for index in 0..len {
+            out.push(crate::typed_arrays::read_element(src, index)?);
+        }
+        return Some(out);
+    }
+    let len = zun_gc::with_current_heap(|heap| heap.array_len(src))?;
+    let mut out = Vec::with_capacity(len);
+    for index in 0..len {
+        let any = zun_gc::with_current_heap(|heap| heap.array_get(src, index))?;
+        let value = zun_gc::with_current_heap(|heap| Value::unbox_any(any, heap))?;
+        out.push(value);
+    }
+    Some(out)
 }
