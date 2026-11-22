@@ -264,6 +264,9 @@ fn check_impl(
         module_globals: HashSet::new(),
         module_global_types: HashMap::new(),
         module_global_consts: HashMap::new(),
+        module_global_fields: HashMap::new(),
+        module_field_layout: Vec::new(),
+        module_field_class: program.classes.len() as hir::ClassIndex,
         globals_read_in_functions: HashSet::new(),
         pending_static_classes: VecDeque::new(),
         arguments_functions: HashSet::new(),
@@ -414,6 +417,44 @@ fn check_impl(
                 }
             }
         }
+        // A top-level binding with a declared value type that does not fold to
+        // a literal gets a static field of a synthetic module type -- the CLR's
+        // `<Module>`. Its read is `ldsfld` at a fixed slot and its write
+        // `stsfld`, both of which the typed translator lowers; the realm store
+        // it replaces was reached through `globalGet`/`globalSet`, a call keyed
+        // by a string that the translator does not lower at all, so any loop
+        // that touched the binding stayed in the interpreter. An unwritten
+        // static reads as `undefined` exactly as an unset realm entry did, so
+        // the move does not change what a read before the declaration answers.
+        for statement in &program.top_level {
+            let ast::Stmt::Let {
+                name,
+                ty: Some(annotation),
+                ..
+            } = statement
+            else {
+                continue;
+            };
+            let text = checker.text(name).to_string();
+            if !checker.module_globals.contains(&text)
+                || checker.module_global_consts.contains_key(&text)
+                || checker.module_global_fields.contains_key(&text)
+            {
+                continue;
+            }
+            let declared = checker.resolve_annotation(annotation);
+            if !matches!(declared, Ty::F64 | Ty::Boolean) {
+                continue;
+            }
+            let slot = checker.module_field_layout.len() as u16;
+            checker.module_field_layout.push(hir::ClassField {
+                name: text.clone(),
+                ty: declared,
+                is_static: true,
+                is_private: false,
+            });
+            checker.module_global_fields.insert(text, slot);
+        }
         checker.fn_mutated_globals = assigned
             .into_iter()
             .filter(|name| checker.module_globals.contains(name))
@@ -479,6 +520,19 @@ fn check_impl(
     // The module's own top-level functions occupy the leading function indices,
     // in source order (see `collect_signatures`). Only those are candidates.
     let top_level_count = program.functions.len();
+    // The synthetic module type goes last, so every declared class keeps the
+    // index its checked code already refers to. It is emitted only when a
+    // binding actually lives in it, and holds nothing but static fields.
+    if !checker.module_field_layout.is_empty() {
+        debug_assert_eq!(classes.len(), checker.module_field_class as usize);
+        classes.push(hir::Class {
+            name: "<Module>".to_string(),
+            base: None,
+            decorators: Vec::new(),
+            fields: std::mem::take(&mut checker.module_field_layout),
+            methods: Vec::new(),
+        });
+    }
     let mut hir_program = hir::Program {
         functions,
         classes,
@@ -690,6 +744,19 @@ struct Checker<'a> {
     /// Top-level bindings nothing assigns to whose initializer is a literal:
     /// every read folds to the value.
     module_global_consts: HashMap<String, Literal>,
+    /// Top-level bindings with a declared value type that live in a static
+    /// field of a synthetic module type instead of the realm store, keyed by
+    /// name and mapping to that field's slot. The CLR's `<Module>`: a read is a
+    /// `ldsfld` at a fixed slot, which the typed translator lowers, where
+    /// `globalGet` was a call keyed by a string the translator cannot lower at
+    /// all -- so a loop reading or writing such a binding stayed interpreted.
+    module_global_fields: HashMap<String, u16>,
+    /// The field layout of that synthetic module type, in slot order. Empty
+    /// when no binding qualifies, in which case no such type is emitted.
+    module_field_layout: Vec<hir::ClassField>,
+    /// The class index the synthetic module type occupies: one past the last
+    /// declared class, so every declared class keeps its index.
+    module_field_class: hir::ClassIndex,
     /// Module globals that some function/method/arrow body references by name
     /// (so a top-level write must be mirrored to the realm store for that
     /// reader to observe it). A sound over-approximation; names outside this set

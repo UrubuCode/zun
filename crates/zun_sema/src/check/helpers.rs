@@ -298,13 +298,31 @@ impl Checker<'_> {
         }
     }
 
-    /// `globalSet(name, box(value), false)` — store a module global.
+    /// The static field of the synthetic module type that holds `name`, with
+    /// the type declared for it, when the binding lives there.
+    fn module_field(&self, name: &str) -> Option<(u16, Ty)> {
+        let slot = *self.module_global_fields.get(name)?;
+        Some((slot, self.module_field_layout[slot as usize].ty))
+    }
+
     pub(in crate::check) fn global_set_expr(
         &self,
         name: &str,
         value: hir::Expr,
         span: Span,
     ) -> hir::Expr {
+        // A binding that lives in the module type is stored at its slot.
+        if let Some((field_slot, declared)) = self.module_field(name) {
+            return hir::Expr {
+                kind: hir::ExprKind::StaticFieldSet {
+                    class: self.module_field_class,
+                    field_slot,
+                    value: Box::new(Self::unbox_to(value, declared)),
+                },
+                ty: declared,
+                span,
+            };
+        }
         let (id, _) = zun_natives::resolve("collections", "globalSet")
             .expect("globalSet intrinsic must exist");
         hir::Expr {
@@ -343,6 +361,18 @@ impl Checker<'_> {
                     ty: Ty::Boolean,
                     span,
                 },
+            };
+        }
+        // A binding that lives in the module type is read from its slot: a
+        // fixed-slot load the translator lowers, not a lookup by name.
+        if let Some((field_slot, declared)) = self.module_field(name) {
+            return hir::Expr {
+                kind: hir::ExprKind::StaticFieldGet {
+                    class: self.module_field_class,
+                    field_slot,
+                },
+                ty: declared,
+                span,
             };
         }
         let (id, _) = zun_natives::resolve("collections", "globalGet")
