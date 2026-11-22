@@ -9,3 +9,4 @@ Cargo.lock
 
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+ZUN_PLAN.MD
