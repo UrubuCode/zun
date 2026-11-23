@@ -387,6 +387,11 @@ pub struct Heap {
     /// Flat store for class-static *data* fields, indexed by field RID (see
     /// `static_store`). Function-valued statics stay on `statics`.
     static_store: static_store::StaticStore,
+    /// Weak-key cell of each unregistered symbol used as a WeakMap/WeakSet key,
+    /// by symbol id (see [`Heap::symbol_cell`]). A heap-internal root table: every
+    /// collection marks it and every relocation rewrites it, and no object user
+    /// code can reach holds it.
+    symbol_cells: HashMap<u64, Obj>,
 }
 
 impl Heap {
@@ -1417,6 +1422,13 @@ impl Heap {
             let mapped = relocation.relocate(object);
             if mapped != object {
                 self.statics = Some(mapped);
+                rewritten += 1;
+            }
+        }
+        for cell in self.symbol_cells.values_mut() {
+            let mapped = relocation.relocate(*cell);
+            if mapped != *cell {
+                *cell = mapped;
                 rewritten += 1;
             }
         }

@@ -2427,3 +2427,59 @@ fn a_static_slot_keeps_its_object_through_full_and_young_collections() {
     unsafe { heap.collect(&[], &ref_slots) };
     assert_eq!(heap.live_count(), 0);
 }
+
+#[test]
+fn a_weak_map_entry_keyed_by_a_symbol_survives_collections() {
+    let mut heap = Heap::new();
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    let first = heap.symbol_create(Some("dup"));
+    let second = heap.symbol_create(Some("dup"));
+    let map = heap.alloc_weak_map();
+    let value = heap.alloc(7, 0);
+    let first_cell = heap.symbol_cell(first);
+    assert!(heap.weak_map_set_object(map, first_cell, value));
+    // Neither the cell nor the value is a root: a symbol owns no heap object, so
+    // only the symbol's identity keeps the entry reachable.
+    for _ in 0..3 {
+        unsafe { heap.collect(&[map], &ref_slots) };
+        let again = heap.symbol_cell(first);
+        assert!(heap.weak_map_has_object(map, again), "entry must survive");
+        assert!(heap.weak_map_get_value_object(map, again).is_some());
+    }
+    // A second symbol with the same description is a different key.
+    let second_cell = heap.symbol_cell(second);
+    assert_ne!(second_cell.addr(), heap.symbol_cell(first).addr());
+    assert!(!heap.weak_map_has_object(map, second_cell));
+    unsafe { heap.collect_young(&[map], &ref_slots) };
+    let again = heap.symbol_cell(first);
+    assert!(heap.weak_map_has_object(map, again));
+}
+
+#[test]
+fn a_symbol_cell_survives_evacuating_and_compacting_collections_when_it_moves() {
+    let mut heap = Heap::new();
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    let symbol = heap.symbol_create(Some("moved"));
+    let map = heap.alloc_weak_map();
+    let value = heap.alloc(7, 0);
+    let cell = heap.symbol_cell(symbol);
+    assert!(heap.weak_map_set_object(map, cell, value));
+    let before = cell.addr();
+    // The cell is young and held only by the root table: evacuation moves it into
+    // tenured storage, and the table, the ephemeron and the lookup must follow.
+    let mut roots = vec![map];
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+    let map = roots[0];
+    let after = heap.symbol_cell(symbol);
+    assert_ne!(before, after.addr(), "the evacuation must have moved the cell");
+    assert!(heap.weak_map_has_object(map, after), "entry follows the moved cell");
+    let mut roots = vec![map];
+    unsafe { heap.collect_and_compact(&mut roots, &ref_slots) };
+    let map = roots[0];
+    let compacted = heap.symbol_cell(symbol);
+    assert!(heap.weak_map_has_object(map, compacted), "entry survives compaction");
+    assert_eq!(heap.symbol_cell(symbol).addr(), compacted.addr());
+    unsafe { heap.collect(&[map], &ref_slots) };
+    let last = heap.symbol_cell(symbol);
+    assert!(heap.weak_map_has_object(map, last));
+}

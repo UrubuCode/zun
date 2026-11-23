@@ -202,3 +202,72 @@ fn a_caller_with_stack_arguments_keeps_its_references_alive() {
         &["leaf", "mid", "top"],
     );
 }
+
+// A `const.null` is accepted by what consumes it, not by what follows it: a field
+// or a parameter of class type takes it wherever it sits among number arguments.
+
+#[test]
+fn newobj_nulls_before_numbers_compile() {
+    assert_equivalent(
+        "class Pair { left: Pair | null = null; right: Pair | null = null; v: number = 0; }\n\
+         function make(): Pair { return new Pair(); }\n\
+         function main(): number { const p = make(); p.v = 5.0; \
+             if (p.left === null && p.right === null) { return p.v + 1.0; } return 0.0; }",
+    );
+}
+
+#[test]
+fn newobj_nulls_between_numbers_compile() {
+    assert_equivalent(
+        "class Mid { a: number = 1; left: Mid | null = null; b: number = 2; right: Mid | null = null; c: number = 3; }\n\
+         function make(): Mid { return new Mid(); }\n\
+         function main(): number { const m = make(); \
+             if (m.left === null && m.right === null) { return m.a + m.b * 10.0 + m.c * 100.0; } return 0.0; }",
+    );
+}
+
+#[test]
+fn newobj_nulls_after_numbers_compile() {
+    assert_equivalent(
+        "class Tail { v: number = 4; w: number = 8; left: Tail | null = null; right: Tail | null = null; }\n\
+         function make(): Tail { return new Tail(); }\n\
+         function main(): number { const t = make(); \
+             if (t.left === null && t.right === null) { return t.v + t.w; } return 0.0; }",
+    );
+}
+
+#[test]
+fn a_tree_node_in_its_natural_field_order_builds_natively() {
+    assert_equivalent(
+        "class Node { left: Node | null = null; right: Node | null = null; v: number = 0; }\n\
+         function build(d: number): Node | null { if (d == 0) { return null; } \
+             const n = new Node(); n.v = d; n.left = build(d - 1); n.right = build(d - 1); return n; }\n\
+         function sum(n: Node | null): number { if (n === null) { return 0; } return n.v + sum(n.left) + sum(n.right); }\n\
+         function main(): number { return sum(build(6)); }",
+    );
+}
+
+#[test]
+fn direct_call_nulls_around_number_arguments_compile() {
+    assert_equivalent(
+        "class Cell { v: number = 0; }\n\
+         function both(l: Cell | null, v: number, r: Cell | null): number { \
+             let s: number = v; if (l === null) { s = s + 10.0; } if (r === null) { s = s + 100.0; } return s; }\n\
+         function lead(l: Cell | null, a: number, b: number): number { if (l === null) { return a + b; } return 0.0; }\n\
+         function trail(a: number, b: number, r: Cell | null): number { if (r === null) { return a * b; } return 0.0; }\n\
+         function main(): number { return both(null, 1.0, null) + lead(null, 2.0, 3.0) + trail(4.0, 5.0, null); }",
+    );
+}
+
+/// A null that lands in a number parameter must not be compiled as a zero handle.
+#[test]
+fn a_null_in_a_number_parameter_position_stays_interpreted() {
+    let module = compile(
+        "class Cell { v: number = 0; }\n\
+         function pick(l: Cell | null, d: number = 2.0): number { if (l === null) { return d; } return 0.0; }\n\
+         function main(): number { return pick(null); }",
+    );
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
+    assert!(!jit.is_compiled(entry), "main passes an omitted number argument");
+}

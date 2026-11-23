@@ -200,6 +200,12 @@ impl Heap {
         for persistent in [self.global_object, self.statics].into_iter().flatten() {
             mark(&mut self.records, &self.by_addr, &mut work, persistent.0 as usize);
         }
+        // Symbol weak-key cells: a symbol owns no heap object, so this table is what
+        // keeps its cell reachable. Like the globals above it is always scanned, so
+        // it needs no remembered-set entry; a cell holds only a symbol id, no children.
+        for cell in self.symbol_cells.values() {
+            mark(&mut self.records, &self.by_addr, &mut work, cell.0 as usize);
+        }
         // Class-static data slots are roots too: always scanned, which is why a
         // young object stored there needs no remembered-set entry.
         for address in self.static_store.object_references() {

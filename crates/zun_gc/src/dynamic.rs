@@ -762,21 +762,22 @@ impl Heap {
         cell
     }
 
-    /// The weak-key cell standing for an unregistered symbol: found by content, one
-    /// per symbol while it is alive.
+    /// The weak-key cell standing for an unregistered symbol: one per symbol.
+    ///
+    /// A symbol owns no heap object (it is an id in the heap's registry and is never
+    /// reclaimed), so nothing but this cell can keep the cell reachable. Left
+    /// unanchored it died at the first collection after it was created, and the next
+    /// lookup minted a different cell: the entry filed under the dead cell was
+    /// dropped and `get` missed. The cell is therefore held by a heap-internal root
+    /// table (`symbol_cells`, never a property of an object user code can reach)
+    /// for as long as the symbol exists, which is forever.
     pub fn symbol_cell(&mut self, symbol: zun_core::SymbolId) -> Obj {
-        let wanted = zun_core::Any::symbol(symbol);
-        let existing = self
-            .dynamic_objects
-            .iter()
-            .find_map(|(address, properties)| {
-                (properties.get(SYMBOL_CELL_KEY) == Some(wanted)).then_some(*address)
-            });
-        if let Some(address) = existing {
-            return unsafe { Obj::from_addr(address as *mut u64) };
+        if let Some(&cell) = self.symbol_cells.get(&symbol.get()) {
+            return cell;
         }
         let cell = self.alloc_dynamic();
-        self.dynamic_set(cell, SYMBOL_CELL_KEY, wanted);
+        self.dynamic_set(cell, SYMBOL_CELL_KEY, zun_core::Any::symbol(symbol));
+        self.symbol_cells.insert(symbol.get(), cell);
         cell
     }
 

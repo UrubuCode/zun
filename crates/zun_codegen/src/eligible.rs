@@ -1209,6 +1209,13 @@ fn pushes_object(
 /// into a slot of class type. Anywhere else (an `any`, a number parameter that
 /// defaults when `null` is passed) zero means something else, and the translator
 /// would refuse it; saying so here keeps eligibility equal to what is lowered.
+///
+/// The rule is about what *consumes* each null, not about where it sits: the
+/// operand stack is followed forward from the null (by declared stack effect, with
+/// call arity read from metadata) until an instruction pops it, and the slot it
+/// lands in (`newobj` field, call parameter, local, field, static, return) must be
+/// of class kind. Control flow between the null and its consumer, or an
+/// instruction whose effect is not known here, declines the method.
 fn const_null_uses_ok(
     module: &Module,
     body: &zun_module::MethodBody<'_>,
@@ -1222,6 +1229,13 @@ fn const_null_uses_ok(
             .get((token.rid() as usize).wrapping_sub(1))
             .is_some_and(|field| JitKind::from_byte(field.kind) == JitKind::Object)
     };
+    let callee_of = |token: zun_metadata::Token| {
+        module
+            .tables
+            .method_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .and_then(|method| read_body(&module.code, method.body_offset).ok())
+    };
     let mut offset = 0usize;
     for (i, instr) in instrs.iter().enumerate() {
         let here = offset;
@@ -1229,55 +1243,89 @@ fn const_null_uses_ok(
         if instr.opcode != Opcode::ConstNull || !within.contains(&here) {
             continue;
         }
-        // Several nulls in a row feed one `newobj`.
-        let mut next = i + 1;
-        while instrs.get(next).is_some_and(|n| n.opcode == Opcode::ConstNull) {
-            next += 1;
-        }
-        let Some(consumer) = instrs.get(next) else {
-            return false;
-        };
-        let ok = match (consumer.opcode, consumer.operand) {
-            (Opcode::StoreLocal, Operand::Local(slot)) => body
-                .local_kinds
-                .get(slot as usize)
-                .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object),
-            (Opcode::StoreField | Opcode::StoreStatic, Operand::Token(token)) => {
-                field_is_object(token)
+        // Depth of the null below the top of the stack, as the scan moves forward.
+        let mut depth = 0usize;
+        let mut ok = false;
+        for (j, next) in instrs.iter().enumerate().skip(i + 1) {
+            // Arity of the instruction: how many operands it pops, and how many
+            // values it leaves. `None` means the effect is not known here.
+            let (pops, pushes) = match (next.opcode, next.operand) {
+                (Opcode::Ret, _) => {
+                    ok = depth == 0
+                        && body.returns_value
+                        && JitKind::from_byte(body.return_kind) == JitKind::Object;
+                    break;
+                }
+                (Opcode::StoreField | Opcode::StoreStatic, _) => (
+                    if next.opcode == Opcode::StoreField { 2 } else { 1 },
+                    0,
+                ),
+                (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => {
+                    let Some(callee) = callee_of(token) else { break };
+                    (callee.param_count as usize, usize::from(callee.returns_value))
+                }
+                (Opcode::NewObj, Operand::Token(token)) => {
+                    let Some(ty) = module
+                        .tables
+                        .type_defs
+                        .get((token.rid() as usize).wrapping_sub(1))
+                    else {
+                        break;
+                    };
+                    ((ty.field_end - ty.field_start) as usize, 1)
+                }
+                (op, operand) => {
+                    if matches!(operand, Operand::Branch(_)) {
+                        break;
+                    }
+                    match op.stack_effect() {
+                        zun_il::StackEffect::Fixed { pops, pushes } => {
+                            (pops as usize, pushes as usize)
+                        }
+                        _ => break,
+                    }
+                }
+            };
+            if pops <= depth {
+                depth = depth - pops + pushes;
+                continue;
             }
-            (Opcode::Ret, _) => {
-                body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Object
-            }
-            (Opcode::NewObj, _) => true,
-            (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => module
-                .tables
-                .method_defs
-                .get((token.rid() as usize).wrapping_sub(1))
-                .and_then(|method| read_body(&module.code, method.body_offset).ok())
-                .is_some_and(|callee| {
-                    callee.param_count > 0
-                        && callee
+            // `next` pops the null, as operand `index` of its `pops` operands.
+            let index = pops - 1 - depth;
+            ok = match (next.opcode, next.operand) {
+                (Opcode::StoreLocal, Operand::Local(slot)) => body
+                    .local_kinds
+                    .get(slot as usize)
+                    .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object),
+                (Opcode::StoreField, Operand::Token(token)) => {
+                    index == 1 && field_is_object(token)
+                }
+                (Opcode::StoreStatic, Operand::Token(token)) => field_is_object(token),
+                (Opcode::NewObj, Operand::Token(token)) => {
+                    module
+                        .tables
+                        .type_defs
+                        .get((token.rid() as usize).wrapping_sub(1))
+                        .and_then(|ty| module.tables.field_defs.get(ty.field_start as usize + index - 1))
+                        .is_some_and(|field| JitKind::from_byte(field.kind) == JitKind::Object)
+                }
+                (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => callee_of(token)
+                    .is_some_and(|callee| {
+                        callee
                             .local_kinds
-                            .get(callee.param_count as usize - 1)
+                            .get(index)
                             .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object)
-                }),
-            // `p === null`: the other operand was pushed just before.
-            (Opcode::CmpEq | Opcode::CmpNe, _) => {
-                next == i + 1
-                    && i > 0
-                    && pushes_object(module, body, &instrs[i - 1])
-            }
-            // `null === p`: the other operand follows and then the compare.
-            _ if next == i + 1
-                && pushes_object(module, body, consumer)
-                && instrs
-                    .get(next + 1)
-                    .is_some_and(|c| matches!(c.opcode, Opcode::CmpEq | Opcode::CmpNe)) =>
-            {
-                true
-            }
-            _ => false,
-        };
+                    }),
+                // `p === null`: the other operand was pushed just before.
+                (Opcode::CmpEq | Opcode::CmpNe, _) => {
+                    (j == i + 1 && i > 0 && pushes_object(module, body, &instrs[i - 1]))
+                        // `null === p`: the other operand follows and then the compare.
+                        || (j == i + 2 && pushes_object(module, body, &instrs[i + 1]))
+                }
+                _ => false,
+            };
+            break;
+        }
         if !ok {
             return false;
         }
