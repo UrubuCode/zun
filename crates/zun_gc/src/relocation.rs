@@ -17,6 +17,10 @@ impl RelocationMap {
         Self::default()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.addresses.is_empty()
+    }
+
     pub fn insert(&mut self, old: Obj, new: Obj) {
         self.insert_addresses(old.addr() as usize, new.addr() as usize);
     }

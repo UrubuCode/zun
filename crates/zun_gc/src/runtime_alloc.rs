@@ -42,6 +42,22 @@ pub unsafe extern "C" fn zun_rt_alloc(
 ) -> *mut u64 {
     let pc = unsafe { safepoint_pc(caller_sp) };
 
+    // Fast path: one thread-local lookup. Allocation count is a coarse fallback
+    // cadence; the nursery budget is the actual generational trigger. Large
+    // objects can exhaust that budget in a single call, so do not wait for the
+    // count-based cadence in that case. Publishing the safepoint (below) is only
+    // needed when a collection can actually run.
+    let fast = with_current_heap_mut(|heap| {
+        if heap.native_allocation_due() || heap.nursery_collection_due() {
+            None
+        } else {
+            Some(heap.alloc(type_rid, field_count).addr())
+        }
+    });
+    if let Some(address) = fast {
+        return address;
+    }
+
     with_active_stack_map_registry(|registry| {
         let Some(registry) = registry else {
             return with_current_heap_mut(|heap| heap.alloc(type_rid, field_count).addr());
@@ -51,36 +67,30 @@ pub unsafe extern "C" fn zun_rt_alloc(
         // active so a collection can consume the registered stack map.
         let _frame = unsafe { ActiveNativeFrameScope::enter(registry, pc, caller_sp as *mut u8) };
         with_current_heap_mut(|heap| {
-            // Allocation count is a coarse fallback cadence; the nursery
-            // budget is the actual generational trigger. Large objects can
-            // exhaust that budget in a single call, so do not wait for the
-            // count-based cadence in that case.
-            if heap.native_allocation_due() || heap.nursery_collection_due() {
-                let layouts = heap.reference_slots.clone();
-                let ref_slots = |rid: u32| {
-                    layouts
-                        .get(&rid)
-                        .map(|slots| std::rc::Rc::from(slots.as_slice()))
-                        .unwrap_or_else(|| std::rc::Rc::from(Vec::new()))
-                };
-                // SAFETY: the active frame and all registered roots remain
-                // stopped and valid for this allocation slow path.
-                unsafe {
-                    if heap.native_compaction_due() {
-                        heap.collect_and_compact_with_registered_native_frames(
-                            &mut Vec::new(),
-                            &ref_slots,
-                        );
-                    } else {
-                        heap.collect_young_evacuating_with_active_native_frame(
-                            &mut Vec::new(),
-                            pc,
-                            caller_sp as *mut u8,
-                            &ref_slots,
-                        );
-                    }
+            // The layout table is moved out for the collection rather than
+            // cloned, and its slot lists are shared, so a layout lookup during
+            // marking or rewriting is a reference-count bump, not an allocation.
+            let layouts = std::mem::take(&mut heap.reference_slots);
+            let empty: std::rc::Rc<[usize]> = std::rc::Rc::from(Vec::new());
+            let ref_slots = |rid: u32| layouts.get(&rid).cloned().unwrap_or_else(|| empty.clone());
+            // SAFETY: the active frame and all registered roots remain
+            // stopped and valid for this allocation slow path.
+            unsafe {
+                if heap.native_compaction_due() {
+                    heap.collect_and_compact_with_registered_native_frames(
+                        &mut Vec::new(),
+                        &ref_slots,
+                    );
+                } else {
+                    heap.collect_young_evacuating_with_active_native_frame(
+                        &mut Vec::new(),
+                        pc,
+                        caller_sp as *mut u8,
+                        &ref_slots,
+                    );
                 }
             }
+            heap.reference_slots = layouts;
             heap.alloc(type_rid, field_count).addr()
         })
     })
@@ -120,11 +130,13 @@ mod tests {
         let _registry_scope = unsafe { ActiveStackMapScope::enter(&registry) };
         let _heap_scope = unsafe { HeapScope::enter(&mut heap) };
 
-        for _ in 0..2_048 {
+        for _ in 0..140_000 {
             unsafe { super::zun_rt_alloc(2, 0, caller_sp) };
         }
 
-        // The eighth young collection compacts the heap. The stack-map slot,
+        // The 64th young collection (the backstop; this test promotes almost
+        // nothing) compacts the heap, 16-byte objects spending the 32 KiB
+        // nursery budget every 2048 allocations. The stack-map slot,
         // rather than the stale pre-compaction Obj, is the authoritative root.
         assert!(heap.by_addr.contains_key(&native_frame[1]));
     }

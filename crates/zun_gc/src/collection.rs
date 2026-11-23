@@ -44,6 +44,7 @@ impl Heap {
     ) -> usize {
         // SAFETY: callers uphold the root contract documented on the public
         // entry point; this is the complete-heap policy.
+        let roots = roots as *const [Obj] as *mut [Obj];
         unsafe { self.collect_generation(roots, ref_slots, false, false, None) }
     }
 
@@ -59,6 +60,7 @@ impl Heap {
         ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
         // SAFETY: same root contract as `collect`.
+        let roots = roots as *const [Obj] as *mut [Obj];
         unsafe { self.collect_generation(roots, ref_slots, true, false, None) }
     }
 
@@ -69,6 +71,7 @@ impl Heap {
         ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         on_relocation: &mut dyn FnMut(&RelocationMap),
     ) -> usize {
+        let roots = roots as *mut [Obj];
         unsafe { self.collect_generation(roots, ref_slots, true, true, Some(on_relocation)) }
     }
 
@@ -145,7 +148,7 @@ impl Heap {
 
     unsafe fn collect_generation(
         &mut self,
-        roots: &[Obj],
+        roots: *mut [Obj],
         ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
         young_only: bool,
         evacuate: bool,
@@ -158,7 +161,10 @@ impl Heap {
 
         // Mark reachable objects from the roots.
         let mut work: Vec<usize> = Vec::new();
-        for root in roots {
+        // Read through the raw slice: the evacuating path writes the rewritten
+        // roots back through it, so a shared reborrow held across that write
+        // would let the caller assume its roots never change.
+        for root in unsafe { &*roots } {
             if let Some(&idx) = self.by_addr.get(&(root.0 as usize)) {
                 if !self.records[idx].marked {
                     self.records[idx].marked = true;
@@ -628,6 +634,7 @@ impl Heap {
                 .collect();
             for (idx, old, field_count) in survivors {
                 let slots = zun_core::OBJECT_HEADER_SLOTS + field_count;
+                self.promoted_since_compaction += slots * std::mem::size_of::<u64>();
                 let new = self.alloc_old_slots(slots);
                 unsafe { std::ptr::copy_nonoverlapping(old, new, slots) };
                 relocation.insert_addresses(old as usize, new as usize);
@@ -637,17 +644,20 @@ impl Heap {
                 self.by_addr.insert(new as usize, idx);
             }
 
-            let roots =
-                unsafe { std::slice::from_raw_parts_mut(roots.as_ptr() as *mut Obj, roots.len()) };
-            for root in roots {
+            for root in unsafe { &mut *roots } {
                 let address = root.addr() as usize;
                 let mapped = relocation.relocate_address(address);
                 if mapped != address {
                     *root = unsafe { Obj::from_addr(mapped as *mut u64) };
                 }
             }
-            self.rewrite_all_references(&relocation, ref_slots);
-            unsafe { rewrite_native_roots(&relocation) };
+            // Nothing moved (every young object was garbage): there is no
+            // reference to rewrite, and walking every table to find that out
+            // was the dominant cost of a young collection.
+            if !relocation.is_empty() {
+                self.rewrite_all_references_impl(&relocation, ref_slots, true);
+                unsafe { rewrite_native_roots(&relocation) };
+            }
             if let Some(callback) = on_relocation.as_mut() {
                 callback(&relocation);
             }
@@ -655,6 +665,11 @@ impl Heap {
 
         // Sweep: reclaim live-but-unmarked objects into the free list.
         let mut freed = 0;
+        // Dead records whose storage is nursery storage that an evacuating
+        // collection is about to hand out again. They skip the address-keyed free
+        // list (they would only be scrubbed from it below) and are released
+        // straight to the record free list.
+        let mut released_dead: Vec<usize> = Vec::new();
         for idx in 0..self.records.len() {
             let r = &mut self.records[idx];
             let collect_this = !young_only || r.generation == records::Generation::Young;
@@ -734,7 +749,11 @@ impl Heap {
                 if !self.proxies.is_empty() {
                     self.proxies.remove(&(r.addr as usize));
                 }
-                self.free.entry(r.field_count).or_default().push(idx);
+                if evacuate && address_in(&nursery_ranges, r.addr) {
+                    released_dead.push(idx);
+                } else {
+                    self.free.entry(r.field_count).or_default().push(idx);
+                }
                 freed += 1;
             } else if r.alive && (!young_only || r.generation == records::Generation::Young) {
                 // A full collection is also the promotion boundary. Future
@@ -750,7 +769,7 @@ impl Heap {
             // allocation a use-after-free. Release their storage instead, which
             // keeps the record index reusable at a fresh address.
             let mut free = std::mem::take(&mut self.free);
-            let mut stale: Vec<usize> = Vec::new();
+            let mut stale: Vec<usize> = released_dead;
             for free_indices in free.values_mut() {
                 free_indices.retain(|&idx| {
                     if address_in(&nursery_ranges, self.records[idx].addr) {

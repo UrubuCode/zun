@@ -184,6 +184,26 @@ fn poison_from_env() -> bool {
     *ON.get_or_init(|| parse_stress_on(std::env::var("ZUN_GC_STRESS").ok().as_deref()))
 }
 
+/// Allocation count after which a native safepoint collects even if the byte
+/// budget is not spent. It is only a backstop: the nursery byte budget is the
+/// real trigger, and a count of 256 made a young collection fire every 6 KiB of
+/// small objects, paying its fixed cost far more often than the bytes justify.
+const NATIVE_ALLOCATION_BACKSTOP: usize = 4096;
+
+/// Smallest nursery byte budget; also the budget when none was configured.
+const NURSERY_BUDGET_FLOOR: usize = 32 * 1024;
+
+/// Fewest young collections between two compactions, however much was promoted.
+const COMPACT_MIN_INTERVAL: usize = 8;
+
+/// Tenured bytes that must have been promoted since the last compaction before
+/// another one is worth its full copy of the heap.
+const COMPACT_MIN_PROMOTED_BYTES: usize = 64 * 1024;
+
+/// Young collections after which a compaction runs even if little was promoted,
+/// so a tenured object that died without any new promotion is still reclaimed.
+const COMPACT_BACKSTOP_INTERVAL: usize = 64;
+
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
 /// per-size free list, and a string handle table.
 #[derive(Debug, Default)]
@@ -224,11 +244,15 @@ pub struct Heap {
     /// One record per object ever allocated (dead ones are reused).
     records: Vec<Record>,
     /// Reference-field layouts published by the active module/JIT boundary.
-    reference_slots: HashMap<u32, Vec<usize>>,
+    reference_slots: HashMap<u32, std::rc::Rc<[usize]>>,
     /// Allocations since the last native safepoint collection.
     native_allocations: usize,
     /// Young native safepoint collections since the last native compaction.
     native_young_collections: usize,
+    /// Bytes evacuated into tenured storage since the last compaction. Old
+    /// storage only grows by promotion, so a compaction has nothing new to
+    /// reclaim until something has been promoted.
+    promoted_since_compaction: usize,
     /// Dynamic property bags associated with dynamic objects.
     dynamic_objects: HashMap<usize, zun_core::DynamicObject>,
     /// Contiguous array storage associated with array objects.
@@ -424,12 +448,13 @@ impl Heap {
     }
     /// Publish the reference slots for a module type before entering JIT code.
     pub fn register_reference_slots(&mut self, type_rid: u32, slots: Vec<usize>) {
-        self.reference_slots.insert(type_rid, slots);
+        self.reference_slots
+            .insert(type_rid, std::rc::Rc::from(slots));
     }
 
     pub(crate) fn native_allocation_due(&mut self) -> bool {
         self.native_allocations = self.native_allocations.saturating_add(1);
-        if self.native_allocations >= 256 {
+        if self.native_allocations >= NATIVE_ALLOCATION_BACKSTOP {
             self.native_allocations = 0;
             true
         } else {
@@ -444,12 +469,21 @@ impl Heap {
 
     /// Return the current nursery allocation budget in bytes.
     pub fn nursery_budget(&self) -> usize {
-        self.nursery_budget.max(32 * 1024)
+        self.nursery_budget.max(NURSERY_BUDGET_FLOOR)
     }
 
+    /// Whether this young collection should be a full collection plus
+    /// compaction instead. A compaction copies every live object into fresh
+    /// chunks, so it is paid for when tenured storage has grown (at least
+    /// `COMPACT_MIN_PROMOTED_BYTES` promoted, and not more often than every
+    /// `COMPACT_MIN_INTERVAL` young collections), with a longer backstop so an
+    /// old object that died on its own is still reclaimed eventually.
     pub(crate) fn native_compaction_due(&mut self) -> bool {
         self.native_young_collections = self.native_young_collections.saturating_add(1);
-        if self.native_young_collections >= 8 {
+        let grown = self.promoted_since_compaction >= COMPACT_MIN_PROMOTED_BYTES;
+        if (grown && self.native_young_collections >= COMPACT_MIN_INTERVAL)
+            || self.native_young_collections >= COMPACT_BACKSTOP_INTERVAL
+        {
             self.native_young_collections = 0;
             true
         } else {
@@ -588,6 +622,7 @@ impl Heap {
         let mut new_chunks = Vec::new();
         let mut new_cursor = 0;
         let mut relocation = RelocationMap::new();
+        self.promoted_since_compaction = 0;
         let mut moved_objects = 0;
         for record in self.records.iter_mut() {
             if !record.alive {
@@ -751,8 +786,26 @@ impl Heap {
         relocation: &RelocationMap,
         ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
+        self.rewrite_object_references_impl(relocation, ref_slots, false)
+    }
+
+    /// `evacuating` is the young evacuating collection, which calls this before
+    /// its sweep: an unmarked young record is about to be swept, so its fields
+    /// are never read again and rewriting them (a layout lookup per dead object)
+    /// is wasted work.
+    fn rewrite_object_references_impl(
+        &mut self,
+        relocation: &RelocationMap,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
+        evacuating: bool,
+    ) -> usize {
         let mut rewritten = 0;
-        for record in self.records.iter().filter(|record| record.alive) {
+        for record in self.records.iter().filter(|record| {
+            record.alive
+                && (!evacuating
+                    || record.marked
+                    || record.generation == records::Generation::Old)
+        }) {
             let object = Obj(record.addr);
             for &field in ref_slots(object.type_rid()).iter() {
                 let slot = unsafe { object.addr().add(zun_core::OBJECT_HEADER_SLOTS + field) };
@@ -1066,6 +1119,17 @@ impl Heap {
     /// Rewrite remaining strong side-table state held by promises and
     /// proxies, including their address-keyed indexes.
     pub fn rewrite_runtime_references(&mut self, relocation: &RelocationMap) -> usize {
+        self.rewrite_runtime_references_impl(relocation, true)
+    }
+
+    /// `remap_index` is false when the caller already moved each record and its
+    /// `by_addr` entry itself (the evacuating collection does), where rebuilding
+    /// the index would only re-insert every entry at the address it already has.
+    fn rewrite_runtime_references_impl(
+        &mut self,
+        relocation: &RelocationMap,
+        remap_index: bool,
+    ) -> usize {
         let map = |address| relocation.relocate_address(address);
         let mut rewritten = 0;
 
@@ -1142,21 +1206,24 @@ impl Heap {
         }
         self.bigints = mapped_bigints;
 
-        let records = &mut self.records;
-        for record in records.iter_mut().filter(|record| record.alive) {
-            let address = record.addr as usize;
-            let mapped = map(address);
-            if mapped != address {
-                rewritten += 1;
-                record.addr = mapped as *mut u64;
+        if remap_index {
+            let records = &mut self.records;
+            for record in records.iter_mut().filter(|record| record.alive) {
+                let address = record.addr as usize;
+                let mapped = map(address);
+                if mapped != address {
+                    rewritten += 1;
+                    record.addr = mapped as *mut u64;
+                }
             }
+            let by_addr = std::mem::take(&mut self.by_addr);
+            let mut mapped_by_addr =
+                HashMap::with_capacity_and_hasher(by_addr.len(), Default::default());
+            for (address, index) in by_addr {
+                mapped_by_addr.insert(map(address), index);
+            }
+            self.by_addr = mapped_by_addr;
         }
-        let by_addr = std::mem::take(&mut self.by_addr);
-        let mut mapped_by_addr = HashMap::with_capacity_and_hasher(by_addr.len(), Default::default());
-        for (address, index) in by_addr {
-            mapped_by_addr.insert(map(address), index);
-        }
-        self.by_addr = mapped_by_addr;
         self.remembered_set = self
             .remembered_set
             .iter()
@@ -1213,6 +1280,17 @@ impl Heap {
         relocation: &RelocationMap,
         ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
     ) -> usize {
+        self.rewrite_all_references_impl(relocation, ref_slots, false)
+    }
+
+    /// Shared body of the full and the evacuating relocation; see
+    /// `rewrite_object_references_impl` and `rewrite_runtime_references_impl`.
+    pub(crate) fn rewrite_all_references_impl(
+        &mut self,
+        relocation: &RelocationMap,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
+        evacuating: bool,
+    ) -> usize {
         let mut rewritten = 0;
         if let Some(object) = self.global_object {
             let mapped = relocation.relocate(object);
@@ -1232,13 +1310,13 @@ impl Heap {
             .static_store
             .rewrite_object_references(|address| relocation.relocate_address(address));
         rewritten
-            + self.rewrite_object_references(relocation, ref_slots)
+            + self.rewrite_object_references_impl(relocation, ref_slots, evacuating)
             + self.rewrite_auxiliary_references(relocation)
             + self.rewrite_generator_frames(relocation)
             + self.rewrite_generator_states(relocation)
             + self.rewrite_iterator_references(relocation)
             + self.rewrite_weak_references(relocation)
-            + self.rewrite_runtime_references(relocation)
+            + self.rewrite_runtime_references_impl(relocation, !evacuating)
     }
 
     /// Return the number of live objects in each generation.
