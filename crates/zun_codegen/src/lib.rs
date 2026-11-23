@@ -20,7 +20,7 @@ mod translate;
 
 pub use any_abi::JitAnyAbi;
 pub use eligible::{
-    eligible_methods, eligible_methods_bridged, eligible_methods_with_literals, loop_region,
+    eligible_methods, eligible_methods_bridged, eligible_methods_with_literals, loop_region, method_blockers, method_rejections,
     loop_region_eligible, loop_region_rejection,
 };
 pub use zun_il::{JitKind, NumKind};
@@ -289,6 +289,10 @@ impl Jit {
         builder.symbol(
             "zun_jit_string_char_code_at",
             zun_jit_string_char_code_at as *const u8,
+        );
+        builder.symbol(
+            "zun_jit_string_char_code_at_num",
+            zun_jit_string_char_code_at_num as *const u8,
         );
         builder.symbol(
             "zun_jit_string_starts_with",

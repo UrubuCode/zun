@@ -1,39 +1,69 @@
-//! Measurement-only (ignored): JIT eligibility census over the conformance
-//! corpus. For each fixture that compiles, classify every method with a body as
-//! JIT-eligible (bridged, the runtime config) or rejected, and bucket the
-//! rejected methods by the disqualifier opcode family present. Answers "how much
-//! does defect 2 (a non-eligible CallBuiltin disqualifies the whole method)
-//! block".
+//! Measurement-only (ignored): JIT eligibility census over the corpus. Every
+//! method with a body is classified eligible or rejected using the runtime
+//! configuration (bridged, literals allowed), and the first rejection reason
+//! comes from `method_rejections` -- the same analysis that decides eligibility.
+//! Methods are deduplicated by (name, body bytes) so the std prelude compiled
+//! into every fixture counts once; loop-containing methods (a backward branch)
+//! are tallied separately because those are the ones that run hot.
 //!
-//! Run: `cargo test -p zun_codegen --test zz_eligibility_census -- --ignored --nocapture`
+//! Run: `cargo test --release -p zun_codegen --test zz_eligibility_census -- --ignored --nocapture`
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
-use zun_codegen::eligible_methods_bridged;
+use zun_codegen::{method_blockers, method_rejections};
 use zun_il::{decode_all, Opcode, Operand};
 use zun_module::Module;
+
+/// Collapse a reason to a bucket: callee reasons keep only the root cause.
+fn bucket(reason: &str) -> String {
+    let mut r = reason;
+    while let Some(rest) = r.strip_prefix("callee ") {
+        match rest.split_once(": ") {
+            Some((_, root)) => r = root,
+            None => break,
+        }
+    }
+    r.to_string()
+}
 
 #[test]
 #[ignore]
 fn eligibility_census() {
-    let fixtures: Vec<_> = glob_ts("../../tests");
-    let mut total_methods = 0usize;
-    let mut eligible = 0usize;
-    let mut rejected = 0usize;
-    // Rejected-method buckets (a method can be in several).
-    let mut has_nonlisted_builtin = 0usize;
-    let mut has_throw = 0usize;
-    let mut has_cast = 0usize;
-    let mut has_indirect = 0usize;
-    // Rejected methods whose ONLY disqualifier family is a builtin call
-    // (no throw/rethrow/cast/indirect) — the strongest D2-unblockable signal.
-    let mut builtin_only = 0usize;
-    let mut other_only = 0usize;
-    // Which builtin names show up in rejected methods.
-    let mut builtin_names: BTreeMap<String, usize> = BTreeMap::new();
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    files.extend(glob_ts("../../tests", true));
+    files.extend(glob_ts("../../bench", false));
+    files.extend(glob_ts("../../bench/dotnet", false));
+    files.extend(glob_ts("../../../rts/bench", false));
+    if let Ok(filter) = std::env::var("CENSUS_FILTER") {
+        files.retain(|p| p.to_string_lossy().contains(&filter));
+    }
+    let mut seen: HashSet<(String, Vec<u8>)> = HashSet::new();
+    // Methods of an empty program are the std prelude; "user" below excludes them.
+    let mut prelude: HashSet<(String, Vec<u8>)> = HashSet::new();
+    if let Ok(m) = zun_compiler::compile("export {};") {
+        let m = Module::read(&m.write()).unwrap();
+        for me in &m.tables.method_defs {
+            if me.body_offset != u32::MAX {
+                if let Ok(b) = zun_module::read_body(&m.code, me.body_offset) {
+                    prelude.insert((m.strings.get(me.name).to_string(), Vec::new()));
+                }
+            }
+        }
+    }
+    eprintln!("prelude methods: {}", prelude.len());
+    let mut sole: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut pair: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut conststr_mix: BTreeMap<String, usize> = BTreeMap::new();
+    let mut user: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut blockers: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut user_blockers: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let (mut utotal, mut uelig, mut uloop, mut uloop_elig) = (0usize, 0usize, 0usize, 0usize);
     let mut compiled = 0usize;
-
-    for path in &fixtures {
+    let (mut total, mut elig, mut loop_total, mut loop_elig) = (0usize, 0usize, 0usize, 0usize);
+    let mut all: BTreeMap<String, (usize, usize)> = BTreeMap::new(); // bucket -> (methods, loop methods)
+    let mut direct: BTreeMap<String, (usize, usize)> = BTreeMap::new(); // local reason only
+    let mut examples: BTreeMap<String, String> = BTreeMap::new();
+    for path in &files {
         let Ok(src) = std::fs::read_to_string(path) else {
             continue;
         };
@@ -41,101 +71,129 @@ fn eligibility_census() {
             continue;
         };
         compiled += 1;
-        let elig = eligible_methods_bridged(&module, false);
         let bytes = module.write();
         let module = Module::read(&bytes).expect("round-trip");
-
+        let rej = method_rejections(&module, true, true);
         for (i, method) in module.tables.method_defs.iter().enumerate() {
             if method.body_offset == u32::MAX {
-                continue; // abstract / no body
-            }
-            let rid = i as u32 + 1;
-            total_methods += 1;
-            if elig.contains(&rid) {
-                eligible += 1;
                 continue;
             }
-            rejected += 1;
-
-            let Some(body) = read_body(&module, method.body_offset) else {
+            let Ok(body) = zun_module::read_body(&module.code, method.body_offset) else {
                 continue;
             };
-            let Ok(instrs) = decode_all(body) else {
+            let name = module.strings.get(method.name).to_string();
+            if !seen.insert((name.clone(), body.code.len().to_le_bytes().to_vec())) {
                 continue;
-            };
-            let mut builtin = false;
-            let mut throw = false;
-            let mut cast = false;
-            let mut indirect = false;
-            for instr in &instrs {
-                match instr.opcode {
-                    Opcode::CallBuiltin => {
-                        if let Operand::Imm32(id) = instr.operand {
-                            builtin = true;
-                            let name = zun_natives::by_id(id as u32)
-                                .map(|f| f.name.to_string())
-                                .unwrap_or_else(|| format!("#{id}"));
-                            *builtin_names.entry(name).or_default() += 1;
+            }
+            let has_loop = decode_all(body.code).is_ok_and(|instrs| {
+                instrs.iter().any(|i| {
+                    matches!(i.operand, Operand::Branch(d) if d < 0)
+                        && matches!(
+                            i.opcode,
+                            Opcode::Branch | Opcode::BranchTrue | Opcode::BranchFalse
+                        )
+                })
+            });
+            let is_user = !prelude.contains(&(name.clone(), Vec::new()));
+            total += 1;
+            if is_user {
+                utotal += 1;
+                uloop += has_loop as usize;
+            }
+            loop_total += has_loop as usize;
+            match rej.get(&(i as u32 + 1)) {
+                None => {
+                    elig += 1;
+                    loop_elig += has_loop as usize;
+                    if is_user {
+                        uelig += 1;
+                        uloop_elig += has_loop as usize;
+                    }
+                }
+                Some(reason) => {
+                    if reason.starts_with("ConstStr literal mixed") {
+                        let mut set: std::collections::BTreeSet<String> = Default::default();
+                        for i2 in decode_all(body.code).unwrap_or_default() {
+                            if !matches!(i2.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::NewObj | Opcode::LoadLocal | Opcode::StoreLocal | Opcode::LoadField | Opcode::StoreField | Opcode::Concat | Opcode::LoadStatic | Opcode::StoreStatic | Opcode::Pop | Opcode::Ret) {
+                                set.insert(format!("{:?}", i2.opcode));
+                            }
+                        }
+                        for o in set { *conststr_mix.entry(o).or_default() += 1; }
+                    }
+                    let b = bucket(reason);
+                    {
+                        let bl = method_blockers(&module, i as u32 + 1);
+                        if bl.len() == 1 {
+                            let e = sole.entry(bl[0].clone()).or_default();
+                            e.0 += 1;
+                            e.1 += has_loop as usize;
+                        }
+                        if bl.len() == 2 {
+                            let mut b2 = bl.clone();
+                            b2.sort();
+                            let e = pair.entry(b2.join(" + ")).or_default();
+                            e.0 += 1;
+                            e.1 += has_loop as usize;
                         }
                     }
-                    Opcode::Throw | Opcode::Rethrow => throw = true,
-                    Opcode::CastClass => cast = true,
-                    Opcode::CallIndirect => indirect = true,
-                    _ => {}
+                    for k in method_blockers(&module, i as u32 + 1) {
+                        let e = blockers.entry(k.clone()).or_default();
+                        e.0 += 1;
+                        e.1 += has_loop as usize;
+                        if is_user {
+                            let e = user_blockers.entry(k).or_default();
+                            e.0 += 1;
+                            e.1 += has_loop as usize;
+                        }
+                    }
+                    if is_user {
+                        let e = user.entry(b.clone()).or_default();
+                        e.0 += 1;
+                        e.1 += has_loop as usize;
+                    }
+                    let e = all.entry(b.clone()).or_default();
+                    e.0 += 1;
+                    e.1 += has_loop as usize;
+                    if !reason.starts_with("callee ") {
+                        let d = direct.entry(b.clone()).or_default();
+                        d.0 += 1;
+                        d.1 += has_loop as usize;
+                    }
+                    examples
+                        .entry(b)
+                        .or_insert_with(|| format!("{} ({})", name, path.display()));
                 }
-            }
-            if builtin {
-                has_nonlisted_builtin += 1;
-            }
-            if throw {
-                has_throw += 1;
-            }
-            if cast {
-                has_cast += 1;
-            }
-            if indirect {
-                has_indirect += 1;
-            }
-            let other_families = throw || cast || indirect;
-            if builtin && !other_families {
-                builtin_only += 1;
-            } else if !builtin && !other_families {
-                other_only += 1;
             }
         }
     }
-
-    eprintln!("=== JIT eligibility census (bridged) ===");
-    eprintln!("fixtures compiled: {compiled}/{}", fixtures.len());
-    eprintln!("methods with body: {total_methods}");
-    eprintln!("  eligible:  {eligible}");
-    eprintln!("  rejected:  {rejected}");
-    eprintln!("rejected buckets (overlapping):");
-    eprintln!("  any CallBuiltin present:   {has_nonlisted_builtin}");
-    eprintln!("  throw/rethrow present:     {has_throw}");
-    eprintln!("  castclass present:         {has_cast}");
-    eprintln!("  callindirect present:      {has_indirect}");
+    eprintln!("=== JIT eligibility census (bridged, literals) ===");
+    eprintln!("files compiled: {compiled}/{}", files.len());
+    eprintln!("unique methods: {total}  eligible: {elig}  rejected: {}", total - elig);
     eprintln!(
-        "rejected, CallBuiltin present & no throw/cast/indirect (D2 upper bound): {builtin_only}"
+        "loop methods:   {loop_total}  eligible: {loop_elig}  rejected: {}",
+        loop_total - loop_elig
     );
-    eprintln!("rejected, none of the tracked families (other/unsupported-opcode): {other_only}");
-    eprintln!("CallBuiltin names in rejected methods (top 15):");
-    let mut names: Vec<_> = builtin_names.into_iter().collect();
-    names.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-    for (name, count) in names.into_iter().take(15) {
-        eprintln!("  {count:>5}  {name}");
+    { let mut v: Vec<_> = conststr_mix.iter().collect(); v.sort_by_key(|(_, c)| std::cmp::Reverse(**c)); eprintln!("ConstStr-mix: opcodes present (methods): {:?}", &v[..v.len().min(25)]); }
+    eprintln!("USER methods (non-prelude): {utotal} eligible {uelig}; loop methods {uloop} eligible {uloop_elig}");
+    for (title, map) in [
+        ("USER first reason (root)", &user),
+        ("ALL first reason (root)", &all),
+        ("ALL local first reason", &direct),
+        ("SOLE blocker (all other checks pass)", &sole),
+        ("PAIR of blockers", &pair),
+        ("ALL any-blocker presence", &blockers),
+        ("USER any-blocker presence", &user_blockers),
+    ] {
+        eprintln!("--- {title}: methods / loop-methods ---");
+        let mut v: Vec<_> = map.iter().collect();
+        v.sort_by_key(|(_, c)| std::cmp::Reverse((c.1, c.0)));
+        for (b, c) in v.into_iter().take(30) {
+            eprintln!("{:>5} {:>5}  {}   e.g. {}", c.0, c.1, b, examples.get(b).map(String::as_str).unwrap_or(""));
+        }
     }
 }
 
-fn read_body(module: &Module, offset: u32) -> Option<&[u8]> {
-    // MethodBody layout: the code slice starting at `offset`; decode_all stops at
-    // the body's end marker. We hand decode_all the tail; it reads the prologue.
-    zun_module::read_body(&module.code, offset)
-        .ok()
-        .map(|b| b.code)
-}
-
-fn glob_ts(root: &str) -> Vec<std::path::PathBuf> {
+fn glob_ts(root: &str, recurse: bool) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![std::path::PathBuf::from(root)];
     while let Some(dir) = stack.pop() {
@@ -145,7 +203,9 @@ fn glob_ts(root: &str) -> Vec<std::path::PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
+                if recurse {
+                    stack.push(path);
+                }
             } else if path.extension().and_then(|e| e.to_str()) == Some("ts") {
                 out.push(path);
             }

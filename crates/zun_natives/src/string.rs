@@ -364,12 +364,7 @@ fn numeric_arg(arg: Option<&NativeArg>) -> Result<f64, NativeError> {
 /// `nth` — no per-call allocation of the whole string. `None` when the index is
 /// negative, non-finite, or past the end (the caller maps that to `NaN` / `""`).
 fn unit_at(value: &str, index: f64) -> Option<u16> {
-    let i = zun_core::string_ops::integer_or_infinity(index);
-    if i.is_finite() && i >= 0.0 {
-        zun_core::wtf16::encode(value).nth(i as usize)
-    } else {
-        None
-    }
+    zun_core::string_ops::unit_at_number(value, index)
 }
 
 fn starts_with(args: &[NativeArg], _: &mut dyn Sink) -> Result<NativeValue, NativeError> {

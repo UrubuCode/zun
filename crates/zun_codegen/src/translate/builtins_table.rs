@@ -43,6 +43,13 @@ fn builtin_desc_scalar(name: Option<&str>) -> Option<BuiltinDesc> {
             JitKind::Num(NumKind::U32),
             types::I32,
         ),
+        Some("charCodeAtNum") => (
+            "zun_jit_string_char_code_at_num",
+            2,
+            types::I64,
+            JitKind::Num(NumKind::F64),
+            types::F64,
+        ),
         Some("startsWith") => (
             "zun_jit_string_starts_with",
             2,

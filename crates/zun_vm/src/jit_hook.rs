@@ -55,6 +55,16 @@ pub struct JitHook<'a> {
     osr_loops: RefCell<HashMap<(u32, usize), OsrLoop>>,
     osr_transfers: std::cell::Cell<u64>,
     threshold: u32,
+    /// `ZUN_JIT_TRACE` set: report hot methods that are not eligible (read once;
+    /// `try_call` is on the call path). `None` when tracing is off.
+    method_trace: Option<MethodTrace>,
+}
+
+/// State for explaining whole-method ineligibility under `ZUN_JIT_TRACE`.
+struct MethodTrace {
+    /// `zun_codegen::method_rejections`, computed lazily with the runtime config.
+    reasons: RefCell<Option<HashMap<u32, String>>>,
+    reported: RefCell<std::collections::HashSet<u32>>,
 }
 
 /// Cached result of the loop-OSR gate for one `(method, header)`.
@@ -105,6 +115,12 @@ impl<'a> JitHook<'a> {
             osr_loops: RefCell::new(HashMap::new()),
             osr_transfers: std::cell::Cell::new(0),
             threshold,
+            method_trace: std::env::var_os("ZUN_JIT_TRACE")
+                .filter(|v| !v.is_empty() && v != "0")
+                .map(|_| MethodTrace {
+                    reasons: RefCell::new(None),
+                    reported: RefCell::new(Default::default()),
+                }),
         }
     }
 
@@ -300,6 +316,34 @@ impl<'a> JitHook<'a> {
 
     /// Run the conservative loop-OSR gate and compile the entry. Any failure
     /// yields `Rejected`, which is cached so it is never retried.
+    /// `ZUN_JIT_TRACE=1`: once a method that is not JIT-eligible has been called
+    /// `threshold` times, say why (the first reason `eligible::analyze` found).
+    fn trace_method_rejection(&self, method_rid: u32) {
+        let Some(trace) = &self.method_trace else {
+            return;
+        };
+        let count = {
+            let mut counts = self.counts.borrow_mut();
+            let c = counts.entry(method_rid).or_insert(0);
+            *c += 1;
+            *c
+        };
+        if count != self.threshold.max(1) || !trace.reported.borrow_mut().insert(method_rid) {
+            return;
+        }
+        let mut reasons = trace.reasons.borrow_mut();
+        let reasons = reasons.get_or_insert_with(|| zun_codegen::method_rejections(self.module, true, true));
+        let name = self
+            .module
+            .tables
+            .method_defs
+            .get(method_rid as usize - 1)
+            .map(|m| self.module.strings.get(m.name).to_string())
+            .unwrap_or_default();
+        let why = reasons.get(&method_rid).map_or("not eligible", String::as_str);
+        eprintln!("[jit] method {name} stays interpreted ({count} calls): {why}");
+    }
+
     /// `ZUN_JIT_TRACE=1`: say on stderr why a hot loop was kept interpreted.
     fn trace_osr_rejection(&self, method_rid: u32, header_pc: usize) {
         if std::env::var_os("ZUN_JIT_TRACE").is_none_or(|v| v.is_empty() || v == "0") {
@@ -449,6 +493,9 @@ impl CallHook for JitHook<'_> {
     fn try_call(&self, method_rid: u32, args: &[Value]) -> Option<Value> {
         // Ineligible methods never go to the JIT.
         if !self.jit.borrow().is_compiled(method_rid) {
+            if self.method_trace.is_some() {
+                self.trace_method_rejection(method_rid);
+            }
             return None;
         }
 

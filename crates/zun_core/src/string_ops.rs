@@ -24,6 +24,20 @@ pub fn integer_or_infinity(number: f64) -> f64 {
     }
 }
 
+/// The UTF-16 code unit of `value` at a JS `number` index under `charCodeAt` /
+/// `charAt` semantics: ToIntegerOrInfinity is applied (`NaN` folds to `0`,
+/// `±Infinity` stays out of range) and the unit is read lazily with `nth`.
+/// `None` when the index is negative, non-finite, or past the end. Shared by the
+/// `charCodeAtNum` / `charAtNum` natives and the JIT thunk.
+pub fn unit_at_number(value: &str, index: f64) -> Option<u16> {
+    let i = integer_or_infinity(index);
+    if i.is_finite() && i >= 0.0 {
+        wtf16::encode(value).nth(i as usize)
+    } else {
+        None
+    }
+}
+
 /// Clamp an integer-or-infinity into `[0, len]`.
 pub fn clamp_index(number: f64, len: usize) -> usize {
     if number <= 0.0 {

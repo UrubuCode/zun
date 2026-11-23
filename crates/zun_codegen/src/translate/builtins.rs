@@ -100,6 +100,7 @@ impl Translator<'_> {
         }
         let arg_types = match name {
             "zun_jit_string_char_code_at" => vec![types::I64, types::I64],
+            "zun_jit_string_char_code_at_num" => vec![types::I64, types::F64],
             "zun_jit_buffer_set_u8" => vec![types::I64, types::I64, types::I8],
             "zun_jit_buffer_write_u32" => vec![types::I64, types::I64, types::I32],
             "zun_jit_buffer_write_f64" => vec![types::I64, types::I64, types::F64],

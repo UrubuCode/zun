@@ -271,6 +271,7 @@ fn string_builtin(instr: &zun_il::Instruction) -> bool {
                 | "contains"
                 | "includes"
                 | "charCodeAt"
+                | "charCodeAtNum"
                 | "startsWith"
                 | "endsWith"
                 | "indexOf"
@@ -1136,6 +1137,48 @@ pub fn eligible_methods_with_literals(module: &Module, allow_const_str: bool) ->
 /// whole-call-graph fixpoint so a method that directly calls an ineligible but
 /// non-throwing method stays eligible (the call is bridged to the interpreter).
 fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool) -> HashSet<u32> {
+    analyze(module, allow_const_str, bridge_available).eligible
+}
+
+/// Why each method with a body is not JIT-eligible, keyed by method rid. The
+/// text is the `Err` of the same per-method analysis `eligible_impl` decides
+/// with, so the explanation cannot drift from the decision. A method rejected
+/// only because of a callee reads `callee <name>: <callee reason>`.
+pub fn method_rejections(
+    module: &Module,
+    allow_const_str: bool,
+    bridge_available: bool,
+) -> HashMap<u32, String> {
+    analyze(module, allow_const_str, bridge_available).rejected
+}
+
+struct Analysis {
+    eligible: HashSet<u32>,
+    rejected: HashMap<u32, String>,
+}
+
+fn kind_name(byte: u8) -> String {
+    match JitKind::from_byte(byte) {
+        JitKind::Other => format!("Other(byte {byte})"),
+        k => format!("{k:?}"),
+    }
+}
+
+/// The first instruction `opcode_supported` refuses, formatted for a report.
+fn first_unsupported(instrs: &[zun_il::Instruction]) -> Option<String> {
+    let i = instrs.iter().find(|i| !opcode_supported(i.opcode, i))?;
+    Some(match (i.opcode, &i.operand) {
+        (Opcode::CallBuiltin, Operand::Imm32(id)) => format!(
+            "builtin {}",
+            zun_natives::by_id(*id as u32)
+                .map(|f| f.name.to_string())
+                .unwrap_or_else(|| format!("#{id}"))
+        ),
+        (op, _) => format!("opcode {op:?}"),
+    })
+}
+
+fn analyze(module: &Module, allow_const_str: bool, bridge_available: bool) -> Analysis {
     let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
     for (index, method) in module.tables.method_defs.iter().enumerate() {
         methods_by_name
@@ -1158,240 +1201,27 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
     // eligible (the translator lowers it through the vtable, not the bridge),
     // while a direct `Call` callee may be bridged when ineligible.
     let mut candidate: HashMap<u32, Vec<(u32, bool)>> = HashMap::new();
+    let mut rejected: HashMap<u32, String> = HashMap::new();
     for (i, method) in module.tables.method_defs.iter().enumerate() {
         let rid = i as u32 + 1;
         if method.body_offset == u32::MAX {
             continue;
         }
-        let Ok(body) = read_body(&module.code, method.body_offset) else {
-            continue;
-        };
-        // Return and every local must be a representable JIT type.
-        if !kind_supported(body.return_kind)
-            && body.returns_value
-            && JitKind::from_byte(body.return_kind) != JitKind::Other
-        {
-            continue;
-        }
-        let Ok(instrs) = decode_all(body.code) else {
-            continue;
-        };
-        // Exception regions are supported only for the same-frame slice the typed
-        // JIT can lower (an explicit `throw` routed to a catch-all handler in this
-        // frame, with no call-type op in the protected region). A cross-frame
-        // throw — one unwound out of a callee — still needs the deferred Cranelift
-        // unwinding bridge, so such methods stay on Tier 0.
-        if !body.handlers.is_empty()
-            && !exception_regions_jit_safe(module, &body, &instrs, bridge_available)
-        {
-            continue;
-        }
-        if !body.local_kinds.iter().all(|&k| kind_supported(k))
-            && !any_param_return_only(&instrs, &body)
-            && !any_direct_call_return_only(&instrs, &body)
-            && !any_map_get_only(&instrs, &body)
-        {
-            continue;
-        }
-        if !kind_supported(body.return_kind)
-            && body.returns_value
-            && !any_array_return_only(&instrs, &body)
-            && !any_param_return_only(&instrs, &body)
-            && !any_direct_call_return_only(&instrs, &body)
-            && !any_map_get_only(&instrs, &body)
-        {
-            continue;
-        }
-        if instrs.iter().any(|i| i.opcode == Opcode::ConstStr) {
-            // Runtime JIT literals are stable interned handles. Keep the
-            // relocatable/AOT path conservative, but allow the allocation and
-            // field path whose handles have explicit typed representations.
-            let extended_literal_path = instrs.iter().all(|i| {
-                matches!(
-                    i.opcode,
-                    Opcode::Nop
-                        | Opcode::ConstStr
-                        | Opcode::NewObj
-                        | Opcode::LoadLocal
-                        | Opcode::StoreLocal
-                        | Opcode::LoadField
-                        | Opcode::StoreField
-                        // String `+` with literal operands, and static-field
-                        // access, all lower with explicit typed handles, so a
-                        // literal feeding `Concat` or a `ldsfld`/`stsfld` is safe.
-                        | Opcode::Concat
-                        | Opcode::LoadStatic
-                        | Opcode::StoreStatic
-                        | Opcode::Pop
-                        | Opcode::Ret
-                )
-            }) && !instrs.iter().any(|i| i.opcode == Opcode::CallVirt);
-            let direct_literal_callvirt = instrs.iter().all(|i| {
-                matches!(
-                    i.opcode,
-                    Opcode::Nop | Opcode::ConstStr | Opcode::CallVirt | Opcode::Ret
-                )
-            }) && instrs
-                .iter()
-                .filter(|i| i.opcode == Opcode::CallVirt)
-                .count()
-                == 1;
-            let relocatable_literal_only = instrs
-                .iter()
-                .all(|i| matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::Ret));
-            if !allow_const_str
-                || (!extended_literal_path && !direct_literal_callvirt && !relocatable_literal_only)
-            {
-                continue;
+        match method_candidate(
+            module,
+            method.body_offset,
+            allow_const_str,
+            bridge_available,
+            &methods_by_name,
+            &string_method_rids,
+        ) {
+            Ok(callees) => {
+                candidate.insert(rid, callees);
+            }
+            Err(why) => {
+                rejected.insert(rid, why);
             }
         }
-        if instrs
-            .iter()
-            .any(|instruction| requires_exception_bridge(instruction.opcode))
-        {
-            continue;
-        }
-        if instrs.iter().any(allocation_builtin)
-            && JitKind::from_byte(body.return_kind) != JitKind::Object
-        {
-            continue;
-        }
-        if !instrs.iter().all(|i| opcode_supported(i.opcode, i)) {
-            continue;
-        }
-        // Function values in the typed JIT are carried as a one-word method rid
-        // (`LoadFunction` → rid, `CallIndirect` dispatches it through the bridge).
-        // That is sound only for a *concrete, closure-free* function value, so a
-        // method is refused if it could place a closure or bound function into a
-        // Function slot: a function-typed parameter (the caller could pass one),
-        // or a call that returns a function (the callee could). `MakeClosure` is
-        // already excluded by `opcode_supported`, and dynamic function types map
-        // to `Other` (so a Function-typed local/param here is always concrete).
-        // Each `CallIndirect` must target a concrete (rid != 0), marshalable
-        // signature — a dynamic rid-0 indirect call stays on Tier 0. All of this
-        // needs the bridge for dispatch.
-        let function_byte = JitKind::Function.to_byte();
-        let uses_function_value = body.local_kinds.contains(&function_byte)
-            || instrs
-                .iter()
-                .any(|i| matches!(i.opcode, Opcode::LoadFunction | Opcode::CallIndirect));
-        if uses_function_value && !bridge_available {
-            continue;
-        }
-        if uses_function_value
-            && body.local_kinds[..body.param_count as usize].contains(&function_byte)
-        {
-            continue;
-        }
-        if uses_function_value
-            && !instrs.iter().all(|i| match (i.opcode, i.operand) {
-                (Opcode::CallIndirect, Operand::Token(t)) => {
-                    t.rid() != 0
-                        && bridge_marshalable(module, t.rid())
-                        && !call_returns_function(module, t.rid(), function_byte)
-                }
-                (Opcode::Call | Opcode::CallVirt, Operand::Token(t)) => {
-                    !call_returns_function(module, t.rid(), function_byte)
-                }
-                _ => true,
-            })
-        {
-            continue;
-        }
-        // Array access has stable f64 and narrow u64 scalar ABIs. Keep
-        // reference-valued and general collection consumers in Tier 0.
-        if instrs.iter().any(|i| i.opcode == Opcode::LoadArray)
-            && (!body.returns_value
-                || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
-                    && !object_array_access_only(&instrs, &body)
-                    && !object_array_stack_only(&instrs, &body)
-                    && !scalar_bool_array_access_only(&instrs, &body)
-                    && !scalar_u64_array_access_only(&instrs, &body)
-                    && !scalar_i64_array_access_only(&instrs, &body)
-                    && !scalar_i32_array_access_only(&instrs, &body)
-                    && !scalar_narrow_array_access_only(&instrs, &body)
-                    && !any_array_return_only(&instrs, &body)))
-        {
-            continue;
-        }
-        if instrs.iter().any(|i| i.opcode == Opcode::StoreArray)
-            && (!body.returns_value
-                || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
-                    && !object_array_access_only(&instrs, &body)
-                    && !object_array_stack_only(&instrs, &body)
-                    && !scalar_bool_array_access_only(&instrs, &body)
-                    && !scalar_u64_array_access_only(&instrs, &body)
-                    && !scalar_i64_array_access_only(&instrs, &body)
-                    && !scalar_i32_array_access_only(&instrs, &body)
-                    && !scalar_narrow_array_access_only(&instrs, &body)))
-        {
-            continue;
-        }
-        if instrs.iter().any(|i| i.opcode == Opcode::ArrayPop)
-            && (!body.returns_value
-                || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
-                    && JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::U64)
-                    && JitKind::from_byte(body.return_kind) != JitKind::Bool
-                    && !scalar_i32_array_access_only(&instrs, &body)
-                    && !scalar_narrow_array_access_only(&instrs, &body)
-                    && !scalar_bool_array_access_only(&instrs, &body)
-                    && !object_array_stack_only(&instrs, &body)))
-        {
-            continue;
-        }
-        if instrs.iter().any(|i| i.opcode == Opcode::NewArray)
-            && !matches!(
-                JitKind::from_byte(body.return_kind),
-                JitKind::Object | JitKind::Array
-            )
-            && !scalar_bool_array_access_only(&instrs, &body)
-            && !scalar_u64_array_access_only(&instrs, &body)
-            && !scalar_i32_array_access_only(&instrs, &body)
-            && !scalar_narrow_array_access_only(&instrs, &body)
-            && !scalar_i64_array_access_only(&instrs, &body)
-            && !scalar_f64_array_access_only(&instrs, &body)
-            && !scalar_array_length_only(&instrs, &body)
-        {
-            continue;
-        }
-        // Reject methods whose field/newobj operands touch non-JIT types.
-        if !instrs.iter().all(|i| instr_fields_ok(module, i)) {
-            continue;
-        }
-        if !instrs
-            .iter()
-            .all(|i| callvirt_is_non_overridden(module, i, &string_method_rids))
-        {
-            continue;
-        }
-        let mut callees = Vec::new();
-        for instr in &instrs {
-            if !matches!(instr.opcode, Opcode::Call | Opcode::CallVirt) {
-                continue;
-            }
-            let Operand::Token(token) = instr.operand else {
-                continue;
-            };
-            if instr.opcode == Opcode::CallVirt {
-                let Some(method) = module.tables.method_defs.get(token.rid() as usize - 1) else {
-                    continue;
-                };
-                callees.extend(
-                    methods_by_name
-                        .get(&method.name)
-                        .into_iter()
-                        .flatten()
-                        .copied()
-                        .filter(|rid| {
-                            module.tables.method_defs[*rid as usize - 1].body_offset != u32::MAX
-                        })
-                        .map(|rid| (rid, true)),
-                );
-            } else {
-                callees.push((token.rid(), false));
-            }
-        }
-        candidate.insert(rid, callees);
     }
 
     let mut eligible: HashSet<u32> = candidate.keys().copied().collect();
@@ -1416,7 +1246,370 @@ fn eligible_impl(module: &Module, allow_const_str: bool, bridge_available: bool)
             break;
         }
     }
-    eligible
+    // Locally-fine methods dropped by the fixpoint: name the blocking callee.
+    for (rid, callees) in &candidate {
+        if eligible.contains(rid) {
+            continue;
+        }
+        let blocker = callees.iter().find(|&&(c, is_virtual)| {
+            !eligible.contains(&c)
+                && (is_virtual || !bridge_available || !bridge_marshalable(module, c))
+        });
+        let why = match blocker {
+            Some(&(c, _)) => {
+                let name = module
+                    .tables
+                    .method_defs
+                    .get(c as usize - 1)
+                    .map(|m| module.strings.get(m.name).to_string())
+                    .unwrap_or_default();
+                let root = rejected
+                    .get(&c)
+                    .cloned()
+                    .unwrap_or_else(|| "callee chain".into());
+                format!("callee {name}: {root}")
+            }
+            None => "callee chain".into(),
+        };
+        rejected.insert(*rid, why);
+    }
+    Analysis { eligible, rejected }
+}
+
+/// Local (per-method) eligibility: `Ok` with the method's callees, or `Err`
+/// with the first reason it cannot be compiled. Call-graph effects are applied
+/// by the caller.
+fn method_candidate(
+    module: &Module,
+    body_offset: u32,
+    allow_const_str: bool,
+    bridge_available: bool,
+    methods_by_name: &HashMap<zun_metadata::StringIndex, Vec<u32>>,
+    string_method_rids: &HashSet<u32>,
+) -> Result<Vec<(u32, bool)>, String> {
+    let Ok(body) = read_body(&module.code, body_offset) else {
+        return Err("unreadable body".into());
+    };
+    // Return and every local must be a representable JIT type.
+    if !kind_supported(body.return_kind)
+        && body.returns_value
+        && JitKind::from_byte(body.return_kind) != JitKind::Other
+    {
+        return Err(format!("return kind {}", kind_name(body.return_kind)));
+    }
+    let Ok(instrs) = decode_all(body.code) else {
+        return Err("undecodable body".into());
+    };
+    // Exception regions are supported only for the same-frame slice the typed
+    // JIT can lower (an explicit `throw` routed to a catch-all handler in this
+    // frame, with no call-type op in the protected region). A cross-frame
+    // throw — one unwound out of a callee — still needs the deferred Cranelift
+    // unwinding bridge, so such methods stay on Tier 0.
+    if !body.handlers.is_empty()
+        && !exception_regions_jit_safe(module, &body, &instrs, bridge_available)
+    {
+        return Err("exception region shape (try/catch/finally)".into());
+    }
+    if !body.local_kinds.iter().all(|&k| kind_supported(k))
+        && !any_param_return_only(&instrs, &body)
+        && !any_direct_call_return_only(&instrs, &body)
+        && !any_map_get_only(&instrs, &body)
+    {
+        let bad = body
+            .local_kinds
+            .iter()
+            .position(|&k| !kind_supported(k))
+            .map(|p| {
+                let which = if p < body.param_count as usize {
+                    "param"
+                } else {
+                    "local"
+                };
+                format!("{which} kind {}", kind_name(body.local_kinds[p]))
+            })
+            .unwrap_or_default();
+        return Err(bad);
+    }
+    if !kind_supported(body.return_kind)
+        && body.returns_value
+        && !any_array_return_only(&instrs, &body)
+        && !any_param_return_only(&instrs, &body)
+        && !any_direct_call_return_only(&instrs, &body)
+        && !any_map_get_only(&instrs, &body)
+    {
+        return Err(format!("return kind {}", kind_name(body.return_kind)));
+    }
+    if instrs.iter().any(|i| i.opcode == Opcode::ConstStr) {
+        // Runtime JIT literals are stable interned handles. Keep the
+        // relocatable/AOT path conservative, but allow the allocation and
+        // field path whose handles have explicit typed representations.
+        let extended_literal_path = instrs.iter().all(|i| {
+            matches!(
+                i.opcode,
+                Opcode::Nop
+                    | Opcode::ConstStr
+                    | Opcode::NewObj
+                    | Opcode::LoadLocal
+                    | Opcode::StoreLocal
+                    | Opcode::LoadField
+                    | Opcode::StoreField
+                    // String `+` with literal operands, and static-field
+                    // access, all lower with explicit typed handles, so a
+                    // literal feeding `Concat` or a `ldsfld`/`stsfld` is safe.
+                    | Opcode::Concat
+                    | Opcode::LoadStatic
+                    | Opcode::StoreStatic
+                    | Opcode::Pop
+                    | Opcode::Ret
+            )
+        }) && !instrs.iter().any(|i| i.opcode == Opcode::CallVirt);
+        let direct_literal_callvirt = instrs.iter().all(|i| {
+            matches!(
+                i.opcode,
+                Opcode::Nop | Opcode::ConstStr | Opcode::CallVirt | Opcode::Ret
+            )
+        }) && instrs
+            .iter()
+            .filter(|i| i.opcode == Opcode::CallVirt)
+            .count()
+            == 1;
+        let relocatable_literal_only = instrs
+            .iter()
+            .all(|i| matches!(i.opcode, Opcode::Nop | Opcode::ConstStr | Opcode::Ret));
+        if !allow_const_str
+            || (!extended_literal_path && !direct_literal_callvirt && !relocatable_literal_only)
+        {
+            return Err(if allow_const_str {
+                "ConstStr literal mixed with an opcode outside the literal allowlist".into()
+            } else {
+                "ConstStr literal in AOT mode".into()
+            });
+        }
+    }
+    if let Some(i) = instrs.iter().find(|i| requires_exception_bridge(i.opcode)) {
+        return Err(format!("opcode {:?} needs the exception bridge", i.opcode));
+    }
+    if instrs.iter().any(allocation_builtin)
+        && JitKind::from_byte(body.return_kind) != JitKind::Object
+    {
+        return Err("allocation builtin in a method not returning Object".into());
+    }
+    if let Some(why) = first_unsupported(&instrs) {
+        return Err(why);
+    }
+    // Function values in the typed JIT are carried as a one-word method rid
+    // (`LoadFunction` → rid, `CallIndirect` dispatches it through the bridge).
+    // That is sound only for a *concrete, closure-free* function value, so a
+    // method is refused if it could place a closure or bound function into a
+    // Function slot: a function-typed parameter (the caller could pass one),
+    // or a call that returns a function (the callee could). `MakeClosure` is
+    // already excluded by `opcode_supported`, and dynamic function types map
+    // to `Other` (so a Function-typed local/param here is always concrete).
+    // Each `CallIndirect` must target a concrete (rid != 0), marshalable
+    // signature — a dynamic rid-0 indirect call stays on Tier 0. All of this
+    // needs the bridge for dispatch.
+    let function_byte = JitKind::Function.to_byte();
+    let uses_function_value = body.local_kinds.contains(&function_byte)
+        || instrs
+            .iter()
+            .any(|i| matches!(i.opcode, Opcode::LoadFunction | Opcode::CallIndirect));
+    if uses_function_value && !bridge_available {
+        return Err("function value without a bridge".into());
+    }
+    if uses_function_value && body.local_kinds[..body.param_count as usize].contains(&function_byte)
+    {
+        return Err("function-typed parameter".into());
+    }
+    if uses_function_value
+        && !instrs.iter().all(|i| match (i.opcode, i.operand) {
+            (Opcode::CallIndirect, Operand::Token(t)) => {
+                t.rid() != 0
+                    && bridge_marshalable(module, t.rid())
+                    && !call_returns_function(module, t.rid(), function_byte)
+            }
+            (Opcode::Call | Opcode::CallVirt, Operand::Token(t)) => {
+                !call_returns_function(module, t.rid(), function_byte)
+            }
+            _ => true,
+        })
+    {
+        return Err("function value: dynamic indirect call or call returning a function".into());
+    }
+    // Array access has stable f64 and narrow u64 scalar ABIs. Keep
+    // reference-valued and general collection consumers in Tier 0.
+    if instrs.iter().any(|i| i.opcode == Opcode::LoadArray)
+        && (!body.returns_value
+            || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
+                && !object_array_access_only(&instrs, &body)
+                && !object_array_stack_only(&instrs, &body)
+                && !scalar_bool_array_access_only(&instrs, &body)
+                && !scalar_u64_array_access_only(&instrs, &body)
+                && !scalar_i64_array_access_only(&instrs, &body)
+                && !scalar_i32_array_access_only(&instrs, &body)
+                && !scalar_narrow_array_access_only(&instrs, &body)
+                && !any_array_return_only(&instrs, &body)))
+    {
+        return Err("LoadArray shape (array kind / return kind)".into());
+    }
+    if instrs.iter().any(|i| i.opcode == Opcode::StoreArray)
+        && (!body.returns_value
+            || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
+                && !object_array_access_only(&instrs, &body)
+                && !object_array_stack_only(&instrs, &body)
+                && !scalar_bool_array_access_only(&instrs, &body)
+                && !scalar_u64_array_access_only(&instrs, &body)
+                && !scalar_i64_array_access_only(&instrs, &body)
+                && !scalar_i32_array_access_only(&instrs, &body)
+                && !scalar_narrow_array_access_only(&instrs, &body)))
+    {
+        return Err("StoreArray shape (array kind / return kind)".into());
+    }
+    if instrs.iter().any(|i| i.opcode == Opcode::ArrayPop)
+        && (!body.returns_value
+            || (JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::F64)
+                && JitKind::from_byte(body.return_kind) != JitKind::Num(zun_il::NumKind::U64)
+                && JitKind::from_byte(body.return_kind) != JitKind::Bool
+                && !scalar_i32_array_access_only(&instrs, &body)
+                && !scalar_narrow_array_access_only(&instrs, &body)
+                && !scalar_bool_array_access_only(&instrs, &body)
+                && !object_array_stack_only(&instrs, &body)))
+    {
+        return Err("ArrayPop shape (array kind / return kind)".into());
+    }
+    if instrs.iter().any(|i| i.opcode == Opcode::NewArray)
+        && !matches!(
+            JitKind::from_byte(body.return_kind),
+            JitKind::Object | JitKind::Array
+        )
+        && !scalar_bool_array_access_only(&instrs, &body)
+        && !scalar_u64_array_access_only(&instrs, &body)
+        && !scalar_i32_array_access_only(&instrs, &body)
+        && !scalar_narrow_array_access_only(&instrs, &body)
+        && !scalar_i64_array_access_only(&instrs, &body)
+        && !scalar_f64_array_access_only(&instrs, &body)
+        && !scalar_array_length_only(&instrs, &body)
+    {
+        return Err("NewArray shape (array kind / return kind)".into());
+    }
+    // Reject methods whose field/newobj operands touch non-JIT types.
+    if let Some(i) = instrs.iter().find(|i| !instr_fields_ok(module, i)) {
+        return Err(format!(
+            "field kind of {:?} {}",
+            i.opcode,
+            field_kind_detail(module, i)
+        ));
+    }
+    if instrs
+        .iter()
+        .any(|i| !callvirt_is_non_overridden(module, i, string_method_rids))
+    {
+        return Err("overridden virtual call".into());
+    }
+    let mut callees = Vec::new();
+    for instr in &instrs {
+        if !matches!(instr.opcode, Opcode::Call | Opcode::CallVirt) {
+            continue;
+        }
+        let Operand::Token(token) = instr.operand else {
+            continue;
+        };
+        if instr.opcode == Opcode::CallVirt {
+            let Some(method) = module.tables.method_defs.get(token.rid() as usize - 1) else {
+                continue;
+            };
+            callees.extend(
+                methods_by_name
+                    .get(&method.name)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|rid| {
+                        module.tables.method_defs[*rid as usize - 1].body_offset != u32::MAX
+                    })
+                    .map(|rid| (rid, true)),
+            );
+        } else {
+            callees.push((token.rid(), false));
+        }
+    }
+    Ok(callees)
+}
+
+/// The offending field's declared kind, for `instr_fields_ok` rejections.
+fn field_kind_detail(module: &Module, instr: &zun_il::Instruction) -> String {
+    let kind_of = |rid: u32| {
+        module
+            .tables
+            .field_defs
+            .get(rid as usize - 1)
+            .map(|f| kind_name(f.kind))
+            .unwrap_or_default()
+    };
+    match (instr.opcode, instr.operand) {
+        (Opcode::NewObj, Operand::Token(t)) => module
+            .tables
+            .type_defs
+            .get(t.rid() as usize - 1)
+            .and_then(|ty| (ty.field_start..ty.field_end).find(|&r| !field_jit_ok(module, r)))
+            .map(|r| format!("(a field of the class: {})", kind_of(r)))
+            .unwrap_or_default(),
+        (_, Operand::Token(t)) => format!("({})", kind_of(t.rid())),
+        _ => String::new(),
+    }
+}
+
+
+/// Every independent local blocker of a method, not just the first. The
+/// first-reason report in `method_rejections` is order-sensitive (a method with
+/// an `any` parameter never reaches the opcode check), so a census also needs
+/// this view to rank blockers by how many methods each one touches. Built from
+/// the same predicates (`opcode_supported`, `kind_supported`, `instr_fields_ok`).
+pub fn method_blockers(module: &Module, method_rid: u32) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let Some(method) = module.tables.method_defs.get(method_rid as usize - 1) else {
+        return out;
+    };
+    let Ok(body) = read_body(&module.code, method.body_offset) else {
+        return out;
+    };
+    let Ok(instrs) = decode_all(body.code) else {
+        return out;
+    };
+    if body.local_kinds[..(body.param_count as usize).min(body.local_kinds.len())]
+        .iter()
+        .any(|&k| !kind_supported(k))
+    {
+        out.push("param kind Other".into());
+    }
+    if body.local_kinds[(body.param_count as usize).min(body.local_kinds.len())..]
+        .iter()
+        .any(|&k| !kind_supported(k))
+    {
+        out.push("local kind Other".into());
+    }
+    if body.returns_value && !kind_supported(body.return_kind) {
+        out.push("return kind Other".into());
+    }
+    if !body.handlers.is_empty() {
+        out.push("has exception region".into());
+    }
+    for i in &instrs {
+        let why = if requires_exception_bridge(i.opcode) {
+            Some(format!("opcode {:?} needs the exception bridge", i.opcode))
+        } else if !opcode_supported(i.opcode, i) {
+            first_unsupported(std::slice::from_ref(i))
+        } else if !instr_fields_ok(module, i) {
+            Some(format!("field kind of {:?}", i.opcode))
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            if !out.contains(&why) {
+                out.push(why);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

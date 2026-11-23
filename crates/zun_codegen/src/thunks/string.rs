@@ -52,6 +52,17 @@ pub extern "C" fn zun_jit_string_char_code_at(handle: i64, index: i64) -> i32 {
     })
 }
 
+/// `charCodeAtNum`: the code unit at a JS `number` index, `NaN` when out of range.
+/// Same `unit_at_number` the native uses; never allocates, never throws.
+#[inline]
+pub extern "C" fn zun_jit_string_char_code_at_num(handle: i64, index: f64) -> f64 {
+    zun_gc::with_current_heap(|heap| {
+        heap.try_string(handle as u32)
+            .and_then(|value| zun_core::string_ops::unit_at_number(value, index))
+            .map_or(f64::NAN, f64::from)
+    })
+}
+
 #[inline]
 pub extern "C" fn zun_jit_string_starts_with(value: i64, prefix: i64) -> i32 {
     zun_gc::with_current_heap(|heap| {
