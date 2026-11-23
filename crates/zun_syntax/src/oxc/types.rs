@@ -16,6 +16,14 @@ pub(super) fn convert_type_annotation(
         .find(|character: char| !character.is_ascii_whitespace() && character != ':')
         .ok_or_else(|| "OXC adapter received an empty type annotation".to_owned())?;
     let mut type_text = raw[type_start..].trim();
+    // `C | null` / `null | C`: a nullable reference. Zun keeps it a typed class
+    // reference (null is the zero handle, as in the CLR); sema decides whether
+    // the member really is a class and otherwise treats it as `any`.
+    let mut nullable = false;
+    if let Some(member) = nullable_union_member(type_text) {
+        type_text = member;
+        nullable = true;
+    }
     // Strip trailing `[]` array suffixes; Zun arrays are untyped, so `T[]`
     // resolves to `Array` and the base name stays for diagnostics.
     let mut is_array = false;
@@ -70,7 +78,40 @@ pub(super) fn convert_type_annotation(
         },
         is_array,
         array_depth,
+        nullable,
     }))
+}
+
+/// The non-`null` member of a two-member top-level union `A | null` (either
+/// order), or `None` for any other shape (those erase to `any`).
+fn nullable_union_member(text: &str) -> Option<&str> {
+    let mut depth = 0i32;
+    let mut previous = ' ';
+    let mut split = None;
+    for (index, character) in text.char_indices() {
+        match character {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' if previous == '=' => {}
+            '>' | ')' | ']' | '}' => depth -= 1,
+            '&' if depth == 0 => return None,
+            '|' if depth == 0 => {
+                if split.is_some() {
+                    return None;
+                }
+                split = Some(index);
+            }
+            _ => {}
+        }
+        previous = character;
+    }
+    let split = split?;
+    let (left, right) = (text[..split].trim(), text[split + 1..].trim());
+    match (left, right) {
+        (member, "null") | ("null", member) if !member.is_empty() && member != "null" => {
+            Some(member)
+        }
+        _ => None,
+    }
 }
 
 /// Convert an OXC `enum` declaration into the AST enum (numeric / string / auto

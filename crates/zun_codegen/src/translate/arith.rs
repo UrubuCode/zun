@@ -256,8 +256,11 @@ impl Translator<'_> {
     }
 
     pub(crate) fn compare(&mut self, stack: &mut Vec<Slot>, cmp: Cmp) -> Result<(), String> {
-        let (b, _) = stack.pop().ok_or("stack underflow")?;
+        let (b, kb) = stack.pop().ok_or("stack underflow")?;
         let (a, k) = stack.pop().ok_or("stack underflow")?;
+        // A reference compares with a reference only (`p === null` is `Object` against
+        // the zero handle); an `any` carrier is a pointer to a carrier, not a value.
+        super::objects::require_reference_agreement(k, kb, "compare")?;
         let flag = if is_float(k) {
             let cc = match cmp {
                 Cmp::Eq => FloatCC::Equal,

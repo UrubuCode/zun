@@ -239,6 +239,7 @@ fn any_type() -> Option<crate::ast::TypeAnnotation> {
         name: crate::ast::synthetic_ident("any"),
         is_array: false,
         array_depth: 0,
+        nullable: false,
     })
 }
 

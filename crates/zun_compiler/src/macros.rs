@@ -243,6 +243,7 @@ impl Emitter {
             name: self.name(&ty),
             is_array: false,
             array_depth: 0,
+            nullable: false,
         });
         let statements = method
             .body

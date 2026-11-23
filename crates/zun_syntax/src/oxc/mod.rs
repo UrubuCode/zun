@@ -195,6 +195,7 @@ pub fn parse_subset(source: &str, typescript: bool) -> Result<Program, Vec<Strin
                             name: crate::ast::synthetic_ident("any"),
                             is_array: false,
                             array_depth: 0,
+                            nullable: false,
                         }),
                         init,
                         span: whole,

@@ -137,15 +137,27 @@ pub struct BridgeConfig {
     /// `extern "C" zun_jit_route_pending(catch_type_rid) -> u64` (0 = no/unmatched
     /// pending; else the caught object handle, slot cleared).
     pub route_pending: *const u8,
+    /// `extern "C" zun_jit_null_deref(kind, rid)`: raise the `TypeError` for a null
+    /// dereference (kind 0 = read field, 1 = write field, 2 = call method; `rid` is
+    /// the field or method token) by setting the pending-exception slot.
+    pub null_deref: *const u8,
     /// Address of the per-thread pending-exception slot the JIT loads after calls.
     pub pending_slot_addr: u64,
 }
+
+/// The resume value an OSR loop returns when it exits by throwing (a null
+/// dereference left the exception pending): not a valid pc, so the interpreter
+/// takes the pending exception instead of resuming.
+pub const OSR_THROW: u64 = u64::MAX;
 
 pub struct Jit {
     module: JITModule,
     func_ids: HashMap<u32, FuncId>,
     shim_ids: HashMap<u32, FuncId>,
     eligible: HashSet<u32>,
+    /// Eligible methods whose execution can run a collection (they allocate or call
+    /// something that does); a loop region holding references must not call them.
+    collecting: HashSet<u32>,
     /// Eligible callees of each eligible method (for the compile closure).
     callees: HashMap<u32, Vec<u32>>,
     /// Methods whose bodies are defined and finalized.
@@ -675,6 +687,7 @@ impl Jit {
             builder.symbol("zun_jit_call_interp", bridge.call_interp);
             builder.symbol("zun_jit_call_indirect", bridge.call_indirect);
             builder.symbol("zun_jit_route_pending", bridge.route_pending);
+            builder.symbol("zun_jit_null_deref", bridge.null_deref);
         }
         let module = JITModule::new(builder);
 
@@ -699,11 +712,7 @@ impl Jit {
             storage_index += 1;
         }
         let literal_ptrs = literal_ptrs.into_boxed_slice();
-        let eligible = if bridge_fn.is_some() {
-            eligible_methods_bridged(zm, true)
-        } else {
-            eligible_methods_with_literals(zm, true)
-        };
+        let (eligible, collecting) = eligible::eligible_and_collecting(zm, true, bridge_fn.is_some());
         let types =
             zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
         let virtual_tables: Vec<Box<[u64]>> = (1..=types.len() as u32)
@@ -727,6 +736,7 @@ impl Jit {
             func_ids: HashMap::new(),
             shim_ids: HashMap::new(),
             eligible: eligible.clone(),
+            collecting,
             callees: HashMap::new(),
             defined: HashSet::new(),
             failed: HashSet::new(),
@@ -1029,6 +1039,15 @@ impl Jit {
                 }
             })?;
             if !eligible::loop_region_eligible(zm, method_rid, target_pc) {
+                return Err(JitError::Ineligible(method_rid));
+            }
+            if eligible::loop_region_holds_references_across_collecting_call(
+                zm,
+                method_rid,
+                target_pc,
+                &self.eligible,
+                &self.collecting,
+            ) {
                 return Err(JitError::Ineligible(method_rid));
             }
             Some(end)

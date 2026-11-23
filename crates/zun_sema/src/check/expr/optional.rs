@@ -67,14 +67,23 @@ impl Checker<'_> {
             unreachable!()
         };
         let guard = self.check_expr(cx, object);
-        if matches!(guard.ty, Ty::Any | Ty::DynamicObject) {
-            let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+        // A class reference is null-capable (`C | null`), so it short-circuits too;
+        // it keeps its static type so the guarded body is still a typed access.
+        let nullable_instance = matches!(guard.ty, Ty::Instance(_));
+        if nullable_instance || matches!(guard.ty, Ty::Any | Ty::DynamicObject) {
+            let slot_ty = if nullable_instance { guard.ty } else { Ty::Any };
+            let (slot, tmp) = self.synthetic_local(cx, slot_ty);
             let tmp_expr = ast::Expr::Ident(tmp);
             self.chain_roots.push(tmp);
+            let bound = if nullable_instance {
+                guard
+            } else {
+                Self::box_to_any(guard)
+            };
             let result = self.optional_guarded(
                 cx,
                 slot,
-                Self::box_to_any(guard),
+                bound,
                 tmp_expr,
                 body.as_ref().clone(),
                 span,
@@ -116,6 +125,18 @@ impl Checker<'_> {
         };
         let object_ast: &ast::Expr = object;
         let object = self.check_expr(cx, object);
+        if matches!(object.ty, Ty::Instance(_)) {
+            // A class reference may be null: bind it once, then
+            // `tmp == null ? undefined : tmp.field` with `tmp` still typed.
+            let (slot, tmp) = self.synthetic_local(cx, object.ty);
+            let tmp_expr = ast::Expr::Ident(tmp);
+            let read = ast::Expr::Field {
+                object: Box::new(tmp_expr.clone()),
+                field: *field,
+                span,
+            };
+            return self.optional_instance_guarded(cx, slot, object, tmp_expr, read, span);
+        }
         if !matches!(object.ty, Ty::Any | Ty::DynamicObject | Ty::Error) {
             // A statically non-nullable receiver: `?.` is a plain read.
             let read = ast::Expr::Field {
@@ -402,10 +423,12 @@ impl Checker<'_> {
                 | Ty::Error
         );
         if !managed {
-            if matches!(object.ty, Ty::Any | Ty::DynamicObject) {
-                // `a?.m(args)` on a dynamic receiver: bind the receiver
-                // once, then `tmp == null ? undefined : tmp.m(args)`.
-                let (slot, tmp) = self.synthetic_local(cx, Ty::Any);
+            let nullable_instance = matches!(object.ty, Ty::Instance(_));
+            if nullable_instance || matches!(object.ty, Ty::Any | Ty::DynamicObject) {
+                // `a?.m(args)` on a dynamic or null-capable class receiver: bind the
+                // receiver once, then `tmp == null ? undefined : tmp.m(args)`.
+                let slot_ty = if nullable_instance { object.ty } else { Ty::Any };
+                let (slot, tmp) = self.synthetic_local(cx, slot_ty);
                 let tmp_expr = ast::Expr::Ident(tmp);
                 let call = ast::Expr::MethodCall {
                     receiver: Box::new(tmp_expr.clone()),
@@ -430,7 +453,11 @@ impl Checker<'_> {
                 };
                 let value = self.check_expr(cx, &cond);
                 let ty = value.ty;
-                let bound = Self::box_to_any(object);
+                let bound = if nullable_instance {
+                    object
+                } else {
+                    Self::box_to_any(object)
+                };
                 return hir::Expr {
                     kind: hir::ExprKind::Sequence {
                         effect: Box::new(hir::Expr {
@@ -539,6 +566,54 @@ impl Checker<'_> {
                 args: call_args,
             },
             ty: return_ty,
+            span,
+        }
+    }
+}
+
+impl Checker<'_> {
+    /// `{ slot = bound; tmp == null ? undefined : read }` for a null-capable class
+    /// receiver. `tmp` keeps the receiver's static type, so `read` stays a typed
+    /// access; the conditional's value type unifies with `undefined`.
+    fn optional_instance_guarded(
+        &mut self,
+        cx: &mut FunctionCx,
+        slot: hir::LocalSlot,
+        bound: hir::Expr,
+        tmp_expr: ast::Expr,
+        read: ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let cond = ast::Expr::Conditional {
+            condition: Box::new(ast::Expr::Binary {
+                op: ast::BinaryOp::LooseEq,
+                lhs: Box::new(tmp_expr),
+                rhs: Box::new(ast::Expr::Null { span }),
+                span,
+            }),
+            when_true: Box::new(ast::Expr::Unary {
+                op: ast::UnaryOp::Void,
+                operand: Box::new(ast::Expr::Number { value: 0.0, span }),
+                span,
+            }),
+            when_false: Box::new(read),
+            span,
+        };
+        let value = self.check_expr(cx, &cond);
+        let ty = value.ty;
+        hir::Expr {
+            kind: hir::ExprKind::Sequence {
+                effect: Box::new(hir::Expr {
+                    kind: hir::ExprKind::Assign {
+                        slot,
+                        value: Box::new(bound),
+                    },
+                    ty: Ty::Any,
+                    span,
+                }),
+                value: Box::new(value),
+            },
+            ty,
             span,
         }
     }

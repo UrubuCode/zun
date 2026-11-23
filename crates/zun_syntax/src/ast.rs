@@ -381,6 +381,9 @@ pub struct TypeAnnotation {
     /// Number of `[]` suffixes: `number[]` is 1, `number[][]` is 2. Only depth 1
     /// lets the checker know what an index read yields.
     pub array_depth: u8,
+    /// Set for `C | null` (either order): a class reference that may be null. Only
+    /// a class type keeps it; every other `T | null` still resolves to `any`.
+    pub nullable: bool,
 }
 
 /// An identifier occurrence: its text lives in the source at `span`.

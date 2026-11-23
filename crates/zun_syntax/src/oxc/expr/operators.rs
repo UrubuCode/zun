@@ -44,6 +44,7 @@ pub(super) fn convert_binary(
                     name: crate::ast::synthetic_ident("any"),
                     is_array: false,
                     array_depth: 0,
+                    nullable: false,
                 },
                 span: span(identifier.span),
             };
@@ -77,6 +78,7 @@ pub(super) fn convert_unary(
                 },
                 is_array: false,
                 array_depth: 0,
+                nullable: false,
             },
             span: span(unary.span),
         };

@@ -709,19 +709,15 @@ pub(crate) fn run_method_loaded_on_current_heap(
     run_method_loaded_on_current_heap_bare(scope.module(), Some(loader), method_rid, args, output)
 }
 
-/// As [`run_method_loaded_on_current_heap`], but taking the module directly and
-/// an optional loader. The JIT→interpreter bridge uses this: it holds the
-/// running module but, for a single-module program, no loader (a bridged callee
-/// that attempts a cross-module call then fails cleanly with `BadToken`).
-pub(crate) fn run_method_loaded_on_current_heap_bare(
-    module: &Module,
-    loader: Option<&zun_loader::ModuleLoader>,
-    method_rid: u32,
-    args: Vec<Value>,
-    output: &mut dyn Output,
-) -> Result<Value, RunError> {
+/// An interpreter with no hook, eval host or suspended state, for a call made from
+/// native code (the JIT bridge) on the current heap.
+fn bare_interp<'a>(
+    module: &'a Module,
+    loader: Option<&'a zun_loader::ModuleLoader>,
+    output: &'a mut dyn Output,
+) -> Result<Interp<'a>, RunError> {
     let types = zun_types::TypeSystem::from_module(module).map_err(|_| RunError::BadToken)?;
-    let mut interp = Interp {
+    Ok(Interp {
         module,
         output,
         hook: None,
@@ -750,7 +746,21 @@ pub(crate) fn run_method_loaded_on_current_heap_bare(
         instance_field_index: std::cell::RefCell::new(std::collections::HashMap::new()),
         prototype_keys: std::cell::RefCell::new(std::collections::HashMap::new()),
         native_link: None,
-    };
+    })
+}
+
+/// As [`run_method_loaded_on_current_heap`], but taking the module directly and
+/// an optional loader. The JIT→interpreter bridge uses this: it holds the
+/// running module but, for a single-module program, no loader (a bridged callee
+/// that attempts a cross-module call then fails cleanly with `BadToken`).
+pub(crate) fn run_method_loaded_on_current_heap_bare(
+    module: &Module,
+    loader: Option<&zun_loader::ModuleLoader>,
+    method_rid: u32,
+    args: Vec<Value>,
+    output: &mut dyn Output,
+) -> Result<Value, RunError> {
+    let mut interp = bare_interp(module, loader, output)?;
     let first = interp.call(method_rid, args, None);
     let outcome = match first {
         Err(RunError::Suspended) => interp
@@ -1043,5 +1053,36 @@ impl Interp<'_> {
             }
         }
         self.call(method_rid, args, parent)
+    }
+}
+
+/// The JIT's null-dereference raise: build the `TypeError` node throws for
+/// `null.v` (`kind` 0 = read field, 1 = write field, 2 = call method; `rid` is the
+/// field or method token) and return its object handle. The text is produced by
+/// the same code the interpreter's `ldfld`/`stfld`/`callvirt` arms use.
+pub(crate) fn null_dereference_error_on_current_heap(
+    module: &Module,
+    loader: Option<&zun_loader::ModuleLoader>,
+    output: &mut dyn Output,
+    kind: u32,
+    rid: u32,
+) -> Option<u64> {
+    let interp = bare_interp(module, loader, output).ok()?;
+    let message = match kind {
+        0 | 1 => {
+            let token = zun_metadata::Token::new(zun_metadata::TableKind::FieldDef, rid);
+            interp.field_receiver_message(token, &Value::Null, kind == 1)
+        }
+        _ => {
+            let method = module.tables.method_defs.get((rid as usize).checked_sub(1)?)?;
+            format!(
+                "Cannot read properties of null (reading '{}')",
+                module.strings.get(method.name)
+            )
+        }
+    };
+    match interp.make_error_value("TypeError", &message)? {
+        Value::Object(object) => Some(object.addr() as u64),
+        _ => None,
     }
 }

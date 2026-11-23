@@ -17,12 +17,22 @@ impl Translator<'_> {
             Operand::Token(t) => t.rid(),
             _ => return Err("newobj operand".into()),
         };
-        let (_field_start, count) = type_field_range(self.zm, type_rid)?;
+        let (field_start, count) = type_field_range(self.zm, type_rid)?;
         // Pop field initializers (last pushed = last field).
         if stack.len() < count {
             return Err("stack underflow at newobj".into());
         }
         let args: Vec<Slot> = stack.split_off(stack.len() - count);
+        // A `null` (an `Object`-kind zero) may only initialize a class-reference field.
+        for (i, &(_, kind)) in args.iter().enumerate() {
+            let field = self
+                .zm
+                .tables
+                .field_defs
+                .get(field_start as usize + i - 1)
+                .ok_or("newobj field")?;
+            require_reference_agreement(kind, JitKind::from_byte(field.kind), "newobj")?;
+        }
         // Allocation may reach the GC. Keep reference-valued
         // initializers live while the new object is being built.
         for &(value, kind) in &args {
@@ -476,4 +486,117 @@ pub(crate) fn type_field_range(zm: &ZmModule, type_rid: u32) -> Result<(u32, usi
         .get(type_rid as usize - 1)
         .ok_or("bad type token")?;
     Ok((ty.field_start, (ty.field_end - ty.field_start) as usize))
+}
+
+/// What a null check guards, for the `TypeError` text (shared with Tier 0).
+#[derive(Clone, Copy)]
+pub(crate) enum NullDeref {
+    /// `ldfld` (`storing: false`) or `stfld` (`storing: true`) of this field token.
+    Field { rid: u32, storing: bool },
+    /// `callvirt` of this method token.
+    Call { rid: u32 },
+}
+
+impl NullDeref {
+    /// The `(kind, rid)` pair `zun_jit_null_deref` takes.
+    fn operands(self) -> (i64, i64) {
+        match self {
+            NullDeref::Field { rid, storing } => (i64::from(storing), i64::from(rid)),
+            NullDeref::Call { rid } => (2, i64::from(rid)),
+        }
+    }
+}
+
+/// The RID of a field-token operand.
+pub(crate) fn field_token_rid(operand: &Operand) -> Result<u32, String> {
+    match operand {
+        Operand::Token(token) => Ok(token.rid()),
+        _ => Err("field operand".into()),
+    }
+}
+
+/// `null` is a zero `Object` handle, so an `Object` value and a non-`Object` slot
+/// (or the reverse) never agree: refusing the pair keeps a null out of an `any`,
+/// array or string slot, where zero is a different thing.
+pub(crate) fn require_reference_agreement(
+    got: JitKind,
+    want: JitKind,
+    what: &str,
+) -> Result<(), String> {
+    if (got == JitKind::Object) != (want == JitKind::Object) {
+        return Err(format!(
+            "{what}: {got:?} value meets a {want:?} slot (null reference cannot be represented)"
+        ));
+    }
+    Ok(())
+}
+
+/// A field or method receiver must be a managed reference.
+pub(crate) fn require_reference_receiver(got: JitKind, what: &str) -> Result<(), String> {
+    if matches!(got, JitKind::Object | JitKind::Array) {
+        Ok(())
+    } else {
+        Err(format!("{what} receiver is a {got:?} value"))
+    }
+}
+
+impl Translator<'_> {
+    /// Guard a dereference of `receiver`: a zero handle is `null`, which raises the
+    /// JS `TypeError` Tier 0 raises instead of reading address 0. The raise goes
+    /// through the host (`zun_jit_null_deref` leaves the exception pending) and the
+    /// usual after-call routing sends it to a catch in this frame or out of it. The
+    /// check is a compare and a cold branch; execution continues in the new block.
+    ///
+    /// Without a bridge (AOT, the codegen-only tests) there is no host to build the
+    /// error, so the cold path traps. A null receiver cannot be reported there, and
+    /// reading address 0 would not be better.
+    pub(crate) fn emit_null_check(
+        &mut self,
+        receiver: Value,
+        what: NullDeref,
+        stack: &[Slot],
+        block_sigs: &mut HashMap<Block, Vec<JitKind>>,
+        call_offset: usize,
+        index_of_offset: &BTreeMap<usize, usize>,
+    ) -> Result<(), String> {
+        let proceed = self.builder.create_block();
+        let slow = self.builder.create_block();
+        self.builder.set_cold_block(slow);
+        self.builder.ins().brif(receiver, proceed, &[], slow, &[]);
+
+        self.builder.switch_to_block(slow);
+        if self.bridge_enabled {
+            let (kind, rid) = what.operands();
+            let raise = self.null_deref_fref();
+            let kind = self.builder.ins().iconst(types::I64, kind);
+            let rid = self.builder.ins().iconst(types::I64, rid);
+            self.builder.ins().call(raise, &[kind, rid]);
+            // The throw is pending now: route it exactly like a callee's. Its
+            // continuation block is unreachable, so it only needs a terminator.
+            let mut after = stack.to_vec();
+            self.route_pending_check(block_sigs, &mut after, call_offset, index_of_offset, true)?;
+        }
+        self.builder
+            .ins()
+            .trap(cranelift_codegen::ir::TrapCode::unwrap_user(1));
+
+        self.builder.switch_to_block(proceed);
+        Ok(())
+    }
+
+    fn null_deref_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
+        if let Some(fref) = self.null_deref_ref {
+            return fref;
+        }
+        let mut sig = Signature::new(self.module.isa().default_call_conv());
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        let id = self
+            .module
+            .declare_function("zun_jit_null_deref", Linkage::Import, &sig)
+            .expect("declare zun_jit_null_deref");
+        let fref = self.module.declare_func_in_func(id, self.builder.func);
+        self.null_deref_ref = Some(fref);
+        fref
+    }
 }

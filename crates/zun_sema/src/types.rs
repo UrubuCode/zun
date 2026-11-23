@@ -103,6 +103,20 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn resolve_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
+        let ty = self.resolve_annotation_member(annotation);
+        // `C | null`: a class reference stays a typed (null-capable) reference.
+        // Every other `T | null` keeps the dynamic type, because a value slot of
+        // another kind has no null representation.
+        if annotation.nullable {
+            return match ty {
+                Ty::Instance(_) => ty,
+                _ => Ty::Any,
+            };
+        }
+        ty
+    }
+
+    fn resolve_annotation_member(&mut self, annotation: &ast::TypeAnnotation) -> Ty {
         // `T[]` (any element type, any depth) is an untyped `Array`.
         if annotation.is_array {
             return Ty::Array;
@@ -198,6 +212,7 @@ impl Checker<'_> {
     /// Whether `annotation` is exactly `number[]` (one level, element `number`).
     pub(super) fn is_number_array_annotation(&self, annotation: &ast::TypeAnnotation) -> bool {
         annotation.array_depth == 1
+            && !annotation.nullable
             && self.text(&annotation.name) == "number"
             && !self.type_aliases.contains_key("number")
     }

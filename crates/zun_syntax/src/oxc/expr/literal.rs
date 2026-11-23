@@ -132,6 +132,7 @@ pub(super) fn convert_ts_cast(
             },
             is_array: false,
             array_depth: 0,
+            nullable: false,
         },
         span: span(whole),
     })

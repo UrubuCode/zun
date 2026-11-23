@@ -558,6 +558,8 @@ pub extern "C" fn zun_jit_static_set(owner: i64, field: i64, raw: i64, kind: i64
             JitKind::Num(NumKind::F32) => zun_core::Any::float(f32::from_bits(raw as u32) as f64),
             JitKind::Num(_) => zun_core::Any::int(raw),
             JitKind::Bool => zun_core::Any::bool(raw != 0),
+            // A zero handle is `null`, which the interpreter stores as `Any::null`.
+            JitKind::Object | JitKind::Array if raw == 0 => zun_core::Any::null(),
             JitKind::Object | JitKind::Array => zun_core::Any::object(raw as usize),
             JitKind::String => zun_core::Any::string(raw as u32),
             JitKind::Function | JitKind::Other => zun_core::Any::null(),

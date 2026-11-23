@@ -544,6 +544,7 @@ fn convert_class_statement(
                     name: crate::ast::synthetic_ident("any"),
                     is_array: false,
                     array_depth: 0,
+                    nullable: false,
                 }),
                 init: convert_runtime_class(source, class_declaration, id.name.as_str())?,
                 span: whole,
@@ -703,6 +704,7 @@ pub(super) fn convert_try_statement(
                 },
                 is_array: false,
                 array_depth: 0,
+                nullable: false,
             },
             body: catch_body,
         }]

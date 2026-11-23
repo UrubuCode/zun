@@ -328,6 +328,9 @@ pub fn store_field(
 pub fn decode_field(kind: u8, slot: u64, heap: &zun_gc::Heap) -> Value {
     use zun_il::{JitKind, NumKind};
     match kind {
+        // A zero slot is the null reference (a `C | null` field, or a default). It
+        // must never become `Value::Object`: that would be an object at address 0.
+        FIELD_OBJECT if slot == 0 => Value::Null,
         FIELD_OBJECT => Value::Object(unsafe { zun_gc::Obj::from_addr(slot as *mut u64) }),
         FIELD_STRING => Value::Str(heap.string(slot as u32).clone()),
         _ => match JitKind::from_byte(kind) {
@@ -337,6 +340,7 @@ pub fn decode_field(kind: u8, slot: u64, heap: &zun_gc::Heap) -> Value {
             }
             JitKind::Num(n) => Value::Int(slot as i64, n),
             JitKind::Bool => Value::Bool(slot != 0),
+            JitKind::Object | JitKind::Array if slot == 0 => Value::Null,
             JitKind::Object | JitKind::Array => {
                 Value::Object(unsafe { zun_gc::Obj::from_addr(slot as *mut u64) })
             }

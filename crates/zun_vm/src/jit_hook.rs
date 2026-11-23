@@ -717,6 +717,8 @@ pub(crate) fn pack_value(v: &Value, k: JitKind, heap: &mut zun_gc::Heap) -> u64 
         JitKind::Num(NumKind::F64) => v.as_number().to_bits(),
         JitKind::Num(NumKind::F32) => (v.as_number() as f32).to_bits() as u64,
         JitKind::Bool => matches!(v, Value::Bool(true)) as u64,
+        // `null` (and a missing value) is the zero handle: a nullable class reference.
+        JitKind::Object | JitKind::Array if matches!(v, Value::Null | Value::Void) => 0,
         JitKind::Object | JitKind::Array => v.as_object().addr() as u64,
         JitKind::String => match v {
             Value::Str(value) => heap.intern_string(value.clone()) as u64,
@@ -740,6 +742,8 @@ pub(crate) fn unpack_value(bits: u64, ret: Option<JitKind>, heap: &zun_gc::Heap)
     match ret {
         None => Value::Void,
         Some(JitKind::Bool) => Value::Bool(bits != 0),
+        // A zero handle is `null`, never an object at address 0.
+        Some(JitKind::Object) | Some(JitKind::Array) if bits == 0 => Value::Null,
         Some(JitKind::Object) | Some(JitKind::Array) => {
             Value::Object(unsafe { zun_gc::Obj::from_addr(bits as *mut u64) })
         }

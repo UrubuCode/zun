@@ -358,6 +358,7 @@ fn convert_computed_field(
                 },
                 is_array: false,
                 array_depth: 0,
+                nullable: false,
             },
             is_static: false,
             is_private: true,
@@ -401,6 +402,7 @@ fn convert_field(
             },
             is_array: false,
             array_depth: 0,
+            nullable: false,
         });
     fields.push(crate::ast::ClassField {
         name: Name { span: field_span },
@@ -467,6 +469,7 @@ fn convert_static_block(
             },
             is_array: false,
             array_depth: 0,
+            nullable: false,
         },
         is_static: true,
         is_private: false,
@@ -561,6 +564,7 @@ fn infer_constructor_fields(
                     },
                     is_array: false,
                     array_depth: 0,
+                    nullable: false,
                 },
                 is_static: false,
                 is_private: false,

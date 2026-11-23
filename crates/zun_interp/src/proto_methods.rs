@@ -130,12 +130,14 @@ impl Interp<'_> {
     /// Node's wording for a typed field access whose receiver is not an
     /// object: `Cannot read properties of undefined (reading 'tag')`, or
     /// `Cannot set properties of null (setting 'tag')`.
-    pub(crate) fn field_receiver_error(
-        &mut self,
+    /// Shared by the interpreter's field arms and the JIT's null dereference
+    /// raise, so both tiers say the same thing.
+    pub(crate) fn field_receiver_message(
+        &self,
         token: zun_metadata::Token,
         receiver: &Value,
         storing: bool,
-    ) -> RunError {
+    ) -> String {
         let field = self
             .module
             .tables
@@ -153,9 +155,7 @@ impl Interp<'_> {
         } else {
             ("read", "reading")
         };
-        self.proto_type_error(&format!(
-            "Cannot {verb} properties of {shown} ({gerund} '{field}')"
-        ))
+        format!("Cannot {verb} properties of {shown} ({gerund} '{field}')")
     }
 
     pub(crate) fn proto_type_error(&mut self, message: &str) -> RunError {

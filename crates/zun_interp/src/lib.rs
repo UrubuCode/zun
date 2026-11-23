@@ -318,6 +318,20 @@ pub fn run_method_on_current_heap_bare(
     runner::run_method_loaded_on_current_heap_bare(module, loader, method_rid, args, output)
 }
 
+/// Build the `TypeError` for a null dereference raised by JIT-compiled code and
+/// return its object handle. `kind` is 0 (read field), 1 (write field) or 2 (call
+/// method); `rid` is the field or method token. See
+/// [`runner::null_dereference_error_on_current_heap`].
+pub fn null_dereference_error_on_current_heap(
+    module: &Module,
+    loader: Option<&zun_loader::ModuleLoader>,
+    output: &mut dyn Output,
+    kind: u32,
+    rid: u32,
+) -> Option<u64> {
+    runner::null_dereference_error_on_current_heap(module, loader, output, kind, rid)
+}
+
 impl Interp<'_> {
     /// Create the managed identity of a generator invocation. The execution
     /// body is deliberately not entered here; `generatorIteratorNext` owns
@@ -1098,11 +1112,19 @@ impl Interp<'_> {
                 Opcode::Branch => {
                     let target = branch_target(next, &instr.operand);
                     if target < *pc {
-                        if let Some(resume) =
-                            self.loop_backedge(method_rid, target, *pc, stack, locals, parent)
-                        {
-                            *pc = resume;
-                            continue;
+                        match self.loop_backedge(method_rid, target, *pc, stack, locals, parent) {
+                            Ok(Some(resume)) => {
+                                *pc = resume;
+                                continue;
+                            }
+                            Ok(None) => {}
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
                         }
                     }
                     *pc = target;
@@ -1114,12 +1136,20 @@ impl Interp<'_> {
                     }) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
-                            if let Some(resume) =
-                                self.loop_backedge(method_rid, target, *pc, stack, locals, parent)
-                            {
+                            match self.loop_backedge(method_rid, target, *pc, stack, locals, parent) {
+                            Ok(Some(resume)) => {
                                 *pc = resume;
                                 continue;
                             }
+                            Ok(None) => {}
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        }
                         }
                         *pc = target;
                     }
@@ -1131,12 +1161,20 @@ impl Interp<'_> {
                     }) {
                         let target = branch_target(next, &instr.operand);
                         if target < *pc {
-                            if let Some(resume) =
-                                self.loop_backedge(method_rid, target, *pc, stack, locals, parent)
-                            {
+                            match self.loop_backedge(method_rid, target, *pc, stack, locals, parent) {
+                            Ok(Some(resume)) => {
                                 *pc = resume;
                                 continue;
                             }
+                            Ok(None) => {}
+                            Err(RunError::Thrown(exception)) => {
+                                if self.route_exception(&body, stack, pc, next - size, &exception) {
+                                    continue;
+                                }
+                                return Err(RunError::Thrown(exception));
+                            }
+                            Err(error) => return Err(error),
+                        }
                         }
                         *pc = target;
                     }
@@ -1772,7 +1810,13 @@ impl Interp<'_> {
                     let receiver = pop(stack)?;
                     let obj = match value::field_receiver(&receiver) {
                         Some(obj) => obj,
-                        None => return Err(self.field_receiver_error(token, &receiver, false)),
+                        None => {
+                            let message = format!(
+                                "TypeError: {}",
+                                self.field_receiver_message(token, &receiver, false)
+                            );
+                            throw_native!(self, body, stack, pc, next - size, message);
+                        }
                     };
                     // A private field only answers to a receiver that carries
                     // its brand. See `private_field_brand_ok`: without this a
@@ -1847,7 +1891,13 @@ impl Interp<'_> {
                     let receiver = pop(stack)?;
                     let obj = match value::field_receiver(&receiver) {
                         Some(obj) => obj,
-                        None => return Err(self.field_receiver_error(token, &receiver, true)),
+                        None => {
+                            let message = format!(
+                                "TypeError: {}",
+                                self.field_receiver_message(token, &receiver, true)
+                            );
+                            throw_native!(self, body, stack, pc, next - size, message);
+                        }
                     };
                     // Same brand gate as the read path.
                     if self.field_rid_is_private(token.rid())
@@ -1914,6 +1964,20 @@ impl Interp<'_> {
                         matches!(args.first(), Some(Value::Str(_) | Value::Float(_, _)))
                             || matches!(args.first(), Some(Value::Object(object))
                             if zun_gc::with_current_heap(|heap| heap.array_len(*object).is_some()));
+                    // `null.m()` is a TypeError at the call, as in node; a null receiver has
+                    // no header to dispatch on.
+                    if matches!(args.first(), Some(Value::Null | Value::Void)) {
+                        let shown = if matches!(args.first(), Some(Value::Null)) {
+                            "null"
+                        } else {
+                            "undefined"
+                        };
+                        let message = format!(
+                            "TypeError: Cannot read properties of {shown} (reading '{}')",
+                            self.module.strings.get(static_method.name)
+                        );
+                        throw_native!(self, body, stack, pc, next - size, message);
+                    }
                     let target = if primitive_receiver {
                         token.rid()
                     } else {
@@ -2176,18 +2240,27 @@ impl Interp<'_> {
         stack: &mut [Value],
         locals: &mut [Value],
         parent: Option<&RootLink>,
-    ) -> Option<usize> {
+    ) -> Result<Option<usize>, RunError> {
         if let Some(hook) = self.hook {
             if stack.is_empty() {
                 if let Some(resume) = hook.try_loop_osr(method_rid, target, locals) {
+                    // `usize::MAX` is no pc: the compiled loop left by a throw (a null
+                    // dereference), the locals are already written back, and the
+                    // exception is pending in the hook.
+                    if resume == usize::MAX {
+                        return match hook.take_pending_exception() {
+                            Some(exception) => Err(RunError::Thrown(exception)),
+                            None => Err(RunError::BadToken),
+                        };
+                    }
                     self.poll_gc(stack, locals, parent);
-                    return Some(resume);
+                    return Ok(Some(resume));
                 }
             }
             hook.on_backedge_state(method_rid, target, pc, stack, locals);
         }
         self.poll_gc(stack, locals, parent);
-        None
+        Ok(None)
     }
 
     /// Poll the adaptive GC budget at an interpreter safepoint.

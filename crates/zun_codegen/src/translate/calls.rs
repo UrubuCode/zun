@@ -53,6 +53,16 @@ impl Translator<'_> {
                 (v, kind)
             })
             .collect();
+        for ((_, kind), &param_kind_byte) in arg_values
+            .iter()
+            .zip(&callee.local_kinds[..callee.param_count as usize])
+        {
+            super::objects::require_reference_agreement(
+                *kind,
+                JitKind::from_byte(param_kind_byte),
+                "call argument",
+            )?;
+        }
         // A direct call to an ineligible (non-compiled) callee is
         // routed to the interpreter through the bridge. Eligibility
         // only admits this for a non-throwing, marshalable callee.
@@ -71,6 +81,20 @@ impl Translator<'_> {
                 .first()
                 .map(|(value, _)| *value)
                 .ok_or("virtual call receiver")?;
+            let receiver_kind = arg_values.first().map(|(_, kind)| *kind);
+            super::objects::require_reference_receiver(
+                receiver_kind.ok_or("virtual call receiver")?,
+                "callvirt",
+            )?;
+            // A null receiver has no header to dispatch on: raise instead.
+            self.emit_null_check(
+                receiver,
+                NullDeref::Call { rid },
+                stack,
+                block_sigs,
+                offset_of_index[i],
+                index_of_offset,
+            )?;
             let slot = self.types.virtual_slot(rid).ok_or("virtual method slot")?;
             let type_rid = self
                 .builder

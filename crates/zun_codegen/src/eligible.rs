@@ -25,6 +25,9 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             | Opcode::ConstTrue
             | Opcode::ConstFalse
             | Opcode::ConstStr
+            // A nullable class reference's `null`: the zero handle. The translator
+            // refuses it wherever the target is not an `Object` slot.
+            | Opcode::ConstNull
             | Opcode::Conv
             | Opcode::UnboxAny
             | Opcode::BoxAny
@@ -144,6 +147,7 @@ fn try_region_op_allowed(op: Opcode) -> bool {
             | Opcode::ConstTrue
             | Opcode::ConstFalse
             | Opcode::ConstStr
+            | Opcode::ConstNull
             | Opcode::Conv
             | Opcode::LoadLocal
             | Opcode::StoreLocal
@@ -246,6 +250,11 @@ fn exception_regions_jit_safe(
                 call_in_try = true;
             } else if !try_region_op_allowed(instr.opcode) {
                 return false;
+            }
+            // A field access on a null reference raises a TypeError through the same
+            // pending-exception slot, so the catch can be reached without a `throw`.
+            if bridge_available && matches!(instr.opcode, Opcode::LoadField | Opcode::StoreField) {
+                call_in_try = true;
             }
         }
         prev_newobj_type = match (instr.opcode, instr.operand) {
@@ -1084,6 +1093,9 @@ pub fn loop_region_rejection(module: &Module, method_rid: u32, target_pc: usize)
         .filter(|ty| module.strings.get(ty.name) == "String")
         .flat_map(|ty| ty.method_start..ty.method_end)
         .collect();
+    if !const_null_uses_ok(module, &body, &instrs, start..end) {
+        return Some("const.null where the target is not a class reference".into());
+    }
     let mut offset = 0usize;
     for instr in &instrs {
         let next = offset + instr.encoded_len();
@@ -1155,8 +1167,538 @@ pub fn method_rejections(
 struct Analysis {
     eligible: HashSet<u32>,
     rejected: HashMap<u32, String>,
+    /// Methods whose execution may run a collection: they allocate, or call a method
+    /// that does, or call one the interpreter runs. See [`gc_profile`].
+    collecting: HashSet<u32>,
 }
 
+
+/// Whether instruction `instr` pushes a class reference (an `Object`-kind value).
+fn pushes_object(
+    module: &Module,
+    body: &zun_module::MethodBody<'_>,
+    instr: &zun_il::Instruction,
+) -> bool {
+    let field_is_object = |rid: u32| {
+        module
+            .tables
+            .field_defs
+            .get((rid as usize).wrapping_sub(1))
+            .is_some_and(|field| JitKind::from_byte(field.kind) == JitKind::Object)
+    };
+    match (instr.opcode, instr.operand) {
+        (Opcode::LoadLocal, Operand::Local(slot)) => body
+            .local_kinds
+            .get(slot as usize)
+            .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object),
+        (Opcode::LoadField | Opcode::LoadStatic, Operand::Token(token)) => {
+            field_is_object(token.rid())
+        }
+        (Opcode::NewObj | Opcode::ConstNull, _) => true,
+        (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => module
+            .tables
+            .method_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .and_then(|method| read_body(&module.code, method.body_offset).ok())
+            .is_some_and(|callee| {
+                callee.returns_value && JitKind::from_byte(callee.return_kind) == JitKind::Object
+            }),
+        _ => false,
+    }
+}
+
+/// `const.null` is the zero handle of a class reference, so it is only meaningful
+/// where a class reference is: compared with one, or stored, passed or returned
+/// into a slot of class type. Anywhere else (an `any`, a number parameter that
+/// defaults when `null` is passed) zero means something else, and the translator
+/// would refuse it; saying so here keeps eligibility equal to what is lowered.
+fn const_null_uses_ok(
+    module: &Module,
+    body: &zun_module::MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+    within: std::ops::Range<usize>,
+) -> bool {
+    let field_is_object = |token: zun_metadata::Token| {
+        module
+            .tables
+            .field_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .is_some_and(|field| JitKind::from_byte(field.kind) == JitKind::Object)
+    };
+    let mut offset = 0usize;
+    for (i, instr) in instrs.iter().enumerate() {
+        let here = offset;
+        offset += instr.encoded_len();
+        if instr.opcode != Opcode::ConstNull || !within.contains(&here) {
+            continue;
+        }
+        // Several nulls in a row feed one `newobj`.
+        let mut next = i + 1;
+        while instrs.get(next).is_some_and(|n| n.opcode == Opcode::ConstNull) {
+            next += 1;
+        }
+        let Some(consumer) = instrs.get(next) else {
+            return false;
+        };
+        let ok = match (consumer.opcode, consumer.operand) {
+            (Opcode::StoreLocal, Operand::Local(slot)) => body
+                .local_kinds
+                .get(slot as usize)
+                .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object),
+            (Opcode::StoreField | Opcode::StoreStatic, Operand::Token(token)) => {
+                field_is_object(token)
+            }
+            (Opcode::Ret, _) => {
+                body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Object
+            }
+            (Opcode::NewObj, _) => true,
+            (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => module
+                .tables
+                .method_defs
+                .get((token.rid() as usize).wrapping_sub(1))
+                .and_then(|method| read_body(&module.code, method.body_offset).ok())
+                .is_some_and(|callee| {
+                    callee.param_count > 0
+                        && callee
+                            .local_kinds
+                            .get(callee.param_count as usize - 1)
+                            .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object)
+                }),
+            // `p === null`: the other operand was pushed just before.
+            (Opcode::CmpEq | Opcode::CmpNe, _) => {
+                next == i + 1
+                    && i > 0
+                    && pushes_object(module, body, &instrs[i - 1])
+            }
+            // `null === p`: the other operand follows and then the compare.
+            _ if next == i + 1
+                && pushes_object(module, body, consumer)
+                && instrs
+                    .get(next + 1)
+                    .is_some_and(|c| matches!(c.opcode, Opcode::CmpEq | Opcode::CmpNe)) =>
+            {
+                true
+            }
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether the body keeps a managed reference live across a call that can collect,
+/// counting only calls whose byte offset lies in `within`.
+///
+/// A collection scans the native frame that allocates and no other, so a compiled
+/// frame that is suspended in such a call and holds a reference would resume on a
+/// stale address once the object moved. A reference is held across the call when a
+/// reference-kind local is live after it (backward liveness over the locals, loops
+/// and handlers included) or when the operand stack below the call's arguments may
+/// hold one (a forward walk of "may be a reference" per stack slot). The walk gives
+/// up, reporting a hazard, on any opcode it has no rule for.
+///
+/// `collects` decides, for a call instruction, whether its callee can run a
+/// collection (a callee the interpreter runs, or one that allocates).
+fn holds_reference_across_collecting_call(
+    module: &Module,
+    body: &zun_module::MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+    within: std::ops::Range<usize>,
+    collects: &dyn Fn(&zun_il::Instruction) -> bool,
+) -> bool {
+    let count = instrs.len();
+    let mut offsets = Vec::with_capacity(count + 1);
+    let mut index_of_offset: HashMap<usize, usize> = HashMap::new();
+    let mut at = 0usize;
+    for (i, instr) in instrs.iter().enumerate() {
+        offsets.push(at);
+        index_of_offset.insert(at, i);
+        at += instr.encoded_len();
+    }
+    offsets.push(at);
+    index_of_offset.insert(at, count);
+
+    let branch_target = |i: usize| -> Option<usize> {
+        match instrs[i].operand {
+            Operand::Branch(displacement) => {
+                let target = offsets[i + 1] as i64 + i64::from(displacement);
+                index_of_offset.get(&(target as usize)).copied()
+            }
+            _ => None,
+        }
+    };
+    // Successors of an instruction, handlers included: anything in a protected
+    // range may continue at the handler.
+    let successors = |i: usize| -> Vec<usize> {
+        let mut out = Vec::new();
+        match instrs[i].opcode {
+            Opcode::Branch => out.extend(branch_target(i)),
+            Opcode::BranchTrue | Opcode::BranchFalse => {
+                out.extend(branch_target(i));
+                out.push(i + 1);
+            }
+            Opcode::Ret | Opcode::Throw | Opcode::Rethrow => {}
+            _ => out.push(i + 1),
+        }
+        for handler in &body.handlers {
+            if (handler.try_start as usize) <= offsets[i] && offsets[i] < handler.try_end as usize {
+                out.extend(index_of_offset.get(&(handler.handler_start as usize)).copied());
+            }
+        }
+        out.retain(|&s| s < count);
+        out
+    };
+
+    let locals = body.local_kinds.len();
+    let words = locals.div_ceil(64).max(1);
+    let is_reference_local: Vec<bool> = body
+        .local_kinds
+        .iter()
+        .map(|&kind| kind_is_reference(kind))
+        .collect();
+
+    // Backward liveness of the reference locals.
+    let mut live_in = vec![vec![0u64; words]; count + 1];
+    loop {
+        let mut changed = false;
+        for i in (0..count).rev() {
+            let mut out = vec![0u64; words];
+            for s in successors(i) {
+                for (o, w) in out.iter_mut().zip(&live_in[s]) {
+                    *o |= *w;
+                }
+            }
+            if let (Opcode::StoreLocal, Operand::Local(slot)) = (instrs[i].opcode, instrs[i].operand)
+            {
+                let slot = slot as usize;
+                if slot < locals {
+                    out[slot / 64] &= !(1u64 << (slot % 64));
+                }
+            }
+            if let (Opcode::LoadLocal, Operand::Local(slot)) = (instrs[i].opcode, instrs[i].operand)
+            {
+                let slot = slot as usize;
+                if slot < locals && is_reference_local[slot] {
+                    out[slot / 64] |= 1u64 << (slot % 64);
+                }
+            }
+            if out != live_in[i] {
+                live_in[i] = out;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let live_after = |i: usize| -> bool {
+        successors(i)
+            .into_iter()
+            .any(|s| live_in[s].iter().any(|&word| word != 0))
+    };
+
+    // Forward walk of the operand stack: may each slot hold a reference?
+    let field_is_reference = |rid: u32| {
+        module
+            .tables
+            .field_defs
+            .get((rid as usize).wrapping_sub(1))
+            .is_none_or(|field| kind_is_reference(field.kind))
+    };
+    let callee_body = |rid: u32| {
+        module
+            .tables
+            .method_defs
+            .get((rid as usize).wrapping_sub(1))
+            .and_then(|method| read_body(&module.code, method.body_offset).ok())
+    };
+    // The walk covers only `within`: a loop region is entered with an empty stack,
+    // and what the rest of the method does with the operand stack is not its
+    // business (nor is an opcode this walk has no rule for out there).
+    let first = index_of_offset.get(&within.start).copied().unwrap_or(0);
+    let mut entry: Vec<Option<Vec<bool>>> = vec![None; count + 1];
+    entry[first] = Some(Vec::new());
+    let mut work = vec![first];
+    for handler in &body.handlers {
+        if !within.contains(&(handler.handler_start as usize)) {
+            continue;
+        }
+        if let Some(&h) = index_of_offset.get(&(handler.handler_start as usize)) {
+            if h < count && entry[h].is_none() {
+                entry[h] = Some(vec![true]);
+                work.push(h);
+            }
+        }
+    }
+    while let Some(i) = work.pop() {
+        let Some(mut stack) = entry[i].clone() else {
+            continue;
+        };
+        let instr = &instrs[i];
+        // (values popped, values pushed, whether a pushed value may be a reference;
+        // `None` = decided per opcode below).
+        let (pops, pushes, pushes_reference): (usize, usize, Option<bool>) =
+            match (instr.opcode, instr.operand) {
+                (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => {
+                    let Some(callee) = callee_body(token.rid()) else {
+                        return true;
+                    };
+                    let returns_reference =
+                        callee.returns_value && kind_is_reference(callee.return_kind);
+                    (callee.param_count as usize, 1, Some(returns_reference))
+                }
+                (Opcode::NewObj, Operand::Token(token)) => {
+                    let Some(ty) = module
+                        .tables
+                        .type_defs
+                        .get((token.rid() as usize).wrapping_sub(1))
+                    else {
+                        return true;
+                    };
+                    ((ty.field_end - ty.field_start) as usize, 1, Some(true))
+                }
+                (Opcode::CallBuiltin, Operand::Imm32(id)) => {
+                    let Some(native) = zun_natives::by_id(id as u32) else {
+                        return true;
+                    };
+                    (native.params.len(), 1, Some(true))
+                }
+                (Opcode::CallIndirect, _) => return true,
+                (opcode, _) => match opcode.stack_effect() {
+                    zun_il::StackEffect::Fixed { pops, pushes } => {
+                        let name = format!("{opcode:?}");
+                        let numeric = matches!(
+                            opcode,
+                            Opcode::ConstI32
+                                | Opcode::ConstI64
+                                | Opcode::ConstF64
+                                | Opcode::ConstTrue
+                                | Opcode::ConstFalse
+                                | Opcode::ConstStr
+                                | Opcode::Conv
+                                | Opcode::BoxAny
+                                | Opcode::ArrayLength
+                                | Opcode::CmpEq
+                                | Opcode::CmpNe
+                                | Opcode::CmpLt
+                                | Opcode::CmpLe
+                                | Opcode::CmpGt
+                                | Opcode::CmpGe
+                        ) || name.ends_with("I32")
+                            || name.ends_with("F64");
+                        (
+                            pops as usize,
+                            pushes as usize,
+                            if numeric { Some(false) } else { None },
+                        )
+                    }
+                    zun_il::StackEffect::Terminator => (
+                        usize::from(matches!(opcode, Opcode::Ret | Opcode::Throw)),
+                        0,
+                        None,
+                    ),
+                    zun_il::StackEffect::Call => return true,
+                },
+            };
+        if stack.len() < pops {
+            return true;
+        }
+        let args_start = stack.len() - pops;
+        let is_call = matches!(instr.opcode, Opcode::Call | Opcode::CallVirt);
+        if is_call
+            && within.contains(&offsets[i])
+            && collects(instr)
+            && (stack[..args_start].iter().any(|&held| held) || live_after(i))
+        {
+            return true;
+        }
+        let popped: Vec<bool> = stack.split_off(args_start);
+        match instr.opcode {
+            Opcode::Dup => {
+                let top = popped.last().copied().unwrap_or(true);
+                stack.push(top);
+                stack.push(top);
+            }
+            Opcode::LoadLocal => {
+                let reference = match instr.operand {
+                    Operand::Local(slot) => {
+                        is_reference_local.get(slot as usize).copied().unwrap_or(true)
+                    }
+                    _ => true,
+                };
+                stack.push(reference);
+            }
+            Opcode::LoadField | Opcode::LoadStatic => {
+                let reference = match instr.operand {
+                    Operand::Token(token) => field_is_reference(token.rid()),
+                    _ => true,
+                };
+                stack.push(reference);
+            }
+            Opcode::ConstNull | Opcode::NewArray | Opcode::LoadArray | Opcode::ArrayPop => {
+                stack.push(true)
+            }
+            _ => {
+                for _ in 0..pushes {
+                    stack.push(pushes_reference.unwrap_or(true));
+                }
+            }
+        }
+        for s in successors(i) {
+            if !within.contains(&offsets[s]) {
+                continue;
+            }
+            match &entry[s] {
+                None => {
+                    entry[s] = Some(stack.clone());
+                    work.push(s);
+                }
+                Some(existing) => {
+                    if existing.len() != stack.len() {
+                        return true;
+                    }
+                    let merged: Vec<bool> =
+                        existing.iter().zip(&stack).map(|(&a, &b)| a || b).collect();
+                    if merged != *existing {
+                        entry[s] = Some(merged);
+                        work.push(s);
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// What a method body does that matters to a moving collection.
+struct GcProfile {
+    /// It allocates itself, so running it can start a collection.
+    allocates: bool,
+}
+
+/// Whether `instr` can start a collection from compiled code. Only `newobj` can:
+/// it allocates through `zun_rt_alloc`, the one entry point that collects. The
+/// array, string and collection helpers allocate without ever collecting, and a
+/// `CallIndirect` runs arbitrary code through the bridge.
+fn instruction_allocates(instr: &zun_il::Instruction) -> bool {
+    matches!(instr.opcode, Opcode::NewObj | Opcode::CallIndirect)
+}
+
+fn kind_is_reference(byte: u8) -> bool {
+    matches!(JitKind::from_byte(byte), JitKind::Object | JitKind::Array)
+}
+
+fn gc_profile(module: &Module, body_offset: u32) -> Option<GcProfile> {
+    let body = read_body(&module.code, body_offset).ok()?;
+    let instrs = decode_all(body.code).ok()?;
+    Some(GcProfile {
+        allocates: instrs.iter().any(instruction_allocates),
+    })
+}
+
+/// Whether the call instruction `instr` can run a collection, given which methods
+/// `may_collect`. A virtual call reaches every method of that name.
+fn call_may_collect(
+    module: &Module,
+    instr: &zun_il::Instruction,
+    methods_by_name: &HashMap<zun_metadata::StringIndex, Vec<u32>>,
+    may_collect: &dyn Fn(u32) -> bool,
+) -> bool {
+    match (instr.opcode, instr.operand) {
+        (Opcode::Call, Operand::Token(token)) => may_collect(token.rid()),
+        (Opcode::CallVirt, Operand::Token(token)) => {
+            let Some(method) = module.tables.method_defs.get((token.rid() as usize).wrapping_sub(1))
+            else {
+                return true;
+            };
+            may_collect(token.rid())
+                || methods_by_name
+                    .get(&method.name)
+                    .is_some_and(|rids| rids.iter().any(|&rid| may_collect(rid)))
+        }
+        _ => true,
+    }
+}
+
+/// The eligible methods whose execution can run a collection: they allocate, or
+/// call something that does, or call a method the interpreter runs.
+fn collecting_methods(
+    candidate: &HashMap<u32, Vec<(u32, bool)>>,
+    profiles: &HashMap<u32, GcProfile>,
+    eligible: &HashSet<u32>,
+) -> HashSet<u32> {
+    let mut collecting: HashSet<u32> = eligible
+        .iter()
+        .copied()
+        .filter(|rid| profiles.get(rid).is_some_and(|profile| profile.allocates))
+        .collect();
+    loop {
+        let before = collecting.len();
+        for rid in eligible {
+            if collecting.contains(rid) {
+                continue;
+            }
+            if candidate[rid]
+                .iter()
+                .any(|&(c, _)| !eligible.contains(&c) || collecting.contains(&c))
+            {
+                collecting.insert(*rid);
+            }
+        }
+        if collecting.len() == before {
+            return collecting;
+        }
+    }
+}
+
+/// The JIT's eligible methods together with the ones that may run a collection
+/// (see [`GcProfile`]). The second set is what a loop region consults: a region
+/// that keeps references in its locals must not call into it.
+pub fn eligible_and_collecting(
+    module: &Module,
+    allow_const_str: bool,
+    bridge_available: bool,
+) -> (HashSet<u32>, HashSet<u32>) {
+    let analysis = analyze(module, allow_const_str, bridge_available);
+    (analysis.eligible, analysis.collecting)
+}
+
+/// Whether the loop at `target_pc` keeps a managed reference live across a call
+/// that can collect. A collection scans only the frame that allocates, so the loop
+/// frame would resume on stale addresses; such a loop stays on the interpreter.
+pub fn loop_region_holds_references_across_collecting_call(
+    module: &Module,
+    method_rid: u32,
+    target_pc: usize,
+    eligible: &HashSet<u32>,
+    collecting: &HashSet<u32>,
+) -> bool {
+    let Some((start, end)) = loop_region(module, method_rid, target_pc) else {
+        return false;
+    };
+    let Some(method) = module.tables.method_defs.get(method_rid as usize - 1) else {
+        return false;
+    };
+    let Ok(body) = read_body(&module.code, method.body_offset) else {
+        return true;
+    };
+    let Ok(instrs) = decode_all(body.code) else {
+        return true;
+    };
+    let mut methods_by_name: HashMap<_, Vec<u32>> = HashMap::new();
+    for (index, method) in module.tables.method_defs.iter().enumerate() {
+        methods_by_name
+            .entry(method.name)
+            .or_default()
+            .push(index as u32 + 1);
+    }
+    let may_collect = |rid: u32| !eligible.contains(&rid) || collecting.contains(&rid);
+    holds_reference_across_collecting_call(module, &body, &instrs, start..end, &|call| {
+        call_may_collect(module, call, &methods_by_name, &may_collect)
+    })
+}
 fn kind_name(byte: u8) -> String {
     match JitKind::from_byte(byte) {
         JitKind::Other => format!("Other(byte {byte})"),
@@ -1224,31 +1766,82 @@ fn analyze(module: &Module, allow_const_str: bool, bridge_available: bool) -> An
         }
     }
 
+    let profiles: HashMap<u32, GcProfile> = candidate
+        .keys()
+        .filter_map(|&rid| {
+            let method = &module.tables.method_defs[rid as usize - 1];
+            gc_profile(module, method.body_offset).map(|profile| (rid, profile))
+        })
+        .collect();
     let mut eligible: HashSet<u32> = candidate.keys().copied().collect();
+    let mut unsafe_to_hold: HashSet<u32> = HashSet::new();
+    let mut collecting: HashSet<u32>;
     loop {
-        let prev = eligible.clone();
-        // A callee must be eligible, OR (with a bridge) ineligible but provably
-        // non-throwing — then the call is routed to the interpreter.
-        eligible.retain(|rid| {
-            candidate[rid].iter().all(|&(c, is_virtual)| {
-                if prev.contains(&c) {
-                    return true;
-                }
-                // Only a direct `Call` to an ineligible method is bridged (the
-                // translator does not bridge `CallVirt`). With the exceptional-
-                // return channel, such a callee may be bridged whether or not it
-                // can throw — a throw propagates out via the pending slot — as
-                // long as its signature is marshalable by the packed-value ABI.
-                !is_virtual && bridge_available && bridge_marshalable(module, c)
+        loop {
+            let prev = eligible.clone();
+            // A callee must be eligible, OR (with a bridge) ineligible but provably
+            // non-throwing — then the call is routed to the interpreter.
+            eligible.retain(|rid| {
+                candidate[rid].iter().all(|&(c, is_virtual)| {
+                    if prev.contains(&c) {
+                        return true;
+                    }
+                    // Only a direct `Call` to an ineligible method is bridged (the
+                    // translator does not bridge `CallVirt`). With the exceptional-
+                    // return channel, such a callee may be bridged whether or not it
+                    // can throw — a throw propagates out via the pending slot — as
+                    // long as its signature is marshalable by the packed-value ABI.
+                    !is_virtual && bridge_available && bridge_marshalable(module, c)
+                })
+            });
+            if eligible.len() == prev.len() {
+                break;
+            }
+        }
+        // A collection scans the native frame that allocates, and no other native
+        // frame. A compiled method that keeps a managed reference across a call
+        // that can collect would resume on a stale address once the object moved,
+        // so it stays on the interpreter, whose frames the collector does root and
+        // rewrite. A callee the interpreter runs (a bridged call) collects too.
+        collecting = collecting_methods(&candidate, &profiles, &eligible);
+        let may_collect = |rid: u32| !eligible.contains(&rid) || collecting.contains(&rid);
+        let pruned: Vec<u32> = eligible
+            .iter()
+            .copied()
+            .filter(|&rid| {
+                let method = &module.tables.method_defs[rid as usize - 1];
+                let Ok(body) = read_body(&module.code, method.body_offset) else {
+                    return false;
+                };
+                let Ok(instrs) = decode_all(body.code) else {
+                    return false;
+                };
+                holds_reference_across_collecting_call(
+                    module,
+                    &body,
+                    &instrs,
+                    0..usize::MAX,
+                    &|call| call_may_collect(module, call, &methods_by_name, &may_collect),
+                )
             })
-        });
-        if eligible.len() == prev.len() {
+            .collect();
+        if pruned.is_empty() {
             break;
+        }
+        for rid in pruned {
+            eligible.remove(&rid);
+            unsafe_to_hold.insert(rid);
         }
     }
     // Locally-fine methods dropped by the fixpoint: name the blocking callee.
+    for rid in &unsafe_to_hold {
+        rejected.insert(
+            *rid,
+            "holds a managed reference across a call that may collect".into(),
+        );
+    }
     for (rid, callees) in &candidate {
-        if eligible.contains(rid) {
+        if eligible.contains(rid) || unsafe_to_hold.contains(rid) {
             continue;
         }
         let blocker = callees.iter().find(|&&(c, is_virtual)| {
@@ -1273,7 +1866,11 @@ fn analyze(module: &Module, allow_const_str: bool, bridge_available: bool) -> An
         };
         rejected.insert(*rid, why);
     }
-    Analysis { eligible, rejected }
+    Analysis {
+        eligible,
+        rejected,
+        collecting,
+    }
 }
 
 /// Local (per-method) eligibility: `Ok` with the method's callees, or `Err`
@@ -1396,6 +1993,9 @@ fn method_candidate(
     }
     if let Some(why) = first_unsupported(&instrs) {
         return Err(why);
+    }
+    if !const_null_uses_ok(module, &body, &instrs, 0..usize::MAX) {
+        return Err("const.null where the target is not a class reference".into());
     }
     // Function values in the typed JIT are carried as a one-word method rid
     // (`LoadFunction` → rid, `CallIndirect` dispatches it through the bridge).

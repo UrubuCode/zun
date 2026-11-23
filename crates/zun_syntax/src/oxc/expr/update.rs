@@ -44,6 +44,7 @@ pub(super) fn convert_update(
                     },
                     is_array: false,
                     array_depth: 0,
+                    nullable: false,
                 },
                 span: whole,
             };

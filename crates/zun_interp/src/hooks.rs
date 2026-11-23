@@ -51,7 +51,9 @@ pub trait CallHook {
     /// `locals` has been OVERWRITTEN in place with the post-loop values, and
     /// `Some(resume_pc)` (an IL byte offset) is returned; the interpreter
     /// continues from there with an empty operand stack. Only valid to call
-    /// when the operand stack is empty. The default returns `None`, which
+    /// when the operand stack is empty. `Some(usize::MAX)` is not a pc: the loop
+    /// left by throwing, and the exception is available from
+    /// [`CallHook::take_pending_exception`]. The default returns `None`, which
     /// keeps the interpreter looping.
     fn try_loop_osr(
         &self,

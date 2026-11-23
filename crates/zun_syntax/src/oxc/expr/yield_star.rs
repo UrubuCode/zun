@@ -192,6 +192,7 @@ impl YieldStar {
                     },
                     is_array: false,
                     array_depth: 0,
+                    nullable: false,
                 },
                 body: Block {
                     statements: vec![

@@ -30,6 +30,9 @@ use cranelift_module::{DataId, FuncId, Module as ClifModule};
 use zun_il::{decode_all, JitKind, NumKind, Opcode, Operand};
 use zun_module::{read_body, MethodBody, Module as ZmModule};
 use zun_types::TypeSystem;
+use objects::{
+    field_token_rid, require_reference_agreement, require_reference_receiver, NullDeref,
+};
 
 /// The Cranelift type for a JIT value kind.
 pub fn clif_ty(kind: JitKind) -> Type {
@@ -286,6 +289,7 @@ pub fn translate_body(
         module,
         zm,
         osr_counter,
+        null_deref_ref: None,
         // Region mode returns the resume PC (u64).
         method_return_kind: if region.is_some() {
             JitKind::Num(NumKind::U64)
@@ -309,6 +313,13 @@ pub fn translate_body(
     if let Some(error) = t.osr_error.take() {
         return Err(error);
     }
+    // `finalize` spills and reloads the stack-map values live across a safepoint,
+    // but it rewrites only operands that name the value itself. A use that went
+    // through an SSA alias (a variable read in a later block, whose redundant block
+    // parameter the builder replaced by the dominating value) was left reading the
+    // stale register, so a moving collection at an allocation left it pointing at
+    // the old copy. Resolving aliases first makes every use name its value.
+    t.builder.func.dfg.resolve_all_aliases();
     t.builder.finalize();
     Ok(())
 }
@@ -463,6 +474,8 @@ pub(crate) struct Translator<'a> {
     pub(crate) literal_ptrs: *const u64,
     pub(crate) literal_data_ids: *const u32,
     pub(crate) osr_counter: Variable,
+    /// The `zun_jit_null_deref` import of the function being built (declared once).
+    pub(crate) null_deref_ref: Option<cranelift_codegen::ir::FuncRef>,
     pub(crate) method_return_kind: JitKind,
     /// Exception regions of the method body (same-frame catch-all slice only).
     pub(crate) handlers: Vec<zun_module::ExceptionHandler>,
@@ -590,6 +603,14 @@ impl Translator<'_> {
                     let c = self.builder.ins().iconst(types::I32, 0);
                     stack.push((c, JitKind::Bool));
                 }
+                // `null` is the zero handle of a nullable class reference. It is an
+                // `Object`-kind value; every consumer below refuses it where the
+                // target is not an `Object` slot, so it cannot reach an `any` or
+                // array slot, where zero is not null.
+                Opcode::ConstNull => {
+                    let zero = self.builder.ins().iconst(types::I64, 0);
+                    stack.push((zero, JitKind::Object));
+                }
                 Opcode::ConstStr => self.op_const_str(instr, &mut stack)?,
                 Opcode::Conv => {
                     let target = NumKind::from_imm(imm32(&instr.operand)).ok_or("bad conv kind")?;
@@ -604,7 +625,8 @@ impl Translator<'_> {
                 }
                 Opcode::StoreLocal => {
                     let slot = local_index(&instr.operand)?;
-                    let (v, _) = stack.pop().ok_or("stack underflow")?;
+                    let (v, kind) = stack.pop().ok_or("stack underflow")?;
+                    require_reference_agreement(kind, self.local_kinds[slot], "stloc")?;
                     self.builder.def_var(self.vars[slot], v);
                 }
                 Opcode::Pop => {
@@ -706,6 +728,9 @@ impl Translator<'_> {
                 }
                 Opcode::Ret => {
                     if let Some((v, kind)) = stack.pop() {
+                        if self.method_returns_value {
+                            require_reference_agreement(kind, self.method_return_kind, "ret")?;
+                        }
                         if kind == JitKind::Other {
                             let tag = self.builder.ins().load(
                                 types::I64,
@@ -893,8 +918,18 @@ impl Translator<'_> {
                 Opcode::ArrayPush => self.op_array_push(&mut stack)?,
                 Opcode::LoadField => {
                     let (kind, slot) = self.field_info(&instr.operand)?;
-                    let (ptr, _) = stack.pop().ok_or("stack underflow")?;
+                    let (ptr, ptr_kind) = stack.pop().ok_or("stack underflow")?;
+                    require_reference_receiver(ptr_kind, "ldfld")?;
                     self.builder.declare_value_needs_stack_map(ptr);
+                    let field_rid = field_token_rid(&instr.operand)?;
+                    self.emit_null_check(
+                        ptr,
+                        NullDeref::Field { rid: field_rid, storing: false },
+                        &stack,
+                        &mut block_sigs,
+                        offset_of_index[i],
+                        index_of_offset,
+                    )?;
                     let off = zun_core::field_offset(slot) as i32;
                     let raw = self
                         .builder
@@ -908,8 +943,19 @@ impl Translator<'_> {
                 }
                 Opcode::StoreField => {
                     let (kind, slot) = self.field_info(&instr.operand)?;
-                    let (val, _) = stack.pop().ok_or("stack underflow")?;
-                    let (ptr, _) = stack.pop().ok_or("stack underflow")?;
+                    let (val, val_kind) = stack.pop().ok_or("stack underflow")?;
+                    let (ptr, ptr_kind) = stack.pop().ok_or("stack underflow")?;
+                    require_reference_agreement(val_kind, kind, "stfld value")?;
+                    require_reference_receiver(ptr_kind, "stfld")?;
+                    let field_rid = field_token_rid(&instr.operand)?;
+                    self.emit_null_check(
+                        ptr,
+                        NullDeref::Field { rid: field_rid, storing: true },
+                        &stack,
+                        &mut block_sigs,
+                        offset_of_index[i],
+                        index_of_offset,
+                    )?;
                     if kind == JitKind::Object {
                         self.builder.declare_value_needs_stack_map(ptr);
                         self.builder.declare_value_needs_stack_map(val);
@@ -953,6 +999,7 @@ impl Translator<'_> {
             }
         }
 
+        let osr_out_ptr = self.osr_exit.as_ref().map(|exit| exit.out_ptr);
         if let Some(exit) = self.osr_exit.take() {
             // Falling off the region's last instruction is the exit edge.
             let last = &instrs[hi - 1];
@@ -968,21 +1015,11 @@ impl Translator<'_> {
                 self.builder.ins().jump(exit.block, &args);
             }
             self.builder.switch_to_block(exit.block);
-            for slot in 0..self.local_kinds.len() {
-                let kind = self.local_kinds[slot];
-                let v = self.builder.use_var(self.vars[slot]);
-                let packed = crate::shim::pack_result(&mut self.builder, v, kind);
-                self.builder.ins().store(
-                    MemFlags::trusted(),
-                    packed,
-                    exit.out_ptr,
-                    (slot * 8) as i32,
-                );
-            }
+            self.store_osr_locals(exit.out_ptr);
             let pc = self.builder.ins().iconst(types::I64, exit.resume_pc);
             self.builder.ins().return_(&[pc]);
         }
-        self.finish_exc_exit();
+        self.finish_exc_exit(osr_out_ptr);
         self.builder.seal_all_blocks();
         Ok(())
     }

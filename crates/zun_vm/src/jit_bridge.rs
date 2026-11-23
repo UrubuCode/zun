@@ -228,6 +228,7 @@ pub(crate) fn bridge_config() -> zun_codegen::BridgeConfig {
         call_interp: zun_jit_call_interp as *const u8,
         call_indirect: zun_jit_call_indirect as *const u8,
         route_pending: zun_jit_route_pending as *const u8,
+        null_deref: zun_jit_null_deref as *const u8,
         pending_slot_addr: pending_slot_addr(),
     }
 }
@@ -253,6 +254,27 @@ pub(crate) extern "C" fn zun_jit_route_pending(catch_type_rid: i64) -> i64 {
         handle as i64
     } else {
         0
+    }
+}
+
+/// Raise the `TypeError` for a null dereference in compiled code: build the same
+/// error the interpreter throws and leave it pending, so the JIT frame's post-call
+/// check routes it to a catch or out of the frame like a bridged callee's throw.
+pub(crate) extern "C" fn zun_jit_null_deref(kind: i64, rid: i64) {
+    let Some(context) = BRIDGE_CONTEXT.with(|cell| *cell.borrow()) else {
+        return;
+    };
+    let module = unsafe { &*context.module };
+    let loader = context.loader.map(|loader| unsafe { &*loader });
+    let output = unsafe { &mut *context.output };
+    if let Some(handle) = zun_interp::null_dereference_error_on_current_heap(
+        module,
+        loader,
+        output,
+        kind as u32,
+        rid as u32,
+    ) {
+        set_pending_exception(handle);
     }
 }
 

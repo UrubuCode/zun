@@ -61,13 +61,21 @@ impl Translator<'_> {
     /// emitted by [`Self::finish_exc_exit`] after the main translation, so this
     /// only needs to hand back the block to branch to.
     pub(crate) fn exc_exit_block(&mut self) -> Block {
-        if let Some(block) = self.exc_exit {
-            return block;
-        }
         if self.osr_exit.is_some() {
-            // The OSR loop exit has no way to propagate a pending throw yet.
+            // Only a null dereference may leave an OSR region by throwing (see
+            // [`Self::null_exit_block`]); a call's throw still cannot.
             self.osr_error =
                 Some("OSR loop exit does not support bridged calls that may throw".into());
+        }
+        self.null_exit_block()
+    }
+
+    /// The exceptional exit as reached from a null dereference. In an OSR region it
+    /// stores the locals and returns [`crate::OSR_THROW`] so the interpreter, which owns
+    /// the frame, throws the pending exception at the loop header.
+    pub(crate) fn null_exit_block(&mut self) -> Block {
+        if let Some(block) = self.exc_exit {
+            return block;
         }
         let block = self.builder.create_block();
         self.exc_exit = Some(block);
@@ -77,11 +85,20 @@ impl Translator<'_> {
     /// Emit the exceptional-exit block's body: return an ABI-shaped dummy value
     /// (never used — the pending exception the interpreter reads overrides it),
     /// leaving the pending slot set so callers up the chain also unwind.
-    pub(crate) fn finish_exc_exit(&mut self) {
+    pub(crate) fn finish_exc_exit(&mut self, osr_out_ptr: Option<Value>) {
         let Some(block) = self.exc_exit else {
             return;
         };
         self.builder.switch_to_block(block);
+        if let Some(out_ptr) = osr_out_ptr {
+            // An OSR region: hand the locals back and return the throw sentinel; the
+            // interpreter picks the pending exception up and throws it from the
+            // loop header (see `JitHook::try_loop_osr`).
+            self.store_osr_locals(out_ptr);
+            let sentinel = self.builder.ins().iconst(types::I64, crate::OSR_THROW as i64);
+            self.builder.ins().return_(&[sentinel]);
+            return;
+        }
         if !self.method_returns_value {
             self.builder.ins().return_(&[]);
         } else if self.method_return_kind == JitKind::Other {
@@ -107,6 +124,19 @@ impl Translator<'_> {
         stack: &mut Vec<Slot>,
         call_offset: usize,
         index_of_offset: &BTreeMap<usize, usize>,
+    ) -> Result<(), String> {
+        self.route_pending_check(block_sigs, stack, call_offset, index_of_offset, false)
+    }
+
+    /// [`Self::after_call_pending_check`], also usable right after a null
+    /// dereference raised the throw (`from_null`): that one may leave an OSR region.
+    pub(crate) fn route_pending_check(
+        &mut self,
+        block_sigs: &mut HashMap<Block, Vec<JitKind>>,
+        stack: &mut Vec<Slot>,
+        call_offset: usize,
+        index_of_offset: &BTreeMap<usize, usize>,
+        from_null: bool,
     ) -> Result<(), String> {
         if !self.bridge_enabled {
             return Ok(());
@@ -164,7 +194,11 @@ impl Translator<'_> {
             let still = self.builder.ins().icmp(IntCC::NotEqual, pending, zero);
             let cont = self.builder.create_block();
             let args = self.thread_edge(block_sigs, cont, stack);
-            let exc = self.exc_exit_block();
+            let exc = if from_null {
+                self.null_exit_block()
+            } else {
+                self.exc_exit_block()
+            };
             self.builder.ins().brif(still, exc, &[], cont, &args);
             self.builder.switch_to_block(cont);
             *stack = Self::rebuild_stack(&self.builder, block_sigs, cont);
@@ -179,11 +213,28 @@ impl Translator<'_> {
         let is_pending = self.builder.ins().icmp(IntCC::NotEqual, pending, zero);
         let cont = self.builder.create_block();
         let args = self.thread_edge(block_sigs, cont, stack);
-        let exc = self.exc_exit_block();
+        let exc = if from_null {
+            self.null_exit_block()
+        } else {
+            self.exc_exit_block()
+        };
         self.builder.ins().brif(is_pending, exc, &[], cont, &args);
         self.builder.switch_to_block(cont);
         *stack = Self::rebuild_stack(&self.builder, block_sigs, cont);
         Ok(())
+    }
+
+    /// Write every local, packed, to the OSR out buffer (the loop exit and the
+    /// exceptional exit both hand the frame back to the interpreter).
+    pub(crate) fn store_osr_locals(&mut self, out_ptr: Value) {
+        for slot in 0..self.local_kinds.len() {
+            let kind = self.local_kinds[slot];
+            let v = self.builder.use_var(self.vars[slot]);
+            let packed = crate::shim::pack_result(&mut self.builder, v, kind);
+            self.builder
+                .ins()
+                .store(MemFlags::trusted(), packed, out_ptr, (slot * 8) as i32);
+        }
     }
 
     /// Rebuild the operand stack from a continuation block's parameters.
