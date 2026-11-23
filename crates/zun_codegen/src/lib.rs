@@ -175,6 +175,10 @@ pub struct Jit {
     /// Address of the per-thread pending-exception slot the JIT loads after a
     /// call to detect a propagated throw (0 when no bridge).
     bridge_pending_addr: u64,
+    /// Address of this thread's current-statics cell, loaded by inline static
+    /// accesses (see `zun_gc::static_table_cell_addr`); the JIT runs on the
+    /// thread that built it. 0 disables inlining (AOT).
+    statics_cell_addr: u64,
     /// OSR entry variants compiled by [`Jit::ensure_osr_compiled`]
     /// (module-JIT epic slice 3), indexed by [`OsrEntryId`].
     osr_entries: Vec<OsrEntry>,
@@ -735,6 +739,7 @@ impl Jit {
             stack_map_registry: zun_gc::StackMapRegistry::new(),
             bridge_enabled: bridge_fn.is_some(),
             bridge_pending_addr,
+            statics_cell_addr: zun_gc::static_table_cell_addr(),
             osr_entries: Vec::new(),
         };
 
@@ -890,6 +895,7 @@ impl Jit {
             &body,
             self.bridge_enabled,
             self.bridge_pending_addr,
+            self.statics_cell_addr,
             None,
             None,
         ) {
@@ -1087,6 +1093,7 @@ impl Jit {
             &body,
             self.bridge_enabled,
             self.bridge_pending_addr,
+            self.statics_cell_addr,
             Some(target_pc),
             region_end,
         ) {
@@ -1762,6 +1769,7 @@ pub fn compile_object_for_target(
             literal_data_ids.as_ptr(),
             &body,
             false,
+            0,
             0,
             None,
             None,

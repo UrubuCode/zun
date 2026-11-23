@@ -177,6 +177,16 @@ impl Heap {
                 }
             }
         }
+        // Class-static data slots are roots too: always scanned, which is why a
+        // young object stored there needs no remembered-set entry.
+        for address in self.static_store.object_references() {
+            if let Some(&idx) = self.by_addr.get(&address) {
+                if !self.records[idx].marked {
+                    self.records[idx].marked = true;
+                    work.push(idx);
+                }
+            }
+        }
         if young_only {
             // Move the set out to iterate it while mutating `self.records`
             // (disjoint fields), then put it back — the later retain/clear pass

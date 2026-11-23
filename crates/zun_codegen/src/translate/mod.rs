@@ -99,6 +99,7 @@ pub fn translate_body(
     body: &MethodBody<'_>,
     bridge_enabled: bool,
     pending_slot_addr: u64,
+    statics_cell_addr: u64,
     osr_entry_pc: Option<usize>,
     osr_region_end: Option<usize>,
 ) -> Result<(), String> {
@@ -295,6 +296,7 @@ pub fn translate_body(
         handlers: body.handlers.clone(),
         bridge_enabled,
         pending_slot_addr,
+        statics_cell_addr,
         exc_exit: None,
         osr_pinned: osr_block,
         osr_error: None,
@@ -472,6 +474,8 @@ pub(crate) struct Translator<'a> {
     /// Address of the pending-exception slot loaded after each call when the
     /// bridge is enabled (0 otherwise).
     pub(crate) pending_slot_addr: u64,
+    /// Address of the current-statics cell (0 = no inline static access).
+    pub(crate) statics_cell_addr: u64,
     /// The method's single exceptional-exit block (returns an ABI-shaped dummy,
     /// leaving the pending slot set), created lazily on the first post-call check.
     pub(crate) exc_exit: Option<Block>,

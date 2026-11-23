@@ -34,7 +34,7 @@ mod heap_context;
 mod native_roots;
 mod runtime_alloc;
 mod stack_maps;
-pub use heap_context::{current_heap_ptr, with_current_heap, with_current_heap_mut, HeapScope};
+pub use heap_context::{current_heap_ptr, static_table_cell_addr, with_current_heap, with_current_heap_mut, HeapScope};
 pub use native_roots::{
     append_native_roots, rewrite_native_roots, ExternalRootAppend, ExternalRootRewrite,
     ExternalRootScope, RootArray, RootCarrier, Rooted,
@@ -65,6 +65,12 @@ mod records;
 mod regexes;
 mod relocation;
 mod sets;
+pub use static_store::{
+    STATIC_CHUNK_BITS, STATIC_MAX_FLAT_FIELD,
+    StaticSlot, STATIC_SLOT_EMPTY, STATIC_SLOT_OWNER_OFFSET, STATIC_SLOT_PAYLOAD_OFFSET,
+    STATIC_SLOT_SET, STATIC_SLOT_SIZE, STATIC_SLOT_STATE_OFFSET, STATIC_SLOT_TAG_OFFSET,
+};
+mod static_store;
 mod strings;
 mod typed_views;
 mod value_ops;
@@ -302,6 +308,9 @@ pub struct Heap {
     /// are the static slots, so both the interpreter and JIT reach the same
     /// values through one GC-rooted object (see [`Heap::statics_object`]).
     statics: Option<Obj>,
+    /// Flat store for class-static *data* fields, indexed by field RID (see
+    /// `static_store`). Function-valued statics stay on `statics`.
+    static_store: static_store::StaticStore,
 }
 
 impl Heap {
@@ -363,43 +372,25 @@ impl Heap {
     /// Remove a class-static field slot (value or function), answering whether
     /// one was present.
     pub fn static_remove(&mut self, owner_type_rid: u32, field_rid: u32) -> bool {
+        let removed = self.static_store.remove(owner_type_rid, field_rid);
         let Some(object) = self.statics else {
-            return false;
+            return removed;
         };
         let key = Self::static_slot_key(owner_type_rid, field_rid);
         let had_function = self.dynamic_get_function(object, &key).is_some();
-        let removed = self.dynamic_remove(object, &key).is_some();
-        removed || had_function
+        let removed_function = self.dynamic_remove(object, &key).is_some();
+        removed || removed_function || had_function
     }
 
     /// Read a class-static field value (or `None` if unset).
     pub fn static_get(&self, owner_type_rid: u32, field_rid: u32) -> Option<zun_core::Any> {
-        let object = self.statics?;
-        let mut buffer = [0u8; 24];
-        self.dynamic_get(
-            object,
-            Self::static_slot_key_in(&mut buffer, owner_type_rid, field_rid),
-        )
+        self.static_store.get(owner_type_rid, field_rid)
     }
 
-    /// Write a class-static field value, allocating the statics object on first use.
+    /// Write a class-static field value. The store is a root scanned by every
+    /// collection, so no write barrier is needed.
     pub fn static_set(&mut self, owner_type_rid: u32, field_rid: u32, value: zun_core::Any) {
-        let object = self.statics_object();
-        // Overwriting a slot that already exists -- which is every write after
-        // the first, and so every write inside a loop -- needs no owned key.
-        let mut buffer = [0u8; 24];
-        if self.dynamic_set_existing(
-            object,
-            Self::static_slot_key_in(&mut buffer, owner_type_rid, field_rid),
-            value,
-        ) {
-            return;
-        }
-        self.dynamic_set(
-            object,
-            Self::static_slot_key(owner_type_rid, field_rid),
-            value,
-        );
+        self.static_store.set(owner_type_rid, field_rid, value);
     }
 
     /// Read a class-static field holding a function value (closures do not box
@@ -1237,6 +1228,9 @@ impl Heap {
                 rewritten += 1;
             }
         }
+        rewritten += self
+            .static_store
+            .rewrite_object_references(|address| relocation.relocate_address(address));
         rewritten
             + self.rewrite_object_references(relocation, ref_slots)
             + self.rewrite_auxiliary_references(relocation)

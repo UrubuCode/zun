@@ -2364,3 +2364,66 @@ fn a_rooted_none_is_reported_as_nothing() {
     evacuate_with_native_roots(&mut heap);
     assert_eq!(held.get(), None);
 }
+
+#[test]
+fn an_unset_static_slot_answers_none_and_a_stored_undefined_is_distinct() {
+    let mut heap = Heap::new();
+    assert_eq!(heap.static_get(3, 7), None);
+    heap.static_set(3, 7, zun_core::Any::void());
+    assert_eq!(heap.static_get(3, 7), Some(zun_core::Any::void()));
+    assert!(heap.static_remove(3, 7));
+    assert_eq!(heap.static_get(3, 7), None);
+    assert!(!heap.static_remove(3, 7));
+}
+
+#[test]
+fn a_static_slot_is_keyed_by_owner_and_field() {
+    let mut heap = Heap::new();
+    heap.static_set(1, 9, zun_core::Any::float(1.5));
+    // An inherited static written through a subclass leaves the base alone.
+    heap.static_set(2, 9, zun_core::Any::float(2.5));
+    assert_eq!(heap.static_get(1, 9), Some(zun_core::Any::float(1.5)));
+    assert_eq!(heap.static_get(2, 9), Some(zun_core::Any::float(2.5)));
+    assert!(heap.static_remove(2, 9));
+    assert_eq!(heap.static_get(2, 9), None);
+    assert_eq!(heap.static_get(1, 9), Some(zun_core::Any::float(1.5)));
+}
+
+#[test]
+fn a_static_slot_holding_a_young_object_survives_an_evacuating_collection() {
+    let mut heap = Heap::new();
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    let object = heap.alloc(1, 0);
+    heap.static_set(4, 11, zun_core::Any::object(object.addr() as usize));
+    // The slot is the only reference: no frame root names the object.
+    let mut roots: Vec<Obj> = Vec::new();
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+    let moved = heap.static_get(4, 11).and_then(|any| any.as_object());
+    assert!(moved.is_some());
+    assert_eq!(heap.live_count(), 1);
+    // And again, after the first collection promoted or moved it.
+    unsafe { heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {}) };
+    assert!(heap.static_get(4, 11).and_then(|any| any.as_object()).is_some());
+    assert_eq!(heap.live_count(), 1);
+}
+
+#[test]
+fn a_static_slot_keeps_its_object_through_full_and_young_collections() {
+    let mut heap = Heap::new();
+    let ref_slots = |_: u32| std::rc::Rc::from(Vec::new());
+    let object = heap.alloc(5, 0);
+    heap.static_set(1, 3, zun_core::Any::object(object.addr() as usize));
+    for _ in 0..64 {
+        let _ = heap.alloc(5, 0);
+    }
+    unsafe { heap.collect(&[], &ref_slots) };
+    assert_eq!(heap.live_count(), 1);
+    unsafe { heap.collect_young(&[], &ref_slots) };
+    assert_eq!(heap.live_count(), 1);
+    let held = heap.static_get(1, 3).and_then(|any| any.as_object()).unwrap();
+    assert_eq!(held, object.addr() as usize);
+    // Removing the slot releases the object.
+    assert!(heap.static_remove(1, 3));
+    unsafe { heap.collect(&[], &ref_slots) };
+    assert_eq!(heap.live_count(), 0);
+}

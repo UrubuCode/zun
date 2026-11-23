@@ -172,6 +172,11 @@ impl Translator<'_> {
         stack: &mut Vec<Slot>,
     ) -> Result<(), String> {
         let (kind, owner, field) = self.static_info(&instr.operand)?;
+        if self.static_inline_f64(kind, field) {
+            let v = self.inline_load_static_f64(owner, field);
+            stack.push((v, kind));
+            return Ok(());
+        }
         let get = self.static_get_fref();
         let owner_c = self.builder.ins().iconst(types::I64, owner as i64);
         let field_c = self.builder.ins().iconst(types::I64, field as i64);
@@ -193,6 +198,11 @@ impl Translator<'_> {
     ) -> Result<(), String> {
         let (kind, owner, field) = self.static_info(&instr.operand)?;
         let (val, _) = stack.pop().ok_or("stack underflow")?;
+        if self.static_inline_f64(kind, field) {
+            self.inline_store_static_f64(owner, field, val);
+            stack.push((val, kind));
+            return Ok(());
+        }
         if matches!(kind, JitKind::Object | JitKind::Array) {
             self.builder.declare_value_needs_stack_map(val);
         }
@@ -206,6 +216,180 @@ impl Translator<'_> {
             .call(set, &[owner_c, field_c, raw, kind_c]);
         stack.push((val, kind)); // stsfld leaves the stored value
         Ok(())
+    }
+
+
+    /// Whether a static access of `kind` on `field` is lowered inline: only an
+    /// `f64` field, on a little-endian JIT (not AOT, which has no thread cell),
+    /// whose RID the flat store indexes. Everything else takes the helper.
+    fn static_inline_f64(&self, kind: JitKind, field: u32) -> bool {
+        self.statics_cell_addr != 0
+            && cfg!(target_endian = "little")
+            && zun_gc::STATIC_SLOT_STATE_OFFSET == zun_gc::STATIC_SLOT_OWNER_OFFSET + 4
+            && matches!(kind, JitKind::Num(NumKind::F64))
+            && field <= zun_gc::STATIC_MAX_FLAT_FIELD
+    }
+
+    /// Emit the shared prefix of an inline static access: the thread cell, the
+    /// chunk table, the chunk for `field` (any null branches to `slow`). Leaves
+    /// the builder in a block holding the chunk pointer, and returns it with the
+    /// slot byte offset inside the chunk.
+    fn static_slot_prefix(&mut self, field: u32, slow: Block) -> (Value, i32) {
+        let cell = self
+            .builder
+            .ins()
+            .iconst(types::I64, self.statics_cell_addr as i64);
+        let table = self.builder.ins().load(types::I64, MemFlags::trusted(), cell, 0);
+        let have_chunk_table = self.builder.create_block();
+        self.builder.ins().brif(table, have_chunk_table, &[], slow, &[]);
+        self.builder.switch_to_block(have_chunk_table);
+        self.builder.seal_block(have_chunk_table);
+        let chunk_index = (field >> zun_gc::STATIC_CHUNK_BITS) as i32;
+        let chunk = self
+            .builder
+            .ins()
+            .load(types::I64, MemFlags::trusted(), table, chunk_index * 8);
+        let have_chunk = self.builder.create_block();
+        self.builder.ins().brif(chunk, have_chunk, &[], slow, &[]);
+        self.builder.switch_to_block(have_chunk);
+        self.builder.seal_block(have_chunk);
+        let in_chunk = (field & ((1 << zun_gc::STATIC_CHUNK_BITS) - 1)) as usize;
+        (chunk, (in_chunk * zun_gc::STATIC_SLOT_SIZE) as i32)
+    }
+
+    /// `ldsfld` of an `f64` static: load tag and payload straight out of the
+    /// flat store when the slot belongs to this owner and holds a float; a cold
+    /// block calls the helper for every other case (unset, other owner, other
+    /// tag).
+    fn inline_load_static_f64(&mut self, owner: u32, field: u32) -> Value {
+        let slow = self.builder.create_block();
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::F64);
+        self.builder.set_cold_block(slow);
+
+        let (chunk, slot) = self.static_slot_prefix(field, slow);
+        let flags = MemFlags::trusted();
+        // Owner (low half) and state (high half) are adjacent: one compare.
+        let word = self.builder.ins().load(
+            types::I64,
+            flags,
+            chunk,
+            slot + zun_gc::STATIC_SLOT_OWNER_OFFSET as i32,
+        );
+        let expected = ((zun_gc::STATIC_SLOT_SET as i64) << 32) | owner as i64;
+        let expected = self.builder.ins().iconst(types::I64, expected);
+        let owned_and_set = self.builder.ins().icmp(IntCC::Equal, word, expected);
+        let tag = self.builder.ins().uload8(
+            types::I32,
+            flags,
+            chunk,
+            slot + zun_gc::STATIC_SLOT_TAG_OFFSET as i32,
+        );
+        let float_tag = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::Equal, tag, zun_core::AnyTag::Float as u8 as i64);
+        let hit = self.builder.ins().band(owned_and_set, float_tag);
+        let payload = self.builder.ins().load(
+            types::F64,
+            flags,
+            chunk,
+            slot + zun_gc::STATIC_SLOT_PAYLOAD_OFFSET as i32,
+        );
+        self.builder
+            .ins()
+            .brif(hit, merge, &[BlockArg::from(payload)], slow, &[]);
+
+        self.builder.switch_to_block(slow);
+        self.builder.seal_block(slow);
+        let get = self.static_get_fref();
+        let owner_c = self.builder.ins().iconst(types::I64, owner as i64);
+        let field_c = self.builder.ins().iconst(types::I64, field as i64);
+        let kind = JitKind::Num(NumKind::F64);
+        let kind_c = self.builder.ins().iconst(types::I64, kind.to_byte() as i64);
+        let call = self.builder.ins().call(get, &[owner_c, field_c, kind_c]);
+        let raw = self.builder.inst_results(call)[0];
+        let value = crate::shim::unpack_arg(&mut self.builder, raw, kind);
+        self.builder.ins().jump(merge, &[BlockArg::from(value)]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        self.builder.block_params(merge)[0]
+    }
+
+    /// `stsfld` of an `f64` static: when the slot is already claimed by this
+    /// owner (whether or not it holds a value) write tag, payload and state in
+    /// place. A float holds no reference, so no barrier or root bookkeeping is
+    /// involved; the cold block takes the helper (first write, other owner).
+    fn inline_store_static_f64(&mut self, owner: u32, field: u32, value: Value) {
+        let slow = self.builder.create_block();
+        let done = self.builder.create_block();
+        self.builder.set_cold_block(slow);
+
+        let (chunk, slot) = self.static_slot_prefix(field, slow);
+        let flags = MemFlags::trusted();
+        let word = self.builder.ins().load(
+            types::I64,
+            flags,
+            chunk,
+            slot + zun_gc::STATIC_SLOT_OWNER_OFFSET as i32,
+        );
+        let low = self.builder.ins().ireduce(types::I32, word);
+        let same_owner = self
+            .builder
+            .ins()
+            .icmp_imm(IntCC::Equal, low, owner as i64);
+        let high = self.builder.ins().ushr_imm(word, 32);
+        let claimed = self.builder.ins().icmp_imm(IntCC::NotEqual, high, 0);
+        let ok = self.builder.ins().band(same_owner, claimed);
+        let fast = self.builder.create_block();
+        self.builder.ins().brif(ok, fast, &[], slow, &[]);
+
+        self.builder.switch_to_block(fast);
+        self.builder.seal_block(fast);
+        let tag = self
+            .builder
+            .ins()
+            .iconst(types::I8, zun_core::AnyTag::Float as u8 as i64);
+        self.builder.ins().store(
+            flags,
+            tag,
+            chunk,
+            slot + zun_gc::STATIC_SLOT_TAG_OFFSET as i32,
+        );
+        self.builder.ins().store(
+            flags,
+            value,
+            chunk,
+            slot + zun_gc::STATIC_SLOT_PAYLOAD_OFFSET as i32,
+        );
+        let set = self
+            .builder
+            .ins()
+            .iconst(types::I32, zun_gc::STATIC_SLOT_SET as i64);
+        self.builder.ins().store(
+            flags,
+            set,
+            chunk,
+            slot + zun_gc::STATIC_SLOT_STATE_OFFSET as i32,
+        );
+        self.builder.ins().jump(done, &[]);
+
+        self.builder.switch_to_block(slow);
+        self.builder.seal_block(slow);
+        let kind = JitKind::Num(NumKind::F64);
+        let raw = crate::shim::pack_result(&mut self.builder, value, kind);
+        let set_fn = self.static_set_fref();
+        let owner_c = self.builder.ins().iconst(types::I64, owner as i64);
+        let field_c = self.builder.ins().iconst(types::I64, field as i64);
+        let kind_c = self.builder.ins().iconst(types::I64, kind.to_byte() as i64);
+        self.builder
+            .ins()
+            .call(set_fn, &[owner_c, field_c, raw, kind_c]);
+        self.builder.ins().jump(done, &[]);
+
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
     }
 
     pub(crate) fn alloc_fref(&mut self) -> cranelift_codegen::ir::FuncRef {

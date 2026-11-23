@@ -621,6 +621,61 @@ fn static_float_field_round_trips_through_the_jit_store() {
 }
 
 #[test]
+fn inline_float_static_access_follows_the_current_heap_and_the_helper_slow_paths() {
+    // An `f64` static is read and written inline through a per-thread cell that
+    // names the current heap's slot table, so one compiled module must keep
+    // separate state per heap, take the helper for an unset slot, and see a
+    // value stored through the heap API (the interpreter's path).
+    let module = compile(
+        "class Gauge { static value: number; } function bump(): number { Gauge.value = Gauge.value + 1.0; return Gauge.value; } function main(): int { return 0; }",
+    );
+    let rid = module
+        .tables
+        .method_defs
+        .iter()
+        .position(|method| module.strings.get(method.name) == "bump")
+        .expect("bump method") as u32
+        + 1;
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    assert!(jit.is_compiled(rid), "float static method should be JIT-eligible");
+
+    let call = |heap: &mut zun_gc::Heap| {
+        f64::from_bits(jit.call_packed_with_heap(rid, &[], heap).expect("bump call"))
+    };
+    let mut first = zun_gc::Heap::new();
+    let mut second = zun_gc::Heap::new();
+    assert_eq!(call(&mut first), 1.0);
+    assert_eq!(call(&mut first), 2.0);
+    assert_eq!(call(&mut second), 1.0);
+    assert_eq!(call(&mut first), 3.0);
+
+    // A value written through the heap API is read by the inline path, and the
+    // inline write is visible to the heap API afterwards.
+    let (owner, field) = (
+        module
+            .tables
+            .type_defs
+            .iter()
+            .position(|ty| module.strings.get(ty.name) == "Gauge")
+            .expect("Gauge type") as u32
+            + 1,
+        module
+            .tables
+            .field_defs
+            .iter()
+            .position(|f| module.strings.get(f.name) == "value")
+            .expect("value field") as u32
+            + 1,
+    );
+    second.static_set(owner, field, zun_core::Any::float(40.5));
+    assert_eq!(call(&mut second), 41.5);
+    assert_eq!(
+        second.static_get(owner, field).and_then(|any| any.as_float()),
+        Some(41.5)
+    );
+}
+
+#[test]
 fn data_view_extended_scalar_widths_use_the_typed_view_abi() {
     // The signed/8-bit/float32 DataView accessors lower to their own width-
     // specific helpers, just like the u16/u32/f64 fast paths. Writes are verified
