@@ -40,12 +40,16 @@ impl Translator<'_> {
                 self.builder.declare_value_needs_stack_map(value);
             }
         }
-        // ptr = zun_rt_alloc(type_rid, count, caller_sp)
+        // ptr = zun_rt_alloc(type_rid, count, caller_sp, caller_fp)
         let alloc = self.alloc_fref();
         let trid = self.builder.ins().iconst(types::I32, type_rid as i64);
         let nfields = self.builder.ins().iconst(types::I64, count as i64);
         let caller_sp = self.builder.ins().get_stack_pointer(types::I64);
-        let inst = self.builder.ins().call(alloc, &[trid, nfields, caller_sp]);
+        let caller_fp = self.builder.ins().get_frame_pointer(types::I64);
+        let inst = self
+            .builder
+            .ins()
+            .call(alloc, &[trid, nfields, caller_sp, caller_fp]);
         let ptr = self.builder.inst_results(inst)[0];
         self.builder.declare_value_needs_stack_map(ptr);
         // Store each field as a full i64 slot (same encoding the
@@ -408,6 +412,7 @@ impl Translator<'_> {
         sig.params.push(AbiParam::new(types::I32));
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
         let id = self
             .module
@@ -570,7 +575,11 @@ impl Translator<'_> {
             let raise = self.null_deref_fref();
             let kind = self.builder.ins().iconst(types::I64, kind);
             let rid = self.builder.ins().iconst(types::I64, rid);
-            self.builder.ins().call(raise, &[kind, rid]);
+            let caller_sp = self.builder.ins().get_stack_pointer(types::I64);
+            let caller_fp = self.builder.ins().get_frame_pointer(types::I64);
+            self.builder
+                .ins()
+                .call(raise, &[kind, rid, caller_sp, caller_fp]);
             // The throw is pending now: route it exactly like a callee's. Its
             // continuation block is unreachable, so it only needs a terminator.
             let mut after = stack.to_vec();
@@ -591,6 +600,8 @@ impl Translator<'_> {
         let mut sig = Signature::new(self.module.isa().default_call_conv());
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64)); // caller stack pointer
+        sig.params.push(AbiParam::new(types::I64)); // caller frame pointer
         let id = self
             .module
             .declare_function("zun_jit_null_deref", Linkage::Import, &sig)

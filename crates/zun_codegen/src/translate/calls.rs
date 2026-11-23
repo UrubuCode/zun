@@ -283,6 +283,8 @@ impl Translator<'_> {
         sig.params.push(AbiParam::new(types::I64)); // method rid
         sig.params.push(AbiParam::new(types::I64)); // packed args pointer
         sig.params.push(AbiParam::new(types::I64)); // argument count
+        sig.params.push(AbiParam::new(types::I64)); // caller stack pointer
+        sig.params.push(AbiParam::new(types::I64)); // caller frame pointer
         sig.returns.push(AbiParam::new(types::I64)); // packed result
         let id = self
             .module
@@ -297,6 +299,8 @@ impl Translator<'_> {
         sig.params.push(AbiParam::new(types::I64)); // closure environment address, or 0
         sig.params.push(AbiParam::new(types::I64)); // packed args pointer
         sig.params.push(AbiParam::new(types::I64)); // argument count
+        sig.params.push(AbiParam::new(types::I64)); // caller stack pointer
+        sig.params.push(AbiParam::new(types::I64)); // caller frame pointer
         sig.returns.push(AbiParam::new(types::I64)); // packed result
         let id = self
             .module
@@ -360,7 +364,12 @@ impl Translator<'_> {
         }
         let fref = self.bridge_fref();
         let argc_c = self.builder.ins().iconst(types::I64, argc as i64);
-        let call = self.builder.ins().call(fref, &[target, buf, argc_c]);
+        let caller_sp = self.builder.ins().get_stack_pointer(types::I64);
+        let caller_fp = self.builder.ins().get_frame_pointer(types::I64);
+        let call = self
+            .builder
+            .ins()
+            .call(fref, &[target, buf, argc_c, caller_sp, caller_fp]);
         let result = self.builder.inst_results(call)[0];
         if let Some(kind) = return_kind {
             if kind == JitKind::Other {
@@ -419,10 +428,12 @@ impl Translator<'_> {
         self.builder.declare_value_needs_stack_map(environment);
         let fref = self.call_indirect_fref();
         let argc_c = self.builder.ins().iconst(types::I64, argc as i64);
+        let caller_sp = self.builder.ins().get_stack_pointer(types::I64);
+        let caller_fp = self.builder.ins().get_frame_pointer(types::I64);
         let call = self
             .builder
             .ins()
-            .call(fref, &[identity, environment, buf, argc_c]);
+            .call(fref, &[identity, environment, buf, argc_c, caller_sp, caller_fp]);
         let result = self.builder.inst_results(call)[0];
         if let Some(kind) = return_kind {
             if kind == JitKind::Other {

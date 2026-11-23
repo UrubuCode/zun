@@ -25,7 +25,7 @@ pub fn define_shim(
     real: FuncId,
     param_kinds: &[JitKind],
     ret: Option<JitKind>,
-) -> Result<FuncId, String> {
+) -> Result<(FuncId, u32), String> {
     let conv = module.isa().default_call_conv();
     let ptr_ty = module.isa().pointer_type();
 
@@ -75,8 +75,11 @@ pub fn define_shim(
     module
         .define_function(shim_id, ctx)
         .map_err(|e| e.to_string())?;
+    let size = ctx
+        .compiled_code()
+        .map_or(0, |code| code.code_info().total_size);
     module.clear_context(ctx);
-    Ok(shim_id)
+    Ok((shim_id, size))
 }
 
 /// Build a shim for a loop-exit OSR entry (milestone B): the uniform
@@ -90,7 +93,7 @@ pub fn define_osr_loop_shim(
     name: &str,
     real: FuncId,
     param_kinds: &[JitKind],
-) -> Result<FuncId, String> {
+) -> Result<(FuncId, u32), String> {
     let conv = module.isa().default_call_conv();
     let ptr_ty = module.isa().pointer_type();
     let mut shim_sig = cranelift_codegen::ir::Signature::new(conv);
@@ -132,8 +135,11 @@ pub fn define_osr_loop_shim(
     module
         .define_function(shim_id, ctx)
         .map_err(|e| e.to_string())?;
+    let size = ctx
+        .compiled_code()
+        .map_or(0, |code| code.code_info().total_size);
     module.clear_context(ctx);
-    Ok(shim_id)
+    Ok((shim_id, size))
 }
 
 /// Build a shim for the two-word `Any` return ABI.
@@ -147,7 +153,7 @@ pub fn define_any_return_shim(
     name: &str,
     real: FuncId,
     param_kinds: &[JitKind],
-) -> Result<FuncId, String> {
+) -> Result<(FuncId, u32), String> {
     let conv = module.isa().default_call_conv();
     let ptr_ty = module.isa().pointer_type();
     let mut shim_sig = cranelift_codegen::ir::Signature::new(conv);
@@ -216,8 +222,11 @@ pub fn define_any_return_shim(
     module
         .define_function(shim_id, ctx)
         .map_err(|e| e.to_string())?;
+    let size = ctx
+        .compiled_code()
+        .map_or(0, |code| code.code_info().total_size);
     module.clear_context(ctx);
-    Ok(shim_id)
+    Ok((shim_id, size))
 }
 
 /// Convert a raw i64 value into a value of kind `k` (shared with field loads).

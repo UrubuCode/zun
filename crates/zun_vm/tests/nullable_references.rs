@@ -86,3 +86,93 @@ fn a_null_terminated_list_survives_collections_in_both_tiers() {
     assert_eq!(plain, jitted);
     assert_eq!(plain, ["3000,3000,3000,3000,3000,3000"]);
 }
+
+/// Compiled code that is suspended in a bridged call into the interpreter keeps its
+/// references: the interpreter allocates enough to run moving collections, and the
+/// compiled caller must still find its objects (at their new addresses) afterwards.
+#[test]
+fn a_compiled_caller_survives_collections_run_by_a_bridged_callee() {
+    let src = "class N { v: number = 0; next: N | null = null; }
+        function churn(k: number): number {
+            let s = 0;
+            try { for (let i = 0; i < k; i++) { const x = new N(); x.v = i; s += x.v; } }
+            catch (e) { s = -1; }
+            return s;
+        }
+        function outer(i: number): number {
+            const keep = new N(); keep.v = i;
+            const other = new N(); other.v = i * 2; keep.next = other;
+            const r = churn(400);
+            return keep.v + (keep.next as N).v + r;
+        }
+        let total = 0;
+        for (let k = 0; k < 4000; k++) total += outer(k);
+        console.log(total);";
+    let (plain, jitted) = both_tiers(src);
+    assert_eq!(plain, jitted);
+    assert_eq!(plain, ["343194000"]);
+}
+
+/// Compiled, bridged interpreter, compiled again: the innermost compiled code
+/// allocates and collects while two activations of compiled frames are on the
+/// stack. Each activation holds references of its own across the call below it.
+#[test]
+fn nested_activations_of_compiled_code_are_all_scanned() {
+    let src = "class N { v: number = 0; next: N | null = null; }
+        function leaf(i: number): number {
+            const a = new N(); a.v = i;
+            const b = new N(); b.v = a.v + 1; b.next = a;
+            return (b.next as N).v + b.v;
+        }
+        function churn(k: number): number {
+            let s = 0;
+            try { for (let i = 0; i < k; i++) { s += leaf(i); } } catch (e) { s = -1; }
+            return s;
+        }
+        function middle(i: number): number {
+            const held = new N(); held.v = i * 3;
+            const r = churn(300);
+            return held.v + r;
+        }
+        function outer(i: number): number {
+            const keep = new N(); keep.v = i; keep.next = new N();
+            (keep.next as N).v = i + 5;
+            const r = middle(i);
+            return keep.v + (keep.next as N).v + r;
+        }
+        let total = 0;
+        for (let k = 0; k < 3000; k++) total += outer(k);
+        console.log(total);";
+    let (plain, jitted) = both_tiers(src);
+    assert_eq!(plain, jitted);
+}
+
+/// An OSR loop keeps a reference in its locals across a call that allocates, under
+/// many moving collections. The loop must have transferred to native code.
+#[test]
+fn an_osr_loop_holds_references_across_a_collecting_call() {
+    let src = "class N { v: number = 0; next: N | null = null; }
+        function mk(i: number): number {
+            const a = new N(); a.v = i;
+            const b = new N(); b.v = a.v + 1; b.next = a;
+            return b.v;
+        }
+        function main() {
+            const keep = new N(); keep.v = 3;
+            keep.next = new N(); (keep.next as N).v = 4;
+            let s = 0;
+            let i = 0;
+            while (i < 60000) { s = s + mk(i) + keep.v + (keep.next as N).v; i = i + 1; }
+            console.log(s);
+        }";
+    let module = zun_compiler::compile_with_oxc(src, true).expect("compiles");
+    let loaded = zun_vm::load(&module.write()).unwrap();
+    let mut plain = CaptureOutput::default();
+    run_with(&loaded, &mut plain, None).expect("interpreter runs");
+    let jit = zun_codegen::Jit::new(&loaded).unwrap();
+    let hook = zun_vm::JitHook::with_threshold(jit, &loaded, 2);
+    let mut hooked = CaptureOutput::default();
+    run_with(&loaded, &mut hooked, Some(&hook)).expect("hooked run");
+    assert_eq!(plain.lines, hooked.lines);
+    assert!(hook.osr_transfers() > 0, "the loop must have run natively");
+}

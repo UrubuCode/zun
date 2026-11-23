@@ -1,21 +1,9 @@
 //! C ABI allocation entry points used by generated native code.
 
-use super::{with_active_stack_map_registry, with_current_heap_mut, ActiveNativeFrameScope, Heap};
-
-#[inline]
-unsafe fn safepoint_pc(caller_sp: usize) -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        // Cranelift materializes the caller's SP immediately before the ABI
-        // call. The call pushes its return address at SP - 8 on x86-64.
-        unsafe { (caller_sp as *const usize).sub(1).read_unaligned() }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let _ = caller_sp;
-        0
-    }
-}
+use super::{
+    append_native_roots, with_active_stack_map_registry, with_current_heap_mut, Heap,
+    SuspendedFrameScope,
+};
 
 /// Allocate through a raw `Heap` pointer for the `newobj` runtime call.
 ///
@@ -33,15 +21,21 @@ pub unsafe extern "C" fn zun_gc_alloc(
 
 /// Allocate through the thread's current heap for JIT `newobj` calls.
 ///
+/// `caller_sp` is the compiled caller's stack pointer immediately before this
+/// call and `caller_fp` its frame pointer. Both are read by the caller's code
+/// (a register move each), so the fast path pays nothing for them; the slow path
+/// publishes them as the activation's innermost compiled frame, and the
+/// collection walks the frame-pointer chain from there to scan every compiled
+/// caller, not only this one.
+///
 /// # Safety
 /// A current heap must be registered via `HeapScope`.
 pub unsafe extern "C" fn zun_rt_alloc(
     type_rid: u32,
     field_count: usize,
     caller_sp: usize,
+    caller_fp: usize,
 ) -> *mut u64 {
-    let pc = unsafe { safepoint_pc(caller_sp) };
-
     // Fast path: one thread-local lookup. Allocation count is a coarse fallback
     // cadence; the nursery budget is the actual generational trigger. Large
     // objects can exhaust that budget in a single call, so do not wait for the
@@ -58,41 +52,39 @@ pub unsafe extern "C" fn zun_rt_alloc(
         return address;
     }
 
-    with_active_stack_map_registry(|registry| {
-        let Some(registry) = registry else {
-            return with_current_heap_mut(|heap| heap.alloc(type_rid, field_count).addr());
-        };
-        // The JIT has already stopped at this call site. Keep its exact
-        // safepoint coordinates published while the allocation slow path is
-        // active so a collection can consume the registered stack map.
-        let _frame = unsafe { ActiveNativeFrameScope::enter(registry, pc, caller_sp as *mut u8) };
-        with_current_heap_mut(|heap| {
-            // The layout table is moved out for the collection rather than
-            // cloned, and its slot lists are shared, so a layout lookup during
-            // marking or rewriting is a reference-count bump, not an allocation.
-            let layouts = std::mem::take(&mut heap.reference_slots);
-            let empty: std::rc::Rc<[usize]> = std::rc::Rc::from(Vec::new());
-            let ref_slots = |rid: u32| layouts.get(&rid).cloned().unwrap_or_else(|| empty.clone());
-            // SAFETY: the active frame and all registered roots remain
-            // stopped and valid for this allocation slow path.
-            unsafe {
-                if heap.native_compaction_due() {
-                    heap.collect_and_compact_with_registered_native_frames(
-                        &mut Vec::new(),
-                        &ref_slots,
-                    );
-                } else {
-                    heap.collect_young_evacuating_with_active_native_frame(
-                        &mut Vec::new(),
-                        pc,
-                        caller_sp as *mut u8,
-                        &ref_slots,
-                    );
-                }
+    let has_activation = with_active_stack_map_registry(|registry| registry.is_some());
+    if !has_activation {
+        return with_current_heap_mut(|heap| heap.alloc(type_rid, field_count).addr());
+    }
+    // The JIT has already stopped at this call site. Publish its frame (the
+    // exact safepoint plus the frame pointer that anchors the chain of compiled
+    // callers) while the slow path runs, so a collection consumes the registered
+    // stack maps of every compiled frame.
+    let _frame = unsafe { SuspendedFrameScope::enter_at_call(caller_sp, caller_fp) };
+    with_current_heap_mut(|heap| {
+        // The layout table is moved out for the collection rather than
+        // cloned, and its slot lists are shared, so a layout lookup during
+        // marking or rewriting is a reference-count bump, not an allocation.
+        let layouts = std::mem::take(&mut heap.reference_slots);
+        let empty: std::rc::Rc<[usize]> = std::rc::Rc::from(Vec::new());
+        let ref_slots = |rid: u32| layouts.get(&rid).cloned().unwrap_or_else(|| empty.clone());
+        // SAFETY: the published frames and all registered roots remain stopped
+        // and valid for this allocation slow path.
+        unsafe {
+            if heap.native_compaction_due() {
+                heap.collect_and_compact_with_registered_native_frames(
+                    &mut Vec::new(),
+                    &ref_slots,
+                );
+            } else {
+                // The compiled frames' references come with the native roots.
+                let mut roots = Vec::new();
+                append_native_roots(&mut roots);
+                heap.collect_young_evacuating(&mut roots, &ref_slots, &mut |_| {});
             }
-            heap.reference_slots = layouts;
-            heap.alloc(type_rid, field_count).addr()
-        })
+        }
+        heap.reference_slots = layouts;
+        heap.alloc(type_rid, field_count).addr()
     })
 }
 
@@ -102,12 +94,12 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn safepoint_pc_reads_return_address_from_pre_call_stack_pointer() {
+    fn return_pc_before_call_reads_return_address_from_pre_call_stack_pointer() {
         let mut call_frame = [0usize; 1];
         call_frame[0] = 0x1234_5678;
         let pre_call_sp = unsafe { call_frame.as_mut_ptr().add(1) as usize };
 
-        let pc = unsafe { super::safepoint_pc(pre_call_sp) };
+        let pc = unsafe { crate::return_pc_before_call(pre_call_sp) };
 
         assert_eq!(pc, call_frame[0]);
     }
@@ -131,7 +123,7 @@ mod tests {
         let _heap_scope = unsafe { HeapScope::enter(&mut heap) };
 
         for _ in 0..140_000 {
-            unsafe { super::zun_rt_alloc(2, 0, caller_sp) };
+            unsafe { super::zun_rt_alloc(2, 0, caller_sp, 0) };
         }
 
         // The 64th young collection (the backstop; this test promotes almost

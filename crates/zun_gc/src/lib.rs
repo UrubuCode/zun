@@ -43,6 +43,7 @@ pub use runtime_alloc::{zun_gc_alloc, zun_rt_alloc};
 pub use stack_maps::{
     with_active_native_frames, with_active_stack_map_registry, ActiveNativeFrame,
     ActiveNativeFrameScope, ActiveStackMapScope, NativeStackMap, StackMapRegistry,
+    suspended_frames, return_pc_before_call, SuspendedFrame, SuspendedFrameScope,
 };
 
 mod allocation;

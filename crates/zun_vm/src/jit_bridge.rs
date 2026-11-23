@@ -260,7 +260,9 @@ pub(crate) extern "C" fn zun_jit_route_pending(catch_type_rid: i64) -> i64 {
 /// Raise the `TypeError` for a null dereference in compiled code: build the same
 /// error the interpreter throws and leave it pending, so the JIT frame's post-call
 /// check routes it to a catch or out of the frame like a bridged callee's throw.
-pub(crate) extern "C" fn zun_jit_null_deref(kind: i64, rid: i64) {
+pub(crate) extern "C" fn zun_jit_null_deref(kind: i64, rid: i64, caller_sp: usize, caller_fp: usize) {
+    // Building the error runs interpreter code, which can collect.
+    let _frame = unsafe { zun_gc::SuspendedFrameScope::enter_at_call(caller_sp, caller_fp) };
     let Some(context) = BRIDGE_CONTEXT.with(|cell| *cell.borrow()) else {
         return;
     };
@@ -329,7 +331,16 @@ impl Drop for BridgeScope {
 /// packed result. Only non-throwing callees are bridged (eligibility guarantees
 /// it), so a throw cannot occur here; a VM fault returns 0 (the callee cannot
 /// fault on valid input, and faults are abort-level in both tiers).
-pub(crate) extern "C" fn zun_jit_call_interp(rid: i64, args_ptr: *const u64, argc: i64) -> u64 {
+pub(crate) extern "C" fn zun_jit_call_interp(
+    rid: i64,
+    args_ptr: *const u64,
+    argc: i64,
+    caller_sp: usize,
+    caller_fp: usize,
+) -> u64 {
+    // The interpreter this call enters can collect: publish the calling compiled
+    // frame so the collection scans it and every compiled caller above it.
+    let _frame = unsafe { zun_gc::SuspendedFrameScope::enter_at_call(caller_sp, caller_fp) };
     // Copy the context out and drop the borrow before re-entering the
     // interpreter (which could, in principle, reach another bridged call).
     let context = BRIDGE_CONTEXT
@@ -370,7 +381,10 @@ pub(crate) extern "C" fn zun_jit_call_indirect(
     environment: i64,
     args_ptr: *const u64,
     argc: i64,
+    caller_sp: usize,
+    caller_fp: usize,
 ) -> u64 {
+    let _frame = unsafe { zun_gc::SuspendedFrameScope::enter_at_call(caller_sp, caller_fp) };
     let handle = zun_core::FunctionHandle::from_carrier_words(identity as u64, environment as u64);
     let context = BRIDGE_CONTEXT
         .with(|cell| *cell.borrow())

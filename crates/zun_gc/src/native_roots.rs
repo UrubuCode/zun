@@ -373,6 +373,8 @@ pub fn append_native_roots(roots: &mut Vec<Obj>) {
             unsafe { append(owner, roots) };
         }
     });
+    // Compiled frames suspended in a call that can collect (see `SuspendedFrameScope`).
+    crate::stack_maps::append_compiled_frame_roots(roots);
 }
 
 /// Rewrite the managed references held by active [`Rooted`] guards and
@@ -419,6 +421,8 @@ pub unsafe fn rewrite_native_roots(relocation: &RelocationMap) -> usize {
             unsafe { rewrite(owner, relocation) };
         }
     });
+    // Compiled frames suspended in a call that can collect (see `SuspendedFrameScope`).
+    rewritten += unsafe { crate::stack_maps::rewrite_compiled_frame_roots(relocation) };
     rewritten
 }
 

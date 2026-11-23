@@ -127,9 +127,11 @@ struct Sig {
 /// VM (which owns the interpreter). All pointers must outlive any compiled code.
 #[derive(Debug, Clone, Copy)]
 pub struct BridgeConfig {
-    /// `extern "C" zun_jit_call_interp(rid, args_ptr, argc) -> u64`.
+    /// `extern "C" zun_jit_call_interp(rid, args_ptr, argc, caller_sp, caller_fp) -> u64`
+    /// (`caller_sp`/`caller_fp`: the calling compiled frame, published to the GC).
     pub call_interp: *const u8,
-    /// `extern "C" zun_jit_call_indirect(identity, environment, args_ptr, argc) -> u64`:
+    /// `extern "C" zun_jit_call_indirect(identity, environment, args_ptr, argc, caller_sp,
+    /// caller_fp) -> u64`:
     /// dispatch a `CallIndirect` on a concrete function value, reconstructing a
     /// `FunctionHandle` from the two carrier words so a captured closure
     /// environment reaches the callee.
@@ -137,7 +139,7 @@ pub struct BridgeConfig {
     /// `extern "C" zun_jit_route_pending(catch_type_rid) -> u64` (0 = no/unmatched
     /// pending; else the caught object handle, slot cleared).
     pub route_pending: *const u8,
-    /// `extern "C" zun_jit_null_deref(kind, rid)`: raise the `TypeError` for a null
+    /// `extern "C" zun_jit_null_deref(kind, rid, caller_sp, caller_fp)`: raise the `TypeError` for a null
     /// dereference (kind 0 = read field, 1 = write field, 2 = call method; `rid` is
     /// the field or method token) by setting the pending-exception slot.
     pub null_deref: *const u8,
@@ -155,9 +157,6 @@ pub struct Jit {
     func_ids: HashMap<u32, FuncId>,
     shim_ids: HashMap<u32, FuncId>,
     eligible: HashSet<u32>,
-    /// Eligible methods whose execution can run a collection (they allocate or call
-    /// something that does); a loop region holding references must not call them.
-    collecting: HashSet<u32>,
     /// Eligible callees of each eligible method (for the compile closure).
     callees: HashMap<u32, Vec<u32>>,
     /// Methods whose bodies are defined and finalized.
@@ -179,6 +178,9 @@ pub struct Jit {
     _literal_storage: Vec<Box<[u8]>>,
     literal_ptrs: Box<[u64]>,
     stack_maps: HashMap<u32, Vec<StackMapInfo>>,
+    /// Machine-code size of each compiled method body, and of each entry shim.
+    code_sizes: HashMap<u32, u32>,
+    entry_code_sizes: HashMap<u32, u32>,
     stack_map_registry: zun_gc::StackMapRegistry,
     /// Whether a JIT→interpreter call bridge is wired (its `zun_jit_call_interp`
     /// symbol registered and eligibility relaxed). When set, a call to an
@@ -207,7 +209,11 @@ struct OsrEntry {
     method_rid: u32,
     target_pc: usize,
     shim_id: FuncId,
+    /// Size in bytes of the entry shim and of the compiled body, for the frame-walk
+    /// code ranges.
+    shim_size: u32,
     func_id: FuncId,
+    code_size: u32,
     /// Every local's kind, in local-index order (the OSR entry's parameters).
     sig: Sig,
     stack_maps: Vec<StackMapInfo>,
@@ -712,7 +718,11 @@ impl Jit {
             storage_index += 1;
         }
         let literal_ptrs = literal_ptrs.into_boxed_slice();
-        let (eligible, collecting) = eligible::eligible_and_collecting(zm, true, bridge_fn.is_some());
+        let eligible = if bridge_fn.is_some() {
+            eligible_methods_bridged(zm, true)
+        } else {
+            eligible_methods_with_literals(zm, true)
+        };
         let types =
             zun_types::TypeSystem::from_module(zm).map_err(|e| JitError::Module(e.to_string()))?;
         let virtual_tables: Vec<Box<[u64]>> = (1..=types.len() as u32)
@@ -736,7 +746,6 @@ impl Jit {
             func_ids: HashMap::new(),
             shim_ids: HashMap::new(),
             eligible: eligible.clone(),
-            collecting,
             callees: HashMap::new(),
             defined: HashSet::new(),
             failed: HashSet::new(),
@@ -750,6 +759,8 @@ impl Jit {
             _literal_storage: literal_storage,
             literal_ptrs,
             stack_maps: HashMap::new(),
+            code_sizes: HashMap::new(),
+            entry_code_sizes: HashMap::new(),
             stack_map_registry: zun_gc::StackMapRegistry::new(),
             bridge_enabled: bridge_fn.is_some(),
             bridge_pending_addr,
@@ -932,6 +943,11 @@ impl Jit {
                 method_rid: rid,
                 detail: e.to_string(),
             })?;
+        let code_size = self
+            .ctx
+            .compiled_code()
+            .map_or(0, |code| code.code_info().total_size);
+        self.code_sizes.insert(rid, code_size);
         let maps = self
             .ctx
             .compiled_code()
@@ -952,7 +968,7 @@ impl Jit {
         self.module.clear_context(&mut self.ctx);
 
         let sig = self.sigs[&rid].clone();
-        let shim_id = if sig.returns == Some(JitKind::Other) {
+        let (shim_id, shim_size) = if sig.returns == Some(JitKind::Other) {
             shim::define_any_return_shim(
                 &mut self.module,
                 &mut self.ctx,
@@ -977,6 +993,7 @@ impl Jit {
             detail,
         })?;
         self.shim_ids.insert(rid, shim_id);
+        self.entry_code_sizes.insert(rid, shim_size);
         Ok(())
     }
 
@@ -1039,15 +1056,6 @@ impl Jit {
                 }
             })?;
             if !eligible::loop_region_eligible(zm, method_rid, target_pc) {
-                return Err(JitError::Ineligible(method_rid));
-            }
-            if eligible::loop_region_holds_references_across_collecting_call(
-                zm,
-                method_rid,
-                target_pc,
-                &self.eligible,
-                &self.collecting,
-            ) {
                 return Err(JitError::Ineligible(method_rid));
             }
             Some(end)
@@ -1130,6 +1138,10 @@ impl Jit {
                 method_rid,
                 detail: e.to_string(),
             })?;
+        let code_size = self
+            .ctx
+            .compiled_code()
+            .map_or(0, |code| code.code_info().total_size);
         let stack_maps = self
             .ctx
             .compiled_code()
@@ -1158,7 +1170,7 @@ impl Jit {
             param_kinds: local_kinds,
             returns,
         };
-        let shim_id = if loop_exit {
+        let (shim_id, shim_size) = if loop_exit {
             shim::define_osr_loop_shim(
                 &mut self.module,
                 &mut self.ctx,
@@ -1186,7 +1198,9 @@ impl Jit {
             method_rid,
             target_pc,
             shim_id,
+            shim_size,
             func_id,
+            code_size,
             sig,
             stack_maps,
             loop_exit,
@@ -1349,6 +1363,30 @@ impl Jit {
                     reference_slots: map.reference_slots.clone(),
                 })
             }));
+        // The address ranges the collector's frame walk needs: a return address in
+        // a method body (or an OSR body) is a compiled caller to climb into; one in
+        // an entry shim is the host entry, where the chain ends.
+        let mut compiled = Vec::new();
+        for (&rid, &size) in &self.code_sizes {
+            if let Some(&func_id) = self.func_ids.get(&rid) {
+                let base = self.module.get_finalized_function(func_id) as usize;
+                compiled.push((base, base + size as usize));
+            }
+        }
+        let mut entry = Vec::new();
+        for (&rid, &size) in &self.entry_code_sizes {
+            if let Some(&shim_id) = self.shim_ids.get(&rid) {
+                let base = self.module.get_finalized_function(shim_id) as usize;
+                entry.push((base, base + size as usize));
+            }
+        }
+        for osr in &self.osr_entries {
+            let base = self.module.get_finalized_function(osr.func_id) as usize;
+            compiled.push((base, base + osr.code_size as usize));
+            let base = self.module.get_finalized_function(osr.shim_id) as usize;
+            entry.push((base, base + osr.shim_size as usize));
+        }
+        self.stack_map_registry.set_code_ranges(compiled, entry);
     }
 
     /// Whether `method_rid` is eligible for JIT compilation.

@@ -97,28 +97,70 @@ fn a_null_that_is_not_a_class_reference_stays_interpreted() {
     assert!(!jit.is_compiled(entry));
 }
 
-/// A moving collection scans only the frame that allocates. A method that holds a
-/// reference across a call that allocates must stay interpreted, or it would resume
-/// on a stale address.
-#[test]
-fn a_reference_held_across_an_allocating_call_stays_interpreted() {
-    let module = compile(&format!(
-        "{NODE}\
-         function build(d: number): Node1 | null {{ if (d === 0.0) {{ return null; }} \
-             let t = new Node1(); t.v = d; t.next = build(d - 1.0); return t; }}\n\
-         function main(): number {{ let r = build(3.0); if (r !== null) {{ return r.v; }} return 0.0; }}"
-    ));
-    let rid = |name: &str| {
-        module
-            .tables
-            .method_defs
-            .iter()
-            .position(|m| module.strings.get(m.name) == name)
-            .map(|i| i as u32 + 1)
-            .unwrap()
+/// Method rid by name (rids are 1-based method-table positions).
+fn method_rid(module: &zun_module::Module, name: &str) -> u32 {
+    module
+        .tables
+        .method_defs
+        .iter()
+        .position(|m| module.strings.get(m.name) == name)
+        .map(|i| i as u32 + 1)
+        .unwrap_or_else(|| panic!("no method {name}"))
+}
+
+/// `assert_equivalent` for a program whose listed methods must be compiled and
+/// that allocates enough, under the smallest nursery, to force many moving
+/// collections while compiled frames are suspended in calls.
+fn assert_collecting_equivalent(src: &str, compiled: &[&str]) {
+    let module = compile(src);
+    let entry = module.entry_point.expect("entry point").rid();
+    let jit = zun_codegen::Jit::compile(&module).expect("jit compiles");
+    for name in compiled.iter().chain(&["main"]) {
+        assert!(jit.is_compiled(method_rid(&module, name)), "{name} must be compiled:\n{src}");
+    }
+    let mut heap = zun_gc::Heap::new();
+    let jit_result = jit.call_entry_with_heap(entry, &mut heap).expect("jit call");
+    let interp_result = interp_entry(&module);
+    let same = match (&jit_result, &interp_result) {
+        (RetVal::Float(a), Value::Float(b, _)) => a == b,
+        (RetVal::Int(a), Value::Int(b, _)) => a == b,
+        _ => false,
     };
-    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(!jit.is_compiled(rid("build")), "build holds `t` across build()");
+    assert!(same, "JIT {jit_result:?} vs interpreter {interp_result:?} for:\n{src}");
+}
+
+/// A recursive build holds `t` across two allocating calls, and a recursive sum
+/// reads the result back: every collection must rewrite the references that the
+/// outer frames hold, not only the innermost one.
+#[test]
+fn a_recursive_tree_build_and_sum_survive_moving_collections() {
+    assert_collecting_equivalent(
+        "class T { v: number = 0; left: T | null = null; right: T | null = null; }\n\
+         function build(d: number): T | null { if (d === 0.0) { return null; } \
+             let t = new T(); t.v = d; t.left = build(d - 1.0); t.right = build(d - 1.0); return t; }\n\
+         function sum(t: T | null): number { if (t === null) { return 0.0; } \
+             return t.v + sum(t.left) + sum(t.right); }\n\
+         function main(): number { let total = 0.0; let i = 0.0; \
+             while (i < 40.0) { total = total + sum(build(10.0)); i = i + 1.0; } return total; }",
+        &["build", "sum"],
+    );
+}
+
+/// A -> B -> C where only C allocates, and A and B each hold a different live
+/// reference across the call: both outer frames must be scanned.
+#[test]
+fn a_three_deep_chain_keeps_each_frames_references_alive() {
+    assert_collecting_equivalent(
+        "class P { a: number = 0; b: number = 0; }\n\
+         function c(x: number): number { let p = new P(); p.a = x; let q = new P(); q.b = x + 1.0; return p.a + q.b; }\n\
+         function b(x: number): number { let kb = new P(); kb.a = x * 3.0; kb.b = 7.0; \
+             let r = c(x); let j = new P(); j.a = r; return kb.a + kb.b + j.a; }\n\
+         function a(x: number): number { let ka = new P(); ka.a = x; ka.b = x * 2.0; \
+             let r = b(x); return ka.a + ka.b + r; }\n\
+         function main(): number { let t = 0.0; let i = 0.0; \
+             while (i < 30000.0) { t = t + a(i); i = i + 1.0; } return t; }",
+        &["a", "b", "c"],
+    );
 }
 
 /// The same shape without the allocation compiles: a recursive sum only reads.
@@ -138,4 +180,25 @@ fn a_recursive_read_over_a_tree_compiles() {
         .unwrap();
     let jit = zun_codegen::Jit::new(&module).expect("jit builds");
     assert!(jit.is_compiled(rid));
+}
+
+/// Callers with more parameters than fit in registers pass the rest on the stack,
+/// which moves the callee's frame relative to the caller's stack pointer at the
+/// call. The outer frame's references must still be found.
+#[test]
+fn a_caller_with_stack_arguments_keeps_its_references_alive() {
+    assert_collecting_equivalent(
+        "class P { a: number = 0; b: number = 0; }\n\
+         function leaf(x: number, p: P, a1: number, a2: number, a3: number, a4: number, a5: number, \
+             a6: number, a7: number, a8: number, a9: number): number { \
+             let q = new P(); q.a = x; return q.a + p.a + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9; }\n\
+         function mid(x: number, p: P, q: P): number { \
+             let r = leaf(x, p, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0); \
+             let s = new P(); s.a = r; return s.a + p.a + q.b; }\n\
+         function top(x: number): number { let p = new P(); p.a = x; let q = new P(); q.b = x * 2.0; \
+             let r = mid(x, p, q); return r + p.a + q.b; }\n\
+         function main(): number { let t = 0.0; let i = 0.0; \
+             while (i < 20000.0) { t = t + top(i); i = i + 1.0; } return t; }",
+        &["leaf", "mid", "top"],
+    );
 }
