@@ -2,6 +2,7 @@ use super::{GeneratorFrame, GeneratorState, Heap, Obj, RelocationMap};
 
 impl Heap {
     pub fn generator_state_set(&mut self, generator: Obj, state: GeneratorState) {
+        self.remember_if_old(generator);
         self.generator_states
             .insert(generator.addr() as usize, state);
     }
@@ -9,6 +10,7 @@ impl Heap {
         self.generator_states.get(&(generator.addr() as usize))
     }
     pub fn generator_state_mut(&mut self, generator: Obj) -> Option<&mut GeneratorState> {
+        self.remember_if_old(generator);
         self.generator_states.get_mut(&(generator.addr() as usize))
     }
     pub fn generator_state_take(&mut self, generator: Obj) -> Option<GeneratorState> {
@@ -16,6 +18,7 @@ impl Heap {
     }
 
     pub fn generator_frame_set(&mut self, generator: Obj, frame: GeneratorFrame) {
+        self.remember_if_old(generator);
         self.generator_frames
             .insert(generator.addr() as usize, frame);
     }
@@ -23,6 +26,7 @@ impl Heap {
         self.generator_frames.get(&(generator.addr() as usize))
     }
     pub fn generator_frame_mut(&mut self, generator: Obj) -> Option<&mut GeneratorFrame> {
+        self.remember_if_old(generator);
         self.generator_frames.get_mut(&(generator.addr() as usize))
     }
     pub fn generator_frame_take(&mut self, generator: Obj) -> Option<GeneratorFrame> {
@@ -97,7 +101,7 @@ impl Heap {
     }
 }
 
-fn rewrite_frame_values(frame: &mut GeneratorFrame, relocation: &RelocationMap) -> usize {
+pub(super) fn rewrite_frame_values(frame: &mut GeneratorFrame, relocation: &RelocationMap) -> usize {
     let mut rewritten = 0;
     for value in frame.locals.iter_mut().chain(frame.eval_stack.iter_mut()) {
         if let Some(address) = value.as_object() {
@@ -111,7 +115,7 @@ fn rewrite_frame_values(frame: &mut GeneratorFrame, relocation: &RelocationMap) 
     rewritten
 }
 
-fn rewrite_state_values(state: &mut GeneratorState, relocation: &RelocationMap) -> usize {
+pub(super) fn rewrite_state_values(state: &mut GeneratorState, relocation: &RelocationMap) -> usize {
     let mut rewritten = 0;
     {
         let values = state

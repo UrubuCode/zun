@@ -17,8 +17,21 @@ impl RelocationMap {
         Self::default()
     }
 
+    /// An empty map with room for `capacity` translations, so a collection that
+    /// knows how many objects it moves does not regrow the table as it fills.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            addresses: HashMap::with_capacity_and_hasher(capacity, Default::default()),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.addresses.is_empty()
+    }
+
+    /// The number of objects the map relocates.
+    pub fn len(&self) -> usize {
+        self.addresses.len()
     }
 
     pub fn insert(&mut self, old: Obj, new: Obj) {

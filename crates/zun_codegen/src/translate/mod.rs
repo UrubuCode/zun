@@ -956,7 +956,9 @@ impl Translator<'_> {
                         offset_of_index[i],
                         index_of_offset,
                     )?;
-                    if kind == JitKind::Object {
+                    // An array field is a managed reference like an object field: it
+                    // takes the host store, which runs the generational write barrier.
+                    if matches!(kind, JitKind::Object | JitKind::Array) {
                         self.builder.declare_value_needs_stack_map(ptr);
                         self.builder.declare_value_needs_stack_map(val);
                         let store = self.store_ref_fref();

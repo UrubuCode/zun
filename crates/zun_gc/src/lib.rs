@@ -29,6 +29,10 @@
 
 use crate::fast_hash::{HashMap, HashSet};
 
+mod trace;
+mod verify;
+mod young_rewrite;
+use verify::VerifyBarriers;
 mod handles;
 mod heap_context;
 mod native_roots;
@@ -186,23 +190,49 @@ fn poison_from_env() -> bool {
 }
 
 /// Allocation count after which a native safepoint collects even if the byte
-/// budget is not spent. It is only a backstop: the nursery byte budget is the
-/// real trigger, and a count of 256 made a young collection fire every 6 KiB of
-/// small objects, paying its fixed cost far more often than the bytes justify.
+/// budget is not spent, at the smallest nursery budget. It is only a backstop
+/// (an object that owns a large side-table payload costs a few bytes of
+/// nursery but may cost far more of the process): it scales with the budget,
+/// see `Heap::native_allocation_backstop`.
 const NATIVE_ALLOCATION_BACKSTOP: usize = 4096;
 
 /// Smallest nursery byte budget; also the budget when none was configured.
 const NURSERY_BUDGET_FLOOR: usize = 32 * 1024;
 
-/// Fewest young collections between two compactions, however much was promoted.
-const COMPACT_MIN_INTERVAL: usize = 8;
+/// Largest nursery byte budget, whatever the survival rate.
+const NURSERY_BUDGET_CEILING: usize = 16 * 1024 * 1024;
 
-/// Tenured bytes that must have been promoted since the last compaction before
-/// another one is worth its full copy of the heap.
+/// The nursery budget never exceeds `tenured bytes / NURSERY_TENURED_DIVISOR`
+/// (but not below `NURSERY_TENURED_MIN_CEILING`): a young heap gets a small
+/// nursery that fits in cache, a big heap may afford a bigger one.
+const NURSERY_TENURED_DIVISOR: usize = 2;
+const NURSERY_TENURED_MIN_CEILING: usize = 512 * 1024;
+
+/// The next budget aims for `survived bytes * NURSERY_SURVIVAL_MULTIPLE`: a
+/// collection whose survivors are more than 1/16 of the budget is paying to copy
+/// objects that a longer epoch might have let die (or, when they never die, is
+/// paying its fixed cost too often), so the budget grows to that target at once;
+/// below 1/16 it decays toward the target by halves, so one lucky epoch does not
+/// collapse it.
+const NURSERY_SURVIVAL_MULTIPLE: usize = 16;
+
+/// Fewest young collections between two compactions, however much was promoted.
+const COMPACT_MIN_INTERVAL: usize = 4;
+
+/// Promoted bytes since the last compaction below which a compaction is never
+/// worth its full copy of the heap.
 const COMPACT_MIN_PROMOTED_BYTES: usize = 64 * 1024;
 
-/// Young collections after which a compaction runs even if little was promoted,
-/// so a tenured object that died without any new promotion is still reclaimed.
+/// A compaction is due once the bytes promoted since the last one reach this
+/// percentage of what that compaction left alive: tenured
+/// storage has then grown by at least 1x, so the full copy is paid for once per
+/// doubling and costs O(1) amortised per promoted byte.
+const COMPACT_GROWTH_PERCENT: usize = 100;
+
+/// Young collections after which a compaction may run even if little was
+/// promoted, so a tenured object that died without any new promotion is still
+/// reclaimed. It also waits until the allocation since the last compaction
+/// equals the live tenured size, so the backstop copy is paid for by allocation.
 const COMPACT_BACKSTOP_INTERVAL: usize = 64;
 
 /// The runtime heap: bump-allocated chunks, object records for mark-sweep, a
@@ -215,7 +245,10 @@ pub struct Heap {
     cursor: usize,
     /// Ephemeral chunks owned exclusively by the current nursery epoch.
     nursery_chunks: Vec<Box<[u64]>>,
-    /// Bump cursor within the last nursery chunk.
+    /// Index of the nursery chunk the bump allocator is filling; the chunks
+    /// after it, if any, were retained by the last release and are clean.
+    nursery_active: usize,
+    /// Bump cursor within the active nursery chunk.
     nursery_cursor: usize,
     /// Bytes allocated in the current young-generation nursery epoch.
     nursery_bytes: usize,
@@ -323,9 +356,27 @@ pub struct Heap {
     next_identity_hash: u64,
     /// Old objects that have received a reference to a young object.
     ///
-    /// This is the remembered-set boundary for the future minor collector;
-    /// full collections still trace the complete heap today.
+    /// A young collection treats an old object as live and traces only the
+    /// edges of the objects listed here, so every store of a reference into an
+    /// object that can be old must reach [`Heap::write_barrier`]. Every
+    /// survivor of a collection is old, so the set is empty after each one.
     remembered_set: HashSet<usize>,
+    /// Indices of the records whose storage is, or may still be, nursery
+    /// storage: every young record, plus old ones a non-moving collection
+    /// promoted in place. A young collection visits these and nothing else.
+    nursery_records: Vec<usize>,
+    /// A non-moving collection ran since the nursery was last released, so old
+    /// objects or free-list slots may sit in nursery storage and an evacuation
+    /// cannot assume only young objects move.
+    nursery_pinned: bool,
+    /// Check, before every young collection, that no old object holds an
+    /// unremembered young reference. See `verify.rs`.
+    verify_barriers: VerifyBarriers,
+    /// Bytes the last compaction left in tenured storage.
+    tenured_live_bytes: usize,
+    /// Nursery bytes allocated by the young collections since the last
+    /// compaction.
+    allocated_since_compaction: usize,
     /// Per-heap realm singleton used by `globalThis`/`global` bindings.
     global_object: Option<Obj>,
     /// Per-heap store for class-static field values, keyed by
@@ -455,12 +506,18 @@ impl Heap {
 
     pub(crate) fn native_allocation_due(&mut self) -> bool {
         self.native_allocations = self.native_allocations.saturating_add(1);
-        if self.native_allocations >= NATIVE_ALLOCATION_BACKSTOP {
+        if self.native_allocations >= self.native_allocation_backstop() {
             self.native_allocations = 0;
             true
         } else {
             false
         }
+    }
+
+    /// The allocation count backstop: it grows with the byte budget so that a
+    /// larger nursery is not cut short by the count of small objects.
+    fn native_allocation_backstop(&self) -> usize {
+        NATIVE_ALLOCATION_BACKSTOP * (self.nursery_budget() / NURSERY_BUDGET_FLOOR).max(1)
     }
 
     /// Whether the current nursery epoch has exhausted its allocation budget.
@@ -473,18 +530,53 @@ impl Heap {
         self.nursery_budget.max(NURSERY_BUDGET_FLOOR)
     }
 
+    /// The most the nursery budget may grow to right now: half of the
+    /// tenured storage (so a young heap keeps a cache-sized nursery), within
+    /// fixed bounds.
+    fn nursery_budget_ceiling(&self) -> usize {
+        let tenured = self.tenured_live_bytes + self.promoted_since_compaction;
+        (tenured / NURSERY_TENURED_DIVISOR)
+            .clamp(NURSERY_TENURED_MIN_CEILING, NURSERY_BUDGET_CEILING)
+            .max(NURSERY_BUDGET_FLOOR)
+    }
+
+    /// Fold the outcome of one evacuating young collection into the budget:
+    /// `allocated` bytes were allocated in the epoch and `survived` bytes were
+    /// promoted out of it. The next budget aims for `survived *
+    /// NURSERY_SURVIVAL_MULTIPLE`: it grows at once when survival is high and
+    /// decays by halves when it is low.
+    pub(crate) fn note_young_collection(&mut self, allocated: usize, survived: usize) {
+        self.allocated_since_compaction = self.allocated_since_compaction.saturating_add(allocated);
+        if allocated == 0 {
+            return;
+        }
+        let current = self.nursery_budget();
+        let desired = survived.saturating_mul(NURSERY_SURVIVAL_MULTIPLE);
+        let next = if desired >= current {
+            desired
+        } else {
+            (current + desired) / 2
+        };
+        self.nursery_budget = next.clamp(NURSERY_BUDGET_FLOOR, self.nursery_budget_ceiling());
+    }
+
     /// Whether this young collection should be a full collection plus
     /// compaction instead. A compaction copies every live object into fresh
-    /// chunks, so it is paid for when tenured storage has grown (at least
-    /// `COMPACT_MIN_PROMOTED_BYTES` promoted, and not more often than every
-    /// `COMPACT_MIN_INTERVAL` young collections), with a longer backstop so an
-    /// old object that died on its own is still reclaimed eventually.
+    /// chunks, so it is paid for once tenured storage has grown by as much as
+    /// the last compaction left alive (and by at least
+    /// `COMPACT_MIN_PROMOTED_BYTES`), and not more often than every
+    /// `COMPACT_MIN_INTERVAL` young collections. A longer backstop reclaims an
+    /// old object that died on its own, once enough has been allocated that the
+    /// copy is amortised.
     pub(crate) fn native_compaction_due(&mut self) -> bool {
         self.native_young_collections = self.native_young_collections.saturating_add(1);
-        let grown = self.promoted_since_compaction >= COMPACT_MIN_PROMOTED_BYTES;
-        if (grown && self.native_young_collections >= COMPACT_MIN_INTERVAL)
-            || self.native_young_collections >= COMPACT_BACKSTOP_INTERVAL
-        {
+        let threshold = (self.tenured_live_bytes / 100 * COMPACT_GROWTH_PERCENT)
+            .max(COMPACT_MIN_PROMOTED_BYTES);
+        let grown = self.promoted_since_compaction >= threshold;
+        let allocated = self.allocated_since_compaction.saturating_add(self.nursery_bytes);
+        let backstop = self.native_young_collections >= COMPACT_BACKSTOP_INTERVAL
+            && allocated >= self.tenured_live_bytes;
+        if (grown && self.native_young_collections >= COMPACT_MIN_INTERVAL) || backstop {
             self.native_young_collections = 0;
             true
         } else {
@@ -624,14 +716,21 @@ impl Heap {
         let mut new_cursor = 0;
         let mut relocation = RelocationMap::new();
         self.promoted_since_compaction = 0;
+        self.allocated_since_compaction = 0;
         let mut moved_objects = 0;
-        for record in self.records.iter_mut() {
+        let mut live_bytes = 0usize;
+        let mut still_young: Vec<usize> = Vec::new();
+        for (idx, record) in self.records.iter_mut().enumerate() {
             if !record.alive {
                 continue;
+            }
+            if record.generation == records::Generation::Young {
+                still_young.push(idx);
             }
             let slots = zun_core::OBJECT_HEADER_SLOTS + record.field_count;
             let old = record.addr;
             let new = allocate(&mut new_chunks, &mut new_cursor, slots);
+            live_bytes += slots * std::mem::size_of::<u64>();
             unsafe {
                 std::ptr::copy_nonoverlapping(old, new, slots);
             }
@@ -677,6 +776,11 @@ impl Heap {
         self.chunks = new_chunks;
         self.cursor = new_cursor;
         self.reset_nursery();
+        // A record that is still young (compaction without a preceding full
+        // collection) now lives in tenured storage but remains a young record:
+        // the next young collection must still see it.
+        self.nursery_records = still_young;
+        self.tenured_live_bytes = live_bytes;
         CompactionResult {
             moved_objects,
             rewritten_references,
@@ -977,7 +1081,7 @@ impl Heap {
     /// Relocate weak metadata without changing its weak/ephemeron liveness
     /// rules. Targets are translated only so the next collection can still
     /// observe the same registrations after object movement.
-    pub fn rewrite_weak_references(&mut self, relocation: &RelocationMap) -> usize {
+    fn rewrite_weak_lists(&mut self, relocation: &RelocationMap) -> usize {
         let map = |address: usize| relocation.relocate_address(address);
         let mut rewritten = 0;
         for weak in &mut self.weak_refs {
@@ -1003,48 +1107,6 @@ impl Heap {
                 }
             }
         }
-        let owners = std::mem::take(&mut self.weak_map_objects);
-        let mut mapped_owners = HashMap::with_capacity_and_hasher(owners.len(), Default::default());
-        for (owner, id) in owners {
-            let mapped = map(owner);
-            if mapped != owner {
-                rewritten += 1;
-            }
-            mapped_owners.insert(mapped, id);
-        }
-        self.weak_map_objects = mapped_owners;
-        let node_buffers = std::mem::take(&mut self.node_buffers);
-        self.node_buffers = node_buffers
-            .into_iter()
-            .map(|owner| {
-                let mapped = map(owner);
-                if mapped != owner {
-                    rewritten += 1;
-                }
-                mapped
-            })
-            .collect();
-        let weak_sets = std::mem::take(&mut self.weak_set_objects);
-        self.weak_set_objects = weak_sets
-            .into_iter()
-            .map(|owner| {
-                let mapped = map(owner);
-                if mapped != owner {
-                    rewritten += 1;
-                }
-                mapped
-            })
-            .collect();
-        let ref_owners = std::mem::take(&mut self.weak_ref_objects);
-        let mut mapped_ref_owners = HashMap::with_capacity_and_hasher(ref_owners.len(), Default::default());
-        for (owner, id) in ref_owners {
-            let mapped = map(owner);
-            if mapped != owner {
-                rewritten += 1;
-            }
-            mapped_ref_owners.insert(mapped, id);
-        }
-        self.weak_ref_objects = mapped_ref_owners;
         for finalizer in &mut self.finalizers {
             let mapped = map(finalizer.target);
             if mapped != finalizer.target {
@@ -1114,6 +1176,62 @@ impl Heap {
             mapped_registries.insert(mapped_owner, cleanup);
         }
         self.finalization_registries = mapped_registries;
+        rewritten
+    }
+
+    /// Relocate weak metadata without changing its weak/ephemeron liveness
+    /// rules (see [`Heap::rewrite_weak_lists`]) and re-key the weak-owner
+    /// indexes.
+    pub fn rewrite_weak_references(&mut self, relocation: &RelocationMap) -> usize {
+        self.rewrite_weak_lists(relocation) + self.rewrite_weak_owner_keys(relocation)
+    }
+
+    /// Re-key the address-indexed weak-owner tables.
+    fn rewrite_weak_owner_keys(&mut self, relocation: &RelocationMap) -> usize {
+        let map = |address: usize| relocation.relocate_address(address);
+        let mut rewritten = 0;
+        let owners = std::mem::take(&mut self.weak_map_objects);
+        let mut mapped_owners = HashMap::with_capacity_and_hasher(owners.len(), Default::default());
+        for (owner, id) in owners {
+            let mapped = map(owner);
+            if mapped != owner {
+                rewritten += 1;
+            }
+            mapped_owners.insert(mapped, id);
+        }
+        self.weak_map_objects = mapped_owners;
+        let node_buffers = std::mem::take(&mut self.node_buffers);
+        self.node_buffers = node_buffers
+            .into_iter()
+            .map(|owner| {
+                let mapped = map(owner);
+                if mapped != owner {
+                    rewritten += 1;
+                }
+                mapped
+            })
+            .collect();
+        let weak_sets = std::mem::take(&mut self.weak_set_objects);
+        self.weak_set_objects = weak_sets
+            .into_iter()
+            .map(|owner| {
+                let mapped = map(owner);
+                if mapped != owner {
+                    rewritten += 1;
+                }
+                mapped
+            })
+            .collect();
+        let ref_owners = std::mem::take(&mut self.weak_ref_objects);
+        let mut mapped_ref_owners = HashMap::with_capacity_and_hasher(ref_owners.len(), Default::default());
+        for (owner, id) in ref_owners {
+            let mapped = map(owner);
+            if mapped != owner {
+                rewritten += 1;
+            }
+            mapped_ref_owners.insert(mapped, id);
+        }
+        self.weak_ref_objects = mapped_ref_owners;
         rewritten
     }
 
@@ -1284,14 +1402,9 @@ impl Heap {
         self.rewrite_all_references_impl(relocation, ref_slots, false)
     }
 
-    /// Shared body of the full and the evacuating relocation; see
-    /// `rewrite_object_references_impl` and `rewrite_runtime_references_impl`.
-    pub(crate) fn rewrite_all_references_impl(
-        &mut self,
-        relocation: &RelocationMap,
-        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
-        evacuating: bool,
-    ) -> usize {
+    /// Rewrite the heap-owned roots: the realm global, the class-statics object
+    /// and the flat static store. Every relocation does this, young or full.
+    pub(crate) fn rewrite_global_roots(&mut self, relocation: &RelocationMap) -> usize {
         let mut rewritten = 0;
         if let Some(object) = self.global_object {
             let mapped = relocation.relocate(object);
@@ -1307,9 +1420,21 @@ impl Heap {
                 rewritten += 1;
             }
         }
-        rewritten += self
-            .static_store
-            .rewrite_object_references(|address| relocation.relocate_address(address));
+        rewritten
+            + self
+                .static_store
+                .rewrite_object_references(|address| relocation.relocate_address(address))
+    }
+
+    /// Shared body of the full and the evacuating relocation; see
+    /// `rewrite_object_references_impl` and `rewrite_runtime_references_impl`.
+    pub(crate) fn rewrite_all_references_impl(
+        &mut self,
+        relocation: &RelocationMap,
+        ref_slots: &dyn Fn(u32) -> std::rc::Rc<[usize]>,
+        evacuating: bool,
+    ) -> usize {
+        let rewritten = self.rewrite_global_roots(relocation);
         rewritten
             + self.rewrite_object_references_impl(relocation, ref_slots, evacuating)
             + self.rewrite_auxiliary_references(relocation)
@@ -1365,17 +1490,33 @@ impl Heap {
 
     /// Apply the generational write barrier for a raw object reference.
     pub fn write_barrier(&mut self, owner: Obj, value: u64) {
+        // The owner is checked first: it is young in the common case, and then
+        // the child's record is never looked up.
         let Some(&owner_index) = self.by_addr.get(&(owner.addr() as usize)) else {
             return;
         };
+        let owner_record = &self.records[owner_index];
+        if !owner_record.alive || owner_record.generation != records::Generation::Old {
+            return;
+        }
         let Some(&child_index) = self.by_addr.get(&(value as usize)) else {
             return;
         };
-        if self.records[owner_index].alive
-            && self.records[child_index].alive
-            && self.records[owner_index].generation == records::Generation::Old
-            && self.records[child_index].generation == records::Generation::Young
-        {
+        let child = &self.records[child_index];
+        if child.alive && child.generation == records::Generation::Young {
+            self.remembered_set.insert(owner.addr() as usize);
+        }
+    }
+
+    /// Remember `owner` if it is old, whatever it was handed. For a mutation
+    /// the heap cannot observe value by value -- a `&mut` into a side table --
+    /// the owner is conservatively treated as having received a young reference.
+    pub fn remember_if_old(&mut self, owner: Obj) {
+        let Some(&owner_index) = self.by_addr.get(&(owner.addr() as usize)) else {
+            return;
+        };
+        let owner_record = &self.records[owner_index];
+        if owner_record.alive && owner_record.generation == records::Generation::Old {
             self.remembered_set.insert(owner.addr() as usize);
         }
     }
@@ -1417,5 +1558,9 @@ impl Heap {
     }
 }
 
+#[cfg(test)]
+mod barrier_tests;
+#[cfg(test)]
+mod policy_tests;
 #[cfg(test)]
 mod tests;

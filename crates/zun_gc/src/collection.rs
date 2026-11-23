@@ -8,9 +8,9 @@ use super::*;
 /// promotes survivors in place, leaving old objects in nursery chunks.
 fn address_in(ranges: &[(usize, usize)], address: *mut u64) -> bool {
     let address = address as usize;
-    ranges
-        .iter()
-        .any(|&(start, end)| address >= start && address < end)
+    // `ranges` is sorted by start (see `Heap::nursery_ranges`) and disjoint.
+    let after = ranges.partition_point(|&(start, _)| start <= address);
+    after > 0 && address < ranges[after - 1].1
 }
 
 impl Heap {
@@ -154,59 +154,72 @@ impl Heap {
         evacuate: bool,
         mut on_relocation: Option<&mut dyn FnMut(&RelocationMap)>,
     ) -> usize {
+        debug_assert!(!evacuate || young_only, "only a young collection evacuates");
         self.allocations = 0;
-        for r in &mut self.records {
-            r.marked = false;
+        if young_only {
+            if self.verify_barriers.0 {
+                self.verify_remembered_set(ref_slots);
+            }
+        } else {
+            // A full collection marks, and so un-marks, the whole record table.
+            // A young collection marks only young records and clears exactly
+            // those on its way out, so it never needs this pass.
+            for r in &mut self.records {
+                r.marked = false;
+            }
         }
 
-        // Mark reachable objects from the roots.
         let mut work: Vec<usize> = Vec::new();
+        // Mark `address` if it names a live record this collection traces. A
+        // young collection never enters the old generation: an old object is
+        // live by definition, and the only way it can keep a young object alive
+        // is through the remembered set, which is expanded below.
+        let mark = |records: &mut Vec<Record>,
+                    by_addr: &HashMap<usize, usize>,
+                    work: &mut Vec<usize>,
+                    address: usize| {
+            if let Some(&idx) = by_addr.get(&address) {
+                let record = &mut records[idx];
+                if record.marked || (young_only && record.generation == records::Generation::Old) {
+                    return;
+                }
+                record.marked = true;
+                work.push(idx);
+            }
+        };
+
         // Read through the raw slice: the evacuating path writes the rewritten
         // roots back through it, so a shared reborrow held across that write
         // would let the caller assume its roots never change.
         for root in unsafe { &*roots } {
-            if let Some(&idx) = self.by_addr.get(&(root.0 as usize)) {
-                if !self.records[idx].marked {
-                    self.records[idx].marked = true;
-                    work.push(idx);
-                }
-            }
+            mark(&mut self.records, &self.by_addr, &mut work, root.0 as usize);
         }
         // Heap-owned persistent roots: the realm global and the class-statics
         // object outlive any single frame, so they are always live (their stored
         // references are then traced through the work list like any other object).
         for persistent in [self.global_object, self.statics].into_iter().flatten() {
-            if let Some(&idx) = self.by_addr.get(&(persistent.0 as usize)) {
-                if !self.records[idx].marked {
-                    self.records[idx].marked = true;
-                    work.push(idx);
-                }
-            }
+            mark(&mut self.records, &self.by_addr, &mut work, persistent.0 as usize);
         }
         // Class-static data slots are roots too: always scanned, which is why a
         // young object stored there needs no remembered-set entry.
         for address in self.static_store.object_references() {
-            if let Some(&idx) = self.by_addr.get(&address) {
-                if !self.records[idx].marked {
-                    self.records[idx].marked = true;
-                    work.push(idx);
-                }
-            }
+            mark(&mut self.records, &self.by_addr, &mut work, address);
         }
+        let mut children: Vec<usize> = Vec::new();
         if young_only {
-            // Move the set out to iterate it while mutating `self.records`
-            // (disjoint fields), then put it back — the later retain/clear pass
-            // still needs it. Avoids cloning the whole set on every minor GC.
-            let remembered = std::mem::take(&mut self.remembered_set);
-            for &address in &remembered {
-                if let Some(&idx) = self.by_addr.get(&address) {
-                    if !self.records[idx].marked {
-                        self.records[idx].marked = true;
-                        work.push(idx);
+            // An old object that was handed a young reference contributes only
+            // that edge: its own record is neither marked nor traced further.
+            for &owner in &self.remembered_set {
+                if let Some(&idx) = self.by_addr.get(&owner) {
+                    if self.records[idx].alive {
+                        children.clear();
+                        self.children_into(Obj(self.records[idx].addr), ref_slots, &mut children);
+                        for &child in &children {
+                            mark(&mut self.records, &self.by_addr, &mut work, child);
+                        }
                     }
                 }
             }
-            self.remembered_set = remembered;
         }
         // Finalizer callbacks are strong runtime-owned callables. Their
         // target is weak, but a captured callback environment must survive
@@ -216,358 +229,66 @@ impl Heap {
             // callback, so an object it references must survive until then.
             if !entry.queued {
                 if let Some(address) = entry.held.as_object() {
-                    if let Some(&idx) = self.by_addr.get(&address) {
-                        if !self.records[idx].marked {
-                            self.records[idx].marked = true;
-                            work.push(idx);
-                        }
-                    }
+                    mark(&mut self.records, &self.by_addr, &mut work, address);
                 }
             }
-            let Some(environment) = entry.callback.and_then(|callback| callback.environment())
-            else {
-                continue;
-            };
-            let address = environment;
-            if let Some(&idx) = self.by_addr.get(&address) {
-                if !self.records[idx].marked {
-                    self.records[idx].marked = true;
-                    work.push(idx);
-                }
+            if let Some(environment) = entry.callback.and_then(|callback| callback.environment()) {
+                mark(&mut self.records, &self.by_addr, &mut work, environment);
             }
         }
         // Already-queued-but-not-yet-delivered records keep their held value
         // (and callback environment) alive until the runtime drains them.
         for record in &self.finalization_queue {
             if let Some(address) = record.held.as_object() {
-                if let Some(&idx) = self.by_addr.get(&address) {
-                    if !self.records[idx].marked {
-                        self.records[idx].marked = true;
-                        work.push(idx);
-                    }
-                }
+                mark(&mut self.records, &self.by_addr, &mut work, address);
             }
             if let Some(environment) = record.callback.and_then(|callback| callback.environment()) {
-                if let Some(&idx) = self.by_addr.get(&environment) {
-                    if !self.records[idx].marked {
-                        self.records[idx].marked = true;
-                        work.push(idx);
-                    }
-                }
+                mark(&mut self.records, &self.by_addr, &mut work, environment);
             }
         }
         // A registry's cleanup callback is a strong runtime-owned callable: its
         // captured environment must survive as long as the registry is reachable,
         // even before the first `register` copies it into a registration.
         for cleanup in self.finalization_registries.values() {
-            let Some(environment) = cleanup.environment() else {
-                continue;
-            };
-            if let Some(&idx) = self.by_addr.get(&environment) {
-                if !self.records[idx].marked {
-                    self.records[idx].marked = true;
-                    work.push(idx);
-                }
+            if let Some(environment) = cleanup.environment() {
+                mark(&mut self.records, &self.by_addr, &mut work, environment);
             }
         }
-        while let Some(idx) = work.pop() {
-            let obj = Obj(self.records[idx].addr);
-            for &slot in ref_slots(obj.type_rid()).iter() {
-                let child = obj.field(slot) as *mut u64;
-                if child.is_null() {
-                    continue;
-                }
-                if let Some(&cidx) = self.by_addr.get(&(child as usize)) {
-                    if !self.records[cidx].marked {
-                        self.records[cidx].marked = true;
-                        work.push(cidx);
-                    }
-                }
-            }
-            if let Some(properties) = self.dynamic_objects.get(&(obj.addr() as usize)) {
-                // Dynamic properties can hold object-tagged Any values.
-                let dynamic_children: Vec<usize> = properties.object_references().collect();
-                for child in dynamic_children {
-                    if let Some(&cidx) = self.by_addr.get(&child) {
-                        if !self.records[cidx].marked {
-                            self.records[cidx].marked = true;
-                            work.push(cidx);
-                        }
-                    }
-                }
-            }
-            let generator_children: Vec<_> = self.trace_generator_frame(obj).collect();
-            for child in generator_children {
-                if let Some(&cidx) = self.by_addr.get(&child) {
-                    if !self.records[cidx].marked {
-                        self.records[cidx].marked = true;
-                        work.push(cidx);
-                    }
-                }
-            }
-            let generator_state_children: Vec<_> = self.trace_generator_state(obj).collect();
-            for child in generator_state_children {
-                if let Some(&cidx) = self.by_addr.get(&child) {
-                    if !self.records[cidx].marked {
-                        self.records[cidx].marked = true;
-                        work.push(cidx);
-                    }
-                }
-            }
-            // An iterator keeps its source container alive through the side
-            // tables (its header slot is a raw address, not a typed reference).
-            // A typed array and a DataView reach their ArrayBuffer the same
-            // way, so those edges belong here too: a buffer referenced only by
-            // its view was otherwise swept while the view was still alive.
-            {
-                let key = obj.addr() as usize;
-                let sources = [
-                    self.typed_views.get(&key).map(|(buffer, _)| buffer.addr()),
-                    self.data_views.get(&key).map(|_| obj.field(0) as *mut u64),
-                    self.array_iterators
-                        .get(&key)
-                        .map(|(source, _)| source.addr()),
-                    self.set_iterators
-                        .get(&key)
-                        .map(|(source, _)| source.addr()),
-                    self.map_iterators
-                        .get(&key)
-                        .map(|(source, _)| source.addr()),
-                ];
-                for source in sources.into_iter().flatten() {
-                    if let Some(&cidx) = self.by_addr.get(&(source as usize)) {
-                        if !self.records[cidx].marked {
-                            self.records[cidx].marked = true;
-                            work.push(cidx);
-                        }
-                    }
-                }
-            }
-            if let Some(proxy) = self.proxies.get(&(obj.addr() as usize)) {
-                for child in [proxy.target, proxy.handler] {
-                    if let Some(&cidx) = self.by_addr.get(&(child.addr() as usize)) {
-                        if !self.records[cidx].marked {
-                            self.records[cidx].marked = true;
-                            work.push(cidx);
-                        }
-                    }
-                }
-            }
-            if let Some(array) = self.arrays.get(&(obj.addr() as usize)) {
-                for child in array.object_references() {
-                    if let Some(&cidx) = self.by_addr.get(&child) {
-                        if !self.records[cidx].marked {
-                            self.records[cidx].marked = true;
-                            work.push(cidx);
-                        }
-                    }
-                }
-            }
-            if let Some(fields) = self.any_fields.get(&(obj.addr() as usize)) {
-                // Frozen-layout `any` fields can hold object-tagged Any values.
-                let any_children: Vec<usize> = fields
-                    .values()
-                    .filter_map(|value| value.as_object())
-                    .collect();
-                for child in any_children {
-                    if let Some(&cidx) = self.by_addr.get(&child) {
-                        if !self.records[cidx].marked {
-                            self.records[cidx].marked = true;
-                            work.push(cidx);
-                        }
-                    }
-                }
-            }
-            if let Some(map) = self.maps.get(&(obj.addr() as usize)) {
-                for (key, value) in map.iter() {
-                    for child in [key, value].into_iter().filter_map(|item| item.as_object()) {
-                        if let Some(&cidx) = self.by_addr.get(&child) {
-                            if !self.records[cidx].marked {
-                                self.records[cidx].marked = true;
-                                work.push(cidx);
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(set) = self.sets.get(&(obj.addr() as usize)) {
-                for (key, _) in set.iter() {
-                    if let Some(&cidx) = key.as_object().and_then(|child| self.by_addr.get(&child))
-                    {
-                        if !self.records[cidx].marked {
-                            self.records[cidx].marked = true;
-                            work.push(cidx);
-                        }
-                    }
-                }
-            }
-            if let Some(promise) = self.promises.get(&(obj.addr() as usize)) {
-                let children = [
-                    promise.result().and_then(|value| value.as_object()),
-                    promise.reason().and_then(|value| value.as_object()),
-                ];
-                for child in children.into_iter().flatten() {
-                    if let Some(&cidx) = self.by_addr.get(&child) {
-                        if !self.records[cidx].marked {
-                            self.records[cidx].marked = true;
-                            work.push(cidx);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Ephemeron fixed point: a marked key promotes its value, while strong
-        // fields of promoted values can make later keys reachable. Index the
-        // key -> values edges once, seed promotions from already-marked keys,
-        // then resolve a key's values when the key itself enters the work list.
-        // Each entry is therefore visited a constant number of times instead of
-        // re-scanning every ephemeron on each propagation round.
+        // Ephemerons: a marked key promotes its values. The key -> values index
+        // is built once, so each entry is visited a constant number of times. A
+        // young collection never marks an old key, but an old key is live, so
+        // its values are promoted up front.
         let mut ephemeron_values: HashMap<usize, Vec<usize>> = HashMap::default();
-        for entry in &self.weak_maps {
-            for &(key, value) in &entry.entries {
-                ephemeron_values.entry(key).or_default().push(value);
+        if !self.weak_maps.is_empty() {
+            for entry in &self.weak_maps {
+                for &(key, value) in &entry.entries {
+                    ephemeron_values.entry(key).or_default().push(value);
+                }
             }
-        }
-        // Seed from keys that were already reachable when the strong trace
-        // finished; those objects are no longer in `work`.
-        for entry in &self.weak_maps {
-            for &(key, value) in &entry.entries {
-                let Some(&key_idx) = self.by_addr.get(&key) else {
-                    continue;
-                };
-                let Some(&value_idx) = self.by_addr.get(&value) else {
-                    continue;
-                };
-                if self.records[key_idx].marked && !self.records[value_idx].marked {
-                    self.records[value_idx].marked = true;
-                    work.push(value_idx);
+            if young_only {
+                for (&key, values) in &ephemeron_values {
+                    let old_key = self.by_addr.get(&key).is_some_and(|&idx| {
+                        self.records[idx].generation == records::Generation::Old
+                    });
+                    if old_key {
+                        for &value in values {
+                            mark(&mut self.records, &self.by_addr, &mut work, value);
+                        }
+                    }
                 }
             }
         }
         while let Some(idx) = work.pop() {
             let obj = Obj(self.records[idx].addr);
-            // A newly marked object that is itself an ephemeron key promotes
-            // its associated values.
-            if let Some(values) = ephemeron_values.get(&(obj.addr() as usize)) {
-                for &value in values {
-                    if let Some(&value_idx) = self.by_addr.get(&value) {
-                        if !self.records[value_idx].marked {
-                            self.records[value_idx].marked = true;
-                            work.push(value_idx);
-                        }
-                    }
+            children.clear();
+            self.children_into(obj, ref_slots, &mut children);
+            if !ephemeron_values.is_empty() {
+                if let Some(values) = ephemeron_values.get(&(obj.addr() as usize)) {
+                    children.extend(values.iter().copied());
                 }
             }
-            // An iterator keeps its source container alive through the side
-            // tables (its header slot is a raw address, not a typed reference).
-            // A typed array and a DataView reach their ArrayBuffer the same
-            // way, so those edges belong here too: a buffer referenced only by
-            // its view was otherwise swept while the view was still alive.
-            {
-                let key = obj.addr() as usize;
-                let sources = [
-                    self.typed_views.get(&key).map(|(buffer, _)| buffer.addr()),
-                    self.data_views.get(&key).map(|_| obj.field(0) as *mut u64),
-                    self.array_iterators
-                        .get(&key)
-                        .map(|(source, _)| source.addr()),
-                    self.set_iterators
-                        .get(&key)
-                        .map(|(source, _)| source.addr()),
-                    self.map_iterators
-                        .get(&key)
-                        .map(|(source, _)| source.addr()),
-                ];
-                for source in sources.into_iter().flatten() {
-                    if let Some(&cidx) = self.by_addr.get(&(source as usize)) {
-                        if !self.records[cidx].marked {
-                            self.records[cidx].marked = true;
-                            work.push(cidx);
-                        }
-                    }
-                }
-            }
-            for &slot in ref_slots(obj.type_rid()).iter() {
-                let child = obj.field(slot) as *mut u64;
-                if let Some(&child_idx) = self.by_addr.get(&(child as usize)) {
-                    if !self.records[child_idx].marked {
-                        self.records[child_idx].marked = true;
-                        work.push(child_idx);
-                    }
-                }
-            }
-            if let Some(properties) = self.dynamic_objects.get(&(obj.addr() as usize)) {
-                for child in properties.object_references() {
-                    if let Some(&child_idx) = self.by_addr.get(&child) {
-                        if !self.records[child_idx].marked {
-                            self.records[child_idx].marked = true;
-                            work.push(child_idx);
-                        }
-                    }
-                }
-            }
-            if let Some(array) = self.arrays.get(&(obj.addr() as usize)) {
-                for child in array.object_references() {
-                    if let Some(&child_idx) = self.by_addr.get(&child) {
-                        if !self.records[child_idx].marked {
-                            self.records[child_idx].marked = true;
-                            work.push(child_idx);
-                        }
-                    }
-                }
-            }
-            if let Some(fields) = self.any_fields.get(&(obj.addr() as usize)) {
-                let any_children: Vec<usize> = fields
-                    .values()
-                    .filter_map(|value| value.as_object())
-                    .collect();
-                for child in any_children {
-                    if let Some(&child_idx) = self.by_addr.get(&child) {
-                        if !self.records[child_idx].marked {
-                            self.records[child_idx].marked = true;
-                            work.push(child_idx);
-                        }
-                    }
-                }
-            }
-            if let Some(map) = self.maps.get(&(obj.addr() as usize)) {
-                for (key, value) in map.iter() {
-                    for child in [key, value].into_iter().filter_map(|item| item.as_object()) {
-                        if let Some(&child_idx) = self.by_addr.get(&child) {
-                            if !self.records[child_idx].marked {
-                                self.records[child_idx].marked = true;
-                                work.push(child_idx);
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(set) = self.sets.get(&(obj.addr() as usize)) {
-                for (key, _) in set.iter() {
-                    if let Some(&child_idx) =
-                        key.as_object().and_then(|child| self.by_addr.get(&child))
-                    {
-                        if !self.records[child_idx].marked {
-                            self.records[child_idx].marked = true;
-                            work.push(child_idx);
-                        }
-                    }
-                }
-            }
-            if let Some(promise) = self.promises.get(&(obj.addr() as usize)) {
-                let children = [
-                    promise.result().and_then(|value| value.as_object()),
-                    promise.reason().and_then(|value| value.as_object()),
-                ];
-                for child in children.into_iter().flatten() {
-                    if let Some(&child_idx) = self.by_addr.get(&child) {
-                        if !self.records[child_idx].marked {
-                            self.records[child_idx].marked = true;
-                            work.push(child_idx);
-                        }
-                    }
-                }
+            for &child in &children {
+                mark(&mut self.records, &self.by_addr, &mut work, child);
             }
         }
 
@@ -605,43 +326,52 @@ impl Heap {
         } else {
             Vec::new()
         };
+        // A non-moving collection since the last nursery release may have left
+        // old objects, or recycled slots, in nursery storage. Then nothing
+        // short of the whole record table says which references are about to
+        // change, and the evacuation falls back to the complete relocation.
+        let wide = evacuate && self.nursery_pinned;
+        let nursery_list = std::mem::take(&mut self.nursery_records);
+        let mut moved: Vec<(usize, usize)> = Vec::new();
+        let mut survived_bytes = 0usize;
         if evacuate {
-            let mut relocation = RelocationMap::new();
             // This collection releases the nursery, so every object that is
             // still alive afterwards has to leave it. Marked young objects are
             // promoted, as before. An object that an earlier non-moving full
             // collection promoted *in place* is already old but its storage can
             // still be nursery storage, and a young-only collection never
             // proves an old object dead, so those move too and keep their
-            // generation. The alternative - leaving them where they are and
-            // bumping the cursor past them - is what used to abandon a whole
-            // 512 KiB chunk on every minor collection.
-            let survivors: Vec<_> = self
-                .records
+            // generation. The nursery record list names exactly these.
+            let survivors: Vec<usize> = nursery_list
                 .iter()
-                .enumerate()
-                .filter(|(_, record)| {
-                    if !record.alive {
-                        return false;
-                    }
-                    let young = record.generation == records::Generation::Young;
-                    // The sweep below spares an old record in a young-only
-                    // collection whether or not the trace reached it.
-                    let survives_sweep = record.marked || (young_only && !young);
-                    survives_sweep && (young || address_in(&nursery_ranges, record.addr))
+                .copied()
+                .filter(|&idx| {
+                    let record = &self.records[idx];
+                    record.alive
+                        && ((record.generation == records::Generation::Young && record.marked)
+                            || (record.generation == records::Generation::Old
+                                && address_in(&nursery_ranges, record.addr)))
                 })
-                .map(|(idx, record)| (idx, record.addr, record.field_count))
                 .collect();
-            for (idx, old, field_count) in survivors {
+            let mut relocation = RelocationMap::with_capacity(survivors.len());
+            moved.reserve(survivors.len());
+            for idx in survivors {
+                let field_count = self.records[idx].field_count;
+                let old = self.records[idx].addr;
                 let slots = zun_core::OBJECT_HEADER_SLOTS + field_count;
-                self.promoted_since_compaction += slots * std::mem::size_of::<u64>();
+                let bytes = slots * std::mem::size_of::<u64>();
+                self.promoted_since_compaction += bytes;
+                survived_bytes += bytes;
                 let new = self.alloc_old_slots(slots);
                 unsafe { std::ptr::copy_nonoverlapping(old, new, slots) };
                 relocation.insert_addresses(old as usize, new as usize);
-                self.records[idx].addr = new;
-                self.records[idx].generation = records::Generation::Old;
+                let record = &mut self.records[idx];
+                record.addr = new;
+                record.generation = records::Generation::Old;
+                record.marked = false;
                 self.by_addr.remove(&(old as usize));
                 self.by_addr.insert(new as usize, idx);
+                moved.push((idx, old as usize));
             }
 
             for root in unsafe { &mut *roots } {
@@ -655,7 +385,11 @@ impl Heap {
             // reference to rewrite, and walking every table to find that out
             // was the dominant cost of a young collection.
             if !relocation.is_empty() {
-                self.rewrite_all_references_impl(&relocation, ref_slots, true);
+                if wide {
+                    self.rewrite_all_references_impl(&relocation, ref_slots, true);
+                } else {
+                    self.rewrite_after_young_evacuation(&relocation, ref_slots, &moved);
+                }
                 unsafe { rewrite_native_roots(&relocation) };
             }
             if let Some(callback) = on_relocation.as_mut() {
@@ -670,97 +404,61 @@ impl Heap {
         // list (they would only be scrubbed from it below) and are released
         // straight to the record free list.
         let mut released_dead: Vec<usize> = Vec::new();
-        for idx in 0..self.records.len() {
-            let r = &mut self.records[idx];
-            let collect_this = !young_only || r.generation == records::Generation::Young;
-            if r.alive && collect_this && !r.marked {
-                r.alive = false;
-                self.by_addr.remove(&(r.addr as usize));
-                // A plain object is in none of the side tables below, and a table
-                // that holds nothing cannot hold this address: the emptiness
-                // check is what keeps a dead object from costing a hashed probe
-                // per table.
-                if !self.dynamic_objects.is_empty() {
-                    self.dynamic_objects.remove(&(r.addr as usize));
+        if young_only {
+            // Only the nursery's records can be young: the list holds every one.
+            let mut kept = Vec::new();
+            for &idx in &nursery_list {
+                let r = &self.records[idx];
+                if !r.alive || r.generation != records::Generation::Young {
+                    if r.alive && !evacuate {
+                        kept.push(idx);
+                    }
+                    continue;
                 }
-                if !self.arrays.is_empty() {
-                    self.arrays.remove(&(r.addr as usize));
-                }
-                if !self.any_fields.is_empty() {
-                    self.any_fields.remove(&(r.addr as usize));
-                }
-                if !self.buffers.is_empty() {
-                    self.buffers.remove(&(r.addr as usize));
-                }
-                if !self.data_views.is_empty() {
-                    self.data_views.remove(&(r.addr as usize));
-                }
-                if !self.typed_views.is_empty() {
-                    self.typed_views.remove(&(r.addr as usize));
-                }
-                if !self.array_iterators.is_empty() {
-                    self.array_iterators.remove(&(r.addr as usize));
-                }
-                if !self.generator_frames.is_empty() {
-                    self.generator_frames.remove(&(r.addr as usize));
-                }
-                if !self.generator_states.is_empty() {
-                    self.generator_states.remove(&(r.addr as usize));
-                }
-                if !self.set_iterators.is_empty() {
-                    self.set_iterators.remove(&(r.addr as usize));
-                }
-                if !self.map_iterators.is_empty() {
-                    self.map_iterators.remove(&(r.addr as usize));
-                }
-                if !self.dates.is_empty() {
-                    self.dates.remove(&(r.addr as usize));
-                }
-                if !self.errors.is_empty() {
-                    self.errors.remove(&(r.addr as usize));
-                }
-                if !self.maps.is_empty() {
-                    self.maps.remove(&(r.addr as usize));
-                }
-                if !self.sets.is_empty() {
-                    self.sets.remove(&(r.addr as usize));
-                }
-                if !self.weak_map_objects.is_empty() {
-                    self.weak_map_objects.remove(&(r.addr as usize));
-                }
-                if !self.weak_set_objects.is_empty() {
-                    self.weak_set_objects.remove(&(r.addr as usize));
-                }
-                if !self.node_buffers.is_empty() {
-                    self.node_buffers.remove(&(r.addr as usize));
-                }
-                if !self.weak_ref_objects.is_empty() {
-                    self.weak_ref_objects.remove(&(r.addr as usize));
-                }
-                if !self.promises.is_empty() {
-                    self.promises.remove(&(r.addr as usize));
-                }
-                if !self.regexes.is_empty() {
-                    self.regexes.remove(&(r.addr as usize));
-                }
-                if !self.bigints.is_empty() {
-                    self.bigints.remove(&(r.addr as usize));
-                }
-                if !self.proxies.is_empty() {
-                    self.proxies.remove(&(r.addr as usize));
-                }
-                if evacuate && address_in(&nursery_ranges, r.addr) {
-                    released_dead.push(idx);
+                if r.marked {
+                    let r = &mut self.records[idx];
+                    r.marked = false;
+                    r.generation = records::Generation::Old;
+                    kept.push(idx);
                 } else {
-                    self.free.entry(r.field_count).or_default().push(idx);
+                    freed += 1;
+                    self.sweep_dead(idx, evacuate, &nursery_ranges, &mut released_dead);
                 }
-                freed += 1;
-            } else if r.alive && (!young_only || r.generation == records::Generation::Young) {
-                // A full collection is also the promotion boundary. Future
-                // nursery collections can skip these records and rely on a
-                // remembered set for old-to-young writes.
-                r.generation = records::Generation::Old;
             }
+            if evacuate {
+                // Every record left the nursery or died: keep the buffer.
+                let mut list = nursery_list;
+                list.clear();
+                self.nursery_records = list;
+            } else {
+                self.nursery_records = kept;
+            }
+        } else {
+            for idx in 0..self.records.len() {
+                let r = &mut self.records[idx];
+                if r.alive && !r.marked {
+                    freed += 1;
+                    self.sweep_dead(idx, false, &nursery_ranges, &mut released_dead);
+                } else if r.alive {
+                    // A full collection is also the promotion boundary: from
+                    // here a young collection skips these records and relies on
+                    // the remembered set for old-to-young writes.
+                    r.marked = false;
+                    if r.generation == records::Generation::Young {
+                        r.generation = records::Generation::Old;
+                    }
+                }
+            }
+            let records = &self.records;
+            self.nursery_records = nursery_list
+                .iter()
+                .copied()
+                .filter(|&idx| records[idx].alive)
+                .collect();
+        }
+        if !evacuate {
+            // Survivors now sit in nursery storage as old objects.
+            self.nursery_pinned = true;
         }
         if evacuate {
             // Dead records still point into the nursery storage this
@@ -768,25 +466,32 @@ impl Heap {
             // the address-preserving free list: that would make the next
             // allocation a use-after-free. Release their storage instead, which
             // keeps the record index reusable at a fresh address.
-            let mut free = std::mem::take(&mut self.free);
             let mut stale: Vec<usize> = released_dead;
-            for free_indices in free.values_mut() {
-                free_indices.retain(|&idx| {
-                    if address_in(&nursery_ranges, self.records[idx].addr) {
-                        stale.push(idx);
-                        false
-                    } else {
-                        true
-                    }
-                });
+            if self.nursery_pinned {
+                // A non-moving collection may have put nursery-resident slots on
+                // the free list; they are scrubbed here, once, by the collection
+                // that releases the nursery.
+                let mut free = std::mem::take(&mut self.free);
+                for free_indices in free.values_mut() {
+                    free_indices.retain(|&idx| {
+                        if address_in(&nursery_ranges, self.records[idx].addr) {
+                            stale.push(idx);
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
+                self.free = free;
             }
-            self.free = free;
             for idx in stale {
                 self.release_record_storage(idx);
             }
             // Nothing alive is left in nursery storage: young survivors were
             // promoted out of it and the sweep has just dropped the rest.
+            let allocated = self.nursery_bytes;
             self.reset_nursery();
+            self.note_young_collection(allocated, survived_bytes);
         }
         for entry in &mut self.finalizers {
             if entry.target != 0 && !entry.queued && !self.by_addr.contains_key(&entry.target) {
@@ -798,19 +503,49 @@ impl Heap {
                 });
             }
         }
-        self.remembered_set
-            .retain(|address| self.by_addr.contains_key(address));
-        if self
-            .records
-            .iter()
-            .all(|record| !record.alive || record.generation == records::Generation::Old)
-        {
-            self.remembered_set.clear();
-        }
+        // Every survivor of any collection is old afterwards, so no old-to-young
+        // edge can exist: the set starts over empty.
+        self.remembered_set.clear();
         if young_only {
             self.nursery_bytes = 0;
         }
         freed
+    }
+
+    /// Drop a dead record: unindex it, forget its side-table state, and queue it
+    /// for reuse (at its own address, or at a fresh one when its storage is
+    /// nursery storage that is about to be handed out again).
+    fn sweep_dead(
+        &mut self,
+        idx: usize,
+        evacuate: bool,
+        nursery_ranges: &[(usize, usize)],
+        released_dead: &mut Vec<usize>,
+    ) {
+        let r = &mut self.records[idx];
+        r.alive = false;
+        r.marked = false;
+        let addr = r.addr;
+        let address = addr as usize;
+        let field_count = r.field_count;
+        self.by_addr.remove(&address);
+        // A plain object is in none of the side tables below, and a table
+        // that holds nothing cannot hold this address: the emptiness check is
+        // what keeps a dead object from costing a hashed probe per table.
+        macro_rules! forget {
+            ($($table:ident),*) => { $( if !self.$table.is_empty() { self.$table.remove(&address); } )* };
+        }
+        forget!(
+            dynamic_objects, arrays, any_fields, buffers, data_views, typed_views,
+            array_iterators, generator_frames, generator_states, set_iterators,
+            map_iterators, dates, errors, maps, sets, weak_map_objects, weak_set_objects,
+            node_buffers, weak_ref_objects, promises, regexes, bigints, proxies
+        );
+        if evacuate && address_in(nursery_ranges, addr) {
+            released_dead.push(idx);
+        } else {
+            self.free.entry(field_count).or_default().push(idx);
+        }
     }
 
     /// Collect while treating captured environments of function values as

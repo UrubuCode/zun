@@ -61,6 +61,7 @@ impl Heap {
             self.records[idx].marked = false;
             self.records[idx].generation = Generation::Young;
             self.by_addr.insert(addr as usize, idx);
+            self.nursery_records.push(idx);
             self.nursery_bytes = self.nursery_bytes.saturating_add(
                 (zun_core::OBJECT_HEADER_SLOTS + field_count) * std::mem::size_of::<u64>(),
             );
@@ -69,14 +70,19 @@ impl Heap {
         let slots = zun_core::OBJECT_HEADER_SLOTS + field_count;
         assert!(slots <= CHUNK_SLOTS, "object larger than a heap chunk");
         if self.nursery_chunks.is_empty() || self.nursery_cursor + slots > CHUNK_SLOTS {
-            self.nursery_chunks
-                .push(vec![0u64; CHUNK_SLOTS].into_boxed_slice());
+            if !self.nursery_chunks.is_empty()
+                && self.nursery_active + 1 < self.nursery_chunks.len()
+            {
+                // A chunk the last release retained: already clean.
+                self.nursery_active += 1;
+            } else {
+                self.nursery_chunks
+                    .push(vec![0u64; CHUNK_SLOTS].into_boxed_slice());
+                self.nursery_active = self.nursery_chunks.len() - 1;
+            }
             self.nursery_cursor = 0;
         }
-        let chunk = self
-            .nursery_chunks
-            .last_mut()
-            .expect("just pushed a nursery chunk");
+        let chunk = &mut self.nursery_chunks[self.nursery_active];
         let base = &mut chunk[self.nursery_cursor] as *mut u64;
         self.nursery_cursor += slots;
         unsafe {
@@ -114,6 +120,7 @@ impl Heap {
             }
         };
         self.by_addr.insert(base as usize, idx);
+        self.nursery_records.push(idx);
         self.nursery_bytes = self
             .nursery_bytes
             .saturating_add(slots * std::mem::size_of::<u64>());
@@ -124,52 +131,60 @@ impl Heap {
     /// `[start, end)` byte bounds. Computed once per collection so testing a
     /// record's storage does not re-walk the chunk list for every record.
     pub(super) fn nursery_ranges(&self) -> Vec<(usize, usize)> {
-        self.nursery_chunks
+        let mut ranges: Vec<(usize, usize)> = self
+            .nursery_chunks
             .iter()
             .map(|chunk| {
                 let start = chunk.as_ptr() as usize;
                 (start, start + std::mem::size_of_val(&**chunk))
             })
-            .collect()
+            .collect();
+        ranges.sort_unstable();
+        ranges
     }
 
     /// Release the nursery back to the bump allocator.
     ///
     /// The caller must have moved or swept every live object out of nursery
-    /// storage first: this hands the same addresses out again. One chunk is
-    /// kept so the common case does not free and re-zero 512 KiB per
-    /// collection, and any further chunks the epoch grew are returned to the
-    /// system allocator.
+    /// storage first: this hands the same addresses out again. Enough chunks to
+    /// hold one epoch of the current budget are kept, so the common case does
+    /// not free and re-zero them on every collection, and any further chunks the
+    /// epoch grew are returned to the system allocator.
     pub(super) fn reset_nursery(&mut self) {
-        // How much of the retained chunk this epoch actually handed out: all of
-        // it once the epoch grew past one chunk, otherwise only up to the bump
-        // cursor. Everything past that was never written and is still clean, so
-        // zeroing the whole 512 KiB would be about 64x the work for a typical
-        // epoch (a 256-allocation budget dirties roughly 8 KiB of it).
-        let dirty = if self.nursery_chunks.len() > 1 {
-            CHUNK_SLOTS
-        } else {
-            self.nursery_cursor
-        };
-        self.nursery_chunks.truncate(1);
-        if let Some(chunk) = self.nursery_chunks.first_mut() {
+        let keep = (self.nursery_budget() / (CHUNK_SLOTS * std::mem::size_of::<u64>())).max(1);
+        let active = self.nursery_active;
+        self.nursery_chunks.truncate(keep);
+        for (index, chunk) in self.nursery_chunks.iter_mut().enumerate() {
             if self.poison_released_memory.0 {
                 // The whole chunk, not just the dirty extent: this is the
                 // diagnostic path, where being thorough is worth more than
                 // being quick. `alloc` re-zeroes what it hands back out.
                 chunk.fill(POISON_SLOT);
-            } else {
-                // `alloc`'s bump path writes only the header and relies on the
-                // chunk being zero for the object's fields. Reusing the chunk
-                // (rather than abandoning it, as the collector did before
-                // `020e678b`) broke that invariant: a new object started with a
-                // dead object's field values. Restoring it here keeps the
-                // per-allocation path free of a memset.
-                chunk[..dirty].fill(0);
+                continue;
             }
+            // How much of this chunk the epoch actually handed out: all of it
+            // for every chunk but the last one in use, which is filled only up
+            // to the bump cursor. Everything past that was never written and is
+            // still clean, so zeroing a whole 512 KiB chunk would be about 64x
+            // the work for a typical epoch.
+            let dirty = match index.cmp(&active) {
+                std::cmp::Ordering::Less => CHUNK_SLOTS,
+                std::cmp::Ordering::Equal => self.nursery_cursor,
+                std::cmp::Ordering::Greater => 0,
+            };
+            // `alloc`'s bump path writes only the header and relies on the chunk
+            // being zero for the object's fields. Reusing the chunk (rather than
+            // abandoning it, as the collector did before `020e678b`) broke that
+            // invariant: a new object started with a dead object's field
+            // values. Restoring it here keeps the per-allocation path free of a
+            // memset.
+            chunk[..dirty].fill(0);
         }
+        self.nursery_active = 0;
         self.nursery_cursor = 0;
         self.nursery_bytes = 0;
+        self.nursery_records.clear();
+        self.nursery_pinned = false;
     }
 
     /// Queue a dead record for reuse at a fresh address, marking it with a
