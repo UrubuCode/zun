@@ -7,6 +7,7 @@
 //! branches/ret); the front-end leaves the stack empty at block boundaries, so
 //! blocks need no stack parameters and locals become typed Variables.
 
+mod any;
 mod arith;
 mod arrays;
 mod builtins;
@@ -30,6 +31,7 @@ use cranelift_module::{DataId, FuncId, Module as ClifModule};
 use zun_il::{decode_all, JitKind, NumKind, Opcode, Operand};
 use zun_module::{read_body, MethodBody, Module as ZmModule};
 use zun_types::TypeSystem;
+use any::AnyConst;
 use objects::{
     field_token_rid, require_reference_agreement, require_reference_receiver, NullDeref,
 };
@@ -105,6 +107,7 @@ pub fn translate_body(
     statics_cell_addr: u64,
     osr_entry_pc: Option<usize>,
     osr_region_end: Option<usize>,
+    method_rid: u32,
 ) -> Result<(), String> {
     let instrs = decode_all(body.code).map_err(|e| e.to_string())?;
 
@@ -191,13 +194,24 @@ pub fn translate_body(
         .iter()
         .map(|&b| JitKind::from_byte(b))
         .collect();
+    // An `any` local is three variables: the tag in `vars`, then `bits` and `obj`
+    // in `any_vars` (`obj` is the only one a collection must see).
     let mut vars = Vec::with_capacity(local_kinds.len());
+    let mut any_vars: Vec<Option<(Variable, Variable)>> = Vec::with_capacity(local_kinds.len());
     for &k in &local_kinds {
         let var = builder.declare_var(clif_ty(k));
         if matches!(k, JitKind::Object | JitKind::Array) {
             builder.declare_var_needs_stack_map(var);
         }
         vars.push(var);
+        if k == JitKind::Other {
+            let bits = builder.declare_var(types::I64);
+            let obj = builder.declare_var(types::I64);
+            builder.declare_var_needs_stack_map(obj);
+            any_vars.push(Some((bits, obj)));
+        } else {
+            any_vars.push(None);
+        }
     }
 
     builder.switch_to_block(entry);
@@ -212,25 +226,16 @@ pub fn translate_body(
     };
     for (i, &kind) in local_kinds.iter().take(entry_locals).enumerate() {
         if kind == JitKind::Other {
-            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                crate::any_abi::CARRIER_SIZE,
-                crate::any_abi::CARRIER_ALIGN_SHIFT,
-            ));
-            let address = builder.ins().stack_addr(types::I64, slot, 0);
-            builder.ins().store(
-                MemFlags::trusted(),
-                entry_params[param_value],
-                address,
-                crate::any_abi::TAG_OFFSET,
-            );
-            builder.ins().store(
-                MemFlags::trusted(),
-                entry_params[param_value + 1],
-                address,
-                crate::any_abi::PAYLOAD_OFFSET,
-            );
-            builder.def_var(vars[i], address);
+            // An `any` parameter arrives as two words (tag, payload) and is split
+            // into the triple at once; nothing about it lives in a stack slot.
+            let (bits_var, obj_var) = any_vars[i].expect("an any local has its variables");
+            let tag = entry_params[param_value];
+            let payload = entry_params[param_value + 1];
+            let (bits, obj) = any::split_payload_in(&mut builder, tag, payload);
+            builder.declare_value_needs_stack_map(obj);
+            builder.def_var(vars[i], tag);
+            builder.def_var(bits_var, bits);
+            builder.def_var(obj_var, obj);
             param_value += 2;
         } else {
             let p = entry_params[param_value];
@@ -241,16 +246,24 @@ pub fn translate_body(
             param_value += 1;
         }
     }
-    // Zero-initialize non-parameter locals to a typed zero.
+    // Zero-initialize non-parameter locals to a typed zero (an `any` to
+    // `undefined`, what Tier 0 starts every local at).
     for i in entry_locals..local_kinds.len() {
+        if let Some((bits_var, obj_var)) = any_vars[i] {
+            let tag = builder
+                .ins()
+                .iconst(types::I64, zun_core::AnyTag::Void as i64);
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder.def_var(vars[i], tag);
+            builder.def_var(bits_var, zero);
+            builder.def_var(obj_var, zero);
+            continue;
+        }
         let z = typed_zero(&mut builder, local_kinds[i]);
         builder.def_var(vars[i], z);
     }
     let osr_exit = match (&region, osr_exit_block) {
         (Some(r), Some(block)) => {
-            if local_kinds.contains(&JitKind::Other) {
-                return Err("OSR loop exit does not support Any locals".into());
-            }
             let out_ptr = *entry_params
                 .get(param_value)
                 .ok_or("OSR loop entry is missing its out_locals parameter")?;
@@ -276,9 +289,26 @@ pub fn translate_body(
         first.expect("block 0")
     });
 
+    let null_scan_range = match &region {
+        Some(r) => {
+            let end = offset_of_index.get(r.end_idx).copied().unwrap_or(usize::MAX);
+            offset_of_index[r.start_idx]..end
+        }
+        None => 0..usize::MAX,
+    };
+    let null_modes = crate::eligible::const_null_modes(zm, body, &instrs, null_scan_range)
+        .ok_or("const.null/const.undef has a use the typed JIT does not lower")?;
     let mut t = Translator {
         builder,
         vars,
+        any_vars,
+        imports: HashMap::new(),
+        any_parts: HashMap::new(),
+        any_consts: HashMap::new(),
+        any_boxed: HashMap::new(),
+        method_rid,
+        body_returns_any: body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Other,
+        null_modes,
         local_kinds,
         blocks,
         func_ids,
@@ -464,6 +494,22 @@ pub(crate) type Slot = (Value, JitKind);
 pub(crate) struct Translator<'a> {
     pub(crate) builder: FunctionBuilder<'a>,
     pub(crate) vars: Vec<Variable>,
+    /// For an `any` local, the `bits` and `obj` variables (the tag is in `vars`).
+    pub(crate) any_vars: Vec<Option<(Variable, Variable)>>,
+    /// Host helpers imported into the function being built, once each.
+    pub(crate) imports: HashMap<&'static str, cranelift_codegen::ir::FuncRef>,
+    /// `bits` and `obj` of every `any` stack entry, keyed by its (fresh) tag value.
+    pub(crate) any_parts: HashMap<Value, (Value, Value)>,
+    /// Stack entries known to be a literal `null` / `undefined`.
+    pub(crate) any_consts: HashMap<Value, AnyConst>,
+    /// Stack entries that are a just-boxed number or bool, with the typed original.
+    pub(crate) any_boxed: HashMap<Value, Slot>,
+    /// The method being translated (named by an unbox fault so the host can rebuild Tier 0's error).
+    pub(crate) method_rid: u32,
+    /// Whether the method body returns an `any` (an OSR region itself returns the resume pc).
+    pub(crate) body_returns_any: bool,
+    /// How each `const.null` / `const.undef` (by instruction index) is used.
+    pub(crate) null_modes: HashMap<usize, crate::eligible::NullMode>,
     pub(crate) local_kinds: Vec<JitKind>,
     pub(crate) blocks: BTreeMap<usize, Block>,
     pub(crate) func_ids: &'a HashMap<u32, FuncId>,
@@ -532,6 +578,15 @@ impl Translator<'_> {
         }
         if let std::collections::hash_map::Entry::Vacant(e) = block_sigs.entry(target) {
             for &(_, kind) in stack {
+                if kind == JitKind::Other {
+                    // An `any` crosses an edge as its three values; only `obj`
+                    // is a reference.
+                    self.builder.append_block_param(target, types::I64);
+                    self.builder.append_block_param(target, types::I64);
+                    let obj = self.builder.append_block_param(target, types::I64);
+                    self.builder.declare_value_needs_stack_map(obj);
+                    continue;
+                }
                 let param = self.builder.append_block_param(target, clif_ty(kind));
                 if matches!(kind, JitKind::Object | JitKind::Array | JitKind::String) {
                     self.builder.declare_value_needs_stack_map(param);
@@ -539,7 +594,62 @@ impl Translator<'_> {
             }
             e.insert(stack.iter().map(|&(_, k)| k).collect());
         }
-        stack.iter().map(|&(v, _)| BlockArg::from(v)).collect()
+        let signature = block_sigs[&target].clone();
+        if signature.len() != stack.len() {
+            self.osr_error = Some("operand stack depth differs between edges into a block".into());
+            return Vec::new();
+        }
+        let mut args = Vec::new();
+        for (&slot, &wanted) in stack.iter().zip(&signature) {
+            let (value, kind) = slot;
+            if kind == wanted && kind != JitKind::Other {
+                args.push(BlockArg::from(value));
+                continue;
+            }
+            // An `any` slot, or a value an `any` block parameter must receive:
+            // a typed reference or scalar meeting an `any` is boxed on the edge.
+            let any = if kind == JitKind::Other && wanted == JitKind::Other {
+                self.any_of(slot)
+            } else if wanted == JitKind::Other {
+                self.box_to_any(value, kind)
+            } else {
+                Err(format!(
+                    "a {kind:?} value meets a {wanted:?} block parameter"
+                ))
+            };
+            match any {
+                Ok(any) => {
+                    args.push(BlockArg::from(any.tag));
+                    args.push(BlockArg::from(any.bits));
+                    args.push(BlockArg::from(any.obj));
+                }
+                Err(error) => {
+                    self.osr_error = Some(error);
+                    return Vec::new();
+                }
+            }
+        }
+        args
+    }
+
+    /// Rebuild the operand stack from a block's parameters, given the kinds in
+    /// its signature (an `any` is three consecutive parameters).
+    pub(crate) fn stack_from_params(&mut self, block: Block, kinds: &[JitKind]) -> Vec<Slot> {
+        let params = self.builder.block_params(block).to_vec();
+        let mut stack = Vec::with_capacity(kinds.len());
+        let mut cursor = 0usize;
+        for &kind in kinds {
+            if kind == JitKind::Other {
+                let (tag, bits, obj) = (params[cursor], params[cursor + 1], params[cursor + 2]);
+                self.any_parts.insert(tag, (bits, obj));
+                stack.push((tag, kind));
+                cursor += 3;
+            } else {
+                stack.push((params[cursor], kind));
+                cursor += 1;
+            }
+        }
+        stack
     }
 
     fn run(
@@ -565,18 +675,17 @@ impl Translator<'_> {
                     self.builder.switch_to_block(block);
                     // Rebuild the operand stack from the block's parameters (the
                     // threaded edge values) rather than discarding it.
-                    stack = match block_sigs.get(&block) {
-                        Some(kinds) => self
-                            .builder
-                            .block_params(block)
-                            .iter()
-                            .zip(kinds)
-                            .map(|(&value, &kind)| (value, kind))
-                            .collect(),
+                    stack = match block_sigs.get(&block).cloned() {
+                        Some(kinds) => self.stack_from_params(block, &kinds),
                         None => Vec::new(),
                     };
                 }
             }
+
+            // An `any` reaches an operator only through the forms lowered for it. Any
+            // other consumer would read its tag as a number or a reference, so refuse
+            // it here rather than miscompile (the method stays on Tier 0).
+            self.refuse_any_operands(instr.opcode, &stack)?;
 
             match instr.opcode {
                 Opcode::Nop => {}
@@ -607,10 +716,17 @@ impl Translator<'_> {
                 // `Object`-kind value; every consumer below refuses it where the
                 // target is not an `Object` slot, so it cannot reach an `any` or
                 // array slot, where zero is not null.
-                Opcode::ConstNull => {
-                    let zero = self.builder.ins().iconst(types::I64, 0);
-                    stack.push((zero, JitKind::Object));
-                }
+                Opcode::ConstNull => match self.null_modes.get(&i) {
+                    Some(crate::eligible::NullMode::Any) => {
+                        self.push_any_const(&mut stack, AnyConst::Null)
+                    }
+                    _ => {
+                        let zero = self.builder.ins().iconst(types::I64, 0);
+                        stack.push((zero, JitKind::Object));
+                    }
+                },
+                // `undefined` is only ever an `any` (the `Void` tag).
+                Opcode::ConstUndef => self.push_any_const(&mut stack, AnyConst::Undef),
                 Opcode::ConstStr => self.op_const_str(instr, &mut stack)?,
                 Opcode::Conv => {
                     let target = NumKind::from_imm(imm32(&instr.operand)).ok_or("bad conv kind")?;
@@ -620,14 +736,33 @@ impl Translator<'_> {
                 }
                 Opcode::LoadLocal => {
                     let slot = local_index(&instr.operand)?;
-                    let v = self.builder.use_var(self.vars[slot]);
-                    stack.push((v, self.local_kinds[slot]));
+                    if self.local_kinds[slot] == JitKind::Other {
+                        let any = self.load_any_local(slot)?;
+                        self.push_any(&mut stack, any);
+                    } else {
+                        let v = self.builder.use_var(self.vars[slot]);
+                        stack.push((v, self.local_kinds[slot]));
+                    }
                 }
                 Opcode::StoreLocal => {
                     let slot = local_index(&instr.operand)?;
                     let (v, kind) = stack.pop().ok_or("stack underflow")?;
-                    require_reference_agreement(kind, self.local_kinds[slot], "stloc")?;
-                    self.builder.def_var(self.vars[slot], v);
+                    if self.local_kinds[slot] == JitKind::Other {
+                        // A typed value stored into an `any` local is boxed, as
+                        // `Value::box_any` would (a typed null becomes `null`).
+                        let any = if kind == JitKind::Other {
+                            self.any_of((v, kind))?
+                        } else {
+                            self.box_to_any(v, kind)?
+                        };
+                        self.store_any_local(slot, any)?;
+                    } else {
+                        require_reference_agreement(kind, self.local_kinds[slot], "stloc")?;
+                        if kind == JitKind::Other {
+                            return Err("stloc: an any value meets a typed local".into());
+                        }
+                        self.builder.def_var(self.vars[slot], v);
+                    }
                 }
                 Opcode::Pop => {
                     stack.pop().ok_or("stack underflow")?;
@@ -705,7 +840,7 @@ impl Translator<'_> {
                     if self.is_backedge(instr, i, offset_of_index, index_of_offset)? {
                         self.poll_backedge();
                     }
-                    let (cond, _) = stack.pop().ok_or("stack underflow")?;
+                    let cond = self.branch_condition(&mut stack)?;
                     let ft = self.fallthrough(i)?;
                     // The remaining stack (after the condition) is live on both
                     // edges, so it is threaded to each target.
@@ -718,7 +853,7 @@ impl Translator<'_> {
                     if self.is_backedge(instr, i, offset_of_index, index_of_offset)? {
                         self.poll_backedge();
                     }
-                    let (cond, _) = stack.pop().ok_or("stack underflow")?;
+                    let cond = self.branch_condition(&mut stack)?;
                     let ft = self.fallthrough(i)?;
                     // Taken when false: the true edge is the fall-through. The
                     // remaining stack is live on both edges.
@@ -728,23 +863,20 @@ impl Translator<'_> {
                 }
                 Opcode::Ret => {
                     if let Some((v, kind)) = stack.pop() {
-                        if self.method_returns_value {
+                        if self.method_returns_value && self.method_return_kind != JitKind::Other {
                             require_reference_agreement(kind, self.method_return_kind, "ret")?;
                         }
                         if kind == JitKind::Other {
-                            let tag = self.builder.ins().load(
-                                types::I64,
-                                MemFlags::trusted(),
-                                v,
-                                crate::any_abi::TAG_OFFSET,
-                            );
-                            let payload = self.builder.ins().load(
-                                types::I64,
-                                MemFlags::trusted(),
-                                v,
-                                crate::any_abi::PAYLOAD_OFFSET,
-                            );
-                            self.builder.ins().return_(&[tag, payload]);
+                            if self.method_return_kind != JitKind::Other {
+                                return Err("ret: an any value meets a typed return".into());
+                            }
+                            let any = self.any_of((v, kind))?;
+                            let payload = self.join_payload(any);
+                            self.builder.ins().return_(&[any.tag, payload]);
+                        } else if self.method_return_kind == JitKind::Other && self.method_returns_value {
+                            let any = self.box_to_any(v, kind)?;
+                            let payload = self.join_payload(any);
+                            self.builder.ins().return_(&[any.tag, payload]);
                         } else {
                             self.builder.ins().return_(&[v]);
                         }
@@ -764,12 +896,19 @@ impl Translator<'_> {
                 Opcode::NewObj => self.op_new_obj(instr, &mut stack)?,
                 Opcode::ArrayLength => self.op_array_length(&mut stack)?,
                 Opcode::NewArray => self.op_new_array(&mut stack)?,
-                Opcode::UnboxAny => self.op_unbox_any(&mut stack, instrs.get(i + 1))?,
+                Opcode::UnboxAny => self.op_unbox_any(
+                    &mut stack,
+                    instrs.get(i + 1),
+                    offset_of_index.get(i + 1).copied().unwrap_or(0),
+                )?,
                 Opcode::CastClass => self.op_cast_class(&mut stack)?,
                 Opcode::BoxAny => self.op_box_any(&mut stack)?,
                 Opcode::LoadArray => {
                     let (index, index_kind) = stack.pop().ok_or("stack underflow")?;
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
+                    if index_kind == JitKind::Other {
+                        return Err("array index is an any".into());
+                    }
                     if !matches!(array_kind, JitKind::Object | JitKind::Array) {
                         return Err("array load requires an object receiver".into());
                     }
@@ -779,7 +918,12 @@ impl Translator<'_> {
                         ty if ty.is_int() => self.builder.ins().uextend(types::I64, index),
                         _ => return Err("array index must be an integer".into()),
                     };
-                    let carrier_load = self.method_return_kind == JitKind::Other
+                    // The element is an `any` when it is unboxed next, when the method
+                    // returns an `any`, or when the method has any `any` local (a typed
+                    // read infers the element kind from the return kind and is only
+                    // sound in the all-scalar shapes). Mirrors `eligible::array_load_is_any`.
+                    let carrier_load = self.body_returns_any
+                        || self.local_kinds.contains(&JitKind::Other)
                         || instrs
                             .get(i + 1)
                             .is_some_and(|next| next.opcode == Opcode::UnboxAny);
@@ -801,27 +945,7 @@ impl Translator<'_> {
                         return Err("array element load in an OSR loop region needs an Any carrier".into());
                     }
                     if carrier_load {
-                        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            crate::any_abi::CARRIER_SIZE,
-                            crate::any_abi::CARRIER_ALIGN_SHIFT,
-                        ));
-                        let carrier = self.builder.ins().stack_addr(types::I64, slot, 0);
-                        // An out-of-bounds read leaves the slot untouched; seed it as
-                        // `undefined` so it never reads as stale stack bytes.
-                        let void_tag = self.builder.ins().iconst(
-                            types::I64,
-                            zun_core::AnyTag::Void as i64,
-                        );
-                        self.builder.ins().store(
-                            MemFlags::trusted(),
-                            void_tag,
-                            carrier,
-                            crate::any_abi::TAG_OFFSET,
-                        );
-                        let load = self.array_load_any_fref();
-                        self.builder.ins().call(load, &[array, index, carrier]);
-                        stack.push((carrier, JitKind::Other));
+                        self.emit_array_load_any(&mut stack, array, index);
                         continue;
                     }
                     let load = if load_object {
@@ -863,7 +987,35 @@ impl Translator<'_> {
                 Opcode::StoreArray => {
                     let (value, value_kind) = stack.pop().ok_or("stack underflow")?;
                     let (index, index_kind) = stack.pop().ok_or("stack underflow")?;
+                    if index_kind == JitKind::Other {
+                        return Err("array index is an any".into());
+                    }
                     let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
+                    if value_kind == JitKind::Other {
+                        // An `any` element: the helper validates the tag and runs the
+                        // write barrier; the array itself is kept live by its stack map.
+                        if !matches!(array_kind, JitKind::Object | JitKind::Array) {
+                            return Err("array store requires an object receiver".into());
+                        }
+                        self.builder.declare_value_needs_stack_map(array);
+                        let index = match clif_ty(index_kind) {
+                            types::I64 => index,
+                            ty if ty.is_int() => self.builder.ins().uextend(types::I64, index),
+                            _ => return Err("array index must be an integer".into()),
+                        };
+                        let any = self.any_of((value, value_kind))?;
+                        let payload = self.join_payload(any);
+                        let store = self.import(
+                            "zun_jit_array_store_any",
+                            &[types::I64, types::I64, types::I64, types::I64],
+                            &[types::I32],
+                        );
+                        self.builder
+                            .ins()
+                            .call(store, &[array, index, any.tag, payload]);
+                        stack.push((value, value_kind));
+                        continue;
+                    }
                     let store_object = matches!(value_kind, JitKind::Object | JitKind::Array);
                     let store_u64 = value_kind == JitKind::Num(NumKind::U64);
                     let store_i64 = value_kind == JitKind::Num(NumKind::I64);

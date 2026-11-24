@@ -45,43 +45,23 @@ impl Translator<'_> {
             };
             let fref = self.module.declare_func_in_func(fid, self.builder.func);
             self.builder.ins().call(fref, &[receiver]);
-            let void = self.builder.ins().iconst(types::I64, 0);
-            stack.push((void, JitKind::Other));
+            // The interpreter pushes `undefined` for a `clear()` call.
+            self.push_any_const(stack, AnyConst::Undef);
             return Ok(());
         }
         if zun_natives::by_id(id).map(|f| f.name) == Some("mapGet") {
-            if self.method_return_kind != JitKind::Other || stack.len() < 2 {
-                return Err("mapGet requires an Any return and two arguments".into());
+            if stack.len() < 2 {
+                return Err("mapGet requires two arguments".into());
             }
             let key = stack.pop().ok_or("mapGet key")?;
             let (map, map_kind) = stack.pop().ok_or("mapGet receiver")?;
-            if map_kind != JitKind::Object || key.1 != JitKind::Other {
-                return Err("mapGet requires a Map object and Any key".into());
+            if map_kind != JitKind::Object {
+                return Err("mapGet requires a Map object".into());
             }
             self.builder.declare_value_needs_stack_map(map);
-            let key_tag = self.builder.ins().load(
-                types::I64,
-                MemFlags::trusted(),
-                key.0,
-                crate::any_abi::TAG_OFFSET,
-            );
-            let key_payload = self.builder.ins().load(
-                types::I64,
-                MemFlags::trusted(),
-                key.0,
-                crate::any_abi::PAYLOAD_OFFSET,
-            );
-            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                crate::any_abi::CARRIER_SIZE,
-                crate::any_abi::CARRIER_ALIGN_SHIFT,
-            ));
-            let out = self.builder.ins().stack_addr(types::I64, slot, 0);
-            let helper = self.map_get_any_fref();
-            self.builder
-                .ins()
-                .call(helper, &[map, key_tag, key_payload, out]);
-            stack.push((out, JitKind::Other));
+            let key = self.coerce_slot(key, JitKind::Other, "mapGet key")?;
+            let key = self.any_of(key)?;
+            self.emit_map_get_any(stack, map, key);
             return Ok(());
         }
         let (name, arg_count, arg_type, result_kind, result_type) =
@@ -90,6 +70,9 @@ impl Translator<'_> {
             return Err("builtin stack underflow".into());
         }
         let args: Vec<Slot> = stack.split_off(stack.len() - arg_count);
+        if args.iter().any(|&(_, kind)| kind == JitKind::Other) {
+            return Err(format!("builtin {name} takes an any operand: no lowered form"));
+        }
         // Every imported helper is a potential GC boundary. Keep
         // managed receivers/arguments visible before the call,
         // regardless of whether the helper currently allocates.
@@ -190,18 +173,5 @@ impl Translator<'_> {
         }
         stack.push((result, result_kind));
         Ok(())
-    }
-
-    pub(crate) fn map_get_any_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
-        let mut sig = Signature::new(self.builder.func.signature.call_conv);
-        for _ in 0..4 {
-            sig.params.push(AbiParam::new(types::I64));
-        }
-        sig.returns.push(AbiParam::new(types::I32));
-        let id = self
-            .module
-            .declare_function("zun_jit_map_get_any", Linkage::Import, &sig)
-            .expect("declare zun_jit_map_get_any");
-        self.module.declare_func_in_func(id, self.builder.func)
     }
 }

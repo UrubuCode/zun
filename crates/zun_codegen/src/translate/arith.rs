@@ -258,6 +258,16 @@ impl Translator<'_> {
     pub(crate) fn compare(&mut self, stack: &mut Vec<Slot>, cmp: Cmp) -> Result<(), String> {
         let (b, kb) = stack.pop().ok_or("stack underflow")?;
         let (a, k) = stack.pop().ok_or("stack underflow")?;
+        if k == JitKind::Other || kb == JitKind::Other {
+            let equal = match cmp {
+                Cmp::Eq => true,
+                Cmp::Ne => false,
+                _ => return Err("relational comparison of an any value".into()),
+            };
+            let flag = self.compare_any((a, k), (b, kb), equal)?;
+            stack.push((flag, JitKind::Bool));
+            return Ok(());
+        }
         // A reference compares with a reference only (`p === null` is `Object` against
         // the zero handle); an `any` carrier is a pointer to a carrier, not a value.
         super::objects::require_reference_agreement(k, kb, "compare")?;

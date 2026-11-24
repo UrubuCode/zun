@@ -43,25 +43,20 @@ impl Translator<'_> {
         if stack.len() < nargs {
             return Err("stack underflow at call".into());
         }
-        let arg_values: Vec<(Value, JitKind)> = stack
-            .split_off(stack.len() - nargs)
+        let raw_args: Vec<Slot> = stack.split_off(stack.len() - nargs);
+        let mut arg_values: Vec<Slot> = Vec::with_capacity(nargs);
+        for (slot, &param_kind_byte) in raw_args
             .into_iter()
-            .map(|(v, kind)| {
-                if matches!(kind, JitKind::Object | JitKind::String) {
-                    self.builder.declare_value_needs_stack_map(v);
-                }
-                (v, kind)
-            })
-            .collect();
-        for ((_, kind), &param_kind_byte) in arg_values
-            .iter()
             .zip(&callee.local_kinds[..callee.param_count as usize])
         {
-            super::objects::require_reference_agreement(
-                *kind,
+            if matches!(slot.1, JitKind::Object | JitKind::String) {
+                self.builder.declare_value_needs_stack_map(slot.0);
+            }
+            arg_values.push(self.coerce_slot(
+                slot,
                 JitKind::from_byte(param_kind_byte),
                 "call argument",
-            )?;
+            )?);
         }
         // A direct call to an ineligible (non-compiled) callee is
         // routed to the interpreter through the bridge. Eligibility
@@ -118,7 +113,7 @@ impl Translator<'_> {
                 .load(types::I64, MemFlags::trusted(), address, 0);
             let mut sig = Signature::new(self.builder.func.signature.call_conv);
             let mut call_args = Vec::new();
-            for ((value, _kind), &param_kind_byte) in arg_values
+            for (slot, &param_kind_byte) in arg_values
                 .iter()
                 .zip(&callee.local_kinds[..callee.param_count as usize])
             {
@@ -126,21 +121,13 @@ impl Translator<'_> {
                 if param_kind == JitKind::Other {
                     sig.params.push(AbiParam::new(types::I64));
                     sig.params.push(AbiParam::new(types::I64));
-                    call_args.push(self.builder.ins().load(
-                        types::I64,
-                        MemFlags::trusted(),
-                        *value,
-                        crate::any_abi::TAG_OFFSET,
-                    ));
-                    call_args.push(self.builder.ins().load(
-                        types::I64,
-                        MemFlags::trusted(),
-                        *value,
-                        crate::any_abi::PAYLOAD_OFFSET,
-                    ));
+                    let any = self.any_of(*slot)?;
+                    let payload = self.join_payload(any);
+                    call_args.push(any.tag);
+                    call_args.push(payload);
                 } else {
                     sig.params.push(AbiParam::new(clif_ty(param_kind)));
-                    call_args.push(*value);
+                    call_args.push(slot.0);
                 }
             }
             if callee.returns_value {
@@ -163,25 +150,17 @@ impl Translator<'_> {
                 .ok_or("call to non-compiled method")?;
             let fref = self.module.declare_func_in_func(fid, self.builder.func);
             let mut call_args = Vec::new();
-            for ((value, _kind), &param_kind_byte) in arg_values
+            for (slot, &param_kind_byte) in arg_values
                 .iter()
                 .zip(&callee.local_kinds[..callee.param_count as usize])
             {
                 if JitKind::from_byte(param_kind_byte) == JitKind::Other {
-                    call_args.push(self.builder.ins().load(
-                        types::I64,
-                        MemFlags::trusted(),
-                        *value,
-                        crate::any_abi::TAG_OFFSET,
-                    ));
-                    call_args.push(self.builder.ins().load(
-                        types::I64,
-                        MemFlags::trusted(),
-                        *value,
-                        crate::any_abi::PAYLOAD_OFFSET,
-                    ));
+                    let any = self.any_of(*slot)?;
+                    let payload = self.join_payload(any);
+                    call_args.push(any.tag);
+                    call_args.push(payload);
                 } else {
-                    call_args.push(*value);
+                    call_args.push(slot.0);
                 }
             }
             self.builder.ins().call(fref, &call_args)
@@ -190,25 +169,9 @@ impl Translator<'_> {
         if callee.returns_value {
             let kind = JitKind::from_byte(callee.return_kind);
             if kind == JitKind::Other {
-                let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    crate::any_abi::CARRIER_SIZE,
-                    crate::any_abi::CARRIER_ALIGN_SHIFT,
-                ));
-                let carrier = self.builder.ins().stack_addr(types::I64, slot, 0);
-                self.builder.ins().store(
-                    MemFlags::trusted(),
-                    results[0],
-                    carrier,
-                    crate::any_abi::TAG_OFFSET,
-                );
-                self.builder.ins().store(
-                    MemFlags::trusted(),
-                    results[1],
-                    carrier,
-                    crate::any_abi::PAYLOAD_OFFSET,
-                );
-                stack.push((carrier, kind));
+                // The callee returns (tag, payload); the triple is built right away.
+                let any = self.any_from_words(results[0], results[1]);
+                self.push_any(stack, any);
             } else {
                 let r = results[0];
                 if matches!(kind, JitKind::Object | JitKind::String) {
@@ -253,7 +216,18 @@ impl Translator<'_> {
         if stack.len() < argc + 1 {
             return Err("stack underflow at callindirect".into());
         }
-        let arg_values: Vec<Slot> = stack.split_off(stack.len() - argc);
+        let raw_args: Vec<Slot> = stack.split_off(stack.len() - argc);
+        let mut arg_values: Vec<Slot> = Vec::with_capacity(argc);
+        for (slot, &param_kind_byte) in raw_args
+            .into_iter()
+            .zip(&signature.local_kinds[..argc])
+        {
+            arg_values.push(self.coerce_slot(
+                slot,
+                JitKind::from_byte(param_kind_byte),
+                "indirect call argument",
+            )?);
+        }
         let (fn_value, fn_kind) = stack.pop().ok_or("callindirect function value")?;
         if fn_kind != JitKind::Function {
             return Err("callindirect expects a function value".into());
@@ -339,31 +313,9 @@ impl Translator<'_> {
         return_kind: Option<JitKind>,
         stack: &mut Vec<Slot>,
     ) -> Result<(), String> {
-        let argc = arg_values.len();
-        let buf = if argc == 0 {
-            self.builder.ins().iconst(types::I64, 0)
-        } else {
-            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                (argc * 8) as u32,
-                3,
-            ));
-            self.builder.ins().stack_addr(types::I64, slot, 0)
-        };
-        for (i, &(value, kind)) in arg_values.iter().enumerate() {
-            if kind == JitKind::Other {
-                return Err("bridge argument must not be an Any carrier".into());
-            }
-            if matches!(kind, JitKind::Object | JitKind::Array | JitKind::String) {
-                self.builder.declare_value_needs_stack_map(value);
-            }
-            let packed = crate::shim::pack_result(&mut self.builder, value, kind);
-            self.builder
-                .ins()
-                .store(MemFlags::trusted(), packed, buf, (i * 8) as i32);
-        }
+        let (buf, arg_words) = self.pack_bridge_args(arg_values, return_kind)?;
         let fref = self.bridge_fref();
-        let argc_c = self.builder.ins().iconst(types::I64, argc as i64);
+        let argc_c = self.builder.ins().iconst(types::I64, arg_words as i64);
         let caller_sp = self.builder.ins().get_stack_pointer(types::I64);
         let caller_fp = self.builder.ins().get_frame_pointer(types::I64);
         let call = self
@@ -371,17 +323,102 @@ impl Translator<'_> {
             .ins()
             .call(fref, &[target, buf, argc_c, caller_sp, caller_fp]);
         let result = self.builder.inst_results(call)[0];
-        if let Some(kind) = return_kind {
-            if kind == JitKind::Other {
-                return Err("bridge return must not be an Any carrier".into());
-            }
-            let v = crate::shim::unpack_arg(&mut self.builder, result, kind);
-            if matches!(kind, JitKind::Object | JitKind::Array) {
-                self.builder.declare_value_needs_stack_map(v);
-            }
-            stack.push((v, kind));
-        }
+        self.unpack_bridge_result(buf, arg_words, result, return_kind, stack);
         Ok(())
+    }
+
+    /// Write the arguments of a bridged call into one outgoing buffer, right before
+    /// the call: one word per scalar, two (tag, payload) per `any`, plus two result
+    /// words when the callee returns an `any`. Returns the buffer address and the
+    /// number of argument words. The buffer is in no stack map: the host consumes
+    /// it before anything can collect, and the caller keeps using its SSA values.
+    fn pack_bridge_args(
+        &mut self,
+        arg_values: &[Slot],
+        return_kind: Option<JitKind>,
+    ) -> Result<(Value, usize), String> {
+        let arg_words: usize = arg_values
+            .iter()
+            .map(|&(_, kind)| crate::any_abi::abi_word_count(kind))
+            .sum();
+        let result_words = if return_kind == Some(JitKind::Other) { 2 } else { 0 };
+        let words = arg_words + result_words;
+        let buf = if words == 0 {
+            self.builder.ins().iconst(types::I64, 0)
+        } else {
+            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (words * 8) as u32,
+                3,
+            ));
+            self.builder.ins().stack_addr(types::I64, slot, 0)
+        };
+        let mut word = 0usize;
+        for &slot in arg_values {
+            let (value, kind) = slot;
+            if kind == JitKind::Other {
+                let any = self.any_of(slot)?;
+                let payload = self.join_payload(any);
+                self.builder
+                    .ins()
+                    .store(MemFlags::trusted(), any.tag, buf, (word * 8) as i32);
+                self.builder
+                    .ins()
+                    .store(MemFlags::trusted(), payload, buf, (word * 8 + 8) as i32);
+                word += 2;
+                continue;
+            }
+            if matches!(kind, JitKind::Object | JitKind::Array | JitKind::String) {
+                self.builder.declare_value_needs_stack_map(value);
+            }
+            let packed = crate::shim::pack_result(&mut self.builder, value, kind);
+            self.builder
+                .ins()
+                .store(MemFlags::trusted(), packed, buf, (word * 8) as i32);
+            word += 1;
+        }
+        Ok((buf, arg_words))
+    }
+
+    /// Push the result of a bridged call: a packed word, or (for an `any`) the
+    /// result carrier the host wrote after the arguments, read right away.
+    fn unpack_bridge_result(
+        &mut self,
+        buf: Value,
+        arg_words: usize,
+        result: Value,
+        return_kind: Option<JitKind>,
+        stack: &mut Vec<Slot>,
+    ) {
+        let Some(kind) = return_kind else {
+            // A void callee still leaves the placeholder the IL `pop`s (as a direct
+            // call does), or that `pop` would underflow.
+            let placeholder = self.builder.ins().iconst(types::I32, 0);
+            stack.push((placeholder, JitKind::Bool));
+            return;
+        };
+        if kind == JitKind::Other {
+            let tag = self.builder.ins().load(
+                types::I64,
+                MemFlags::trusted(),
+                buf,
+                (arg_words * 8) as i32,
+            );
+            let payload = self.builder.ins().load(
+                types::I64,
+                MemFlags::trusted(),
+                buf,
+                (arg_words * 8 + 8) as i32,
+            );
+            let any = self.any_from_words(tag, payload);
+            self.push_any(stack, any);
+            return;
+        }
+        let v = crate::shim::unpack_arg(&mut self.builder, result, kind);
+        if matches!(kind, JitKind::Object | JitKind::Array) {
+            self.builder.declare_value_needs_stack_map(v);
+        }
+        stack.push((v, kind));
     }
 
     /// Lowering for a `CallIndirect` on a concrete function value: pack the
@@ -401,33 +438,11 @@ impl Translator<'_> {
         return_kind: Option<JitKind>,
         stack: &mut Vec<Slot>,
     ) -> Result<(), String> {
-        let argc = arg_values.len();
-        let buf = if argc == 0 {
-            self.builder.ins().iconst(types::I64, 0)
-        } else {
-            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                (argc * 8) as u32,
-                3,
-            ));
-            self.builder.ins().stack_addr(types::I64, slot, 0)
-        };
-        for (i, &(value, kind)) in arg_values.iter().enumerate() {
-            if kind == JitKind::Other {
-                return Err("bridge argument must not be an Any carrier".into());
-            }
-            if matches!(kind, JitKind::Object | JitKind::Array | JitKind::String) {
-                self.builder.declare_value_needs_stack_map(value);
-            }
-            let packed = crate::shim::pack_result(&mut self.builder, value, kind);
-            self.builder
-                .ins()
-                .store(MemFlags::trusted(), packed, buf, (i * 8) as i32);
-        }
+        let (buf, arg_words) = self.pack_bridge_args(arg_values, return_kind)?;
         // The closure environment is a managed root across the bridged call.
         self.builder.declare_value_needs_stack_map(environment);
         let fref = self.call_indirect_fref();
-        let argc_c = self.builder.ins().iconst(types::I64, argc as i64);
+        let argc_c = self.builder.ins().iconst(types::I64, arg_words as i64);
         let caller_sp = self.builder.ins().get_stack_pointer(types::I64);
         let caller_fp = self.builder.ins().get_frame_pointer(types::I64);
         let call = self
@@ -435,16 +450,7 @@ impl Translator<'_> {
             .ins()
             .call(fref, &[identity, environment, buf, argc_c, caller_sp, caller_fp]);
         let result = self.builder.inst_results(call)[0];
-        if let Some(kind) = return_kind {
-            if kind == JitKind::Other {
-                return Err("bridge return must not be an Any carrier".into());
-            }
-            let v = crate::shim::unpack_arg(&mut self.builder, result, kind);
-            if matches!(kind, JitKind::Object | JitKind::Array) {
-                self.builder.declare_value_needs_stack_map(v);
-            }
-            stack.push((v, kind));
-        }
+        self.unpack_bridge_result(buf, arg_words, result, return_kind, stack);
         Ok(())
     }
 }

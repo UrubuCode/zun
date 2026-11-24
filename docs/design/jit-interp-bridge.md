@@ -174,3 +174,30 @@ executable — only the AOT pipeline (`zun build --aot`) does, and AOT re-uses t
 *interpreter fallback*, not this bridge, for ineligible code. So this foundation
 can be built and verified under the project's build-resource limits without the
 heavy linker step.
+
+## `any` across the bridge and inside compiled frames (stage 5b)
+
+Compiled frames now carry an `any` as **three SSA values**, never a stack slot:
+`tag`, `bits` (the payload when the tag is not `AnyTag::MANAGED_REFERENCE`, else 0)
+and `obj` (the payload when it is, else 0; declared in the stack map). The payload
+is `bits | obj`. A moving collection rewrites `obj` like any typed reference, and a
+zero `obj` is skipped by the root scan. `zun_core::AnyTag::is_managed_reference` is
+the one definition of "this tag's payload is a managed address" (only `Object`;
+strings are append-only table indices, symbols and class descriptors are
+immediates); the emitted split derives from `AnyTag::MANAGED_REFERENCE`.
+
+At every boundary the `any` is the two-word carrier (`any_abi`):
+
+- compiled -> compiled: two `i64` parameters / results (split into the triple on
+  entry, joined with `bits | obj` at the call);
+- host entry (`call_packed_with_any_args`, `call_packed_any`) and OSR: two words per
+  `any` local in the packed buffers (`out_locals` included, also on the
+  exceptional exit);
+- compiled -> interpreter (this bridge): the argument buffer holds one word per
+  scalar or reference and two (tag, payload) per `any`; for an `any` result the
+  caller reserves two more words **after the arguments** and the host writes the
+  result carrier there. `argc` counts argument words only. The caller writes the
+  buffer right before the call and reads the result carrier right after it, with
+  no safepoint in between, and keeps using its SSA triple (kept current by the
+  stack map). A carrier in a stack slot is therefore never read after a call that
+  can collect.

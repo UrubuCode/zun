@@ -201,7 +201,7 @@ impl Translator<'_> {
             };
             self.builder.ins().brif(still, exc, &[], cont, &args);
             self.builder.switch_to_block(cont);
-            *stack = Self::rebuild_stack(&self.builder, block_sigs, cont);
+            *stack = self.rebuild_stack(block_sigs, cont);
             return Ok(());
         }
 
@@ -220,36 +220,46 @@ impl Translator<'_> {
         };
         self.builder.ins().brif(is_pending, exc, &[], cont, &args);
         self.builder.switch_to_block(cont);
-        *stack = Self::rebuild_stack(&self.builder, block_sigs, cont);
+        *stack = self.rebuild_stack(block_sigs, cont);
         Ok(())
     }
 
     /// Write every local, packed, to the OSR out buffer (the loop exit and the
     /// exceptional exit both hand the frame back to the interpreter).
     pub(crate) fn store_osr_locals(&mut self, out_ptr: Value) {
+        // One word per local, two (tag, payload) for an `any`.
+        let mut word = 0usize;
         for slot in 0..self.local_kinds.len() {
             let kind = self.local_kinds[slot];
+            if kind == JitKind::Other {
+                let any = self.load_any_local(slot).expect("an any local has its variables");
+                let payload = self.join_payload(any);
+                self.builder
+                    .ins()
+                    .store(MemFlags::trusted(), any.tag, out_ptr, (word * 8) as i32);
+                self.builder
+                    .ins()
+                    .store(MemFlags::trusted(), payload, out_ptr, (word * 8 + 8) as i32);
+                word += 2;
+                continue;
+            }
             let v = self.builder.use_var(self.vars[slot]);
             let packed = crate::shim::pack_result(&mut self.builder, v, kind);
             self.builder
                 .ins()
-                .store(MemFlags::trusted(), packed, out_ptr, (slot * 8) as i32);
+                .store(MemFlags::trusted(), packed, out_ptr, (word * 8) as i32);
+            word += 1;
         }
     }
 
     /// Rebuild the operand stack from a continuation block's parameters.
     pub(crate) fn rebuild_stack(
-        builder: &FunctionBuilder,
+        &mut self,
         block_sigs: &HashMap<Block, Vec<JitKind>>,
         block: Block,
     ) -> Vec<Slot> {
-        match block_sigs.get(&block) {
-            Some(kinds) => builder
-                .block_params(block)
-                .iter()
-                .zip(kinds)
-                .map(|(&value, &kind)| (value, kind))
-                .collect(),
+        match block_sigs.get(&block).cloned() {
+            Some(kinds) => self.stack_from_params(block, &kinds),
             None => Vec::new(),
         }
     }

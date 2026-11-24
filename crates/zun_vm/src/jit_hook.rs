@@ -14,7 +14,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use zun_codegen::{Jit, JitKind, NumKind};
+use zun_codegen::{Jit, JitAnyAbi, JitKind, NumKind};
 use zun_interp::value::Value;
 use zun_interp::CallHook;
 use zun_module::Module;
@@ -331,6 +331,13 @@ impl<'a> JitHook<'a> {
         if count != self.threshold.max(1) || !trace.reported.borrow_mut().insert(method_rid) {
             return;
         }
+        // An eligible method whose translation failed is not "not eligible": say what
+        // the translator or the Cranelift verifier reported.
+        let translation_failure = {
+            let jit = self.jit.borrow();
+            jit.is_failed(method_rid)
+                .then(|| jit.failure_detail(method_rid).unwrap_or("unknown").to_string())
+        };
         let mut reasons = trace.reasons.borrow_mut();
         let reasons = reasons.get_or_insert_with(|| zun_codegen::method_rejections(self.module, true, true));
         let name = self
@@ -340,7 +347,11 @@ impl<'a> JitHook<'a> {
             .get(method_rid as usize - 1)
             .map(|m| self.module.strings.get(m.name).to_string())
             .unwrap_or_default();
-        let why = reasons.get(&method_rid).map_or("not eligible", String::as_str);
+        let why = match (&translation_failure, reasons.get(&method_rid)) {
+            (Some(detail), _) => format!("translation failed: {detail}"),
+            (None, Some(reason)) => reason.clone(),
+            (None, None) => "not eligible".to_string(),
+        };
         eprintln!("[jit] method {name} stays interpreted ({count} calls): {why}");
     }
 
@@ -411,7 +422,7 @@ impl<'a> JitHook<'a> {
         if !kinds.iter().all(|k| {
             matches!(
                 k,
-                JitKind::Num(_) | JitKind::Bool | JitKind::Object | JitKind::Array
+                JitKind::Num(_) | JitKind::Bool | JitKind::Object | JitKind::Array | JitKind::Other
             )
         }) {
             return OsrLoop::Rejected;
@@ -466,6 +477,10 @@ impl CallHook for JitHook<'_> {
         self.rewrite_osr_snapshot_roots(relocation);
     }
 
+    fn take_pending_fault(&self) -> Option<zun_interp::RunError> {
+        crate::jit_bridge::take_pending_fault()
+    }
+
     fn take_pending_exception(&self) -> Option<Value> {
         // A bridged callee that threw left its object handle here; the JIT frame
         // propagated out, and the interpreter now resumes throwing it.
@@ -512,10 +527,29 @@ impl CallHook for JitHook<'_> {
             if count < self.threshold {
                 return None; // stay interpreted while cold
             }
-            self.jit
+            let compiled = self
+                .jit
                 .borrow_mut()
-                .ensure_compiled(self.module, method_rid)
-                .ok()?;
+                .ensure_compiled(self.module, method_rid);
+            if let Err(error) = compiled {
+                if self.method_trace.is_some() {
+                    let detail = match error {
+                        zun_codegen::JitError::Compile { detail, .. } => detail,
+                        other => format!("{other:?}"),
+                    };
+                    let name = self
+                        .module
+                        .tables
+                        .method_defs
+                        .get(method_rid as usize - 1)
+                        .map(|m| self.module.strings.get(m.name).to_string())
+                        .unwrap_or_default();
+                    eprintln!(
+                        "[jit] method {name} stays interpreted ({count} calls): translation failed: {detail}"
+                    );
+                }
+                return None;
+            }
         }
 
         let jit = self.jit.borrow();
@@ -546,18 +580,27 @@ impl CallHook for JitHook<'_> {
         if args.iter().zip(kinds).any(|(v, &k)| !packs_into(v, k)) {
             return None;
         }
-        let packed: Vec<u64> = args
-            .iter()
-            .zip(kinds)
-            .map(|(v, &k)| pack_value(v, k, unsafe { &mut *heap }))
-            .collect();
+        let packed = pack_words(args, kinds, unsafe { &mut *heap });
+        let return_kind = jit.return_kind(method_rid);
+        // An `any` argument or result takes the carrier entry points: the words
+        // are the (tag, payload) pairs, and a result comes back as a carrier.
+        if return_kind == Some(JitKind::Other) {
+            let carrier = unsafe {
+                jit.call_packed_any_with_heap(method_rid, &packed, &mut *heap).ok()?
+            };
+            let (tag, payload) = carrier.raw_words();
+            return Some(unpack_any(tag, payload, unsafe { &*heap }));
+        }
         let result = unsafe {
-            jit.call_packed_with_heap(method_rid, &packed, &mut *heap)
-                .ok()?
+            if kinds.contains(&JitKind::Other) {
+                jit.call_packed_with_any_args_with_heap(method_rid, &packed, &mut *heap)
+                    .ok()?
+            } else {
+                jit.call_packed_with_heap(method_rid, &packed, &mut *heap)
+                    .ok()?
+            }
         };
-        Some(unpack_value(result, jit.return_kind(method_rid), unsafe {
-            &*heap
-        }))
+        Some(unpack_value(result, return_kind, unsafe { &*heap }))
     }
 
     fn try_loop_osr(
@@ -597,11 +640,7 @@ impl CallHook for JitHook<'_> {
             return None;
         }
         let heap = zun_gc::current_heap_ptr()?;
-        let packed: Vec<u64> = locals
-            .iter()
-            .zip(kinds)
-            .map(|(v, &k)| pack_value(v, k, unsafe { &mut *heap }))
-            .collect();
+        let packed = pack_words(locals, kinds, unsafe { &mut *heap });
         let mut out = vec![0u64; packed.len()];
         let jit = self.jit.borrow();
         let resume = match unsafe {
@@ -615,8 +654,11 @@ impl CallHook for JitHook<'_> {
                 return None;
             }
         };
-        for ((slot, &bits), &k) in locals.iter_mut().zip(&out).zip(kinds) {
-            *slot = unpack_value(bits, Some(k), unsafe { &*heap });
+        for (slot, value) in locals
+            .iter_mut()
+            .zip(unpack_words(&out, kinds, unsafe { &*heap }))
+        {
+            *slot = value;
         }
         self.osr_transfers.set(self.osr_transfers.get() + 1);
         Some(resume as usize)
@@ -707,7 +749,12 @@ pub(crate) fn packs_into(value: &Value, kind: JitKind) -> bool {
             *n == m && matches!(m, NumKind::F64 | NumKind::F32)
         }
         (Value::Int(_, n), JitKind::Num(m)) => *n == m && !matches!(m, NumKind::F64 | NumKind::F32),
-        (_, JitKind::Function | JitKind::Other) => true,
+        // An `any` packs as its (tag, payload) words. A callable has no `Any`
+        // representation and a string would be interned on every call (the table
+        // is append-only), so neither is marshalled: the call stays on Tier 0.
+        (Value::Function(_) | Value::Str(_), JitKind::Other) => false,
+        (_, JitKind::Other) => true,
+        (_, JitKind::Function) => true,
         _ => false,
     }
 }
@@ -733,8 +780,59 @@ pub(crate) fn pack_value(v: &Value, k: JitKind, heap: &mut zun_gc::Heap) -> u64 
             }
             _ => 0,
         },
+        // An `any` is two words; callers go through [`pack_words`].
         JitKind::Other => 0,
     }
+}
+
+/// Pack `value` as the two words of an `any` carrier: its tag and payload.
+pub(crate) fn pack_any(value: &Value, heap: &mut zun_gc::Heap) -> (u64, u64) {
+    let any = value.box_any(heap).unwrap_or_else(zun_core::Any::void);
+    JitAnyAbi::from_any(any).raw_words()
+}
+
+/// Rebuild a value from the two words of an `any` carrier (the shape
+/// `unbox.any` yields, which every interpreter operand accepts).
+pub(crate) fn unpack_any(tag: u64, payload: u64, heap: &zun_gc::Heap) -> Value {
+    match JitAnyAbi::from_raw_words(tag, payload).into_any() {
+        Some(any) => Value::unbox_any(any, heap).unwrap_or(Value::Void),
+        None => Value::Void,
+    }
+}
+
+/// Pack `values` for `kinds` into the word buffer the entry shims read: one word
+/// per scalar or reference, two (tag, payload) per `any`.
+pub(crate) fn pack_words(values: &[Value], kinds: &[JitKind], heap: &mut zun_gc::Heap) -> Vec<u64> {
+    let mut words = Vec::with_capacity(values.len() + 1);
+    for (value, &kind) in values.iter().zip(kinds) {
+        if kind == JitKind::Other {
+            let (tag, payload) = pack_any(value, heap);
+            words.push(tag);
+            words.push(payload);
+        } else {
+            words.push(pack_value(value, kind, heap));
+        }
+    }
+    words
+}
+
+/// Inverse of [`pack_words`].
+pub(crate) fn unpack_words(words: &[u64], kinds: &[JitKind], heap: &zun_gc::Heap) -> Vec<Value> {
+    let mut values = Vec::with_capacity(kinds.len());
+    let mut cursor = 0usize;
+    for &kind in kinds {
+        if kind == JitKind::Other {
+            let tag = words.get(cursor).copied().unwrap_or(0);
+            let payload = words.get(cursor + 1).copied().unwrap_or(0);
+            values.push(unpack_any(tag, payload, heap));
+            cursor += 2;
+        } else {
+            let bits = words.get(cursor).copied().unwrap_or(0);
+            values.push(unpack_value(bits, Some(kind), heap));
+            cursor += 1;
+        }
+    }
+    values
 }
 
 /// Unmarshal a packed `u64` result into a `Value` of the return kind.

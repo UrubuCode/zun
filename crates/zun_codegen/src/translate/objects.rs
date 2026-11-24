@@ -1,5 +1,5 @@
-//! Object and static-field opcodes (`NewObj`, `UnboxAny`, `CastClass`,
-//! `BoxAny`, `LoadStatic`, `StoreStatic`) and their metadata/`FuncRef` helpers
+//! Object and static-field opcodes (`NewObj`, `CastClass`,
+//! `LoadStatic`, `StoreStatic`) and their metadata/`FuncRef` helpers
 //! (`alloc_fref`, `field_info`, `static_info`, `static_get_fref`,
 //! `static_set_fref`, `type_field_range`). Extracted verbatim from
 //! `translate/mod.rs`; `LoadField`/`StoreField` stay inline in the dispatcher
@@ -23,6 +23,9 @@ impl Translator<'_> {
             return Err("stack underflow at newobj".into());
         }
         let args: Vec<Slot> = stack.split_off(stack.len() - count);
+        if args.iter().any(|&(_, kind)| kind == JitKind::Other) {
+            return Err("newobj with an any field initializer has no lowered form".into());
+        }
         // A `null` (an `Object`-kind zero) may only initialize a class-reference field.
         for (i, &(_, kind)) in args.iter().enumerate() {
             let field = self
@@ -69,113 +72,12 @@ impl Translator<'_> {
         Ok(())
     }
 
-    pub(crate) fn op_unbox_any(
-        &mut self,
-        stack: &mut Vec<Slot>,
-        next: Option<&zun_il::Instruction>,
-    ) -> Result<(), String> {
-        let value = stack.pop().ok_or("stack underflow")?;
-        // `unbox.any; conv f64` is the typed read of a `number` out of an `any`
-        // carrier. The target is the conversion, not the method return kind
-        // (an OSR loop region returns its resume PC), and the tag decides how
-        // the payload reads: a float is its bits, an int converts, anything
-        // else (`undefined` from a hole or out-of-bounds read) is `NaN`.
-        if value.1 == JitKind::Other
-            && next.is_some_and(|n| {
-                n.opcode == Opcode::Conv && NumKind::from_imm(imm32(&n.operand)) == Some(NumKind::F64)
-            })
-        {
-            let tag = self.builder.ins().load(
-                types::I64,
-                MemFlags::trusted(),
-                value.0,
-                crate::any_abi::TAG_OFFSET,
-            );
-            let payload = self.builder.ins().load(
-                types::I64,
-                MemFlags::trusted(),
-                value.0,
-                crate::any_abi::PAYLOAD_OFFSET,
-            );
-            let as_float = self
-                .builder
-                .ins()
-                .bitcast(types::F64, MemFlags::new(), payload);
-            let as_int = self.builder.ins().fcvt_from_sint(types::F64, payload);
-            let nan = self.builder.ins().f64const(f64::NAN);
-            let is_float = self.builder.ins().icmp_imm(
-                IntCC::Equal,
-                tag,
-                zun_core::AnyTag::Float as i64,
-            );
-            let is_int = self.builder.ins().icmp_imm(
-                IntCC::Equal,
-                tag,
-                zun_core::AnyTag::Int as i64,
-            );
-            let int_or_nan = self.builder.ins().select(is_int, as_int, nan);
-            let result = self.builder.ins().select(is_float, as_float, int_or_nan);
-            stack.push((result, JitKind::Num(NumKind::F64)));
-            return Ok(());
-        }
-        if value.1 == JitKind::Other {
-            let payload = self.builder.ins().load(
-                types::I64,
-                MemFlags::trusted(),
-                value.0,
-                crate::any_abi::PAYLOAD_OFFSET,
-            );
-            let kind = self.method_return_kind;
-            if !matches!(kind, JitKind::Num(_) | JitKind::Bool) {
-                return Err("unbox.any carrier target must be scalar".into());
-            }
-            let result = match kind {
-                JitKind::Bool => self.builder.ins().ireduce(types::I32, payload),
-                JitKind::Num(NumKind::I8 | NumKind::U8) => {
-                    self.builder.ins().ireduce(types::I8, payload)
-                }
-                JitKind::Num(NumKind::I16 | NumKind::U16) => {
-                    self.builder.ins().ireduce(types::I16, payload)
-                }
-                JitKind::Num(NumKind::I32 | NumKind::U32) => {
-                    self.builder.ins().ireduce(types::I32, payload)
-                }
-                JitKind::Num(NumKind::F32) => {
-                    let bits = self.builder.ins().ireduce(types::I32, payload);
-                    self.builder
-                        .ins()
-                        .bitcast(types::F32, MemFlags::new(), bits)
-                }
-                JitKind::Num(NumKind::F64) => {
-                    self.builder
-                        .ins()
-                        .bitcast(types::F64, MemFlags::new(), payload)
-                }
-                JitKind::Num(NumKind::I64 | NumKind::U64) => payload,
-                _ => unreachable!(),
-            };
-            stack.push((result, kind));
-        } else {
-            stack.push(value);
-        }
-        Ok(())
-    }
-
     pub(crate) fn op_cast_class(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
         let value = stack.pop().ok_or("stack underflow")?;
         if !matches!(value.1, JitKind::Object | JitKind::Array) {
             return Err("castclass requires a managed object value".into());
         }
         self.builder.declare_value_needs_stack_map(value.0);
-        stack.push(value);
-        Ok(())
-    }
-
-    pub(crate) fn op_box_any(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
-        let value = stack.pop().ok_or("stack underflow")?;
-        if !matches!(value.1, JitKind::Num(_) | JitKind::Bool) {
-            return Err("box.any requires a scalar JIT value".into());
-        }
         stack.push(value);
         Ok(())
     }

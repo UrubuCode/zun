@@ -143,6 +143,11 @@ pub struct BridgeConfig {
     /// dereference (kind 0 = read field, 1 = write field, 2 = call method; `rid` is
     /// the field or method token) by setting the pending-exception slot.
     pub null_deref: *const u8,
+    /// `extern "C" zun_jit_unbox_fault(method_rid, pc, tag, payload)`: record the
+    /// uncatchable `RunError` Tier 0 raises when an `unbox.any; conv` meets a tag it
+    /// cannot convert (the same text and source frame), and leave the pending slot
+    /// set so every compiled frame unwinds to the host.
+    pub unbox_fault: *const u8,
     /// Address of the per-thread pending-exception slot the JIT loads after calls.
     pub pending_slot_addr: u64,
 }
@@ -166,6 +171,8 @@ pub struct Jit {
     /// instead of re-attempting a full compile on every backedge (see D5 in
     /// docs/refactor-findings.md).
     failed: HashSet<u32>,
+    /// Why each failed method failed (the translation or verifier error text).
+    failure_details: HashMap<u32, String>,
     /// Count of `define_method` translation attempts per method. Used by the D5
     /// regression test to assert a failed method is attempted exactly once.
     attempts: HashMap<u32, u32>,
@@ -296,6 +303,11 @@ impl Jit {
         builder.symbol("zun_rt_alloc", zun_gc::zun_rt_alloc as *const u8);
         builder.symbol("zun_jit_array_length", zun_jit_array_length as *const u8);
         builder.symbol("zun_jit_string_length", zun_jit_string_length as *const u8);
+        builder.symbol(
+            "zun_jit_any_object_truthy",
+            zun_jit_any_object_truthy as *const u8,
+        );
+        builder.symbol("zun_jit_array_push_any", zun_jit_array_push_any as *const u8);
         builder.symbol(
             "zun_jit_string_literal",
             zun_jit_string_literal as *const u8,
@@ -694,6 +706,7 @@ impl Jit {
             builder.symbol("zun_jit_call_indirect", bridge.call_indirect);
             builder.symbol("zun_jit_route_pending", bridge.route_pending);
             builder.symbol("zun_jit_null_deref", bridge.null_deref);
+            builder.symbol("zun_jit_unbox_fault", bridge.unbox_fault);
         }
         let module = JITModule::new(builder);
 
@@ -749,6 +762,7 @@ impl Jit {
             callees: HashMap::new(),
             defined: HashSet::new(),
             failed: HashSet::new(),
+            failure_details: HashMap::new(),
             attempts: HashMap::new(),
             sigs: HashMap::new(),
             ctx: cranelift_codegen::Context::new(),
@@ -879,6 +893,12 @@ impl Jit {
                 // Cache the failure for the whole requested closure so neither
                 // the failing member `m` nor the entry `rid` is retried; both
                 // stay on the interpreter from here on.
+                let why = match &error {
+                    JitError::Compile { detail, .. } => detail.clone(),
+                    other => format!("{other:?}"),
+                };
+                self.failure_details.entry(m).or_insert(why.clone());
+                self.failure_details.entry(rid).or_insert(why);
                 self.failed.insert(m);
                 self.failed.insert(rid);
                 return Err(error);
@@ -923,6 +943,7 @@ impl Jit {
             self.statics_cell_addr,
             None,
             None,
+            rid,
         ) {
             // Translation failed partway, so `FunctionBuilder::finalize` never
             // ran: the builder context is left dirty and `ctx.func` holds a
@@ -937,12 +958,19 @@ impl Jit {
                 detail,
             });
         }
-        self.module
+        if let Err(e) = self
+            .module
             .define_function(self.func_ids[&rid], &mut self.ctx)
-            .map_err(|e| JitError::Compile {
+        {
+            // A failed definition leaves the half-built function in the context; the
+            // next method must not start from it.
+            self.fb_ctx = FunctionBuilderContext::new();
+            self.module.clear_context(&mut self.ctx);
+            return Err(JitError::Compile {
                 method_rid: rid,
-                detail: e.to_string(),
-            })?;
+                detail: format!("{e}: {e:?}"),
+            });
+        }
         let code_size = self
             .ctx
             .compiled_code()
@@ -1078,20 +1106,24 @@ impl Jit {
             .iter()
             .map(|&b| JitKind::from_byte(b))
             .collect();
-        if local_kinds.contains(&JitKind::Other)
-            || (!loop_exit
-                && body.returns_value
-                && JitKind::from_byte(body.return_kind) == JitKind::Other)
+        // An `any` local is two words (tag, payload) in the entry signature and in the
+        // packed local buffers. A run-to-the-end entry cannot return one (its shim
+        // returns one word); a loop-exit entry returns the resume PC instead.
+        if !loop_exit
+            && body.returns_value
+            && JitKind::from_byte(body.return_kind) == JitKind::Other
         {
             return Err(JitError::Compile {
                 method_rid,
-                detail: "OSR entry does not support Any locals or results yet".into(),
+                detail: "OSR run-to-end entry does not support an Any result".into(),
             });
         }
         let mut signature = body_signature(&self.module, &body);
         signature.params.clear();
         for &kind in &local_kinds {
-            signature.params.push(AbiParam::new(clif_ty(kind)));
+            for _ in 0..any_abi::abi_word_count(kind) {
+                signature.params.push(AbiParam::new(clif_ty(kind)));
+            }
         }
         if loop_exit {
             // Trailing out_locals pointer; the entry returns the resume PC.
@@ -1127,17 +1159,20 @@ impl Jit {
             self.statics_cell_addr,
             Some(target_pc),
             region_end,
+            method_rid,
         ) {
             self.fb_ctx = FunctionBuilderContext::new();
             self.module.clear_context(&mut self.ctx);
             return Err(JitError::Compile { method_rid, detail });
         }
-        self.module
-            .define_function(func_id, &mut self.ctx)
-            .map_err(|e| JitError::Compile {
+        if let Err(e) = self.module.define_function(func_id, &mut self.ctx) {
+            self.fb_ctx = FunctionBuilderContext::new();
+            self.module.clear_context(&mut self.ctx);
+            return Err(JitError::Compile {
                 method_rid,
-                detail: e.to_string(),
-            })?;
+                detail: format!("{e}: {e:?}"),
+            });
+        }
         let code_size = self
             .ctx
             .compiled_code()
@@ -1251,13 +1286,19 @@ impl Jit {
             // A loop-exit entry needs an out buffer; use `call_osr_loop_packed`.
             return Err(JitError::Ineligible(entry.method_rid));
         }
-        if entry.sig.param_kinds.len() != locals.len() {
+        let expected_words: usize = entry
+            .sig
+            .param_kinds
+            .iter()
+            .map(|&kind| any_abi::abi_word_count(kind))
+            .sum();
+        if expected_words != locals.len() {
             return Err(JitError::Arity {
-                expected: entry.sig.param_kinds.len(),
+                expected: expected_words,
                 found: locals.len(),
             });
         }
-        let native_roots = any_abi::collect_native_roots(&entry.sig.param_kinds, locals, false)?;
+        let native_roots = any_abi::collect_native_roots(&entry.sig.param_kinds, locals, true)?;
         let _roots = zun_gc::RootArray::from_objects(native_roots);
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let ptr = self.module.get_finalized_function(entry.shim_id);
@@ -1285,7 +1326,12 @@ impl Jit {
         if !entry.loop_exit {
             return Err(JitError::Ineligible(entry.method_rid));
         }
-        let expected = entry.sig.param_kinds.len();
+        let expected: usize = entry
+            .sig
+            .param_kinds
+            .iter()
+            .map(|&kind| any_abi::abi_word_count(kind))
+            .sum();
         if expected != locals.len() || expected != out_locals.len() {
             return Err(JitError::Arity {
                 expected,
@@ -1296,7 +1342,7 @@ impl Jit {
                 },
             });
         }
-        let native_roots = any_abi::collect_native_roots(&entry.sig.param_kinds, locals, false)?;
+        let native_roots = any_abi::collect_native_roots(&entry.sig.param_kinds, locals, true)?;
         let _roots = zun_gc::RootArray::from_objects(native_roots);
         let _stack_maps = unsafe { zun_gc::ActiveStackMapScope::enter(&self.stack_map_registry) };
         let ptr = self.module.get_finalized_function(entry.shim_id);
@@ -1395,6 +1441,11 @@ impl Jit {
         // could not be translated is not "compiled": reporting it as such made
         // the lazy-tiering path retry `ensure_compiled` on every backedge (D5).
         self.eligible.contains(&method_rid) && !self.failed.contains(&method_rid)
+    }
+
+    /// The error text of a cached translation failure, for `ZUN_JIT_TRACE`.
+    pub fn failure_detail(&self, method_rid: u32) -> Option<&str> {
+        self.failure_details.get(&method_rid).map(String::as_str)
     }
 
     /// Whether `method_rid`'s translation was attempted and failed (cached).
@@ -1511,6 +1562,18 @@ impl Jit {
         let ptr = self.module.get_finalized_function(id);
         let f: extern "C" fn(*const u64) -> u64 = unsafe { std::mem::transmute(ptr) };
         Ok(f(args.as_ptr()))
+    }
+
+    /// [`Self::call_packed_with_any_args`] while `heap` is the current managed heap.
+    pub fn call_packed_with_any_args_with_heap(
+        &self,
+        method_rid: u32,
+        args: &[u64],
+        heap: &mut zun_gc::Heap,
+    ) -> Result<u64, JitError> {
+        self.register_heap_layouts(heap);
+        let _scope = unsafe { zun_gc::HeapScope::enter(heap as *mut _) };
+        self.call_packed_with_any_args(method_rid, args)
     }
 
     /// Call a compiled method using the explicit two-word `Any` return ABI.
@@ -1834,6 +1897,7 @@ pub fn compile_object_for_target(
             0,
             None,
             None,
+            rid,
         )
         .map_err(|detail| JitError::Compile {
             method_rid: rid,

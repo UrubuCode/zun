@@ -2248,6 +2248,9 @@ impl Interp<'_> {
                     // dereference), the locals are already written back, and the
                     // exception is pending in the hook.
                     if resume == usize::MAX {
+                        if let Some(fault) = hook.take_pending_fault() {
+                            return Err(fault);
+                        }
                         return match hook.take_pending_exception() {
                             Some(exception) => Err(RunError::Thrown(exception)),
                             None => Err(RunError::BadToken),

@@ -12,6 +12,14 @@ pub trait CallHook {
         None
     }
 
+    /// An uncatchable run error left pending by the most recent compiled call or
+    /// loop (Tier 0 would have failed the run at that point, for instance an
+    /// `unbox.any; conv` of a `true`). Consulted before [`Self::take_pending_exception`];
+    /// if `Some`, the interpreter fails the run with it instead of using the result.
+    fn take_pending_fault(&self) -> Option<super::RunError> {
+        None
+    }
+
     /// Try a host-provided external call identified by module and export.
     /// Returning `None` preserves the ordinary module-loader path.
     fn try_call_external(

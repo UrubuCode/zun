@@ -59,6 +59,9 @@ fn eligibility_census() {
     let mut user_blockers: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     let (mut utotal, mut uelig, mut uloop, mut uloop_elig) = (0usize, 0usize, 0usize, 0usize);
     let mut compiled = 0usize;
+    let (mut attempted, mut failed_translation) = (0usize, 0usize);
+    let mut translate_failures: BTreeMap<String, usize> = BTreeMap::new();
+    let mut translate_examples: BTreeMap<String, String> = BTreeMap::new();
     let (mut total, mut elig, mut loop_total, mut loop_elig) = (0usize, 0usize, 0usize, 0usize);
     let mut all: BTreeMap<String, (usize, usize)> = BTreeMap::new(); // bucket -> (methods, loop methods)
     let mut direct: BTreeMap<String, (usize, usize)> = BTreeMap::new(); // local reason only
@@ -74,6 +77,44 @@ fn eligibility_census() {
         let bytes = module.write();
         let module = Module::read(&bytes).expect("round-trip");
         let rej = method_rejections(&module, true, true);
+        // Eligible methods must also translate: attempt every one and tally the
+        // failures by their detail (eligibility and translation share no code, so
+        // this is how a disagreement is found).
+        {
+            let config = zun_codegen::BridgeConfig {
+                call_interp: dummy_host as *const u8,
+                call_indirect: dummy_host as *const u8,
+                route_pending: dummy_host as *const u8,
+                null_deref: dummy_host as *const u8,
+                unbox_fault: dummy_host as *const u8,
+                pending_slot_addr: 0,
+            };
+            if let Ok(mut jit) = unsafe { zun_codegen::Jit::new_bridged(&module, config) } {
+                for rid in 1..=module.tables.method_defs.len() as u32 {
+                    if !jit.is_compiled(rid) || rej.contains_key(&rid) {
+                        continue;
+                    }
+                    attempted += 1;
+                    if let Err(error) = jit.ensure_compiled(&module, rid) {
+                        failed_translation += 1;
+                        let detail = match error {
+                            zun_codegen::JitError::Compile { detail, .. } => detail,
+                            other => format!("{other:?}"),
+                        };
+                        translate_examples.entry(detail.clone()).or_insert_with(|| {
+                            let name = module
+                                .tables
+                                .method_defs
+                                .get(rid as usize - 1)
+                                .map(|m| module.strings.get(m.name).to_string())
+                                .unwrap_or_default();
+                            format!("{name} ({})", path.display())
+                        });
+                        *translate_failures.entry(detail).or_default() += 1;
+                    }
+                }
+            }
+        }
         for (i, method) in module.tables.method_defs.iter().enumerate() {
             if method.body_offset == u32::MAX {
                 continue;
@@ -173,6 +214,19 @@ fn eligibility_census() {
         "loop methods:   {loop_total}  eligible: {loop_elig}  rejected: {}",
         loop_total - loop_elig
     );
+    eprintln!(
+        "translation attempts of eligible methods (per file, not deduplicated): {attempted}, failed: {failed_translation}"
+    );
+    {
+        let mut v: Vec<_> = translate_failures.iter().collect();
+        v.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+        for (detail, count) in v.into_iter().take(15) {
+            eprintln!(
+                "  {count:>5}  translation failed: {detail}   e.g. {}",
+                translate_examples.get(detail).map(String::as_str).unwrap_or("")
+            );
+        }
+    }
     { let mut v: Vec<_> = conststr_mix.iter().collect(); v.sort_by_key(|(_, c)| std::cmp::Reverse(**c)); eprintln!("ConstStr-mix: opcodes present (methods): {:?}", &v[..v.len().min(25)]); }
     eprintln!("USER methods (non-prelude): {utotal} eligible {uelig}; loop methods {uloop} eligible {uloop_elig}");
     for (title, map) in [
@@ -214,3 +268,5 @@ fn glob_ts(root: &str, recurse: bool) -> Vec<std::path::PathBuf> {
     out.sort();
     out
 }
+
+extern "C" fn dummy_host() {}

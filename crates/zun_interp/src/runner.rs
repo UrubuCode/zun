@@ -1046,6 +1046,9 @@ impl Interp<'_> {
             if let Some(result) = outcome {
                 // A hooked (JIT) method may have unwound a throw out of a bridged
                 // call; route it as a thrown value rather than the result.
+                if let Some(fault) = hook.take_pending_fault() {
+                    return Err(fault);
+                }
                 if let Some(exception) = hook.take_pending_exception() {
                     return Err(RunError::Thrown(exception));
                 }

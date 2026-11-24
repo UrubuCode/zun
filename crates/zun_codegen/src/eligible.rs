@@ -28,6 +28,8 @@ fn opcode_supported(op: Opcode, instr: &zun_il::Instruction) -> bool {
             // A nullable class reference's `null`: the zero handle. The translator
             // refuses it wherever the target is not an `Object` slot.
             | Opcode::ConstNull
+            // `undefined`: only ever an `any` (the `Void` tag).
+            | Opcode::ConstUndef
             | Opcode::Conv
             | Opcode::UnboxAny
             | Opcode::BoxAny
@@ -579,7 +581,10 @@ fn callvirt_is_non_overridden(
 
 /// Whether a value-type code is one the typed JIT can represent.
 fn kind_supported(byte: u8) -> bool {
-    !matches!(JitKind::from_byte(byte), JitKind::Other)
+    // Every kind is representable now: an `any` is the (tag, bits, obj) triple of
+    // `translate/any.rs`. The predicate stays the one place to refuse a new kind.
+    let _ = JitKind::from_byte(byte);
+    true
 }
 
 /// The current managed allocation lowering is safe for a non-escaping array
@@ -928,82 +933,14 @@ fn any_array_return_only(
         })
 }
 
-fn any_param_return_only(
-    instrs: &[zun_il::Instruction],
-    body: &zun_module::MethodBody<'_>,
-) -> bool {
-    body.returns_value
-        && JitKind::from_byte(body.return_kind) == JitKind::Other
-        && body.param_count > 0
-        && body.local_kinds[..body.param_count as usize]
-            .iter()
-            .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
-        && instrs
-            .iter()
-            .all(|i| matches!(i.opcode, Opcode::Nop | Opcode::LoadLocal | Opcode::Ret))
-}
-
-fn any_direct_call_return_only(
-    instrs: &[zun_il::Instruction],
-    body: &zun_module::MethodBody<'_>,
-) -> bool {
-    body.returns_value
-        && JitKind::from_byte(body.return_kind) == JitKind::Other
-        && body.param_count > 0
-        && body.local_kinds[..body.param_count as usize]
-            .iter()
-            .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
-        && instrs
-            .iter()
-            .filter(|i| matches!(i.opcode, Opcode::Call | Opcode::CallVirt))
-            .count()
-            == 1
-        && instrs.iter().all(|i| {
-            matches!(
-                i.opcode,
-                Opcode::Nop | Opcode::LoadLocal | Opcode::Call | Opcode::CallVirt | Opcode::Ret
-            )
-        })
-}
-
-fn any_map_get_only(instrs: &[zun_il::Instruction], body: &zun_module::MethodBody<'_>) -> bool {
-    body.returns_value
-        && JitKind::from_byte(body.return_kind) == JitKind::Other
-        && body.param_count > 0
-        && body.local_kinds[..body.param_count as usize]
-            .iter()
-            .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
-        && instrs
-            .iter()
-            .filter(|i| i.opcode == Opcode::CallBuiltin)
-            .count()
-            == 1
-        && instrs.iter().all(|i| {
-            matches!(
-                i.opcode,
-                Opcode::Nop | Opcode::LoadLocal | Opcode::CallBuiltin | Opcode::Ret
-            )
-        })
-}
-
-/// Whether a method's signature can cross the bridge's packed-value ABI: every
-/// parameter and the return must be a single-word JIT kind (not `Any`/`Other`,
-/// which needs the two-word carrier the bridge does not yet marshal).
+ /// Whether a method's signature can cross the bridge's packed-value ABI. Every
+/// kind can: a scalar or reference is one word, an `any` two (tag, payload), and
+/// an `any` result comes back in a carrier after the arguments.
 fn bridge_marshalable(module: &Module, rid: u32) -> bool {
     let Some(method) = module.tables.method_defs.get(rid as usize - 1) else {
         return false;
     };
-    if method.body_offset == u32::MAX {
-        return false;
-    }
-    let Ok(body) = read_body(&module.code, method.body_offset) else {
-        return false;
-    };
-    let params_ok = body.local_kinds[..body.param_count as usize]
-        .iter()
-        .all(|&byte| JitKind::from_byte(byte) != JitKind::Other);
-    let return_ok = !body.returns_value || JitKind::from_byte(body.return_kind) != JitKind::Other;
-    params_ok && return_ok
+    method.body_offset != u32::MAX && read_body(&module.code, method.body_offset).is_ok()
 }
 
 /// Whether the method `rid` returns a function value. A call to such a method
@@ -1093,8 +1030,14 @@ pub fn loop_region_rejection(module: &Module, method_rid: u32, target_pc: usize)
         .filter(|ty| module.strings.get(ty.name) == "String")
         .flat_map(|ty| ty.method_start..ty.method_end)
         .collect();
-    if !const_null_uses_ok(module, &body, &instrs, start..end) {
-        return Some("const.null where the target is not a class reference".into());
+    if const_null_modes(module, &body, &instrs, start..end).is_none() {
+        return Some("const.null/const.undef whose use is not a lowered form".into());
+    }
+    if let Some(why) = unbox_any_use_rejection(&instrs, start..end) {
+        return Some(why);
+    }
+    if let Some(why) = any_operand_forms_rejection(module, &body, &instrs, start..end) {
+        return Some(why);
     }
     let mut offset = 0usize;
     for instr in &instrs {
@@ -1204,24 +1147,136 @@ fn pushes_object(
     }
 }
 
-/// `const.null` is the zero handle of a class reference, so it is only meaningful
-/// where a class reference is: compared with one, or stored, passed or returned
-/// into a slot of class type. Anywhere else (an `any`, a number parameter that
-/// defaults when `null` is passed) zero means something else, and the translator
-/// would refuse it; saying so here keeps eligibility equal to what is lowered.
+/// Whether instruction `index` pushes an `any` value (a `JitKind::Other` stack
+/// entry in the translator): an `any` local, a call returning one, a `box.any`,
+/// or an element / `Map.get` read. Used to decide what a `null` is compared with.
+fn pushes_any(
+    module: &Module,
+    body: &zun_module::MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+    index: usize,
+) -> bool {
+    let instr = &instrs[index];
+    match (instr.opcode, instr.operand) {
+        (Opcode::LoadLocal, Operand::Local(slot)) => body
+            .local_kinds
+            .get(slot as usize)
+            .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Other),
+        (Opcode::BoxAny, _) => true,
+        (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => module
+            .tables
+            .method_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .and_then(|method| read_body(&module.code, method.body_offset).ok())
+            .is_some_and(|callee| {
+                callee.returns_value && JitKind::from_byte(callee.return_kind) == JitKind::Other
+            }),
+        (Opcode::LoadArray, _) => array_load_is_any(body, instrs, index),
+        (Opcode::CallBuiltin, Operand::Imm32(id)) => {
+            zun_natives::by_id(id as u32).map(|f| f.name) == Some("mapGet")
+        }
+        _ => false,
+    }
+}
+
+/// Whether the `ldelem` at `index` is lowered as an `any` read. The element kind
+/// is not in the instruction; the translator reads an `any` when the element is
+/// unboxed next, when the method returns an `any`, or when the method has any
+/// `any` local (a typed read is only sound in the narrow all-scalar shapes).
+pub(crate) fn array_load_is_any(
+    body: &zun_module::MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+    index: usize,
+) -> bool {
+    (body.returns_value && JitKind::from_byte(body.return_kind) == JitKind::Other)
+        || instrs
+            .get(index + 1)
+            .is_some_and(|next| next.opcode == Opcode::UnboxAny)
+        || body
+            .local_kinds
+            .iter()
+            .any(|&kind| JitKind::from_byte(kind) == JitKind::Other)
+}
+
+/// The instruction that produced the value `depth` places below the top of the
+/// operand stack just before instruction `at`, found by walking backwards over
+/// straight-line code. `None` when a branch, a duplicating instruction or an
+/// unknown stack effect is in the way.
+fn producer_of(
+    module: &Module,
+    instrs: &[zun_il::Instruction],
+    at: usize,
+    mut depth: usize,
+) -> Option<usize> {
+    for k in (0..at).rev() {
+        let instr = &instrs[k];
+        if matches!(instr.operand, Operand::Branch(_)) || instr.opcode == Opcode::Dup {
+            return None;
+        }
+        let (pops, pushes) = match (instr.opcode, instr.operand) {
+            (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => {
+                let method = module
+                    .tables
+                    .method_defs
+                    .get((token.rid() as usize).wrapping_sub(1))?;
+                let callee = read_body(&module.code, method.body_offset).ok()?;
+                (callee.param_count as usize, usize::from(callee.returns_value))
+            }
+            (Opcode::StoreField, _) => (2, 0),
+            (Opcode::StoreStatic, _) => (1, 0),
+            (Opcode::NewObj, Operand::Token(token)) => {
+                let ty = module
+                    .tables
+                    .type_defs
+                    .get((token.rid() as usize).wrapping_sub(1))?;
+                ((ty.field_end - ty.field_start) as usize, 1)
+            }
+            (op, _) => match op.stack_effect() {
+                zun_il::StackEffect::Fixed { pops, pushes } => (pops as usize, pushes as usize),
+                _ => return None,
+            },
+        };
+        if depth < pushes {
+            return Some(k);
+        }
+        depth = depth - pushes + pops;
+    }
+    None
+}
+
+/// What a `const.null` / `const.undef` stands for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NullMode {
+    /// The zero handle of a nullable class reference.
+    Reference,
+    /// The `null` / `undefined` value of an `any`.
+    Any,
+}
+
+/// Classify every `const.null` / `const.undef` whose byte offset is in `within`
+/// by what *consumes* it, or `None` when some use is not one the typed JIT
+/// lowers.
 ///
-/// The rule is about what *consumes* each null, not about where it sits: the
-/// operand stack is followed forward from the null (by declared stack effect, with
-/// call arity read from metadata) until an instruction pops it, and the slot it
-/// lands in (`newobj` field, call parameter, local, field, static, return) must be
-/// of class kind. Control flow between the null and its consumer, or an
+/// `null` is the zero handle of a class reference, so it is only a reference where
+/// one is: compared with one, or stored, passed or returned into a slot of class
+/// type. Stored, passed, returned or compared into an `any` slot it is the `null`
+/// value of that `any` (`undefined` can only ever be the latter). Anywhere else
+/// (a number parameter that defaults when `null` is passed) zero means something
+/// else, and the translator would refuse it; saying so here keeps eligibility
+/// equal to what is lowered.
+///
+/// The rule is about what *consumes* each value, not about where it sits: the
+/// operand stack is followed forward from the constant (by declared stack effect,
+/// with call arity read from metadata, across `dup`, and along an unconditional
+/// `br`) until an instruction pops it, and the slot it lands in must be of one
+/// kind. Conditional control flow between the constant and its consumer, or an
 /// instruction whose effect is not known here, declines the method.
-fn const_null_uses_ok(
+pub(crate) fn const_null_modes(
     module: &Module,
     body: &zun_module::MethodBody<'_>,
     instrs: &[zun_il::Instruction],
     within: std::ops::Range<usize>,
-) -> bool {
+) -> Option<HashMap<usize, NullMode>> {
     let field_is_object = |token: zun_metadata::Token| {
         module
             .tables
@@ -1236,101 +1291,471 @@ fn const_null_uses_ok(
             .get((token.rid() as usize).wrapping_sub(1))
             .and_then(|method| read_body(&module.code, method.body_offset).ok())
     };
-    let mut offset = 0usize;
+    let mut offsets = Vec::with_capacity(instrs.len());
+    let mut running = 0usize;
+    for instr in instrs {
+        offsets.push(running);
+        running += instr.encoded_len();
+    }
+    let slot_mode = |kind: Option<JitKind>| match kind {
+        Some(JitKind::Object) => Some(Some(NullMode::Reference)),
+        Some(JitKind::Other) => Some(Some(NullMode::Any)),
+        _ => None,
+    };
+    let mut modes = HashMap::new();
     for (i, instr) in instrs.iter().enumerate() {
-        let here = offset;
-        offset += instr.encoded_len();
-        if instr.opcode != Opcode::ConstNull || !within.contains(&here) {
+        if !matches!(instr.opcode, Opcode::ConstNull | Opcode::ConstUndef)
+            || !within.contains(&offsets[i])
+        {
             continue;
         }
-        // Depth of the null below the top of the stack, as the scan moves forward.
-        let mut depth = 0usize;
-        let mut ok = false;
-        for (j, next) in instrs.iter().enumerate().skip(i + 1) {
+        let is_undef = instr.opcode == Opcode::ConstUndef;
+        // Depths (from the top of the stack) of the live copies of the constant.
+        let mut tracked: Vec<usize> = vec![0];
+        let mut mode: Option<NullMode> = None;
+        let mut j = i + 1;
+        let mut steps = 0usize;
+        while !tracked.is_empty() {
+            steps += 1;
+            let next = instrs.get(j)?;
+            if steps > 256 {
+                return None;
+            }
+            // An unconditional `br` keeps the stack: follow it.
+            if next.opcode == Opcode::Branch {
+                let Operand::Branch(disp) = next.operand else {
+                    return None;
+                };
+                let target = offsets[j] as i64 + next.encoded_len() as i64 + i64::from(disp);
+                j = offsets.binary_search(&usize::try_from(target).ok()?).ok()?;
+                continue;
+            }
+            if matches!(next.operand, Operand::Branch(_)) {
+                return None;
+            }
             // Arity of the instruction: how many operands it pops, and how many
-            // values it leaves. `None` means the effect is not known here.
+            // values it leaves.
             let (pops, pushes) = match (next.opcode, next.operand) {
-                (Opcode::Ret, _) => {
-                    ok = depth == 0
-                        && body.returns_value
-                        && JitKind::from_byte(body.return_kind) == JitKind::Object;
-                    break;
-                }
-                (Opcode::StoreField | Opcode::StoreStatic, _) => (
-                    if next.opcode == Opcode::StoreField { 2 } else { 1 },
-                    0,
-                ),
+                (Opcode::Ret, _) => (1, 0),
+                (Opcode::StoreField, _) => (2, 0),
+                (Opcode::StoreStatic, _) => (1, 0),
                 (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => {
-                    let Some(callee) = callee_of(token) else { break };
+                    let callee = callee_of(token)?;
                     (callee.param_count as usize, usize::from(callee.returns_value))
                 }
                 (Opcode::NewObj, Operand::Token(token)) => {
-                    let Some(ty) = module
+                    let ty = module
                         .tables
                         .type_defs
-                        .get((token.rid() as usize).wrapping_sub(1))
-                    else {
-                        break;
-                    };
+                        .get((token.rid() as usize).wrapping_sub(1))?;
                     ((ty.field_end - ty.field_start) as usize, 1)
                 }
-                (op, operand) => {
-                    if matches!(operand, Operand::Branch(_)) {
-                        break;
-                    }
-                    match op.stack_effect() {
-                        zun_il::StackEffect::Fixed { pops, pushes } => {
-                            (pops as usize, pushes as usize)
-                        }
-                        _ => break,
-                    }
-                }
+                (op, _) => match op.stack_effect() {
+                    zun_il::StackEffect::Fixed { pops, pushes } => (pops as usize, pushes as usize),
+                    _ => return None,
+                },
             };
-            if pops <= depth {
-                depth = depth - pops + pushes;
-                continue;
-            }
-            // `next` pops the null, as operand `index` of its `pops` operands.
-            let index = pops - 1 - depth;
-            ok = match (next.opcode, next.operand) {
-                (Opcode::StoreLocal, Operand::Local(slot)) => body
-                    .local_kinds
-                    .get(slot as usize)
-                    .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object),
-                (Opcode::StoreField, Operand::Token(token)) => {
-                    index == 1 && field_is_object(token)
+            let mut next_tracked = Vec::new();
+            for &depth in &tracked {
+                if pops <= depth {
+                    next_tracked.push(depth - pops + pushes);
+                    continue;
                 }
-                (Opcode::StoreStatic, Operand::Token(token)) => field_is_object(token),
-                (Opcode::NewObj, Operand::Token(token)) => {
-                    module
+                // `next` pops this copy, as operand `index` of its `pops` operands.
+                let index = pops - 1 - depth;
+                let consumed: Option<Option<NullMode>> = match (next.opcode, next.operand) {
+                    (Opcode::Dup, _) => {
+                        next_tracked.push(0);
+                        next_tracked.push(1);
+                        continue;
+                    }
+                    (Opcode::Pop, _) => Some(None),
+                    (Opcode::Ret, _) => {
+                        if depth == 0 && body.returns_value {
+                            slot_mode(Some(JitKind::from_byte(body.return_kind)))
+                        } else {
+                            None
+                        }
+                    }
+                    (Opcode::StoreLocal, Operand::Local(slot)) => slot_mode(
+                        body.local_kinds
+                            .get(slot as usize)
+                            .map(|&kind| JitKind::from_byte(kind)),
+                    ),
+                    (Opcode::StoreField, Operand::Token(token)) => {
+                        (index == 1 && field_is_object(token)).then_some(Some(NullMode::Reference))
+                    }
+                    (Opcode::StoreStatic, Operand::Token(token)) => {
+                        field_is_object(token).then_some(Some(NullMode::Reference))
+                    }
+                    (Opcode::NewObj, Operand::Token(token)) => module
                         .tables
                         .type_defs
                         .get((token.rid() as usize).wrapping_sub(1))
                         .and_then(|ty| module.tables.field_defs.get(ty.field_start as usize + index - 1))
                         .is_some_and(|field| JitKind::from_byte(field.kind) == JitKind::Object)
+                        .then_some(Some(NullMode::Reference)),
+                    (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => {
+                        let callee = callee_of(token)?;
+                        slot_mode(
+                            callee
+                                .local_kinds
+                                .get(index)
+                                .map(|&kind| JitKind::from_byte(kind)),
+                        )
+                    }
+                    // `p === null`: the other operand is whatever produced the value
+                    // beside the constant on the operand stack.
+                    (Opcode::CmpEq | Opcode::CmpNe, _) => {
+                        // The constant is operand `index` of two; the other is `1 - index`,
+                        // at depth `index` from the top (the top operand is depth 0).
+                        let other_depth = index;
+                        match producer_of(module, instrs, j, other_depth) {
+                            Some(p) if pushes_object(module, body, &instrs[p]) => {
+                                Some(Some(NullMode::Reference))
+                            }
+                            Some(p) if pushes_any(module, body, instrs, p) => {
+                                Some(Some(NullMode::Any))
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                match consumed? {
+                    None => {}
+                    Some(wanted) => {
+                        if (is_undef && wanted == NullMode::Reference)
+                            || mode.is_some_and(|seen| seen != wanted)
+                        {
+                            return None;
+                        }
+                        mode = Some(wanted);
+                    }
                 }
-                (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => callee_of(token)
-                    .is_some_and(|callee| {
-                        callee
-                            .local_kinds
-                            .get(index)
-                            .is_some_and(|&kind| JitKind::from_byte(kind) == JitKind::Object)
-                    }),
-                // `p === null`: the other operand was pushed just before.
-                (Opcode::CmpEq | Opcode::CmpNe, _) => {
-                    (j == i + 1 && i > 0 && pushes_object(module, body, &instrs[i - 1]))
-                        // `null === p`: the other operand follows and then the compare.
-                        || (j == i + 2 && pushes_object(module, body, &instrs[i + 1]))
-                }
-                _ => false,
-            };
-            break;
+            }
+            tracked = next_tracked;
+            j += 1;
         }
+        modes.insert(i, mode.unwrap_or(NullMode::Reference));
+    }
+    Some(modes)
+}
+
+/// Each `unbox.any` is lowered by looking at what consumes its result (the
+/// static kind is not in the instruction): `conv` or a branch (truthiness). A bare
+/// `ret` / `stloc` hands the unboxed value on unchanged, which a typed slot cannot
+/// represent, and any other consumer needs a coercion or a throw (`castclass`)
+/// that has no inline form yet.
+/// Mirrors `translate::any::unbox_use`.
+fn unbox_any_use_rejection(
+    instrs: &[zun_il::Instruction],
+    within: std::ops::Range<usize>,
+) -> Option<String> {
+    let mut offset = 0usize;
+    for (i, instr) in instrs.iter().enumerate() {
+        let here = offset;
+        offset += instr.encoded_len();
+        if instr.opcode != Opcode::UnboxAny || !within.contains(&here) {
+            continue;
+        }
+        let ok = instrs.get(i + 1).is_some_and(|next| match (next.opcode, next.operand) {
+            (Opcode::Conv, Operand::Imm32(imm)) => zun_il::NumKind::from_imm(imm).is_some(),
+            (Opcode::BranchTrue | Opcode::BranchFalse, _) => true,
+            _ => false,
+        });
         if !ok {
-            return false;
+            let consumer = instrs
+                .get(i + 1)
+                .map_or("nothing".to_string(), |next| format!("{:?}", next.opcode));
+            return Some(format!(
+                "unbox.any consumed by {consumer}, not a conv or a branch at {here:#06x}"
+            ));
         }
     }
-    true
+    None
+}
+
+/// Whether instruction `index` pushes a number or a bool (a scalar the translator
+/// can compare with, or box into, an `any` without a helper).
+fn produces_scalar(
+    module: &Module,
+    body: &zun_module::MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+    index: usize,
+) -> bool {
+    let instr = &instrs[index];
+    let scalar_kind = |kind: u8| matches!(JitKind::from_byte(kind), JitKind::Num(_) | JitKind::Bool);
+    match (instr.opcode, instr.operand) {
+        (Opcode::LoadLocal, Operand::Local(slot)) => body
+            .local_kinds
+            .get(slot as usize)
+            .is_some_and(|&kind| scalar_kind(kind)),
+        (Opcode::LoadField | Opcode::LoadStatic, Operand::Token(token)) => module
+            .tables
+            .field_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .is_some_and(|field| scalar_kind(field.kind)),
+        (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => module
+            .tables
+            .method_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .and_then(|method| read_body(&module.code, method.body_offset).ok())
+            .is_some_and(|callee| callee.returns_value && scalar_kind(callee.return_kind)),
+        (
+            Opcode::ConstI32
+            | Opcode::ConstI64
+            | Opcode::ConstF64
+            | Opcode::ConstTrue
+            | Opcode::ConstFalse
+            | Opcode::Conv
+            | Opcode::CmpEq
+            | Opcode::CmpNe
+            | Opcode::CmpLt
+            | Opcode::CmpLe
+            | Opcode::CmpGt
+            | Opcode::CmpGe
+            | Opcode::AddI32
+            | Opcode::SubI32
+            | Opcode::MulI32
+            | Opcode::DivI32
+            | Opcode::RemI32
+            | Opcode::NegI32
+            | Opcode::AndI32
+            | Opcode::OrI32
+            | Opcode::XorI32
+            | Opcode::NotI32
+            | Opcode::ShlI32
+            | Opcode::ShrI32
+            | Opcode::UShrI32
+            | Opcode::PowI32
+            | Opcode::AddF64
+            | Opcode::SubF64
+            | Opcode::MulF64
+            | Opcode::DivF64
+            | Opcode::RemF64
+            | Opcode::NegF64
+            | Opcode::SqrtF64
+            | Opcode::AbsF64
+            | Opcode::FloorF64
+            | Opcode::CeilF64
+            | Opcode::TruncF64
+            | Opcode::MinF64
+            | Opcode::MaxF64
+            | Opcode::RoundF64
+            | Opcode::SignF64
+            | Opcode::MinI32
+            | Opcode::MaxI32
+            | Opcode::ArrayLength,
+            _,
+        ) => true,
+        _ => false,
+    }
+}
+
+/// Whether instruction `index` pushes a string handle.
+fn produces_string(
+    module: &Module,
+    body: &zun_module::MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+    index: usize,
+) -> bool {
+    let instr = &instrs[index];
+    let string_kind = |kind: u8| JitKind::from_byte(kind) == JitKind::String;
+    match (instr.opcode, instr.operand) {
+        (Opcode::ConstStr | Opcode::Concat, _) => true,
+        (Opcode::LoadLocal, Operand::Local(slot)) => body
+            .local_kinds
+            .get(slot as usize)
+            .is_some_and(|&kind| string_kind(kind)),
+        (Opcode::LoadField | Opcode::LoadStatic, Operand::Token(token)) => module
+            .tables
+            .field_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .is_some_and(|field| string_kind(field.kind)),
+        (Opcode::Call | Opcode::CallVirt, Operand::Token(token)) => module
+            .tables
+            .method_defs
+            .get((token.rid() as usize).wrapping_sub(1))
+            .and_then(|method| read_body(&module.code, method.body_offset).ok())
+            .is_some_and(|callee| callee.returns_value && string_kind(callee.return_kind)),
+        _ => false,
+    }
+}
+
+/// How an `any` meets the other operand of a comparison, and what may be boxed
+/// into one. Mirrors `translate::any::compare_any` / `box_to_any`:
+///
+/// - `===` / `!==` of an `any` is lowered against a literal `null` / `undefined`
+///   and against a number or bool (also one just boxed); two arbitrary `any`s can
+///   hold objects whose equality goes through function boxes, constructor records
+///   or BigInts, or strings whose handles are not canonical, so that form stays on
+///   Tier 0. A relational operator on an `any` coerces (`ToPrimitive`), also Tier 0.
+/// - `box.any` lowers a number, a bool, a class reference or an `any`; a string or
+///   a function value has no inline form.
+fn any_operand_forms_rejection(
+    module: &Module,
+    body: &zun_module::MethodBody<'_>,
+    instrs: &[zun_il::Instruction],
+    within: std::ops::Range<usize>,
+) -> Option<String> {
+    let mut offset = 0usize;
+    for (i, instr) in instrs.iter().enumerate() {
+        let here = offset;
+        offset += instr.encoded_len();
+        if !within.contains(&here) {
+            continue;
+        }
+        match instr.opcode {
+            Opcode::BoxAny => {
+                let ok = producer_of(module, instrs, i, 0).is_some_and(|p| {
+                    produces_string(module, body, instrs, p)
+                        || produces_scalar(module, body, instrs, p)
+                        || pushes_object(module, body, &instrs[p])
+                        || pushes_any(module, body, instrs, p)
+                });
+                if !ok {
+                    return Some(format!(
+                        "box.any of a value that is not a number, bool, class reference or any at {here:#06x}"
+                    ));
+                }
+            }
+            Opcode::CmpEq
+            | Opcode::CmpNe
+            | Opcode::CmpLt
+            | Opcode::CmpLe
+            | Opcode::CmpGt
+            | Opcode::CmpGe => {
+                let top = producer_of(module, instrs, i, 0);
+                let below = producer_of(module, instrs, i, 1);
+                let is_any =
+                    |p: Option<usize>| p.is_some_and(|p| pushes_any(module, body, instrs, p));
+                if !is_any(top) && !is_any(below) {
+                    continue;
+                }
+                let relational = !matches!(instr.opcode, Opcode::CmpEq | Opcode::CmpNe);
+                // The decidable other side: a literal null/undefined, a scalar, or a
+                // box.any of a scalar.
+                let decidable = |p: Option<usize>| {
+                    p.is_some_and(|p| {
+                        matches!(instrs[p].opcode, Opcode::ConstNull | Opcode::ConstUndef)
+                            || produces_scalar(module, body, instrs, p)
+                            || (instrs[p].opcode == Opcode::BoxAny
+                                && producer_of(module, instrs, p, 0)
+                                    .is_some_and(|q| produces_scalar(module, body, instrs, q)))
+                    })
+                };
+                let ok = !relational
+                    && ((is_any(top) && decidable(below)) || (is_any(below) && decidable(top)));
+                if !ok {
+                    return Some(format!(
+                        "comparison of an any with an operand that is not a literal null/undefined, number or bool at {here:#06x}"
+                    ));
+                }
+            }
+            Opcode::Call | Opcode::CallVirt => {
+                let Operand::Token(token) = instr.operand else {
+                    continue;
+                };
+                let Some(callee) = module
+                    .tables
+                    .method_defs
+                    .get((token.rid() as usize).wrapping_sub(1))
+                    .and_then(|method| read_body(&module.code, method.body_offset).ok())
+                else {
+                    continue;
+                };
+                let params = callee.param_count as usize;
+                for arg in 0..params {
+                    let any_arg = producer_of(module, instrs, i, params - 1 - arg)
+                        .is_some_and(|p| pushes_any(module, body, instrs, p));
+                    let want = callee.local_kinds.get(arg).map(|&k| JitKind::from_byte(k));
+                    if any_arg && want != Some(JitKind::Other) {
+                        return Some(format!(
+                            "an any value passed to a typed parameter at {here:#06x}"
+                        ));
+                    }
+                }
+            }
+            Opcode::StoreLocal => {
+                let Operand::Local(slot) = instr.operand else {
+                    continue;
+                };
+                let local_is_any = body
+                    .local_kinds
+                    .get(slot as usize)
+                    .is_some_and(|&k| JitKind::from_byte(k) == JitKind::Other);
+                let value_is_any = producer_of(module, instrs, i, 0)
+                    .is_some_and(|p| pushes_any(module, body, instrs, p));
+                if value_is_any && !local_is_any {
+                    return Some(format!("an any value stored into a typed local at {here:#06x}"));
+                }
+            }
+            Opcode::Ret => {
+                let value_is_any = producer_of(module, instrs, i, 0)
+                    .is_some_and(|p| pushes_any(module, body, instrs, p));
+                let returns_any = body.returns_value
+                    && JitKind::from_byte(body.return_kind) == JitKind::Other;
+                if value_is_any && !returns_any {
+                    return Some(format!("an any value returned as a typed value at {here:#06x}"));
+                }
+            }
+            // An element access takes an array and an index, never an `any`.
+            Opcode::LoadArray | Opcode::StoreArray | Opcode::ArrayPush => {
+                let value_slots = usize::from(matches!(instr.opcode, Opcode::StoreArray | Opcode::ArrayPush));
+                let operands = match instr.opcode {
+                    Opcode::LoadArray => 2,
+                    Opcode::StoreArray => 3,
+                    _ => 2,
+                };
+                for depth in value_slots..operands {
+                    if producer_of(module, instrs, i, depth)
+                        .is_some_and(|p| pushes_any(module, body, instrs, p))
+                    {
+                        return Some(format!(
+                            "an any used as an array or index operand at {here:#06x}"
+                        ));
+                    }
+                }
+            }
+            // A builtin other than `Map.get` / `clear` takes typed operands.
+            Opcode::CallBuiltin => {
+                let Operand::Imm32(id) = instr.operand else {
+                    continue;
+                };
+                let name = zun_natives::by_id(id as u32).map(|f| f.name);
+                if matches!(name, Some("mapGet" | "mapClear" | "setClear")) {
+                    continue;
+                }
+                let Some((_, arg_count, _, _, _)) =
+                    crate::translate::builtins_table::builtin_desc(name)
+                else {
+                    continue;
+                };
+                for depth in 0..arg_count {
+                    if producer_of(module, instrs, i, depth)
+                        .is_some_and(|p| pushes_any(module, body, instrs, p))
+                    {
+                        return Some(format!("a builtin takes an any operand at {here:#06x}"));
+                    }
+                }
+            }
+            op if !any_aware(op) => {
+                // Every other operator reads its operands as numbers or references.
+                if let zun_il::StackEffect::Fixed { pops, .. } = op.stack_effect() {
+                    for depth in 0..pops as usize {
+                        if producer_of(module, instrs, i, depth)
+                            .is_some_and(|p| pushes_any(module, body, instrs, p))
+                        {
+                            return Some(format!("{op:?} on an any operand at {here:#06x}"));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn kind_name(byte: u8) -> String {
@@ -1470,10 +1895,7 @@ fn method_candidate(
         return Err("unreadable body".into());
     };
     // Return and every local must be a representable JIT type.
-    if !kind_supported(body.return_kind)
-        && body.returns_value
-        && JitKind::from_byte(body.return_kind) != JitKind::Other
-    {
+    if !kind_supported(body.return_kind) && body.returns_value {
         return Err(format!("return kind {}", kind_name(body.return_kind)));
     }
     let Ok(instrs) = decode_all(body.code) else {
@@ -1489,11 +1911,7 @@ fn method_candidate(
     {
         return Err("exception region shape (try/catch/finally)".into());
     }
-    if !body.local_kinds.iter().all(|&k| kind_supported(k))
-        && !any_param_return_only(&instrs, &body)
-        && !any_direct_call_return_only(&instrs, &body)
-        && !any_map_get_only(&instrs, &body)
-    {
+    if !body.local_kinds.iter().all(|&k| kind_supported(k)) {
         let bad = body
             .local_kinds
             .iter()
@@ -1509,13 +1927,7 @@ fn method_candidate(
             .unwrap_or_default();
         return Err(bad);
     }
-    if !kind_supported(body.return_kind)
-        && body.returns_value
-        && !any_array_return_only(&instrs, &body)
-        && !any_param_return_only(&instrs, &body)
-        && !any_direct_call_return_only(&instrs, &body)
-        && !any_map_get_only(&instrs, &body)
-    {
+    if !kind_supported(body.return_kind) && body.returns_value {
         return Err(format!("return kind {}", kind_name(body.return_kind)));
     }
     if instrs.iter().any(|i| i.opcode == Opcode::ConstStr) {
@@ -1576,8 +1988,14 @@ fn method_candidate(
     if let Some(why) = first_unsupported(&instrs) {
         return Err(why);
     }
-    if !const_null_uses_ok(module, &body, &instrs, 0..usize::MAX) {
-        return Err("const.null where the target is not a class reference".into());
+    if const_null_modes(module, &body, &instrs, 0..usize::MAX).is_none() {
+        return Err("const.null/const.undef whose use is not a lowered form".into());
+    }
+    if let Some(why) = unbox_any_use_rejection(&instrs, 0..usize::MAX) {
+        return Err(why);
+    }
+    if let Some(why) = any_operand_forms_rejection(module, &body, &instrs, 0..usize::MAX) {
+        return Err(why);
     }
     // Function values in the typed JIT are carried as a one-word method rid
     // (`LoadFunction` → rid, `CallIndirect` dispatches it through the bridge).
@@ -1757,22 +2175,7 @@ pub fn method_blockers(module: &Module, method_rid: u32) -> Vec<String> {
     let Ok(instrs) = decode_all(body.code) else {
         return out;
     };
-    if body.local_kinds[..(body.param_count as usize).min(body.local_kinds.len())]
-        .iter()
-        .any(|&k| !kind_supported(k))
-    {
-        out.push("param kind Other".into());
-    }
-    if body.local_kinds[(body.param_count as usize).min(body.local_kinds.len())..]
-        .iter()
-        .any(|&k| !kind_supported(k))
-    {
-        out.push("local kind Other".into());
-    }
-    if body.returns_value && !kind_supported(body.return_kind) {
-        out.push("return kind Other".into());
-    }
-    if !body.handlers.is_empty() {
+     if !body.handlers.is_empty() {
         out.push("has exception region".into());
     }
     for i in &instrs {
@@ -1789,6 +2192,22 @@ pub fn method_blockers(module: &Module, method_rid: u32) -> Vec<String> {
             if !out.contains(&why) {
                 out.push(why);
             }
+        }
+    }
+    if const_null_modes(module, &body, &instrs, 0..usize::MAX).is_none() {
+        out.push("const.null/const.undef whose use is not a lowered form".into());
+    }
+    if let Some(why) = unbox_any_use_rejection(&instrs, 0..usize::MAX) {
+        let why = why.split(" at ").next().unwrap_or(&why).to_string();
+        if !out.contains(&why) {
+            out.push(why);
+        }
+    }
+    if let Some(why) = any_operand_forms_rejection(module, &body, &instrs, 0..usize::MAX) {
+        // Without the offset, so the census groups methods by the form.
+        let why = why.split(" at ").next().unwrap_or(&why).to_string();
+        if !out.contains(&why) {
+            out.push(why);
         }
     }
     out
@@ -1835,4 +2254,33 @@ mod invariant_tests {
             );
         }
     }
+}
+
+/// The opcodes that have a lowered form for an `any` operand (mirrors
+/// `Translator::refuse_any_operands`); every other operator reads its operands as
+/// numbers or references.
+fn any_aware(op: Opcode) -> bool {
+    matches!(
+        op,
+        Opcode::Nop
+            | Opcode::LoadLocal
+            | Opcode::StoreLocal
+            | Opcode::Pop
+            | Opcode::Dup
+            | Opcode::BranchTrue
+            | Opcode::BranchFalse
+            | Opcode::Branch
+            | Opcode::Ret
+            | Opcode::Call
+            | Opcode::CallVirt
+            | Opcode::CallIndirect
+            | Opcode::CallBuiltin
+            | Opcode::CmpEq
+            | Opcode::CmpNe
+            | Opcode::BoxAny
+            | Opcode::UnboxAny
+            | Opcode::LoadArray
+            | Opcode::StoreArray
+            | Opcode::ArrayPush
+    )
 }

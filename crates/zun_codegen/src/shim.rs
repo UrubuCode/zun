@@ -50,14 +50,9 @@ pub fn define_shim(
         b.seal_block(entry);
         let args_ptr = b.block_params(entry)[0];
 
-        // Load and convert each argument from the buffer (8 bytes per slot).
-        let mut args: Vec<Value> = Vec::with_capacity(param_kinds.len());
-        for (i, &k) in param_kinds.iter().enumerate() {
-            let raw = b
-                .ins()
-                .load(types::I64, MemFlags::trusted(), args_ptr, (i * 8) as i32);
-            args.push(unpack_arg(&mut b, raw, k));
-        }
+        // Load and convert each argument from the buffer (8 bytes per word, two
+        // words for an `any`).
+        let args = load_args(&mut b, args_ptr, param_kinds);
 
         let fref = module.declare_func_in_func(real, b.func);
         let inst = b.ins().call(fref, &args);
@@ -118,13 +113,7 @@ pub fn define_osr_loop_shim(
         b.seal_block(entry);
         let args_ptr = b.block_params(entry)[0];
         let out_ptr = b.block_params(entry)[1];
-        let mut args: Vec<Value> = Vec::with_capacity(param_kinds.len() + 1);
-        for (i, &k) in param_kinds.iter().enumerate() {
-            let raw = b
-                .ins()
-                .load(types::I64, MemFlags::trusted(), args_ptr, (i * 8) as i32);
-            args.push(unpack_arg(&mut b, raw, k));
-        }
+        let mut args = load_args(&mut b, args_ptr, param_kinds);
         args.push(out_ptr);
         let fref = module.declare_func_in_func(real, b.func);
         let inst = b.ins().call(fref, &args);
@@ -179,24 +168,7 @@ pub fn define_any_return_shim(
         b.seal_block(entry);
         let args_ptr = b.block_params(entry)[0];
         let out_ptr = b.block_params(entry)[1];
-        let mut args = Vec::with_capacity(param_kinds.len());
-        let mut offset = 0;
-        for &kind in param_kinds {
-            let raw = b
-                .ins()
-                .load(types::I64, MemFlags::trusted(), args_ptr, offset);
-            if kind == JitKind::Other {
-                let payload = b
-                    .ins()
-                    .load(types::I64, MemFlags::trusted(), args_ptr, offset + 8);
-                args.push(raw);
-                args.push(payload);
-                offset += (crate::any_abi::abi_word_count(kind) * 8) as i32;
-            } else {
-                args.push(unpack_arg(&mut b, raw, kind));
-                offset += (crate::any_abi::abi_word_count(kind) * 8) as i32;
-            }
-        }
+        let args = load_args(&mut b, args_ptr, param_kinds);
         let fref = module.declare_func_in_func(real, b.func);
         let inst = b.ins().call(fref, &args);
         let results = b.inst_results(inst).to_vec();
@@ -272,4 +244,28 @@ pub(crate) fn pack_result(b: &mut FunctionBuilder, r: Value, k: JitKind) -> Valu
 
 fn is_signed(k: JitKind) -> bool {
     matches!(k, JitKind::Num(n) if n.int_parts().map(|(_, s)| s).unwrap_or(false))
+}
+
+/// Load every argument of a shim from the packed word buffer: one word per
+/// scalar or reference (converted to its machine type), two (tag, payload) per
+/// `any`, which the compiled function takes as two `i64` parameters.
+fn load_args(b: &mut FunctionBuilder, args_ptr: Value, param_kinds: &[JitKind]) -> Vec<Value> {
+    let mut args = Vec::with_capacity(param_kinds.len());
+    let mut offset = 0i32;
+    for &kind in param_kinds {
+        let raw = b
+            .ins()
+            .load(types::I64, MemFlags::trusted(), args_ptr, offset);
+        if kind == JitKind::Other {
+            let payload = b
+                .ins()
+                .load(types::I64, MemFlags::trusted(), args_ptr, offset + 8);
+            args.push(raw);
+            args.push(payload);
+        } else {
+            args.push(unpack_arg(b, raw, kind));
+        }
+        offset += (crate::any_abi::abi_word_count(kind) * 8) as i32;
+    }
+    args
 }

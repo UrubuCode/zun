@@ -28,7 +28,8 @@ pub const fn abi_word_count(kind: JitKind) -> usize {
 ///   neither collected nor moved, so no rooting is needed.
 /// - `Function`: a one-word method rid (closures are excluded by eligibility).
 /// - `Num`, `Bool`: scalars.
-/// - `Other`: the two-word `Any` carrier, handled by [`collect_native_roots`].
+/// - `Other`: the two-word `Any` carrier, handled by [`collect_native_roots`]; its
+///   payload is a reference only under `zun_core::AnyTag::MANAGED_REFERENCE`.
 ///
 /// When adding a `JitKind`, decide it here; the match is deliberately exhaustive.
 #[inline]
@@ -49,7 +50,8 @@ pub const fn is_gc_reference(kind: JitKind) -> bool {
 /// words, see [`abi_word_count`]) and an `Any` carrier with an invalid tag is
 /// rejected with [`crate::JitError::InvalidAnyTag`]; an `Object`-tagged carrier
 /// contributes its payload. With `carrier_any == false` every kind occupies one
-/// word (OSR local slots and `call_packed`) and `Other` carries nothing.
+/// word (`call_packed`, which refuses `Other`) and `Other` carries nothing. The OSR
+/// entries pass `true`: an `any` local is two words there as well.
 /// Null (zero) addresses are never rooted.
 pub(crate) fn collect_native_roots(
     kinds: &[JitKind],
@@ -119,18 +121,28 @@ impl JitAnyAbi {
         zun_core::Any::from_raw_parts(self.tag as u8, self.payload)
     }
 
+    /// Whether the tag word names a managed-reference payload. Derived from
+    /// [`zun_core::AnyTag::is_managed_reference`], the single definition the
+    /// emitted `bits | obj` split also uses.
+    pub fn is_managed_reference(self) -> bool {
+        u8::try_from(self.tag)
+            .ok()
+            .and_then(zun_core::AnyTag::from_raw)
+            .is_some_and(zun_core::AnyTag::is_managed_reference)
+    }
+
     /// Append the payload as a GC root when this carrier contains an object.
     /// The tag must be inspected before the payload is interpreted as an
     /// address; integers, strings, and null are not managed object pointers.
     pub fn append_managed_root(self, roots: &mut Vec<zun_gc::Obj>) {
-        if self.tag == zun_core::AnyTag::Object as u64 && self.payload != 0 {
+        if self.is_managed_reference() && self.payload != 0 {
             roots.push(unsafe { zun_gc::Obj::from_addr(self.payload as *mut u64) });
         }
     }
 
     /// Rewrite an object payload after a moving collection.
     pub fn rewrite_managed_payload(&mut self, relocation: &zun_gc::RelocationMap) -> bool {
-        if self.tag != zun_core::AnyTag::Object as u64 || self.payload == 0 {
+        if !self.is_managed_reference() || self.payload == 0 {
             return false;
         }
         let mapped = relocation.relocate_address(self.payload as usize);

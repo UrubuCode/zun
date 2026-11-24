@@ -592,3 +592,37 @@ pub extern "C" fn zun_jit_number_is_negative_zero(value: f64) -> i32 {
 pub extern "C" fn zun_jit_number_is_safe_integer(value: f64) -> i32 {
     (value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0) as i32
 }
+
+/// Truthiness of an `any` whose tag is `Object`: every object is truthy except a
+/// zero BigInt, and a zero address (a `null` that lost its tag) is falsy. This is
+/// the `Value::Object` arm of the interpreter's `is_truthy`; the helper reads the
+/// heap and never allocates or collects.
+#[inline]
+pub extern "C" fn zun_jit_any_object_truthy(address: i64) -> i32 {
+    if address == 0 {
+        return 0;
+    }
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap(|heap| {
+        !heap
+            .bigint_value(object)
+            .map(|big| big.is_zero())
+            .unwrap_or(false)
+    }) as i32
+}
+
+/// Push a dynamic two-word carrier onto an array, returning the new length (or
+/// `-1` for an invalid tag or receiver). The carrier is validated before it enters
+/// managed storage, like [`zun_jit_array_store_any`].
+#[inline]
+pub extern "C" fn zun_jit_array_push_any(address: i64, tag: u64, payload: u64) -> i64 {
+    let Some(value) = zun_core::Any::from_raw_parts(tag as u8, payload) else {
+        return -1;
+    };
+    let object = unsafe { zun_gc::Obj::from_addr(address as *mut u64) };
+    zun_gc::with_current_heap_mut(|heap| {
+        heap.array_push(object, value)
+            .map(|length| length as i64)
+            .unwrap_or(-1)
+    })
+}

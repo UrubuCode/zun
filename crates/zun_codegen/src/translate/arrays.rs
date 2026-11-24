@@ -105,6 +105,25 @@ impl Translator<'_> {
     pub(crate) fn op_array_push(&mut self, stack: &mut Vec<Slot>) -> Result<(), String> {
         let (value, value_kind) = stack.pop().ok_or("stack underflow")?;
         let (array, array_kind) = stack.pop().ok_or("stack underflow")?;
+        if value_kind == JitKind::Other {
+            if !matches!(array_kind, JitKind::Object | JitKind::Array) {
+                return Err("array push requires an object receiver".into());
+            }
+            self.builder.declare_value_needs_stack_map(array);
+            let any = self.any_of((value, value_kind))?;
+            let payload = self.join_payload(any);
+            let push = self.import(
+                "zun_jit_array_push_any",
+                &[types::I64, types::I64, types::I64],
+                &[types::I64],
+            );
+            let inst = self.builder.ins().call(push, &[array, any.tag, payload]);
+            stack.push((
+                self.builder.inst_results(inst)[0],
+                JitKind::Num(NumKind::I64),
+            ));
+            return Ok(());
+        }
         let push_object = value_kind == JitKind::Object;
         let push_u64 = value_kind == JitKind::Num(NumKind::U64);
         let push_i64 = value_kind == JitKind::Num(NumKind::I64);
@@ -241,18 +260,6 @@ impl Translator<'_> {
         self.module.declare_func_in_func(id, self.builder.func)
     }
 
-    pub(crate) fn array_load_any_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
-        let mut sig = Signature::new(self.builder.func.signature.call_conv);
-        sig.params.push(AbiParam::new(types::I64));
-        sig.params.push(AbiParam::new(types::I64));
-        sig.params.push(AbiParam::new(types::I64));
-        sig.returns.push(AbiParam::new(types::I32));
-        let id = self
-            .module
-            .declare_function("zun_jit_array_load_any", Linkage::Import, &sig)
-            .expect("declare zun_jit_array_load_any");
-        self.module.declare_func_in_func(id, self.builder.func)
-    }
 
     pub(crate) fn array_store_f64_fref(&mut self) -> cranelift_codegen::ir::FuncRef {
         let mut sig = Signature::new(self.builder.func.signature.call_conv);

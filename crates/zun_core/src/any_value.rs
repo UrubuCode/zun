@@ -14,6 +14,31 @@ pub enum AnyTag {
 }
 
 impl AnyTag {
+    /// The one tag whose payload is a managed heap address. Compiled code splits
+    /// an `any` into `bits | obj` by comparing its tag with this constant, and
+    /// every Rust-side root scan asks [`AnyTag::is_managed_reference`]; both
+    /// derive from this single definition.
+    pub const MANAGED_REFERENCE: AnyTag = AnyTag::Object;
+
+    /// Whether a value of this tag carries a payload the collector may move or
+    /// free (a managed object address). `String` is an index into the
+    /// append-only string table, `Symbol` an isolate-local index and
+    /// `ClassDescriptor` a metadata token: all immediates. The match is
+    /// deliberately exhaustive so a new tag must be classified here.
+    pub const fn is_managed_reference(self) -> bool {
+        match self {
+            AnyTag::Object => true,
+            AnyTag::Int
+            | AnyTag::Float
+            | AnyTag::Bool
+            | AnyTag::String
+            | AnyTag::Null
+            | AnyTag::Void
+            | AnyTag::ClassDescriptor
+            | AnyTag::Symbol => false,
+        }
+    }
+
     /// Decode the stable tag byte used by native/JIT ABI boundaries.
     pub const fn from_raw(value: u8) -> Option<Self> {
         match value {
@@ -203,6 +228,11 @@ mod tests {
         assert_eq!(Any::from_raw_parts(255, 0), None);
         assert_eq!(core::mem::size_of::<Any>(), 16);
         assert_eq!(core::mem::align_of::<Any>(), 8);
+        // Exactly one tag is a managed reference, and it is the published constant.
+        let managed: Vec<u8> = (0u8..=8)
+            .filter(|&raw| AnyTag::from_raw(raw).unwrap().is_managed_reference())
+            .collect();
+        assert_eq!(managed, vec![AnyTag::MANAGED_REFERENCE as u8]);
         assert_eq!(AnyTag::from_raw(5), Some(AnyTag::Null));
         assert_eq!(AnyTag::from_raw(6), Some(AnyTag::Void));
     }

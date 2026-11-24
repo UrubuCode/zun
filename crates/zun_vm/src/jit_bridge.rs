@@ -25,7 +25,7 @@ use zun_interp::{
 use zun_loader::ModuleLoader;
 use zun_module::{read_body, Module};
 
-use crate::jit_hook::{pack_value, unpack_value};
+use crate::jit_hook::{pack_any, pack_value, unpack_words};
 
 /// Outcome of a bridged call: the packed return value and a status (0 = the
 /// callee returned normally, 1 = it threw). The thrown value, when present, is
@@ -35,6 +35,8 @@ use crate::jit_hook::{pack_value, unpack_value};
 pub(crate) struct BridgeOutcome {
     pub packed: u64,
     pub status: u32,
+    /// The (tag, payload) of an `any` result, which does not fit `packed`.
+    pub carrier: Option<(u64, u64)>,
 }
 
 pub(crate) const STATUS_RETURNED: u32 = 0;
@@ -63,13 +65,18 @@ pub(crate) fn bridge_call(
     let body = read_body(&module.code, method.body_offset)
         .map_err(|e| RunError::Malformed(e.to_string()))?;
     let param_count = body.param_count as usize;
-    if packed_args.len() != param_count {
-        return Err(RunError::BadToken);
-    }
     let param_kinds: Vec<JitKind> = body.local_kinds[..param_count]
         .iter()
         .map(|&byte| JitKind::from_byte(byte))
         .collect();
+    // One word per scalar or reference, two (tag, payload) per `any`.
+    let words: usize = param_kinds
+        .iter()
+        .map(|&kind| if kind == JitKind::Other { 2 } else { 1 })
+        .sum();
+    if packed_args.len() != words {
+        return Err(RunError::BadToken);
+    }
     let return_kind = if body.returns_value {
         Some(JitKind::from_byte(body.return_kind))
     } else {
@@ -79,22 +86,20 @@ pub(crate) fn bridge_call(
     // Unpack arguments in a short heap borrow (no overlap with the interpreter
     // call below, which borrows the heap itself).
     let heap = zun_gc::current_heap_ptr().ok_or(RunError::BadToken)?;
-    let args: Vec<Value> = packed_args
-        .iter()
-        .zip(&param_kinds)
-        .map(|(&bits, &kind)| unpack_value(bits, Some(kind), unsafe { &*heap }))
-        .collect();
+    let args: Vec<Value> = unpack_words(packed_args, &param_kinds, unsafe { &*heap });
 
     match run_method_on_current_heap_bare(module, loader, rid, args, output) {
         Ok(result) => {
             let heap = zun_gc::current_heap_ptr().ok_or(RunError::BadToken)?;
-            let packed = match return_kind {
-                Some(kind) => pack_value(&result, kind, unsafe { &mut *heap }),
-                None => 0,
+            let (packed, carrier) = match return_kind {
+                Some(JitKind::Other) => (0, Some(pack_any(&result, unsafe { &mut *heap }))),
+                Some(kind) => (pack_value(&result, kind, unsafe { &mut *heap }), None),
+                None => (0, None),
             };
             Ok(BridgeOutcome {
                 packed,
                 status: STATUS_RETURNED,
+                carrier,
             })
         }
         // A catchable throw becomes a status the JIT frame can route; the thrown
@@ -107,6 +112,7 @@ pub(crate) fn bridge_call(
             Ok(BridgeOutcome {
                 packed,
                 status: STATUS_THREW,
+                carrier: None,
             })
         }
         Err(other) => Err(other),
@@ -143,13 +149,20 @@ pub(crate) fn bridge_call_indirect(
     // parameter (local 0); the JIT passes only the explicit arguments after it.
     let env_offset = usize::from(handle.environment().is_some());
     let total_params = body.param_count as usize;
-    if total_params < env_offset || total_params - env_offset != packed_user_args.len() {
+    if total_params < env_offset {
         return Err(RunError::BadToken);
     }
     let user_param_kinds: Vec<JitKind> = body.local_kinds[env_offset..total_params]
         .iter()
         .map(|&byte| JitKind::from_byte(byte))
         .collect();
+    let words: usize = user_param_kinds
+        .iter()
+        .map(|&kind| if kind == JitKind::Other { 2 } else { 1 })
+        .sum();
+    if words != packed_user_args.len() {
+        return Err(RunError::BadToken);
+    }
     let return_kind = body
         .returns_value
         .then(|| JitKind::from_byte(body.return_kind));
@@ -157,22 +170,20 @@ pub(crate) fn bridge_call_indirect(
     // Unpack arguments in a short heap borrow that never overlaps the
     // interpreter call below (which borrows the heap itself).
     let heap = zun_gc::current_heap_ptr().ok_or(RunError::BadToken)?;
-    let args: Vec<Value> = packed_user_args
-        .iter()
-        .zip(&user_param_kinds)
-        .map(|(&bits, &kind)| unpack_value(bits, Some(kind), unsafe { &*heap }))
-        .collect();
+    let args: Vec<Value> = unpack_words(packed_user_args, &user_param_kinds, unsafe { &*heap });
 
     match run_function_on_current_heap_bare(module, loader, handle, args, output) {
         Ok(result) => {
             let heap = zun_gc::current_heap_ptr().ok_or(RunError::BadToken)?;
-            let packed = match return_kind {
-                Some(kind) => pack_value(&result, kind, unsafe { &mut *heap }),
-                None => 0,
+            let (packed, carrier) = match return_kind {
+                Some(JitKind::Other) => (0, Some(pack_any(&result, unsafe { &mut *heap }))),
+                Some(kind) => (pack_value(&result, kind, unsafe { &mut *heap }), None),
+                None => (0, None),
             };
             Ok(BridgeOutcome {
                 packed,
                 status: STATUS_RETURNED,
+                carrier,
             })
         }
         Err(RunError::Thrown(value)) => {
@@ -183,6 +194,7 @@ pub(crate) fn bridge_call_indirect(
             Ok(BridgeOutcome {
                 packed,
                 status: STATUS_THREW,
+                carrier: None,
             })
         }
         Err(other) => Err(other),
@@ -207,7 +219,15 @@ thread_local! {
     /// whether to route to a catch or propagate; the interpreter consults it
     /// (via `JitHook::take_pending_exception`) after a hooked JIT call.
     static PENDING_EXCEPTION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// An uncatchable run error raised by compiled code (see [`zun_jit_unbox_fault`]).
+    /// While set, the pending-exception slot holds [`FAULT_SENTINEL`] so every compiled
+    /// frame unwinds, and no handler may claim it.
+    static PENDING_FAULT: RefCell<Option<RunError>> = const { RefCell::new(None) };
 }
+
+/// The value the pending-exception slot holds while a fault is pending: nonzero so the
+/// compiled post-call checks unwind, and never a valid object handle.
+const FAULT_SENTINEL: u64 = 1;
 
 /// Record a thrown object handle as the pending exception (set by the bridge
 /// wrapper when a bridged callee throws).
@@ -229,6 +249,7 @@ pub(crate) fn bridge_config() -> zun_codegen::BridgeConfig {
         call_indirect: zun_jit_call_indirect as *const u8,
         route_pending: zun_jit_route_pending as *const u8,
         null_deref: zun_jit_null_deref as *const u8,
+        unbox_fault: zun_jit_unbox_fault as *const u8,
         pending_slot_addr: pending_slot_addr(),
     }
 }
@@ -240,6 +261,10 @@ pub(crate) fn bridge_config() -> zun_codegen::BridgeConfig {
 /// pending throw or it does not match. The exception type is read from the
 /// object header; the hierarchy comes from the installed bridge context's module.
 pub(crate) extern "C" fn zun_jit_route_pending(catch_type_rid: i64) -> i64 {
+    // A fault is not an exception: no handler claims it, it keeps unwinding.
+    if PENDING_FAULT.with(|fault| fault.borrow().is_some()) {
+        return 0;
+    }
     let handle = PENDING_EXCEPTION.with(|slot| slot.get());
     if handle == 0 {
         return 0;
@@ -278,6 +303,32 @@ pub(crate) extern "C" fn zun_jit_null_deref(kind: i64, rid: i64, caller_sp: usiz
     ) {
         set_pending_exception(handle);
     }
+}
+
+/// Tier 0's failure for `unbox.any; conv` of a value that has no numeric reading, raised
+/// from compiled code: rebuild the very error the interpreter's `Conv` arm returns
+/// (`Malformed("cannot convert <value>")`, framed at the `conv` of `method_rid`), park
+/// it, and leave the slot set so each compiled frame unwinds to the host. The
+/// interpreter picks it up through `CallHook::take_pending_fault` and fails the run.
+pub(crate) extern "C" fn zun_jit_unbox_fault(method_rid: i64, pc: i64, tag: u64, payload: u64) {
+    let Some(context) = BRIDGE_CONTEXT.with(|cell| *cell.borrow()) else {
+        return;
+    };
+    let module = unsafe { &*context.module };
+    let value = crate::jit_hook::unpack_any(tag, payload, unsafe {
+        &*zun_gc::current_heap_ptr().expect("a heap is installed while compiled code runs")
+    });
+    let error = RunError::Malformed(format!("cannot convert {value:?}"))
+        .annotate(module, method_rid as u32, pc as u32);
+    PENDING_FAULT.with(|fault| *fault.borrow_mut() = Some(error));
+    set_pending_exception(FAULT_SENTINEL);
+}
+
+/// Take and clear the pending fault, if any (clearing the slot with it).
+pub(crate) fn take_pending_fault() -> Option<RunError> {
+    let fault = PENDING_FAULT.with(|fault| fault.borrow_mut().take())?;
+    set_pending_exception(0);
+    Some(fault)
 }
 
 /// Take and clear the pending exception handle, if any.
@@ -326,6 +377,20 @@ impl Drop for BridgeScope {
     }
 }
 
+/// Write the result carrier of a bridged call returning an `any` right after the
+/// argument words of the caller's outgoing buffer (which the caller sized for it
+/// and reads straight after the call, before anything can collect).
+fn write_result_carrier(args_ptr: *const u64, argc: i64, carrier: Option<(u64, u64)>) {
+    let Some((tag, payload)) = carrier else {
+        return;
+    };
+    let base = args_ptr as *mut u64;
+    unsafe {
+        base.add(argc.max(0) as usize).write(tag);
+        base.add(argc.max(0) as usize + 1).write(payload);
+    }
+}
+
 /// The `extern "C"` entry JIT code calls for a bridged call. Reads the installed
 /// context, runs the ineligible callee via [`bridge_call`], and returns the
 /// packed result. Only non-throwing callees are bridged (eligibility guarantees
@@ -362,6 +427,7 @@ pub(crate) extern "C" fn zun_jit_call_interp(
                 set_pending_exception(outcome.packed);
                 0
             } else {
+                write_result_carrier(args_ptr, argc, outcome.carrier);
                 outcome.packed
             }
         }
@@ -403,6 +469,7 @@ pub(crate) extern "C" fn zun_jit_call_indirect(
                 set_pending_exception(outcome.packed);
                 0
             } else {
+                write_result_carrier(args_ptr, argc, outcome.carrier);
                 outcome.packed
             }
         }
@@ -538,6 +605,214 @@ mod tests {
             .call_packed_with_heap(caller_rid, &[5], &mut heap)
             .expect("bridged call");
         assert_eq!(result as i64, 6);
+    }
+
+    /// An `any` argument crosses the bridge as two words and an `any` result
+    /// comes back in the carrier written after the arguments. The compiled
+    /// `caller` holds its own `any` across the bridged call while the interpreted
+    /// callee allocates and collects, and the object must be found again, moved.
+    #[test]
+    fn jit_bridges_any_arguments_and_results_through_the_carrier() {
+        let module = zun_compiler::compile_with_oxc(
+            "class B { v: number = 0; w: number = 0; } \
+             function churn(n: number): number { let t = 0; for (let i = 0; i < n; i++) { const p = new B(); p.v = i; t += p.v; } return t; } \
+             function describe(a: any): any { churn(2000); if (a === null) { return 1.5; } return (a as B); } \
+             function caller(a: any): any { const held: any = a; const r: any = describe(a); if (held === null) { return r; } return held; } \
+             function main(): number { return 0; }",
+            true,
+        )
+        .expect("compile");
+        let loader = {
+            let mut loader = ModuleLoader::new();
+            loader.load_bytes("app", &module.write()).unwrap();
+            loader
+        };
+        let scope = loader.get("app").unwrap();
+        let find = |name: &str| {
+            scope
+                .module()
+                .tables
+                .method_defs
+                .iter()
+                .position(|m| scope.module().strings.get(m.name) == name)
+                .expect("method") as u32
+                + 1
+        };
+        let (describe_rid, caller_rid, b_type) = (find("describe"), find("caller"), {
+            scope
+                .module()
+                .tables
+                .type_defs
+                .iter()
+                .position(|t| scope.module().strings.get(t.name) == "B")
+                .expect("class B") as u32
+                + 1
+        });
+        let jit = unsafe { zun_codegen::Jit::compile_with_bridge(scope.module(), bridge_config()) }
+            .expect("jit compiles with bridge");
+        assert!(
+            !jit.is_compiled(describe_rid),
+            "the casting callee stays on the interpreter, so the call is bridged"
+        );
+        assert!(jit.is_compiled(caller_rid), "the caller compiles with an any signature");
+
+        let mut heap = zun_gc::Heap::new();
+        let object = heap.alloc(b_type, 2);
+        object.set_field(0, 99.0f64.to_bits());
+        let before = object.addr() as usize;
+        let _hscope = unsafe { zun_gc::HeapScope::enter(&mut heap as *mut _) };
+        let mut output = CaptureOutput::default();
+        let _bridge = BridgeScope::enter(scope.module(), Some(&loader), &mut output);
+        let (tag, payload) = zun_codegen::JitAnyAbi::from_any(zun_core::Any::object(before)).raw_words();
+        let result = jit
+            .call_packed_any_with_heap(caller_rid, &[tag, payload], &mut heap)
+            .expect("bridged any call");
+        assert_eq!(result.tag, zun_core::AnyTag::Object as u64);
+        assert_ne!(result.payload as usize, before, "the collections must have moved the object");
+        let moved = unsafe { zun_gc::Obj::from_addr(result.payload as *mut u64) };
+        assert_eq!(f64::from_bits(moved.field(0)), 99.0, "the same object, read through its new address");
+        // A `null` argument comes back as the callee's number result.
+        let (tag, payload) = zun_codegen::JitAnyAbi::from_any(zun_core::Any::null()).raw_words();
+        let result = jit
+            .call_packed_any_with_heap(caller_rid, &[tag, payload], &mut heap)
+            .expect("bridged any call");
+        assert_eq!(result.tag, zun_core::AnyTag::Float as u64);
+        assert_eq!(f64::from_bits(result.payload), 1.5);
+    }
+
+    /// Mask the address Tier 0 prints for an object so two runs compare equal.
+    fn mask_addresses(text: String) -> String {
+        let mut out = String::new();
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("Obj(0x") {
+            out.push_str(&rest[..at]);
+            out.push_str("Obj(..)");
+            let tail = &rest[at..];
+            rest = &tail[tail.find(')').map_or(tail.len(), |end| end + 1)..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// Run `src` on Tier 0 alone and again with the bridged JIT at the default
+    /// threshold. Returns each run's `(lines, error text)`, and whether the named
+    /// method was compiled / any loop was OSR-transferred in the JIT run.
+    fn tier0_and_jit(
+        src: &str,
+        method: &str,
+    ) -> ((Vec<String>, Option<String>), (Vec<String>, Option<String>), bool, u64) {
+        let module = zun_compiler::compile_with_oxc(src, true).expect("compiles");
+        let loaded = crate::load(&module.write()).expect("loads");
+        let outcome = |out: CaptureOutput, result: Result<Value, RunError>| {
+            (out.lines, result.err().map(|e| mask_addresses(e.to_string())))
+        };
+        let mut plain = CaptureOutput::default();
+        let plain_result = zun_interp::run_with(&loaded, &mut plain, None);
+        let plain = outcome(plain, plain_result.map(|_| Value::Void));
+
+        let rid = loaded
+            .tables
+            .method_defs
+            .iter()
+            .position(|m| loaded.strings.get(m.name) == method)
+            .map(|i| i as u32 + 1)
+            .expect("method");
+        let jit = unsafe { zun_codegen::Jit::new_bridged(&loaded, bridge_config()) }.unwrap();
+        let hook = crate::JitHook::with_threshold(jit, &loaded, 2);
+        let mut out = CaptureOutput::default();
+        let result = {
+            let _bridge = BridgeScope::enter(&loaded, None, &mut out);
+            zun_interp::run_with(&loaded, &mut out, Some(&hook))
+        };
+        let jitted = outcome(out, result.map(|_| Value::Void));
+        (plain, jitted, hook.jit_is_defined(rid), hook.osr_transfers())
+    }
+
+    const TAGS: &[(&str, &str)] = &[
+        ("float", "(2.5 as any)"),
+        ("int", "(ii as any)"),
+        ("true", "(true as any)"),
+        ("false", "(false as any)"),
+        ("null", "(null as any)"),
+        ("undefined", "(undefined as any)"),
+        ("string", "(('a') as any)"),
+        ("object", "(new B() as any)"),
+    ];
+
+    fn mismatch_program(function: &str, call: &str, bad: &str) -> String {
+        format!(
+            "class B {{ v: number = 1; }}\n{function}\n\
+             const ii: int = 5;\nconst o: any = new B();\nconst bad: any = {bad};\n\
+             {t_decl}\nfor (let i = 0; i < 4; i++) {{ t += {call}; }}\nconsole.log('warm', t);\n\
+             try {{ console.log('bad', {call_bad}); }} catch (e) {{ console.log('caught', String(e)); }}\n\
+             console.log('after');",
+            call_bad = call.replace("2, ", "bad, "),
+            t_decl = if function.contains("): int {") { "let t: int = 0;" } else { "let t = 0;" },
+        )
+    }
+
+    /// Every tag a numeric `unbox.any; conv` can meet, into each numeric target, in a
+    /// whole-method compile: the compiled code agrees with Tier 0 on the value, or on
+    /// the uncatchable error and its text, and the process does not fault.
+    #[test]
+    fn a_mismatching_unbox_matches_tier0_in_a_compiled_method() {
+        for (target, function, call) in [
+            (
+                "number",
+                "function pick(x: any, y: any, n: number): number { let s = 0; for (let k = 0; k < n; k++) { if (k === 1500) { x = y; } s = s + (x as number); } return s; }",
+                "pick(1, 2, 2000)",
+            ),
+            (
+                "int",
+                "function pick(x: any, y: any, n: number): int { let s: int = 0; for (let k = 0; k < n; k++) { if (k === 1500) { x = y; } s = s + (x as int); } return s; }",
+                "pick(1, 2, 2000)",
+            ),
+        ] {
+            for (tag, bad) in TAGS {
+                let src = mismatch_program(function, call, bad);
+                let (plain, jitted, defined, _) = tier0_and_jit(&src, "pick");
+                assert!(defined, "pick must be compiled ({target} <- {tag})");
+                assert_eq!(plain, jitted, "{target} <- {tag}");
+                let errors = matches!(*tag, "true" | "false" | "null" | "string" | "object");
+                assert_eq!(
+                    plain.1.as_deref().is_some_and(|e| e.contains("cannot convert")),
+                    errors,
+                    "Tier 0 outcome for {target} <- {tag}: {plain:?}"
+                );
+                assert_eq!(plain.0.first().map(String::as_str).map(|l| l.starts_with("warm")), Some(true));
+            }
+        }
+    }
+
+    /// The same matrix when the unbox sits in an OSR loop region of a method that is
+    /// not eligible as a whole (it casts to a class after the loop).
+    #[test]
+    fn a_mismatching_unbox_matches_tier0_in_an_osr_loop() {
+        for (target, function) in [
+            (
+                "number",
+                "function pick(x: any, y: any, n: number, p: any): number { let s = 0; for (let k = 0; k < n; k++) { if (k === 1500) { x = y; } s = s + (x as number); } return s + (p as B).v; }",
+            ),
+            (
+                "int",
+                "function pick(x: any, y: any, n: number, p: any): int { let s: int = 0; for (let k = 0; k < n; k++) { if (k === 1500) { x = y; } s = s + (x as int); } return s + ((p as B).v as int); }",
+            ),
+        ] {
+            for (tag, bad) in TAGS {
+                let src = mismatch_program(function, "pick(1, 2, 2000, o)", bad);
+                let (plain, jitted, defined, osr) = tier0_and_jit(&src, "pick");
+                assert!(!defined, "pick casts to a class, so it is only OSR-compiled");
+                assert!(osr > 0, "the loop must have run natively ({target} <- {tag})");
+                assert_eq!(plain, jitted, "{target} <- {tag}");
+                let errors = matches!(*tag, "true" | "false" | "null" | "string" | "object");
+                assert_eq!(
+                    plain.1.as_deref().is_some_and(|e| e.contains("cannot convert")),
+                    errors,
+                    "Tier 0 outcome for {target} <- {tag}: {plain:?}"
+                );
+                assert_eq!(plain.0.first().map(String::as_str).map(|l| l.starts_with("warm")), Some(true));
+            }
+        }
     }
 
     /// A JIT-compiled method that stores a concrete function value and calls it

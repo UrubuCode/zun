@@ -150,7 +150,9 @@ impl core::fmt::Display for RunError {
 }
 
 impl RunError {
-    pub(crate) fn annotate(self, module: &zun_module::Module, method_rid: u32, pc: u32) -> Self {
+    /// Attach the source frame of `method_rid` at `pc`, as Tier 0 does for the
+    /// failing instruction (a host reproducing a Tier 0 error uses the same call).
+    pub fn annotate(self, module: &zun_module::Module, method_rid: u32, pc: u32) -> Self {
         if matches!(
             self,
             RunError::SourceFrame { .. } | RunError::Suspended | RunError::Thrown(_)

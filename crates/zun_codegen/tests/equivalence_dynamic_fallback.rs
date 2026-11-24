@@ -384,19 +384,12 @@ fn typed_view_instance_accessors_preserve_interpreter_fallback_boundary() {
 
 #[test]
 fn switch_lowering_is_jit_equivalent() {
-    // `switch` stays on the interpreter fallback until verifier joins are
-    // lowered: the method is not JIT-compiled (the module still builds) and
-    // the interpreter produces the right result.
-    let module = compile(
+    // `switch` keeps its scrutinee in an `any` temporary. That used to keep the
+    // method on the interpreter; with `any` locals compiled it runs natively and
+    // must agree with the interpreter.
+    assert_equivalent(
         "function main(): u64 { let value: u64 = 2; switch (value) { case 1: return 10; case 2: return 20; default: return 30; } }",
     );
-    let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(
-        !jit.is_compiled(entry),
-        "switch must remain on the interpreter fallback until verifier joins are lowered"
-    );
-    assert!(matches!(interp_entry(&module), Value::Int(20, _)));
 }
 
 #[test]
@@ -436,14 +429,18 @@ fn conditional_expression_is_jit_equivalent() {
 }
 
 #[test]
-fn null_literal_uses_the_interpreter_fallback_boundary() {
+fn null_literal_returned_as_any_compiles_and_matches_the_interpreter() {
+    // `null` as an `any` result is the `Null` tag with a zero payload.
     let module = compile("function main(): any { return null; }");
     let entry = module.entry_point.expect("entry point").rid();
-    let jit = zun_codegen::Jit::new(&module).expect("jit builds");
-    assert!(
-        !jit.is_compiled(entry),
-        "null currently requires Tier 0 fallback"
-    );
+    let jit = zun_codegen::Jit::compile(&module).expect("jit builds");
+    assert!(jit.is_compiled(entry), "an any return of null compiles");
+    let mut heap = zun_gc::Heap::new();
+    let carrier = jit
+        .call_packed_any_with_heap(entry, &[], &mut heap)
+        .expect("compiled call");
+    assert_eq!(carrier.tag, zun_core::AnyTag::Null as u64);
+    assert_eq!(carrier.payload, 0);
     assert!(matches!(interp_entry(&module), Value::Null));
 }
 
